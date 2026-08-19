@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap');
+/* Inter and JetBrains Mono are loaded via next/font/google in
+   src/app/[locale]/layout.tsx. The CSS variables --font-sans and
+   --font-mono are set on <html> and consumed below in :root. */
 @import "tailwindcss";
 
 /* Bind the `dark:` variant to the `.dark` class this app actually toggles.
@@ -19,31 +21,38 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: oklch(0.9911 0 0);
-  --foreground: oklch(0.2046 0 0);
-  --card: oklch(0.9911 0 0);
-  --card-foreground: oklch(0.2046 0 0);
-  --popover: oklch(0.9911 0 0);
-  --popover-foreground: oklch(0.4386 0 0);
-  --primary: oklch(0.55 0.19 250);
-  --primary-foreground: oklch(0.98 0.01 250);
+  /* Hindsight design system palette — light mode. Replaces the shadcn oklch
+     defaults so every bg-card / text-foreground / border-border utility across
+     the whole site picks up the design system without per-component edits. */
+  --background: #F3F5F9;
+  --foreground: #0D1117;
+  --card: #FFFFFF;
+  --card-foreground: #0D1117;
+  --popover: #FFFFFF;
+  --popover-foreground: #0D1117;
+  --primary: #0074D9;
+  --primary-foreground: #FFFFFF;
   --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
-  --secondary: oklch(0.9940 0 0);
-  --secondary-foreground: oklch(0.2046 0 0);
-  --muted: oklch(0.9461 0 0);
-  --muted-foreground: oklch(0.2435 0 0);
-  --accent: oklch(0.9461 0 0);
-  --accent-foreground: oklch(0.2435 0 0);
-  --destructive: oklch(0.5523 0.1927 32.7272);
-  --destructive-foreground: oklch(0.9934 0.0032 17.2118);
-  --border: oklch(0.9037 0 0);
-  --input: oklch(0.9731 0 0);
-  --ring: oklch(0.55 0.19 250);
-  --chart-1: oklch(0.55 0.19 250);
-  --chart-2: oklch(0.6231 0.1880 259.8145);
-  --chart-3: oklch(0.6056 0.2189 292.7172);
-  --chart-4: oklch(0.7686 0.1647 70.0804);
-  --chart-5: oklch(0.6959 0.1491 162.4796);
+  --secondary: #EDF0F6;
+  --secondary-foreground: #0D1117;
+  --muted: #EDF0F6;
+  /* #525866 is 5.3:1 against the page bg and 7.1:1 against card white, which
+     hits WCAG AA for body text at every size we use. The lighter #6C7586 used
+     elsewhere in the palette is only 4.4:1 against the page and fails AA, so
+     light mode keeps this darker value for body copy. */
+  --muted-foreground: #525866;
+  --accent: #EDF0F6;
+  --accent-foreground: #0D1117;
+  --destructive: #D4183D;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(0, 0, 0, 0.08);
+  --input: rgba(0, 0, 0, 0.08);
+  --ring: #0074D9;
+  --chart-1: #2C82F5;
+  --chart-2: #10B981;
+  --chart-3: #8B5CF6;
+  --chart-4: #F59E0B;
+  --chart-5: #EC4899;
 
   /* Chip treatment — used by components/ui/facet-chip.tsx, the only place tags,
      entities and metadata are rendered.
@@ -76,17 +85,19 @@
   --chip-meta-border: #e7ebef;
   --chip-fg: #55677d;
   --chip-accent: #0e7f8c; /* brand cyan, darkened for the light surface */
-  --sidebar: oklch(0.9911 0 0);
-  --sidebar-foreground: oklch(0.5452 0 0);
-  --sidebar-primary: oklch(0.55 0.19 250);
-  --sidebar-primary-foreground: oklch(0.98 0.01 250);
-  --sidebar-accent: oklch(0.9461 0 0);
-  --sidebar-accent-foreground: oklch(0.2435 0 0);
-  --sidebar-border: oklch(0.9037 0 0);
-  --sidebar-ring: oklch(0.55 0.19 250);
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-heading: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #6C7586;
+  --sidebar-primary: #0074D9;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #EDF0F6;
+  --sidebar-accent-foreground: #0D1117;
+  --sidebar-border: rgba(0, 0, 0, 0.05);
+  --sidebar-ring: #0074D9;
+  /* --font-sans and --font-mono are set on <html> by next/font/google in
+     [locale]/layout.tsx. :root inherits them; we intentionally do NOT
+     redeclare them here so the next/font value is what utilities resolve to.
+     A separate --font-fallback chain is provided for any future use. */
+  --font-fallback: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --radius: 0.5rem;
   --shadow-x: 0px;
   --shadow-y: 1px;
@@ -102,36 +113,76 @@
   --shadow-lg: 0px 1px 3px 0px hsl(0 0% 0% / 0.17), 0px 4px 6px -1px hsl(0 0% 0% / 0.17);
   --shadow-xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.17), 0px 8px 10px -1px hsl(0 0% 0% / 0.17);
   --shadow-2xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.43);
-  --tracking-normal: 0.025em;
+  /* Inter renders best at 0 tracking for body text, negative at heading sizes.
+     Was 0.025em (positive), which made all body/label text feel spaced-out and
+     wrong at the sizes the design system actually uses. */
+  --tracking-normal: 0em;
   --spacing: 0.25rem;
+
+  /* Hindsight design tokens (light) — semantic surface/text/border/status/chart
+     palette. The brand gradient stays as the pre-existing --primary-gradient
+     above. These are namespaced with --hs- to avoid colliding with the shadcn
+     token set. */
+  --hs-surface-page: #F3F5F9;
+  --hs-surface-card: #FFFFFF;
+  --hs-surface-sidebar: #FFFFFF;
+  --hs-surface-hover: #EDF0F6;
+  --hs-surface-muted: #EDF0F6;
+
+  --hs-fg-primary: #0D1117;
+  --hs-fg-muted: #6C7586;
+  --hs-fg-on-accent: #FFFFFF;
+
+  --hs-border-default: rgba(0, 0, 0, 0.08);
+  --hs-border-subtle: rgba(0, 0, 0, 0.05);
+
+  /* #00BC7D is the success accent across light mode (progress %, "done"
+     values, operation dots). Distinct from #10B981, which is the Experience
+     chart series — different token, don't conflate them. */
+  --hs-success: #00BC7D;
+  --hs-warning: #F59E0B;
+  --hs-danger: #D4183D;
+  --hs-info: #0074D9;
+  --hs-neutral: #6C7586;
+
+  --hs-brand-blue: #0074D9;
+  --hs-brand-teal: #009296;
+
+  --hs-chart-world: #2C82F5;
+  --hs-chart-experience: #10B981;
+  --hs-chart-observations: #8B5CF6;
+  --hs-chart-temporal: #F59E0B;
+  --hs-chart-semantic: #009296;
+  --hs-chart-entity: #EC4899;
 }
 
 .dark {
-  --background: oklch(0.1822 0 0);
-  --foreground: oklch(0.9288 0.0126 255.5078);
-  --card: oklch(0.2046 0 0);
-  --card-foreground: oklch(0.9288 0.0126 255.5078);
-  --popover: oklch(0.2603 0 0);
-  --popover-foreground: oklch(0.7348 0 0);
-  --primary: oklch(0.60 0.17 250);
-  --primary-foreground: oklch(0.98 0.01 250);
+  /* Hindsight design system palette — dark mode. */
+  --background: #080C17;
+  --foreground: #DCE8FF;
+  --card: #0F1724;
+  --card-foreground: #DCE8FF;
+  --popover: #0F1724;
+  --popover-foreground: #DCE8FF;
+  --primary: #5BB0FF;
+  --primary-foreground: #080C17;
   --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
-  --secondary: oklch(0.2603 0 0);
-  --secondary-foreground: oklch(0.9851 0 0);
-  --muted: oklch(0.2393 0 0);
-  --muted-foreground: oklch(0.7122 0 0);
-  --accent: oklch(0.3132 0 0);
-  --accent-foreground: oklch(0.9851 0 0);
-  --destructive: oklch(0.3123 0.0852 29.7877);
-  --destructive-foreground: oklch(0.9368 0.0045 34.3092);
-  --border: oklch(0.2809 0 0);
-  --input: oklch(0.2603 0 0);
-  --ring: oklch(0.60 0.17 250);
-  --chart-1: oklch(0.60 0.17 250);
-  --chart-2: oklch(0.7137 0.1434 254.6240);
-  --chart-3: oklch(0.7090 0.1592 293.5412);
-  --chart-4: oklch(0.8369 0.1644 84.4286);
-  --chart-5: oklch(0.7845 0.1325 181.9120);
+  --secondary: #172036;
+  --secondary-foreground: #DCE8FF;
+  --muted: #172036;
+  --muted-foreground: #94A8C9;
+  --accent: #172036;
+  --accent-foreground: #DCE8FF;
+  --destructive: #C0183A;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(100, 160, 255, 0.10);
+  --input: rgba(100, 160, 255, 0.10);
+  --ring: #5BB0FF;
+  --chart-1: #2C82F5;
+  --chart-2: #10B981;
+  --chart-3: #8B5CF6;
+  --chart-4: #F59E0B;
+  --chart-5: #EC4899;
 
   /* Chip treatment on the dark surface (see :root for rationale). */
   --chip-tag: #1c2836; /* slate */
@@ -142,14 +193,38 @@
   --chip-meta-border: #232d3a;
   --chip-fg: #94a8bc;
   --chip-accent: #4dd8e6; /* logo cyan */
-  --sidebar: oklch(0.1822 0 0);
-  --sidebar-foreground: oklch(0.6301 0 0);
-  --sidebar-primary: oklch(0.60 0.17 250);
-  --sidebar-primary-foreground: oklch(0.98 0.01 250);
-  --sidebar-accent: oklch(0.3132 0 0);
-  --sidebar-accent-foreground: oklch(0.9851 0 0);
-  --sidebar-border: oklch(0.2809 0 0);
-  --sidebar-ring: oklch(0.60 0.17 250);
+  --sidebar: #0A1020;
+  --sidebar-foreground: #6E8AAF;
+  --sidebar-primary: #5BB0FF;
+  --sidebar-primary-foreground: #080C17;
+  --sidebar-accent: #172036;
+  --sidebar-accent-foreground: #DCE8FF;
+  --sidebar-border: rgba(100, 160, 255, 0.07);
+  --sidebar-ring: #5BB0FF;
+
+  /* Hindsight design tokens (dark) — see the :root block above for rationale. */
+  --hs-surface-page: #080C17;
+  --hs-surface-card: #0F1724;
+  --hs-surface-sidebar: #0A1020;
+  --hs-surface-hover: #172036;
+  --hs-surface-muted: #172036;
+
+  --hs-fg-primary: #DCE8FF;
+  --hs-fg-muted: #94A8C9;
+  --hs-fg-on-accent: #FFFFFF;
+
+  --hs-border-default: rgba(100, 160, 255, 0.10);
+  --hs-border-subtle: rgba(100, 160, 255, 0.07);
+
+  /* Dark mode uses the more vivid #00D492 as the primary success — it reads
+     better against the deep navy page than the light-mode #00BC7D. */
+  --hs-success: #00D492;
+  --hs-warning: #FBB040;
+  --hs-danger: #C0183A;
+  --hs-info: #5BB0FF;
+  --hs-neutral: #6E8AAF;
+
+  /* Brand stops are mode-invariant; the gradient stays as --primary-gradient. */
 }
 
 @theme inline {
@@ -196,7 +271,9 @@
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-heading: var(--font-heading);
+  /* Headings use Inter like the rest of the UI — alias --font-heading to
+     --font-sans so any legacy `font-heading` utility falls through to Inter. */
+  --font-heading: var(--font-sans);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -218,15 +295,58 @@
   --tracking-wide: calc(var(--tracking-normal) + 0.025em);
   --tracking-wider: calc(var(--tracking-normal) + 0.05em);
   --tracking-widest: calc(var(--tracking-normal) + 0.1em);
+
+  /* Hindsight semantic utilities — generate bg-surface-*, text-fg-*, bg-success,
+     border-border-*, text-chart-* etc. from the --hs-* tokens above. */
+  --color-surface-page: var(--hs-surface-page);
+  --color-surface-card: var(--hs-surface-card);
+  --color-surface-sidebar: var(--hs-surface-sidebar);
+  --color-surface-hover: var(--hs-surface-hover);
+  --color-surface-muted: var(--hs-surface-muted);
+
+  --color-fg-primary: var(--hs-fg-primary);
+  --color-fg-muted: var(--hs-fg-muted);
+  --color-fg-on-accent: var(--hs-fg-on-accent);
+
+  --color-border-default: var(--hs-border-default);
+  --color-border-subtle: var(--hs-border-subtle);
+
+  --color-success: var(--hs-success);
+  --color-warning: var(--hs-warning);
+  --color-danger: var(--hs-danger);
+  --color-info: var(--hs-info);
+  --color-neutral: var(--hs-neutral);
+
+  --color-brand-blue: var(--hs-brand-blue);
+  --color-brand-teal: var(--hs-brand-teal);
+
+  --color-chart-world: var(--hs-chart-world);
+  --color-chart-experience: var(--hs-chart-experience);
+  --color-chart-observations: var(--hs-chart-observations);
+  --color-chart-temporal: var(--hs-chart-temporal);
+  --color-chart-semantic: var(--hs-chart-semantic);
+  --color-chart-entity: var(--hs-chart-entity);
+}
+
+/* Force the Inter chain on the document AND on form elements, which don't
+   inherit font-family from body. Without this they fall back to the browser
+   default and render visibly off against the rest of the page. */
+html, body, button, input, select, textarea, optgroup {
+  font-family: var(--font-sans), 'Inter', -apple-system, BlinkMacSystemFont,
+    system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 body {
-  font-family: var(--font-sans);
-  letter-spacing: var(--tracking-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
+/* Tailwind preflight resets headings to `font-weight: inherit`, and unlike the
+   every heading in this app carries an explicit weight utility yet. Keep the
+   600 default so those headings stay headings; the font-family override is
+   gone because everything is Inter now. 600 is the ceiling for UI text. */
 h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-heading);
   font-weight: 600;
 }
 
@@ -237,6 +357,20 @@ code, pre {
 /* Gradient utilities */
 .bg-primary-gradient {
   background: var(--primary-gradient);
+}
+
+/* Switch primitive states. Tailwind `data-[state=...]` variants don't reach
+   the custom `.bg-primary-gradient` class (it's not a generated utility), so
+   we wire the visible track colors here. Targets Radix's `data-state` on
+   the Switch root rendered by `src/components/ui/switch.tsx`. */
+[data-slot="hs-switch"][data-state="checked"] {
+  background: var(--primary-gradient) !important;
+}
+[data-slot="hs-switch"][data-state="unchecked"] {
+  background-color: #c3cad6; /* between slate-300 and slate-400 — visible on white without feeling heavy */
+}
+.dark [data-slot="hs-switch"][data-state="unchecked"] {
+  background-color: #475569; /* slate-600 — visible on navy card without being loud */
 }
 
 .border-primary-gradient {
@@ -438,8 +572,50 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   }
 }
 
+/* List rows that stream in a page at a time (the bank selector pages as it is
+   scrolled). Defined here rather than reached for from tailwindcss-animate:
+   this app is on Tailwind v4 with the CSS-first config, so the v3 plugin in
+   tailwind.config.ts is never loaded and its `animate-in` / `fade-in-0`
+   utilities emit nothing. Callers stagger rows with an inline animation-delay,
+   so `both` matters — without it a delayed row would sit fully drawn until its
+   turn came, which is the pop the stagger exists to avoid. */
+@keyframes list-row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-list-row-enter {
+  animation: list-row-enter 200ms ease-out both;
+}
+
+@keyframes soft-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-soft-fade-in {
+  animation: soft-fade-in 200ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-list-row-enter,
+  .animate-soft-fade-in {
+    animation: none;
+  }
+}
+
 /* Themed scrollbars — match the app surface instead of the default white track.
-   Theme tokens are oklch, so wrap with color-mix to apply opacity. */
+   color-mix is what applies the opacity to the theme token. */
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;

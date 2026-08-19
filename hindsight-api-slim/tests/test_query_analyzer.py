@@ -6,6 +6,8 @@ from datetime import datetime
 
 import pytest
 
+from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+
 
 def test_query_analyzer_june_2024(query_analyzer):
     reference_date = datetime(2025, 1, 15, 12, 0, 0)
@@ -812,11 +814,13 @@ def test_query_analyzer_dateparser_crash_returns_no_constraint(query_analyzer, m
     def boom(*args, **kwargs):
         raise IndexError("list index out of range")
 
-    monkeypatch.setattr(query_analyzer, "_search_dates", boom)
+    monkeypatch.setattr(query_analyzer, "_find_dates", boom)
 
-    # Use a query that doesn't match any of the period regex patterns so the
-    # code path actually reaches the dateparser call.
-    query = "tell me what happened recently with the project"
+    # The query must match no period regex *and* carry a scoreable token, so it
+    # reaches the dateparser call rather than being rejected by the pre-filter
+    # (a query with no digit and no date word can never produce a constraint,
+    # so it short-circuits before dateparser runs at all).
+    query = "tell me what happened on the 3rd with the project"
 
     with caplog.at_level(logging.WARNING):
         analysis = query_analyzer.analyze(query, reference_date)
@@ -978,3 +982,163 @@ def test_query_analyzer_day_month_year_stays_exact(query_analyzer, query, expect
     assert analysis.temporal_constraint is not None
     assert analysis.temporal_constraint.start_date.date() == expected.date()
     assert analysis.temporal_constraint.end_date.date() == expected.date()
+
+
+def test_query_analyzer_default_keeps_auto_detection():
+    """Default (languages=None) must keep dateparser's full-locale auto-detection.
+
+    Auto-detection is the pre-existing behavior; restricting is opt-in only.
+    """
+    from dateparser.search import _search_with_detection
+
+    analyzer = DateparserQueryAnalyzer()
+    analyzer.load()
+
+    assert len(analyzer._locales) == len(_search_with_detection.available_language_map), (
+        "default must detect across every locale dateparser ships"
+    )
+
+
+def test_query_analyzer_languages_passed_through():
+    """An explicit language list must restrict detection to exactly those locales."""
+    analyzer = DateparserQueryAnalyzer(languages=["en", "zh"])
+    analyzer.load()
+
+    assert [loc.shortname for loc in analyzer._locales] == ["en", "zh"]
+
+
+def test_query_analyzer_rejects_unknown_language():
+    """An unusable language list must fail loudly rather than silently widen."""
+    analyzer = DateparserQueryAnalyzer(languages=["en", "not-a-language"])
+    with pytest.raises(ValueError, match="not-a-language"):
+        analyzer.load()
+
+
+def test_query_analyzer_warmup_uses_same_languages(monkeypatch):
+    """load()'s warm-up call must use the same locale set as analyze().
+
+    Warming up under auto-detection while querying restricted (or vice versa)
+    would leave part of dateparser's lazy-load cost on the first real query.
+    """
+    calls = []
+    real_find_dates = DateparserQueryAnalyzer._find_dates
+
+    def spy(self, query, **kwargs):
+        calls.append((query, [loc.shortname for loc in self._locales]))
+        return real_find_dates(self, query, **kwargs)
+
+    monkeypatch.setattr(DateparserQueryAnalyzer, "_find_dates", spy)
+
+    analyzer = DateparserQueryAnalyzer(languages=["en"])
+    analyzer.load()
+
+    assert calls, "load() should fire a warm-up call"
+    assert calls[0][1] == ["en"], "warm-up must use the configured locale set"
+
+
+def test_query_analyzer_explicit_date_with_restricted_language(query_analyzer):
+    """Restricting to English keeps explicit English dates exact.
+
+    Guards the reported failure where auto-detection matched only a fragment
+    ('on 31') and filled the missing month/year from RELATIVE_BASE.
+    """
+    analyzer = DateparserQueryAnalyzer(languages=["en"])
+    reference_date = datetime(2026, 7, 31, 12, 0, 0)
+
+    analysis = analyzer.analyze("Where did they decide to live together on 31 October, 2022?", reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == datetime(2022, 10, 31).date()
+
+
+# --- issue #3217: extreme relative offsets must never crash temporal analysis ---
+#
+# Consolidation recalls with stored fact text as the query, so a single phrase
+# like "十万年前" (100,000 years ago → year -97974) deterministically failed
+# every recall touching that bank. The offset arithmetic in extract_period runs
+# BEFORE analyze()'s dateparser guard, so these used to escape as
+# ValueError('year N is out of range') / OverflowError and kill the search.
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # the observed #3217 trio: 2560 / 3000 / 100000 years ago
+        "2560年前的事",
+        "3000年前",
+        "十万年前的人类",
+        # unbounded month offsets (add_months previously unguarded)
+        "三万个月前的事件",
+        "五万个月前",
+        "三万个月后",
+        "过去三万个月",
+        # unbounded day/week offsets (raw timedelta previously overflowed)
+        "一百万天前的历史",
+        "九十九万周前",
+        "一亿天前",
+        # half-year/half-month forms with unbounded parsed amounts
+        "三千年半后",
+        "十万个半月后",
+    ],
+)
+def test_query_analyzer_extreme_relative_offsets_no_crash(query_analyzer, query):
+    """Unrepresentable relative offsets degrade to no constraint (issue #3217)."""
+    reference_date = datetime(2026, 8, 6, 12, 0, 0)
+
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    if analysis.temporal_constraint is not None:
+        # A constraint is acceptable only if it is a real, in-range date
+        # (e.g. "三千年半后" lands in year 5027, which is representable).
+        assert analysis.temporal_constraint.start_date.year >= 1
+
+
+@pytest.mark.parametrize(
+    ("query", "reference_date"),
+    [
+        ("下个月的计划", datetime(9999, 12, 15)),
+        ("下下月", datetime(9999, 11, 15)),
+        ("上上月", datetime(1, 1, 15)),
+        ("半年前", datetime(1, 3, 15)),
+        ("半年后", datetime(9999, 9, 15)),
+        ("一年半前", datetime(1, 6, 15)),
+        ("下月以来", datetime(9999, 12, 15)),
+        ("上个月到下个月", datetime(1, 1, 15)),
+        ("下月中", datetime(9999, 12, 15)),
+    ],
+)
+def test_query_analyzer_month_offsets_at_year_bounds_no_crash(query_analyzer, query, reference_date):
+    """Month arithmetic at datetime year bounds degrades to no constraint."""
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is None
+
+
+@pytest.mark.parametrize("query", ["what happened in june 0000", "cosa accadde a gennaio 0000"])
+def test_query_analyzer_year_zero_month_pattern_no_crash(query_analyzer, query):
+    """An explicit month + year 0000 is unrepresentable → no constraint (issue #3217)."""
+    analysis = query_analyzer.analyze(query, datetime(2026, 8, 6, 12, 0, 0))
+
+    assert analysis.temporal_constraint is None
+
+
+def test_extract_temporal_constraint_degrades_on_analyzer_crash():
+    """The recall entry point must survive any analyzer failure (issue #3217).
+
+    analyze() stays strict (see test_query_analyzer_period_valueerror_still_surfaces);
+    the recall choke point is where a parser bug degrades to 'no temporal signal'
+    instead of deterministically failing every recall/consolidation on the bank.
+    """
+    from hindsight_api.engine.query_analyzer import QueryAnalysis, QueryAnalyzer
+    from hindsight_api.engine.search.temporal_extraction import extract_temporal_constraint
+
+    class ExplodingAnalyzer(QueryAnalyzer):
+        def load(self) -> None:
+            pass
+
+        def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:
+            raise ValueError("year -534 is out of range")
+
+    result = extract_temporal_constraint("anything", analyzer=ExplodingAnalyzer())
+
+    assert result is None

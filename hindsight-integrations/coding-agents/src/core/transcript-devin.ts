@@ -1,10 +1,15 @@
-import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TransportTurn } from "./chat";
+import { diag } from "./diag";
 import { stripInjectedMemory } from "./transcript-util";
 
-const sessionDb = join(homedir(), ".local", "share", "devin", "cli", "sessions.db");
+/** Where the Devin CLI persists its conversations. Resolved per call so tests can point elsewhere. */
+export function devinSessionDb(home = homedir()): string {
+  return join(home, ".local", "share", "devin", "cli", "sessions.db");
+}
 
 interface DevinMessageNode {
   node_id: number;
@@ -43,23 +48,79 @@ export function parseDevinMessages(nodes: DevinMessageNode[]): TransportTurn[] {
     .map(({ role, content }) => ({ role, content }));
 }
 
-/** Devin hooks provide no transcript path, but the local CLI persists its full conversation in
- * sessions.db. Use sqlite3 as a read-only bridge to avoid a native Node dependency in hook bundles. */
-export function readDevinTranscript(sessionId: string | undefined): TransportTurn[] {
-  if (!sessionId) return [];
+interface SqliteStatement {
+  all(...params: unknown[]): DevinMessageNode[];
+}
+interface SqliteDatabase {
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+}
+type DatabaseCtor = new (path: string, options?: { readOnly?: boolean }) => SqliteDatabase;
+
+const requireBuiltin = createRequire(import.meta.url);
+
+/**
+ * Resolve Node's built-in SQLite, lazily and on the Devin path only.
+ *
+ * `node:sqlite` ships with Node — nothing to install, nothing to bundle — but it does not exist
+ * before 22.5 and is flag-gated in early 22.x. A static import would therefore throw at MODULE
+ * LOAD, and this module is pulled in by hook-lifecycle, which every harness shares: an old Node
+ * would take Claude Code and Codex down with it. Resolving inside the call keeps the blast radius
+ * to Devin, where the failure is real.
+ *
+ * This previously shelled out to the `sqlite3` BINARY to avoid a native npm dependency
+ * (better-sqlite3). The builtin removes both — and the binary was an undeclared prerequisite whose
+ * absence silently produced an empty transcript (#3125).
+ */
+function loadSqlite(): DatabaseCtor | undefined {
   try {
-    const quotedId = sessionId.replace(/'/g, "''");
-    const raw = execFileSync(
-      "sqlite3",
-      [
-        "-json",
-        sessionDb,
-        `SELECT node_id, chat_message FROM message_nodes WHERE session_id = '${quotedId}' ORDER BY node_id`,
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }
-    );
-    return parseDevinMessages(JSON.parse(raw) as DevinMessageNode[]);
+    return (requireBuiltin("node:sqlite") as { DatabaseSync: DatabaseCtor }).DatabaseSync;
   } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Devin hooks provide no transcript path — only a session id — so the conversation has to come from
+ * the CLI's own sessions.db.
+ *
+ * Every failure below is reported through `diag`. An empty array used to be returned for a missing
+ * reader, an absent database and a genuinely idle session alike, which made a permanently
+ * memory-less install indistinguishable from one that simply had nothing to retain yet (#3125).
+ */
+export function readDevinTranscript(
+  sessionId: string | undefined,
+  dbPath = devinSessionDb()
+): TransportTurn[] {
+  if (!sessionId) return [];
+  const Database = loadSqlite();
+  if (!Database) {
+    diag("devin-cli", "sqlite_unavailable", { node: process.version, dbPath });
     return [];
+  }
+  if (!existsSync(dbPath)) {
+    diag("devin-cli", "session_db_missing", { dbPath });
+    return [];
+  }
+  let db: SqliteDatabase | undefined;
+  try {
+    db = new Database(dbPath, { readOnly: true });
+    const rows = db
+      .prepare(
+        "SELECT node_id, chat_message FROM message_nodes WHERE session_id = ? ORDER BY node_id"
+      )
+      .all(sessionId);
+    return parseDevinMessages(rows);
+  } catch (error) {
+    // A corrupt file or a Devin storage-schema change surfaces here instead of masquerading as an
+    // empty conversation.
+    diag("devin-cli", "session_db_read_failed", { dbPath, error: String(error) });
+    return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      /* the read already succeeded or was reported; a close failure adds nothing */
+    }
   }
 }

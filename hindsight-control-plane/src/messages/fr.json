@@ -51,6 +51,7 @@
       "select": "Sélectionner une banque de mémoire...",
       "search": "Rechercher des banques de mémoire...",
       "empty": "Aucune banque de mémoire pour l'instant.",
+      "noSearchResults": "Aucune banque ne correspond à votre recherche.",
       "create": "Créer une nouvelle banque",
       "switchTitle": "Changer de banque de mémoire",
       "returnTo": "Retourner à {bank}",
@@ -277,7 +278,7 @@
     "mentalModels": "Modèles mentaux",
     "noMentalModels": "Aucun modèle mental",
     "upToDate": "À jour",
-    "stale": "Obsolète",
+    "needsRefresh": "Actualisation requise",
     "total": "Total",
     "activity": "Activité",
     "memoriesIngested": "Souvenirs ingérés",
@@ -336,7 +337,7 @@
     "retainMissionDescription": "Ce à quoi cette banque doit prêter attention lors de l'extraction. Oriente le LLM sans remplacer les règles d'extraction — fonctionne en complément du mode d'extraction.",
     "retainMissionPlaceholder": "ex. : Toujours inclure les décisions techniques, les choix de conception API et les compromis architecturaux. Ignorer la logistique des réunions, les salutations et les échanges sociaux.",
     "extractionModeLabel": "Mode d'extraction",
-    "extractionModeDescription": "Niveau d'agressivité pour l'extraction des faits : concis (par défaut, sélectif), verbeux (tout capturer), personnalisé (écrire vos propres règles d'extraction)",
+    "extractionModeDescription": "Comment les faits sont extraits lors du retain : concis (par défaut, sélectif), détaillé (tout capturer), verbatim (conserver la formulation d'origine), fragments (ignorer complètement le LLM et stocker chaque fragment tel quel), personnalisé (écrire vos propres règles d'extraction)",
     "customExtractionPromptLabel": "Invite d'extraction personnalisée",
     "customExtractionPromptDescription": "Remplace entièrement les règles d'extraction intégrées. Actif uniquement lorsque le mode d'extraction est défini sur personnalisé.",
     "entitiesTitle": "Entités",
@@ -409,6 +410,7 @@
     "mcpGroupDocuments": "Documents",
     "mcpGroupOperations": "Opérations",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Base de connaissances",
     "retainSectionDescription": "Paramètres d'extraction par défaut et stratégies nommées. Passez un nom de stratégie dans les requêtes de rétention pour remplacer les valeurs par défaut au cas par cas.",
     "defaultStrategyLabel": "Stratégie par défaut",
     "defaultStrategyDescription": "Appliquée automatiquement lorsqu'aucune stratégie n'est spécifiée dans une requête.",
@@ -420,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "Nombre maximum de tokens de faits sources pris en compte lors de la génération d'une seule observation. Laisser vide pour utiliser la valeur par défaut du serveur.",
     "maxObservationsPerScopeLabel": "Observations max par portée",
     "maxObservationsPerScopeDescription": "Limite du nombre d'observations stockées par portée après consolidation. Laisser vide pour utiliser la valeur par défaut du serveur.",
+    "mentalModelMinRefreshIntervalLabel": "Intervalle minimal de rafraîchissement des modèles mentaux",
+    "mentalModelMinRefreshIntervalDescription": "Nombre minimal de secondes entre deux rafraîchissements automatiques du même modèle mental dans cette banque. Un rafraîchissement déclenché plus tôt est mis en file et attend la fin de la fenêtre ; les déclenchements suivants s'y fondent — une rafale de retains ne coûte donc qu'un rafraîchissement au lieu d'un par retain. Les rafraîchissements manuels s'exécutent toujours immédiatement. Laissez vide pour la valeur par défaut du serveur ; 0 signifie aucune limite. Un modèle donné peut le remplacer dans ses propres paramètres de rafraîchissement.",
+    "mentalModelsTitle": "Modèles mentaux et pages de connaissances",
+    "mentalModelsDescription": "Comment les modèles mentaux de cette banque — et les pages de connaissances qui s'appuient dessus — sont tenus à jour.",
+    "mentalModelsFailedToSave": "Échec de l'enregistrement des paramètres des modèles mentaux",
     "serverDefault": "Défaut du serveur",
     "addStrategy": "Ajouter une stratégie",
     "nameLabel": "Nom",
@@ -457,7 +464,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "Détection d'injection de prompt : bloque les tentatives de modifier le comportement de l'agent",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Anomalie de taille : rejette les charges utiles anormalement volumineuses",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Espaces de noms de tags protégés : applique des tags d'identité immuables",
-    "memoryDefenseEnterpriseCta": "Demander une démo"
+    "memoryDefenseEnterpriseCta": "Demander une démo",
+    "recallTitle": "Pipeline de rappel",
+    "recallDescription": "Les étapes de récupération exécutées lors du rappel pour cette banque",
+    "recallServerDefault": "Valeur par défaut du serveur",
+    "recallFailedToSave": "Échec de l'enregistrement des paramètres du pipeline de rappel",
+    "recallTemporalRetrievalLabel": "Récupération temporelle",
+    "recallTemporalRetrievalDescription": "Exécuter l'analyse des requêtes tenant compte des dates. La désactivation ignore aussi la branche de récupération temporelle. Utile lorsque le contenu de cette banque ne comporte pas de dates significatives.",
+    "recallGraphRetrievalLabel": "Récupération par graphe",
+    "recallGraphRetrievalDescription": "Parcourir les relations d'entités et de liens lors du rappel. La désactivation échange la récupération relationnelle contre une latence réduite.",
+    "recallRerankingLabel": "Reclassement",
+    "recallRerankingDescription": "Reclasser les candidats fusionnés avec le cross-encoder. La désactivation renvoie directement l'ordre RRF : plus rapide, mais moins précis.",
+    "extractionModeConcise": "Concis",
+    "extractionModeVerbose": "Détaillé",
+    "extractionModeVerbatim": "Verbatim",
+    "extractionModeChunks": "Fragments (sans LLM)",
+    "extractionModeCustom": "Personnalisé"
   },
   "bankOperations": {
     "title": "Opérations en arrière-plan",
@@ -473,13 +495,15 @@
     "unknown": "Inconnu",
     "notAvailable": "N/A",
     "operationDetailsLoadError": "Impossible de charger les détails de l'opération",
+    "deferredUntilTitle": "Différée jusqu'à {time}",
     "status": {
       "all": "Tout",
       "pending": "En attente",
       "processing": "En cours",
       "completed": "Terminée",
       "failed": "Échouée",
-      "cancelled": "Annulée"
+      "cancelled": "Annulée",
+      "deferred": "Différée"
     },
     "operationType": {
       "all": "Tous les types",
@@ -488,7 +512,10 @@
       "refreshMentalModel": "Actualisation du modèle mental",
       "fileConvertRetain": "Convertir le fichier",
       "webhookDelivery": "Livraison de webhook",
-      "graphMaintenance": "Maintenance du graphe"
+      "graphMaintenance": "Maintenance du graphe",
+      "vectorIndexMaintenance": "Maintenance de l'index vectoriel",
+      "exportDocuments": "Exporter les documents",
+      "importDocuments": "Importer les documents"
     },
     "table": {
       "id": "ID d'opération",
@@ -502,7 +529,8 @@
     "action": {
       "cancel": "Annuler",
       "retry": "Réessayer",
-      "delete": "Supprimer"
+      "delete": "Supprimer",
+      "download": "Télécharger"
     },
     "pagination": "Affichage de {start}-{end} sur {total}",
     "paginationPrevious": "Précédent",
@@ -518,6 +546,7 @@
       "progress": "Progression",
       "lastHeartbeat": "Dernier signal"
     },
+    "outcomeDetails": "Détails du résultat",
     "metadata": "Métadonnées",
     "error": "Erreur",
     "rawPayloadParentHelp": "Il s'agit d'une opération parente : la charge utile brute est stockée dans chaque sous-lot. Ouvrez une opération enfant pour inspecter sa charge utile.",
@@ -697,6 +726,7 @@
     "exportIncludeObservationsHint": "Exporter aussi les observations synthétisées. Sinon, le bank cible les régénère lors de la consolidation.",
     "importDialogTitle": "Importer des documents",
     "importDialogDescription": "Importez une archive .zip exportée depuis un bank. Ce n'est pas un import de document classique : les faits sont ré-encodés et reliés dans ce bank. L'import s'exécute en arrière-plan.",
+    "importFileHint": "Le .zip doit provenir de l'action Exporter — de ce bank ou d'un autre. Pour ajouter des fichiers PDF, Word ou texte, utilisez « Ajouter un document → Téléverser des fichiers ».",
     "actionsButton": "Actions",
     "importConflictLabel": "Si un document existe déjà",
     "importConflictSkip": "Ignorer — conserver le document existant",
@@ -809,6 +839,9 @@
     "optionsRefreshCronLabel": "Actualisation planifiée (cron)",
     "optionsRefreshCronPlaceholder": "min heure jour mois jourSem  ·  ex. 0 3 * * * (chaque jour 03:00 UTC)",
     "optionsRefreshCronDescription": "Actualise selon une planification cron fixe en UTC. Mutuellement exclusif avec l'actualisation sur nouvelles mémoires. Une actualisation planifiée ne s'exécute que lorsque de nouvelles mémoires modifient la portée de ce modèle. Laissez vide pour désactiver.",
+    "optionsMinRefreshIntervalLabel": "Intervalle minimal de rafraîchissement (secondes)",
+    "optionsMinRefreshIntervalPlaceholder": "Par défaut (hériter)",
+    "optionsMinRefreshIntervalDescription": "Plancher sur la fréquence des rafraîchissements automatiques. Un déclenchement plus précoce est mis en file et suspendu jusqu'à la fin de la fenêtre, et les suivants s'y fondent : une rafale de retains ne coûte qu'un rafraîchissement. Les rafraîchissements manuels s'exécutent toujours immédiatement. 0 ou vide = aucun plancher.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",
     "optionsTagsPlaceholder": "ex. : projet-x, équipe-alpha (séparés par des virgules)",
@@ -850,7 +883,10 @@
     "clearDialogConfirm": "Effacer",
     "actionClearContent": "Effacer le contenu",
     "emptyContent": "Aucun contenu pour le moment. Actualisez ce modèle mental pour générer du contenu.",
-    "selectModelPrompt": "Sélectionnez un modèle mental pour afficher son contenu."
+    "selectModelPrompt": "Sélectionnez un modèle mental pour afficher son contenu.",
+    "optionsSectionTroubleshooting": "Diagnostic",
+    "optionsKeepTraceLabel": "Conserver les traces d'actualisation",
+    "optionsKeepTraceDescription": "Enregistre comment chaque actualisation a abouti à son résultat : mode, portée, fenêtre temporelle, faits récupérés par rapport aux faits utilisés, et opérations delta. Le seul moyen de diagnostiquer les actualisations planifiées après coup."
   },
   "cronPreview": {
     "invalid": "Expression cron non valide",
@@ -936,7 +972,8 @@
     "observationTextField": "Texte",
     "observationTagsField": "Tags",
     "observationSourceMemoriesField": "Souvenirs sources ({count})",
-    "observationIdField": "ID"
+    "observationIdField": "ID",
+    "structuredOutputTitle": "Sortie structurée"
   },
   "searchDebug": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -1458,7 +1495,13 @@
     "factTypeWorld": "monde",
     "factTypeExperience": "expérience",
     "factTypeObservation": "observation",
-    "actionClearContent": "Effacer le contenu"
+    "actionClearContent": "Effacer le contenu",
+    "structuredOutput": "Sortie structurée",
+    "responseSchemaTitle": "Schéma de sortie structurée",
+    "refreshTrace": "Trace de l'actualisation",
+    "traceNotCaptured": "Aucune trace enregistrée pour cette actualisation. Activez « Conserver les traces d'actualisation » dans les réglages du modèle.",
+    "actionDryRun": "Lancer la simulation",
+    "actionDryRunRunning": "Simulation en cours…"
   },
   "constellation": {
     "instructions": "Défiler pour zoomer · Glisser pour déplacer · Survoler pour explorer · Cliquer pour sélectionner",
@@ -1656,7 +1699,8 @@
         "refresh": "Impossible d'actualiser le modèle mental",
         "history": "Impossible de récupérer l'historique du modèle mental",
         "notFound": "Modèle mental introuvable",
-        "clear": "Impossible d'effacer le modèle mental"
+        "clear": "Impossible d'effacer le modèle mental",
+        "dryRunRefresh": "Échec de la simulation d'actualisation du modèle mental"
       },
       "observations": {
         "list": "Impossible de lister les observations",
@@ -1755,7 +1799,7 @@
     "createPageTitle": "New page",
     "autoBadge": "auto",
     "inSync": "In sync",
-    "needsRefresh": "Needs refresh",
+    "needsRefresh": "Actualisation requise",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1786,5 +1830,53 @@
     "pagesEmptyCta": "Create your first page",
     "recentDocsTitle": "Recent documents",
     "recentDocsEmpty": "No documents yet"
+  },
+  "schemaBuilder": {
+    "title": "Schéma de sortie structurée",
+    "subtitle": "Ajoutez des champs visuellement ou modifiez le JSON brut. Le modèle renvoie un objet de cette forme.",
+    "visualTab": "Visuel",
+    "codeTab": "Code",
+    "addField": "Ajouter un champ",
+    "namePlaceholder": "nom du champ",
+    "descriptionPlaceholder": "description (facultatif)",
+    "required": "Requis",
+    "removeField": "Supprimer le champ",
+    "emptyState": "Ajoutez au moins un champ pour définir la sortie.",
+    "duplicateNames": "Les noms des champs doivent être uniques.",
+    "visualUnavailable": "Ce schéma est trop complexe pour l'éditeur visuel — modifiez-le en code.",
+    "invalidJson": "Syntaxe JSON invalide.",
+    "cancel": "Annuler",
+    "apply": "Appliquer",
+    "openBuilder": "Créer le schéma",
+    "edit": "Modifier",
+    "clear": "Supprimer le schéma",
+    "fieldsSummary": "{count, plural, one {# champ} other {# champs}}",
+    "invalidSchema": "Schéma invalide — ouvrez le générateur pour le corriger.",
+    "fieldDescription": "S'il est défini, la réponse est aussi renvoyée en tant que structured_output conforme à ce schéma.",
+    "itemsLabel": "chaque élément"
+  },
+  "mentalModelDiagnostics": {
+    "fallbackNoBaseline": "Aucun contenu existant à modifier",
+    "fallbackQueryChanged": "La requête source a changé",
+    "fallbackDocUnreadable": "Le document enregistré était illisible",
+    "fallbackOpsFailed": "L'appel des opérations delta a échoué",
+    "fallbackOpsAllSkipped": "Toutes les opérations delta ont été rejetées",
+    "outcomeWritten": "Nouveau contenu écrit",
+    "outcomePreserved": "Aucun fait nouveau, contenu conservé",
+    "outcomeFailed": "Résultat vide, l'actualisation échoue",
+    "outcomeDeltaNotApplied": "Delta non appliqué, l'actualisation échoue",
+    "warningsTitle": "Avertissements",
+    "traceResults": "{count} résultats",
+    "executionTraceTitle": "Trace d'exécution",
+    "noOperations": "Aucune opération",
+    "responseGenerated": "Réponse générée",
+    "agentDecided": "L'agent a décidé",
+    "toolInputLabel": "Entrée :",
+    "executionTraceDescription": "{iterations} appels LLM • {totalMs}ms au total",
+    "executingTools": "Outils appelés : {count}",
+    "resultTitle": "Simulation — {name}",
+    "toolOutputLabel": "Sortie :",
+    "toolWindowBound": "fenêtre : uniquement les mémoires mises à jour après {time}",
+    "toolWindowUnbounded": "fenêtre : aucune — cet outil n'est pas borné dans le temps"
   }
 }

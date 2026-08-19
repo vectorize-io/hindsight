@@ -160,16 +160,22 @@ class MemoryEngineInterface(ABC):
     async def list_banks(
         self,
         *,
+        search_query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
-        List all memory banks.
+        List memory banks, one page at a time.
 
         Args:
+            search_query: Case-insensitive substring matched against bank ID and name.
+            limit: Maximum number of banks to return (0 returns none).
+            offset: Number of banks to skip.
             request_context: Request context for authentication.
 
         Returns:
-            List of bank info dicts.
+            Dict with ``banks`` (the page), ``total``, ``limit`` and ``offset``.
         """
         ...
 
@@ -322,7 +328,7 @@ class MemoryEngineInterface(ABC):
         self,
         bank_id: str,
         *,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         entity_id: str | None = None,
         created_before: datetime | None = None,
@@ -335,7 +341,8 @@ class MemoryEngineInterface(ABC):
 
         Args:
             bank_id: The memory bank ID.
-            fact_type: Filter by fact type.
+            fact_type: Filter by fact type. A list matches any of them; an empty
+                list is treated as no filter.
             search_query: Full-text search query.
             entity_id: Filter to memory units linked to this entity ID.
             created_before: Keep units with ``created_at`` before this instant.
@@ -531,11 +538,15 @@ class MemoryEngineInterface(ABC):
         Get consolidation freshness for a bank.
 
         Cheap alternative to get_bank_stats when callers only need
-        last_consolidated_at / pending_consolidation / failed_consolidation.
+        last_consolidated_at / last_memory_write_at / pending_consolidation /
+        failed_consolidation.
 
         Returns:
-            Dict with last_consolidated_at (ISO-8601 string or None),
-            pending_consolidation (int), and failed_consolidation (int).
+            Dict with last_consolidated_at and last_memory_write_at (ISO-8601
+            strings or None), pending_consolidation (int), and
+            failed_consolidation (int). last_memory_write_at is the newest write
+            across the bank's memories — a mental model refreshed at or after it
+            cannot be stale, whatever its scope.
         """
         ...
 

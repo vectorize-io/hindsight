@@ -143,6 +143,36 @@ raise AuthenticationError(
 )
 ```
 
+### Reading additional request headers
+
+`RequestContext` carries the `Authorization` header as `api_key`. To authenticate on a *different* header — for instance when a gateway terminates auth with one shared identity and forwards the per-caller identity separately — name the headers you want forwarded:
+
+```bash
+HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS=x-user-assertion
+```
+
+They are available as `context.extra_headers`, keyed by lower-cased name:
+
+```python
+async def authenticate(self, context: RequestContext) -> TenantContext:
+    assertion = context.extra_headers.get("x-user-assertion")
+    if not assertion:
+        raise AuthenticationError("x-user-assertion header required")
+
+    user_id = verify_assertion(assertion)  # your verification
+    return TenantContext(schema_name=f"tenant_{user_id}")
+```
+
+This works on both the HTTP and MCP transports, and the same `RequestContext` is passed to `OperationValidatorExtension` hooks, so a validator can enforce rules against the identity resolved here.
+
+Only headers you list are forwarded, and only when present on the request. The variable is unset by default, so extensions see no header data unless you opt in.
+
+A header sent **more than once** is not forwarded at all, and a warning is logged. There is no safe way to choose between the copies — a proxy may append its trusted value either before or after a client-supplied one — so an extension reading it sees nothing and fails the request, rather than silently accepting a value that may be spoofed. Make sure your proxy *replaces* the identity header it injects instead of appending to it.
+
+:::caution Deferred operations
+`extra_headers` describes the request being served. Operations that run later — a queued retain, a scheduled consolidation, a mental-model refresh — are executed by a background worker with no request behind them, so their `RequestContext` carries no headers. Authorize on the header at request time; do not rely on it inside work that continues after the response.
+:::
+
 ### Example: Custom HttpExtension
 
 ```python

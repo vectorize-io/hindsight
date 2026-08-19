@@ -6,9 +6,7 @@
  * `beforeModel` hook can, so it is the only path that can provide the same reflect/page injection
  * guarantee as every other Hindsight harness. The memory behaviour itself stays in RuntimeCore.
  */
-import { applyBankConfig, loadConfig } from "./core/config";
-import { deriveBankId } from "./core/bank";
-import { HindsightClient } from "./core/hindsight";
+import { resolveHostMemory } from "./core/host-client";
 import { RuntimeCore } from "./core/runtime";
 import type { TransportTurn } from "./core/chat";
 import { diag } from "./core/diag";
@@ -132,7 +130,11 @@ export function createClineHooks(
         // `seedIfCold` sets the shared new-bank marker before the first prompt. Awaiting it here,
         // rather than racing plugin setup, preserves the invariant that a brand-new bank skips its
         // first auto-reflect instead of spending that one synthesis before it has any knowledge.
-        await sessionStart;
+        // Bounded by the same budget as onPrompt below: seedIfCold now also waits for a cold local
+        // daemon (up to DAEMON_WAIT_SESSION_START_MS), and this is the one host that awaits it
+        // inside an RPC the sandbox aborts at 3s. It stays running either way, so a start that
+        // outlasts the budget just lands for a later turn.
+        await settleWithinHookBudget(sessionStart ?? Promise.resolve());
       }
       const user = latestUserMessage(snapshot.messages);
       if (!user) return undefined;
@@ -183,17 +185,10 @@ export function createClineHooks(
 }
 
 function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefined {
-  let cfg = loadConfig({ harness: HARNESS });
-  if (cfg.disabled) return undefined;
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, workspaceRoot || process.cwd(), HARNESS));
-  cfg = resolved.cfg;
-  if (cfg.disabled) return undefined;
-  const client = new HindsightClient({
-    apiUrl: cfg.apiUrl,
-    apiToken: cfg.apiToken,
-    bank: resolved.bankId,
-  });
-  return new RuntimeCore(client, resolved.bankId, cfg, HARNESS);
+  const dir = workspaceRoot || process.cwd();
+  const { cfg, bankId, client } = resolveHostMemory(HARNESS, dir);
+  if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
+  return new RuntimeCore(client, bankId, cfg, HARNESS, dir);
 }
 
 const plugin: ClinePlugin = {

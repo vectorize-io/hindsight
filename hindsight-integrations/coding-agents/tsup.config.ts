@@ -20,6 +20,11 @@ export default defineConfig({
     // Cline CLI loads this module through `cline plugin install`; file hooks cannot mutate
     // model requests, so the native beforeModel hook is the reliable injection path.
     cline: "src/cline.ts",
+    // DeepSeek Harness loads this as a native Cordis plugin — see src/dsh.ts.
+    dsh: "src/dsh.ts",
+    // Prime Agent loads this module as an extension (default export) by absolute path from its
+    // settings.json `extensions` array, so it must be self-contained like the hook bins.
+    "prime-agent": "src/prime-agent.ts",
     "grok-hook": "src/grok-hook.ts",
     "grok-sessionstart-hook": "src/grok-sessionstart-hook.ts",
     "grok-stop-hook": "src/grok-stop-hook.ts",
@@ -32,6 +37,8 @@ export default defineConfig({
     "devin-hook": "src/devin-hook.ts",
     "devin-sessionstart-hook": "src/devin-sessionstart-hook.ts",
     "devin-stop-hook": "src/devin-stop-hook.ts",
+    // Spawned DETACHED to start the local daemon — a cold start outlives every hook timeout.
+    "daemon-start": "src/daemon-start.ts",
     "mcp-server": "src/mcp-server.ts",
     "hindsight-seed": "src/hindsight-seed.ts",
   },
@@ -48,5 +55,8 @@ export default defineConfig({
   // mcp-server.js additionally needs its npm deps (the MCP SDK + zod) inlined, since the wrapper
   // only copies the single bundle file, not node_modules. The regexes catch subpath imports too
   // (e.g. "@modelcontextprotocol/sdk/server/mcp.js", "zod/v4/...").
-  noExternal: [/^@modelcontextprotocol\/sdk/, /^zod/],
+  // hindsight-all (the local-daemon lifecycle manager) is inlined for the same reason: hooks are
+  // wired by absolute path to ONE dist file and never load the package's node_modules. It has zero
+  // dependencies of its own, so inlining costs almost nothing.
+  noExternal: [/^@modelcontextprotocol\/sdk/, /^zod/, /^@vectorize-io\/hindsight-all/],
 });

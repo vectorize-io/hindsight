@@ -205,6 +205,7 @@ export function KnowledgeBaseView() {
       tags: [],
       timestamp: null,
       is_stale: null,
+      trigger: null,
       children: roots,
     }),
     [currentBank, roots]

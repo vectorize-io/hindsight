@@ -28,15 +28,17 @@ import { ingestChats } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { commitsSince, gitHeadSha, ingestGitLog, repoNameOf, retainCommit } from "./core/git";
 import { SURVEY_DOC_IDS } from "./core/survey";
+import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
 import { DEEPEN_DIFF_TARGET } from "./core/status";
+import type { ChatSession } from "./core/types";
 import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
-import { log as plog, setLogLevel } from "./core/log";
+import { buildRetainStamp } from "./core/retain-stamp";
+import { describeError, log as plog, setLogLevel } from "./core/log";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
-const CONCURRENCY = 4;
 const LOCK_STALE_MS = 30 * 60 * 1000;
 
 function arg(name: string, def?: string): string | undefined {
@@ -49,7 +51,9 @@ const REPO = arg("repo");
 const cfg0 = loadConfig({ harness: arg("harness") ?? undefined, path: arg("config") });
 const BANK =
   arg("bank") ?? (REPO ? deriveBankId(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId);
-const resolved0 = BANK ? applyBankConfig(cfg0, BANK) : { cfg: cfg0, bankId: BANK };
+const resolved0 = BANK
+  ? applyBankConfig(cfg0, BANK, REPO ?? undefined)
+  : { cfg: cfg0, bankId: BANK };
 const cfg = resolved0.cfg;
 const FINAL_BANK = resolved0.bankId ?? BANK;
 if (cfg.disabled) {
@@ -130,11 +134,24 @@ async function main() {
       apiUrl: API_URL,
       apiToken: API_TOKEN,
       bank: FINAL_BANK!,
+      // Names the repository in every seeded page's query, so page synthesis can tell this
+      // project's decisions from those of a dependency it merely discusses (#3476). Same
+      // worktree-aware name the gitlog document id uses, so all worktrees agree on it.
+      project: repoNameOf(REPO!),
+      maxParallelRetains: cfg.maxParallelRetains,
+      observationScopes: cfg.observationScopes,
       log,
     });
     log(`deepen -> ${client.apiUrl} bank=${FINAL_BANK} harness=${harness.name}`);
+    const stampFor = (sessionId?: string) =>
+      buildRetainStamp(cfg, {
+        directory: REPO!,
+        harness: HARNESS,
+        bankId: FINAL_BANK!,
+        sessionId,
+      });
 
-    await client.configureBank();
+    await client.configureBank({ pageTrigger: buildPageTrigger(cfg) });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
         bank: FINAL_BANK,
@@ -146,12 +163,28 @@ async function main() {
 
     // chats FIRST: few, and they carry the decisions that make memory necessary — never starved
     // behind the git flood. Dedup against what's already in the bank (chat:<id>).
-    const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
-    const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
-    const sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
-    if (all.length !== sessions.length)
-      log(`[chat] ${all.length - sessions.length} conversations already ingested — skipping those`);
-    const chatFails = await ingestChats(client, sessions, { concurrency: CONCURRENCY, log });
+    //
+    // `retainSessions: false` covers THIS door too, not just the live write-back (#3596): history
+    // import puts the very same conversations in the bank, one session later, so honoring the flag
+    // in only one of the two places would leave the opt-out cosmetic. Git ingest, knowledge pages
+    // and bank configuration below are untouched by it.
+    let sessions: ChatSession[] = [];
+    if (!cfg.retainSessions) {
+      log("[chat] retainSessions: false — skipping conversation import");
+    } else {
+      const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
+      const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
+      sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
+      if (all.length !== sessions.length)
+        log(
+          `[chat] ${all.length - sessions.length} conversations already ingested — skipping those`
+        );
+    }
+    const chatFails = await ingestChats(client, sessions, {
+      concurrency: cfg.maxParallelRetains,
+      log,
+      stampFor,
+    });
 
     // ── git: seeding and syncing are the SAME code — this idempotent pass runs every session,
     // so "keep the bank current" is just "run it again". cfg.gitIngest picks the depth:
@@ -171,7 +204,7 @@ async function main() {
       if (gitlogCurrent) {
         log("[gitlog] current with HEAD — skipping");
       } else {
-        gitFails += await ingestGitLog(client, REPO!, { limit: GITLOG_LIMIT, log });
+        gitFails += await ingestGitLog(client, REPO!, { limit: GITLOG_LIMIT, log, stampFor });
       }
       // Self-cleanup: earlier versions named the gitlog doc per WORKTREE (gitlog:my-repo-wt2 …),
       // duplicating the history in the shared bank. Delete any gitlog doc that isn't the
@@ -207,8 +240,8 @@ async function main() {
             log(`[deepen] ingesting ${shas.length} commits with full diffs (newest first) …`);
             await pool(
               shas,
-              CONCURRENCY,
-              (sha) => retainCommit(client, REPO!, sha, repoName),
+              cfg.maxParallelRetains,
+              (sha) => retainCommit(client, REPO!, sha, repoName, stampFor()),
               () => {
                 gitFails++;
               }
@@ -240,14 +273,21 @@ async function main() {
           if (behind !== null && (!best || behind < best.behind)) best = { id, sha, behind };
         }
         if (best) {
-          await client.retain(
+          const stamp = stampFor();
+          const content =
             `✅ Codebase survey completed — baseline commit ${best.sha.slice(0, 12)}. ` +
-              `(Internal marker: no memories are extracted from this document.)`,
+            `(Internal marker: no memories are extracted from this document.)`;
+          const tags = [...new Set([...stamp.tags, "source:survey-baseline", "survey-state:done"])];
+          await client.retain(
+            content,
             "hindsight codebase-survey baseline",
             best.id,
-            ["source:survey-baseline", "survey-state:done"],
+            tags,
             "survey",
-            { async: true }
+            {
+              // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+              metadata: Object.keys(stamp.metadata).length ? stamp.metadata : undefined,
+            }
           );
           log(`[survey] marker ${best.id} flipped to completed`);
         }
@@ -298,7 +338,7 @@ async function main() {
 main().catch((e) => {
   diag("deepen", "deepen_failed", {
     bank: FINAL_BANK,
-    error: String((e as Error)?.message || e).slice(0, 200),
+    error: describeError(e),
   });
   console.error("deepen failed:", (e as Error).message || e);
   try {

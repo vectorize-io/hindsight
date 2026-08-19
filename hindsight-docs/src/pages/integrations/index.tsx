@@ -6,6 +6,32 @@ import IntegrationsBanner from '@site/src/components/IntegrationsBanner';
 import {integrationsSorted} from '@site/src/lib/integrations';
 import styles from './index.module.css';
 
+/**
+ * Pinned above the grid. These three are the ones we want a first-time visitor to see: the umbrella
+ * coding-agent plugin, the SDK most TypeScript apps reach for, and the agent harness with the
+ * deepest native integration.
+ */
+const FEATURED_IDS = ['coding-agents', 'vercel-ai-sdk', 'openclaw'];
+
+/**
+ * Agents covered by the Coding Agents plugin, drawn on its card. The whole pitch of that package is
+ * "one install, every agent", which a single icon cannot convey — the row of logos is the pitch.
+ * Files live in static/img/harness/, named by the harness id the plugin itself uses.
+ */
+const CODING_AGENT_LOGOS: {id: string; name: string; file: string}[] = [
+  {id: 'claude-code', name: 'Claude Code', file: 'claude-code.png'},
+  {id: 'codex', name: 'Codex CLI', file: 'codex.svg'},
+  {id: 'opencode', name: 'opencode', file: 'opencode.png'},
+  {id: 'kilo', name: 'Kilo CLI', file: 'kilo.svg'},
+  {id: 'cursor-cli', name: 'Cursor CLI', file: 'cursor-cli.svg'},
+  {id: 'copilot-cli', name: 'GitHub Copilot CLI', file: 'copilot-cli.svg'},
+  {id: 'grok-build', name: 'Grok Build', file: 'grok-build.svg'},
+  {id: 'antigravity-cli', name: 'Antigravity CLI', file: 'antigravity-cli.png'},
+  {id: 'devin-cli', name: 'Devin CLI', file: 'devin-cli.svg'},
+  {id: 'cline-cli', name: 'Cline CLI', file: 'cline-cli.svg'},
+  {id: 'dsh', name: 'DeepSeek Harness', file: 'dsh.svg'},
+];
+
 const INTEGRATIONS_JSON_URL =
   'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/integrations.json';
 
@@ -23,6 +49,7 @@ interface Integration {
 }
 
 function IntegrationCard({integration}: {integration: Integration}) {
+  const harnessBase = useBaseUrl('/img/harness/');
   const iconSrc = useBaseUrl(integration.icon ?? '');
   const faviconSrc = useBaseUrl('/img/favicon.png');
   const isExternal = integration.link.startsWith('http');
@@ -38,6 +65,20 @@ function IntegrationCard({integration}: {integration: Integration}) {
       <div className={styles.cardBody}>
         <h3 className={styles.cardTitle}>{integration.name}</h3>
         <p className={styles.cardDescription}>{integration.description}</p>
+        {integration.id === 'coding-agents' && (
+          <div className={styles.harnessStrip} aria-label="Supported coding agents">
+            {CODING_AGENT_LOGOS.map((h) => (
+              <img
+                key={h.id}
+                src={`${harnessBase}${h.file}`}
+                alt={h.name}
+                title={h.name}
+                className={styles.harnessLogo}
+                loading="lazy"
+              />
+            ))}
+          </div>
+        )}
       </div>
       <div className={styles.cardFooter}>
         {integration.type === 'official' ? (
@@ -60,7 +101,12 @@ export default function IntegrationsHub(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState<IntegrationType | 'all'>('all');
 
-  const integrations = integrationsSorted as unknown as Integration[];
+  // Superseded pages stay published and linked from the docs sidebar, but the gallery is where
+  // people come to CHOOSE an integration — offering something we are actively migrating them off
+  // would be pointing them at a dead end.
+  const integrations = (integrationsSorted as unknown as Integration[]).filter(
+    (i) => i.category !== 'legacy',
+  );
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -70,6 +116,21 @@ export default function IntegrationsHub(): React.ReactElement {
       return true;
     });
   }, [integrations, search, selectedType]);
+
+  // Featured only makes sense on the unfiltered view: once someone searches or filters, pinned
+  // cards would sit above results that don't match them and read as noise.
+  const showFeatured = !search.trim() && selectedType === 'all';
+  const featured = useMemo(
+    () =>
+      FEATURED_IDS.map((id) => integrations.find((i) => i.id === id)).filter(
+        (i): i is Integration => Boolean(i),
+      ),
+    [integrations],
+  );
+  const rest = useMemo(
+    () => (showFeatured ? filtered.filter((i) => !FEATURED_IDS.includes(i.id)) : filtered),
+    [filtered, showFeatured],
+  );
 
   const officialCount = integrations.filter((i) => i.type === 'official').length;
   const communityCount = integrations.filter((i) => i.type === 'community').length;
@@ -127,6 +188,24 @@ export default function IntegrationsHub(): React.ReactElement {
           <span className={styles.resultCount}>{filtered.length} integration{filtered.length !== 1 ? 's' : ''}</span>
         </div>
 
+        {showFeatured && featured.length > 0 && (
+          <section className={styles.featuredSection}>
+            <h2 className={styles.featuredTitle}>Featured</h2>
+            <div className={styles.featuredGrid}>
+              {featured.map((integration) => (
+                <IntegrationCard key={integration.id} integration={integration} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {showFeatured && (
+          <>
+            <hr className={styles.sectionDivider} />
+            <h2 className={styles.sectionTitle}>All integrations</h2>
+          </>
+        )}
+
         {filtered.length === 0 ? (
           <div className={styles.empty}>
             <p>No integrations match your search.</p>
@@ -136,7 +215,7 @@ export default function IntegrationsHub(): React.ReactElement {
           </div>
         ) : (
           <div className={styles.grid}>
-            {filtered.map((integration) => (
+            {rest.map((integration) => (
               <IntegrationCard key={integration.id} integration={integration} />
             ))}
           </div>

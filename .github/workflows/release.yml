@@ -327,17 +327,50 @@ jobs:
       working-directory: hindsight-cli
       run: cargo build --release --target ${{ matrix.target }}
 
+    - name: Install cargo-about
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-about@0.9.1
+
+    - name: Verify cargo-about
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      run: cargo about --version
+
+    # The build above only fetches crates for this target; cargo-about resolves
+    # the graph for every target platform, so fetch for all of them (that is what
+    # `cargo fetch` without --target does) before the --offline generate.
+    - name: Fetch crate sources for the license scan
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      working-directory: hindsight-cli
+      run: cargo fetch
+
+    - name: Generate license manifest
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      working-directory: hindsight-cli
+      run: mkdir -p ../artifacts && cargo about generate --offline --manifest-path Cargo.toml --config about.toml about.hbs --output-file ../artifacts/THIRD_PARTY_LICENSES.txt
+
+    - name: Verify license files
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      run: |
+        test -s LICENSE
+        test -s artifacts/THIRD_PARTY_LICENSES.txt
+        grep -Fq "THIRD-PARTY SOFTWARE LICENSES" artifacts/THIRD_PARTY_LICENSES.txt
+
     - name: Prepare artifact
       run: |
         mkdir -p artifacts
         cp hindsight-cli/target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
+        if [ "${{ matrix.asset_name }}" = "hindsight-linux-amd64" ]; then
+          cp LICENSE artifacts/LICENSE
+        fi
         chmod +x artifacts/${{ matrix.asset_name }}
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v7
       with:
         name: rust-cli-${{ matrix.asset_name }}
-        path: artifacts/${{ matrix.asset_name }}
+        path: artifacts/*
         retention-days: 1
 
   release-docker-images:
@@ -601,6 +634,11 @@ jobs:
         cp artifacts/rust-cli-linux-arm64/hindsight-linux-arm64 release-assets/ || true
         cp artifacts/rust-cli-darwin-amd64/hindsight-darwin-amd64 release-assets/ || true
         cp artifacts/rust-cli-darwin-arm64/hindsight-darwin-arm64 release-assets/ || true
+        # Rust CLI license files (shared by all four platform binaries)
+        cp artifacts/rust-cli-linux/LICENSE release-assets/
+        cp artifacts/rust-cli-linux/THIRD_PARTY_LICENSES.txt release-assets/
+        test -s release-assets/LICENSE
+        test -s release-assets/THIRD_PARTY_LICENSES.txt
         # Helm chart
         cp artifacts/helm-chart/*.tgz release-assets/ || true
         ls -la release-assets/

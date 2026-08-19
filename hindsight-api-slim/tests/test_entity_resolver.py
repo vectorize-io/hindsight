@@ -161,6 +161,216 @@ async def test_resolve_entities_batch_handles_unicode_lower_conflicts(pg0_db_url
         await backend.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_label_entities_stored_and_reasserted_with_label_kind(pg0_db_url):
+    """Label entities are created with entity_kind='label' and keep it through
+    the Phase-2 reassert.
+
+    The kind decides membership in the partial trigram index (#3208): a label
+    row resurrected as 'regular' would silently re-enter the index, so the
+    resurrect path is the interesting one to pin, not just the insert.
+    """
+    resolved_url = await resolve_database_url(pg0_db_url)
+    backend = create_database_backend("postgresql")
+    await backend.initialize(resolved_url, min_size=1, max_size=2, command_timeout=30)
+    bank_id = f"test-entity-kind-{uuid.uuid4().hex[:8]}"
+    # Free-text label group: any "topic:..." text classifies as a label.
+    entity_labels = [{"key": "topic", "type": "text", "description": "session topic"}]
+    resolver = EntityResolver(pool=backend, entity_lookup="trigram")
+
+    try:
+        async with backend.acquire() as conn:
+            resolved = await resolver.resolve_entities_batch(
+                bank_id=bank_id,
+                entities_data=[
+                    {"text": "topic:algebra", "nearby_entities": []},
+                    {"text": "Alice", "nearby_entities": []},
+                ],
+                context="entity kind storage",
+                unit_event_date=None,
+                conn=conn,
+                entity_labels=entity_labels,
+            )
+
+            async def _kinds_by_name():
+                rows = await conn.fetch("SELECT canonical_name, entity_kind FROM entities WHERE bank_id = $1", bank_id)
+                return {row["canonical_name"]: row["entity_kind"] for row in rows}
+
+            assert await _kinds_by_name() == {"topic:algebra": "label", "Alice": "regular"}
+            kinds_resolved = {e.canonical_name: e.entity_kind for e in resolved}
+            assert kinds_resolved == {"topic:algebra": "label", "Alice": "regular"}
+
+            # Simulate the prune-between-phases race: rows vanish after Phase-1
+            # resolution, then the Phase-2 reassert re-creates them.
+            await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
+            await resolver.reassert_entities_batch(bank_id, resolved, conn)
+            assert await _kinds_by_name() == {"topic:algebra": "label", "Alice": "regular"}
+    finally:
+        async with backend.acquire() as conn:
+            await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
+        await backend.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_scoring_never_merges_regular_text_into_label_row():
+    """A regular text must not fuzzy-merge into a label row (#1558).
+
+    The trigram/UTL_MATCH probes exclude label rows in SQL (entity_kind
+    filter), but the "full" fallback strategy loads every bank entity, so the
+    Python scoring loop must skip label-classified candidates itself. The
+    candidate here would clear the 0.6 merge threshold on name similarity plus
+    temporal proximity if it weren't skipped.
+    """
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
+
+    now = datetime.now(timezone.utc)
+    labels_cfg = parse_entity_labels([{"key": "topic", "type": "text"}])
+    ops = SimpleNamespace(
+        bulk_insert_entities=AsyncMock(return_value={"topic empathy": "new-entity-id"}),
+        fetch_missing_entity_ids=AsyncMock(return_value=[]),
+    )
+    resolver = EntityResolver(pool=SimpleNamespace(ops=ops), entity_lookup="full")
+
+    resolved = await resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        # "topic empathy" (no colon) is NOT a label text, so it goes through
+        # fuzzy scoring rather than the exact-match label branch.
+        entities_data=[{"text": "topic empathy", "nearby_entities": [], "event_date": now}],
+        unit_event_date=now,
+        all_candidates={"topic empathy": [("label-row-id", "topic:empathy", {}, now, 5)]},
+        cooccurrence_map={},
+        taxonomy_lookup=build_labels_lookup(labels_cfg),
+        labels_cfg=labels_cfg,
+    )
+
+    assert resolved == [ResolvedEntity(entity_id="new-entity-id", canonical_name="topic empathy")]
+    ops.bulk_insert_entities.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unresolved_names_beat_a_winning_fuzzy_candidate():
+    """A caller-authored name must not be re-resolved to a similar entity (#3479).
+
+    "Dr Wall" here is the shape that broke curation: a typo entity that outscores the
+    0.6 threshold on name similarity (0.41) plus co-occurrence with the other name in
+    the same request (0.3), so resolution silently swaps it in for the corrected
+    "Dr. Waller". With resolve=False on that mention the scoring is skipped entirely and
+    the literal name is created/reused instead.
+    """
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc)
+    candidates = {"Dr. Waller": [("typo-entity-id", "Dr Wall", {}, now, 40)]}
+    cooccurrence = {"typo-entity-id": {"careorg"}}
+    entities_data = [
+        {
+            "text": "Dr. Waller",
+            "nearby_entities": [{"text": "Dr. Waller"}, {"text": "CareOrg"}],
+            "event_date": now,
+        }
+    ]
+
+    # Fuzzy matching (retain's behaviour) picks the typo entity — the bug, pinned here so
+    # the assertion below is measuring a real difference.
+    fuzzy_resolver = EntityResolver(
+        pool=SimpleNamespace(
+            ops=SimpleNamespace(bulk_insert_entities=AsyncMock(), fetch_missing_entity_ids=AsyncMock())
+        ),
+        entity_lookup="full",
+    )
+    fuzzy = await fuzzy_resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=entities_data,
+        unit_event_date=now,
+        all_candidates=candidates,
+        cooccurrence_map=cooccurrence,
+    )
+    assert fuzzy[0].canonical_name == "Dr Wall", "precondition: fuzzy scoring picks the typo entity"
+
+    ops = SimpleNamespace(
+        bulk_insert_entities=AsyncMock(return_value={"dr. waller": "correct-entity-id"}),
+        fetch_missing_entity_ids=AsyncMock(return_value=[]),
+    )
+    exact_resolver = EntityResolver(pool=SimpleNamespace(ops=ops), entity_lookup="full")
+    exact = await exact_resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=[{**entities_data[0], "resolve": False}],
+        unit_event_date=now,
+        all_candidates=candidates,
+        cooccurrence_map=cooccurrence,
+    )
+    assert exact == [ResolvedEntity(entity_id="correct-entity-id", canonical_name="Dr. Waller")]
+
+
+@pytest.mark.asyncio
+async def test_per_mention_resolve_flag_only_spares_the_names_that_opt_out():
+    """Retain mixes caller-supplied and extracted names in one batch (#3479).
+
+    The flag is per mention precisely so a caller can have their own names taken literally
+    without turning off resolution for the extractor's — which would silently fill the bank
+    with near-duplicate entities. Here the caller's "Dr. Waller" must be created as written
+    while the extractor's "Dr Waler" still resolves onto the existing "Dr Wall".
+    """
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc)
+    typo = ("typo-entity-id", "Dr Wall", {}, now, 40)
+    ops = SimpleNamespace(
+        bulk_insert_entities=AsyncMock(return_value={"dr. waller": "literal-id"}),
+        fetch_missing_entity_ids=AsyncMock(return_value=[]),
+    )
+    resolver = EntityResolver(pool=SimpleNamespace(ops=ops), entity_lookup="full")
+
+    resolved = await resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=[
+            {"text": "Dr. Waller", "nearby_entities": [], "event_date": now, "resolve": False},
+            {"text": "Dr Waler", "nearby_entities": [], "event_date": now},
+        ],
+        unit_event_date=now,
+        all_candidates={"Dr. Waller": [typo], "Dr Waler": [typo]},
+        cooccurrence_map={},
+    )
+
+    assert resolved[0] == ResolvedEntity(entity_id="literal-id", canonical_name="Dr. Waller"), (
+        "the opted-out name is created as written"
+    )
+    assert resolved[1].canonical_name == "Dr Wall", "the extracted name still resolves onto the existing entity"
+
+
+@pytest.mark.asyncio
+async def test_intrabatch_clustering_skips_names_that_opted_out():
+    """A literal name must not be folded into a same-batch variant, or pull one into itself."""
+    from types import SimpleNamespace
+
+    ops = SimpleNamespace(
+        bulk_insert_entities=AsyncMock(return_value={"alice": "alice-id", "alice smith": "alice-smith-id"}),
+        fetch_missing_entity_ids=AsyncMock(return_value=[]),
+    )
+    resolver = EntityResolver(pool=SimpleNamespace(ops=ops), entity_lookup="full")
+
+    resolved = await resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=[
+            {"text": "Alice", "nearby_entities": [], "resolve": False},
+            {"text": "Alice Smith", "nearby_entities": [], "resolve": False},
+        ],
+        unit_event_date=None,
+        all_candidates={},
+        cooccurrence_map={},
+    )
+
+    assert [e.canonical_name for e in resolved] == ["Alice", "Alice Smith"]
+    assert [e.entity_id for e in resolved] == ["alice-id", "alice-smith-id"]
+
+
 # ---------------------------------------------------------------------------
 # Oracle fuzzy entity resolution — unit tests (mock conn, no live DB)
 # ---------------------------------------------------------------------------

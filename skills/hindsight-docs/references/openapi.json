@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.8.6"
+    "version": "0.9.1"
   },
   "paths": {
     "/health": {
@@ -19,7 +19,7 @@
           "Monitoring"
         ],
         "summary": "Health check endpoint",
-        "description": "Checks the health of the API and database connection",
+        "description": "Readiness check: verifies the API can reach the database. Alias of /health/ready. Use /health/live for liveness probes \u2014 this one fails whenever the database is unreachable, which must gate traffic, not restart the process.",
         "operationId": "health_endpoint_health_get",
         "responses": {
           "200": {
@@ -27,6 +27,48 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Readiness probe",
+        "description": "Returns 200 when the API can serve traffic (database reachable), 503 otherwise. Identical to /health, which stays supported as its alias.",
+        "operationId": "get_readiness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Liveness probe",
+        "description": "Returns 200 whenever the process can serve a request. Performs no database access, so a slow or unreachable database never restarts the pod. Point livenessProbe here and readinessProbe at /health.",
+        "operationId": "get_liveness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
               }
             }
           }
@@ -869,10 +911,54 @@
         "tags": [
           "Banks"
         ],
-        "summary": "List all memory banks",
-        "description": "Get a list of all agents with their profiles",
+        "summary": "List memory banks",
+        "description": "List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.",
         "operationId": "list_banks",
         "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')",
+              "title": "Q"
+            },
+            "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum number of banks to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of banks to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -1994,6 +2080,74 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh": {
+      "post": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Dry-run mental model refresh (preview, no persistence)",
+        "description": "Preview what a refresh would do to this mental model WITHOUT changing it \u2014 no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.\n\nThis is the production refresh pipeline with two writes skipped \u2014 the content and the watermark \u2014 and nothing about it is configurable, so what it reports is what the next refresh will do. Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.\n\nIt costs the same LLM tokens as a refresh and is validated the same way.",
+        "operationId": "dry_run_refresh_mental_model",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "mental_model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Mental Model Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MentalModelDryRunRefreshResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear": {
       "post": {
         "tags": [
@@ -2477,7 +2631,7 @@
           "Knowledge Base"
         ],
         "summary": "Rename/move a knowledge-base node or update a page's options",
-        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question.",
+        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.",
         "operationId": "update_knowledge_node",
         "parameters": [
           {
@@ -2619,7 +2773,7 @@
           "Directives"
         ],
         "summary": "List directives",
-        "description": "List hard rules that are injected into prompts.",
+        "description": "List directive definitions. Unlike reflect, an omitted tag filter returns all directives.",
         "operationId": "list_directives",
         "parameters": [
           {
@@ -2647,10 +2801,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by tags",
+              "description": "Filter directives by execution scope. Omit or pass [] to list all directives.",
               "title": "Tags"
             },
-            "description": "Filter by tags"
+            "description": "Filter directives by execution scope. Omit or pass [] to list all directives."
           },
           {
             "name": "tags_match",
@@ -2663,11 +2817,11 @@
                 "exact"
               ],
               "type": "string",
-              "description": "How to match tags",
+              "description": "How tagged directives match the requested scope. Untagged/global directives are included.",
               "default": "any",
               "title": "Tags Match"
             },
-            "description": "How to match tags"
+            "description": "How tagged directives match the requested scope. Untagged/global directives are included."
           },
           {
             "name": "active_only",
@@ -2749,7 +2903,7 @@
           "Directives"
         ],
         "summary": "Create directive",
-        "description": "Create a hard rule that will be injected into prompts.",
+        "description": "Create a global or tag-scoped hard rule for reflect prompts.",
         "operationId": "create_directive",
         "parameters": [
           {
@@ -4645,9 +4799,10 @@
         "tags": [
           "Document Transfer"
         ],
-        "summary": "Export documents",
-        "description": "Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.",
-        "operationId": "export_documents",
+        "summary": "Export documents (removed \u2014 use POST .../document-transfer/export)",
+        "description": "**Removed.** The synchronous whole-bank export loaded the entire bank into memory and held a database connection for the full request, which could exhaust memory and take down the shared API on large banks. Use the asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead: it returns an operation_id, runs the export in the background, and exposes a download URL on completion.",
+        "operationId": "export_documents_sync_removed",
+        "deprecated": true,
         "parameters": [
           {
             "name": "bank_id",
@@ -4657,39 +4812,6 @@
               "type": "string",
               "title": "Bank Id"
             }
-          },
-          {
-            "name": "document_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Document id(s) to export; omit for all",
-              "title": "Document Id"
-            },
-            "description": "Document id(s) to export; omit for all"
-          },
-          {
-            "name": "include_observations",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "Also export consolidated observations (restored on import)",
-              "default": false,
-              "title": "Include Observations"
-            },
-            "description": "Also export consolidated observations (restored on import)"
           },
           {
             "name": "authorization",
@@ -4710,12 +4832,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Transfer archive",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
-              },
-              "application/zip": {}
+              }
             }
           },
           "422": {
@@ -4795,6 +4916,156 @@
                   "$ref": "#/components/schemas/DocumentImportSubmitResponse"
                 }
               }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/document-transfer/export": {
+      "post": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Export documents (async)",
+        "description": "Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true also carries consolidated observations (whole-bank export only).",
+        "operationId": "export_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s) to export; omit for all",
+              "title": "Document Id"
+            },
+            "description": "Document id(s) to export; omit for all"
+          },
+          {
+            "name": "include_observations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export consolidated observations (restored on import; whole-bank only)",
+              "default": false,
+              "title": "Include Observations"
+            },
+            "description": "Also export consolidated observations (restored on import; whole-bank only)"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentExportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/files/download/{key}": {
+      "get": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Download a stored file (async export archive)",
+        "description": "Stream a file previously written to file storage \u2014 currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.",
+        "operationId": "download_file",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored file",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/zip": {}
             }
           },
           "422": {
@@ -5138,7 +5409,7 @@
           "Banks"
         ],
         "summary": "Update bank configuration",
-        "description": "Update configuration overrides for a bank. Only hierarchical fields can be overridden (LLM settings, retention parameters, etc.). Keys can be provided in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER).",
+        "description": "Update configuration overrides for a bank. Only hierarchical behavioral settings can be overridden (retention parameters, recall settings, etc.). Keys can be provided in Python field format (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE).",
         "operationId": "update_bank_config",
         "parameters": [
           {
@@ -6838,12 +7109,10 @@
         "example": {
           "bank_id": "my-bank",
           "config": {
-            "llm_model": "gpt-4",
-            "llm_provider": "openai",
+            "retain_chunk_size": 3000,
             "retain_extraction_mode": "verbose"
           },
           "overrides": {
-            "llm_model": "gpt-4",
             "retain_extraction_mode": "verbose"
           }
         }
@@ -6854,7 +7123,7 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Updates",
-            "description": "Configuration overrides. Keys can be in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER). Only hierarchical fields can be overridden per-bank."
+            "description": "Configuration overrides. Keys can be in Python field format (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE). Only hierarchical fields can be overridden per-bank."
           }
         },
         "type": "object",
@@ -6865,9 +7134,8 @@
         "description": "Request model for updating bank configuration.",
         "example": {
           "updates": {
-            "llm_model": "claude-sonnet-4-5",
             "retain_custom_instructions": "Extract technical details carefully",
-            "retain_extraction_mode": "verbose"
+            "retain_extraction_mode": "custom"
           }
         }
       },
@@ -6970,14 +7238,30 @@
             },
             "type": "array",
             "title": "Banks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
           }
         },
         "type": "object",
         "required": [
-          "banks"
+          "banks",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "BankListResponse",
-        "description": "Response model for listing all banks.",
+        "description": "Response model for listing banks, one page at a time.",
         "example": {
           "banks": [
             {
@@ -6995,7 +7279,10 @@
               "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"
             }
-          ]
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 50
         }
       },
       "BankLlmHealthResponse": {
@@ -7172,10 +7459,22 @@
             "title": "Last Consolidated At",
             "description": "When consolidation last ran (ISO format)"
           },
+          "last_memory_write_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Memory Write At",
+            "description": "When a memory was last written in this bank \u2014 stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_memory_seen_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm."
+          },
           "pending_consolidation": {
             "type": "integer",
             "title": "Pending Consolidation",
-            "description": "Number of memories not yet processed into observations",
+            "description": "Number of source memories (world/experience) still queued for consolidation into observations. Excludes memories whose consolidation permanently failed \u2014 those are counted only in failed_consolidation \u2014 so this drains to 0 when the consolidator catches up.",
             "default": 0
           },
           "failed_consolidation": {
@@ -7211,6 +7510,7 @@
           "failed_consolidation": 0,
           "failed_operations": 0,
           "last_consolidated_at": "2024-01-15T10:30:00Z",
+          "last_memory_write_at": "2024-01-15T11:05:00Z",
           "links_breakdown": {
             "fact": {
               "entity": 40,
@@ -7339,6 +7639,42 @@
             "title": "Observations Mission",
             "description": "Controls what gets synthesised"
           },
+          "enable_temporal_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Temporal Retrieval",
+            "description": "Toggle the temporal arm (and its date-aware query analysis) during recall"
+          },
+          "enable_graph_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Graph Retrieval",
+            "description": "Toggle the entity/link graph arm during recall"
+          },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "Toggle cross-encoder reranking during recall"
+          },
           "disposition_skepticism": {
             "anyOf": [
               {
@@ -7385,8 +7721,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/LabelGroup-Output"
                 },
                 "type": "array"
               },
@@ -7537,6 +7872,19 @@
             "title": "Reflect Source Facts Max Tokens",
             "description": "Max tokens of source facts per reflect call"
           },
+          "mental_model_min_refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Min Refresh Interval Seconds",
+            "description": "Minimum seconds between two automatic refreshes of the same mental model in this bank. 0 (the default) means no floor. Overridable per model via the trigger's min_refresh_interval_seconds."
+          },
           "llm_gemini_safety_settings": {
             "anyOf": [
               {
@@ -7681,6 +8029,91 @@
             ],
             "title": "Store Document Text",
             "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts."
+          },
+          "enable_auto_consolidation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Auto Consolidation",
+            "description": "Automatically consolidate observations after retain"
+          },
+          "consolidation_max_memories_per_round": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Max Memories Per Round",
+            "description": "Max memory units fed into a single consolidation round"
+          },
+          "consolidation_llm_parallelism": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Llm Parallelism",
+            "description": "Number of consolidation LLM batches processed concurrently"
+          },
+          "recall_include_chunks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Include Chunks",
+            "description": "Include raw chunks in recall results"
+          },
+          "recall_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Max Tokens",
+            "description": "Max tokens of results returned by recall"
+          },
+          "recall_chunks_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Chunks Max Tokens",
+            "description": "Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"
+          },
+          "memory_defense": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Defense",
+            "description": "Memory Defense policy for this bank (validated against the DefensePolicy schema on write)"
           }
         },
         "type": "object",
@@ -8401,6 +8834,42 @@
             ],
             "title": "Observations Mission",
             "description": "Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely."
+          },
+          "enable_temporal_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Temporal Retrieval",
+            "description": "Toggle the temporal retrieval arm during recall, together with the date-aware query analysis that feeds it. Useful for banks whose content carries no meaningful dates."
+          },
+          "enable_graph_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Graph Retrieval",
+            "description": "Toggle the entity/link graph traversal arm during recall. Disabling trades relational recall for latency on banks whose content has little entity structure."
+          },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "Toggle cross-encoder reranking during recall. Disabling returns the RRF-fused ordering directly, which is faster but less precise."
           }
         },
         "type": "object",
@@ -8441,7 +8910,7 @@
             },
             "type": "array",
             "title": "Tags",
-            "description": "Tags for filtering",
+            "description": "Directive execution scope. Empty means global; non-empty requires a matching reflect scope.",
             "default": []
           }
         },
@@ -8828,11 +9297,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of directives matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "DirectiveListResponse",
         "description": "Response model for listing directives."
@@ -8943,6 +9430,25 @@
           "literalism": 3,
           "skepticism": 3
         }
+      },
+      "DocumentExportSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "DocumentExportSubmitResponse",
+        "description": "Response for the async document-export endpoint (202).\n\nThe export runs in the background; poll the operations endpoint for status.\nOn completion the operation's ``result_metadata`` carries ``download_url``\n(fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,\n``byte_size``, and ``filename``."
       },
       "DocumentImportSubmitResponse": {
         "properties": {
@@ -9149,7 +9655,8 @@
               }
             ],
             "title": "Agent Name",
-            "description": "Narrator override (memory owner) primed in the prompt."
+            "description": "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.",
+            "deprecated": true
           },
           "retain_mission": {
             "anyOf": [
@@ -9209,14 +9716,17 @@
           "entity_labels": {
             "anyOf": [
               {
-                "items": {},
+                "items": {
+                  "$ref": "#/components/schemas/LabelGroup-Input"
+                },
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Entity Labels"
+            "title": "Entity Labels",
+            "description": "Controlled vocabulary for entity labels (overrides the bank's config for this call)"
           },
           "entities_allow_free_form": {
             "anyOf": [
@@ -10011,7 +10521,18 @@
               }
             ],
             "title": "Is Stale",
-            "description": "Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint."
+            "description": "Pages only, populated by the tree endpoint. True when a memory in *this page's* scope \u2014 its tags and fact types \u2014 has been written since the page last read the memories. That is the same check a scheduled refresh runs before spending an LLM call, so a flagged page is one a refresh would actually rewrite. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pages only: the page's refresh settings \u2014 when it rebuilds itself (`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. This is the EFFECTIVE policy: a setting the page never stored is reported at its default, so compare the fields you care about rather than the whole object against a patch you sent. Absent on folders, which have no backing mental model, and on a page with no trigger stored."
           },
           "children": {
             "items": {
@@ -10231,6 +10752,27 @@
         ],
         "title": "KnowledgeTreeResponse",
         "description": "The knowledge base as a nested folder/page tree."
+      },
+      "LLMCallTrace": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "description": "Call scope: agent_1, agent_2, final, etc."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Execution time in milliseconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "duration_ms"
+        ],
+        "title": "LLMCallTrace",
+        "description": "A single LLM call made during reflect."
       },
       "LLMRequestEntry": {
         "properties": {
@@ -10595,6 +11137,137 @@
         "title": "LLMRequestTokenSums",
         "description": "Token totals for a time bucket."
       },
+      "LabelGroup-Input": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "value",
+              "multi-values",
+              "text",
+              "map"
+            ],
+            "title": "Type",
+            "default": "value"
+          },
+          "optional": {
+            "type": "boolean",
+            "title": "Optional",
+            "default": true
+          },
+          "tag": {
+            "type": "boolean",
+            "title": "Tag",
+            "default": false
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "LabelGroup",
+        "description": "A label group (dimension) with its type and allowed values."
+      },
+      "LabelGroup-Output": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "value",
+              "multi-values",
+              "text",
+              "map"
+            ],
+            "title": "Type",
+            "default": "value"
+          },
+          "optional": {
+            "type": "boolean",
+            "title": "Optional",
+            "default": true
+          },
+          "tag": {
+            "type": "boolean",
+            "title": "Tag",
+            "default": false
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Output"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "LabelGroup",
+        "description": "A label group (dimension) with its type and allowed values."
+      },
+      "LabelValue": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "LabelValue",
+        "description": "A single allowed value for a label group."
+      },
       "ListChunksResponse": {
         "properties": {
           "items": {
@@ -10783,6 +11456,39 @@
           "total": 25
         }
       },
+      "LivenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "alive",
+            "title": "Status",
+            "description": "Always \"alive\" \u2014 reaching this handler is the check"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Hindsight version this process is running"
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds",
+            "description": "Seconds since the process started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "uptime_seconds"
+        ],
+        "title": "LivenessResponse",
+        "description": "Payload for the API's DB-free liveness probe.",
+        "example": {
+          "status": "alive",
+          "uptime_seconds": 812.4,
+          "version": "0.4.0"
+        }
+      },
       "LlmOperationHealth": {
         "properties": {
           "operation": {
@@ -10833,6 +11539,84 @@
         ],
         "title": "LlmOperationHealth",
         "description": "LLM connectivity status for a single operation. Status only \u2014 no provider/model/\nendpoint/error, so the probe never discloses the LLM configuration."
+      },
+      "MapField-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "value",
+              "multi-values",
+              "map"
+            ],
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "MapField",
+        "description": "A field within a map-type entity label group. Supports recursion via type='map'."
+      },
+      "MapField-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "value",
+              "multi-values",
+              "map"
+            ],
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Output"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "MapField",
+        "description": "A field within a map-type entity label group. Supports recursion via type='map'."
       },
       "MemoriesTimeseriesResponse": {
         "properties": {
@@ -10931,7 +11715,7 @@
               }
             ],
             "title": "Document Id",
-            "description": "Optional document ID for this memory item."
+            "description": "Optional document ID for this memory item. Provide a distinct document_id per source document \u2014 items sharing a document_id are grouped into the same document. Auto-generated when omitted."
           },
           "entities": {
             "anyOf": [
@@ -10947,6 +11731,12 @@
             ],
             "title": "Entities",
             "description": "Optional entities to combine with auto-extracted entities."
+          },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) matches each name to a similar existing entity when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes your names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and your names are never merged with each other. This applies only to the entities you supply here; auto-extracted entities are always resolved, since they are the extractor's guess at a name rather than yours. Ignored when 'entities' is omitted.",
+            "default": true
           },
           "tags": {
             "anyOf": [
@@ -11082,6 +11872,247 @@
         "title": "MemoryTimeseriesBucket",
         "description": "One bucket in the memory ingestion time-series."
       },
+      "MentalModelDeltaOperations": {
+        "properties": {
+          "applied": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Applied",
+            "description": "Operations applied to the document, in order."
+          },
+          "skipped": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Skipped",
+            "description": "Operations dropped as invalid, each with a reason."
+          }
+        },
+        "type": "object",
+        "title": "MentalModelDeltaOperations",
+        "description": "Structured operations a delta refresh emitted against the existing document."
+      },
+      "MentalModelDryRunRefreshResult": {
+        "properties": {
+          "mental_model_id": {
+            "type": "string",
+            "title": "Mental Model Id",
+            "description": "The mental model previewed."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Display name of the mental model."
+          },
+          "requested_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Requested Mode",
+            "description": "The mode asked for (from the model's trigger, or overridden)."
+          },
+          "effective_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Effective Mode",
+            "description": "The mode the refresh actually ran in."
+          },
+          "mode_fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_baseline_content",
+                  "source_query_changed",
+                  "structured_doc_unreadable",
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Fallback Reason",
+            "description": "Why delta was requested but not applied, if that happened."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "content_written",
+              "content_unchanged",
+              "content_preserved_no_new_facts",
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied"
+            ],
+            "title": "Outcome",
+            "description": "What a real refresh would do with the document."
+          },
+          "would_persist": {
+            "type": "boolean",
+            "title": "Would Persist",
+            "description": "Whether a real refresh would write new content."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/MentalModelRefreshScope",
+            "description": "The resolved memory scope."
+          },
+          "window": {
+            "$ref": "#/components/schemas/MentalModelRefreshWindow",
+            "description": "The snapshot window read from."
+          },
+          "facts": {
+            "$ref": "#/components/schemas/MentalModelFactCounts",
+            "description": "Facts retrieved versus actually used."
+          },
+          "based_on": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Based On",
+            "description": "The evidence this run would ground the document on, keyed by fact type \u2014 the same shape a refresh persists under reflect_response.based_on. Returned so a preview can show its sources without having to write them anywhere."
+          },
+          "current_content": {
+            "type": "string",
+            "title": "Current Content",
+            "description": "The model's content as it stands now."
+          },
+          "candidate_content": {
+            "type": "string",
+            "title": "Candidate Content",
+            "description": "Raw reflect synthesis, before any delta operations."
+          },
+          "preview_content": {
+            "type": "string",
+            "title": "Preview Content",
+            "description": "The content a real refresh would store: the delta-edited document, or the candidate in full mode."
+          },
+          "diff": {
+            "type": "string",
+            "title": "Diff",
+            "description": "Unified diff from current_content to preview_content. Empty when identical."
+          },
+          "delta_operations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelDeltaOperations"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structured operations emitted, in delta mode."
+          },
+          "retraction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelRetraction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Facts the document cites that no longer exist, and what a real refresh would do about them."
+          },
+          "trace": {
+            "$ref": "#/components/schemas/MentalModelRefreshTrace",
+            "description": "Execution trace of the run, always included for a dry run."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage",
+            "description": "Token usage across the run's LLM calls."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Wall-clock duration of the run.",
+            "default": 0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Conditions worth a human's attention, in plain language."
+          }
+        },
+        "type": "object",
+        "required": [
+          "mental_model_id",
+          "name",
+          "requested_mode",
+          "effective_mode",
+          "outcome",
+          "would_persist",
+          "scope",
+          "window",
+          "facts",
+          "current_content",
+          "candidate_content",
+          "preview_content",
+          "diff",
+          "trace"
+        ],
+        "title": "MentalModelDryRunRefreshResult",
+        "description": "Preview of what a mental model refresh would do, having changed nothing.\n\nRuns the real pipeline \u2014 same scope resolution, same reflect call, same\ndelta operations \u2014 then reports the result instead of persisting it. The\nmodel's content, structured content, watermark, and last_refreshed_at are\nall left untouched, so a delta dry run is repeatable: it reads the same\nwindow the next real refresh would.",
+        "example": {
+          "effective_mode": "full",
+          "facts": {
+            "retrieved": {
+              "observation": 12
+            },
+            "used": {
+              "observation": 4
+            }
+          },
+          "mental_model_id": "coding-style",
+          "mode_fallback_reason": "source_query_changed",
+          "name": "Coding Style",
+          "outcome": "content_written",
+          "requested_mode": "delta",
+          "warnings": [],
+          "would_persist": true
+        }
+      },
+      "MentalModelFactCounts": {
+        "properties": {
+          "retrieved": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Retrieved",
+            "description": "Facts the reflect agent's tool calls returned, by fact type."
+          },
+          "used": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Used",
+            "description": "Facts the agent declared it actually based the answer on, by fact type."
+          }
+        },
+        "type": "object",
+        "title": "MentalModelFactCounts",
+        "description": "Facts the refresh saw, keyed by fact type.\n\n``retrieved`` and ``used`` diverging is the single most common cause of a\ndisappointing refresh: recall found plenty, but the reflect agent declared\nnone of it relevant to the topic, so none of it reached the document."
+      },
       "MentalModelListResponse": {
         "properties": {
           "items": {
@@ -11090,14 +12121,295 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of mental models matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "MentalModelListResponse",
         "description": "Response model for listing mental models."
+      },
+      "MentalModelRefreshScope": {
+        "properties": {
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags",
+            "description": "Flat tags used to filter memories (null when unused)."
+          },
+          "tags_match": {
+            "type": "string",
+            "enum": [
+              "any",
+              "all",
+              "any_strict",
+              "all_strict",
+              "exact"
+            ],
+            "title": "Tags Match",
+            "description": "Resolved tag match mode."
+          },
+          "tag_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagGroupLeaf"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupAnd-Output"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupOr-Output"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupNot-Output"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Groups",
+            "description": "Compound tag expressions used instead of flat tags, when set."
+          },
+          "fact_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Types",
+            "description": "Fact types retrieved (null means all)."
+          },
+          "exclude_mental_models": {
+            "type": "boolean",
+            "title": "Exclude Mental Models",
+            "description": "Whether other mental models were excluded from the reflect loop."
+          },
+          "exclude_mental_model_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Mental Model Ids",
+            "description": "Mental models excluded by ID (always includes the model being refreshed)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags_match",
+          "exclude_mental_models"
+        ],
+        "title": "MentalModelRefreshScope",
+        "description": "The memory scope a refresh actually resolved to.\n\nA model's stored ``tags`` are not what filters memories \u2014 ``tags_match``\ndefaults to ``all_strict`` when tags are present, and ``tag_groups``\noverride flat tags entirely. This reports the resolved result."
+      },
+      "MentalModelRefreshTrace": {
+        "properties": {
+          "recorded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At",
+            "description": "When this trace was recorded."
+          },
+          "effective_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Effective Mode",
+            "description": "Whether the refresh ran as full or delta."
+          },
+          "mode_fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_baseline_content",
+                  "source_query_changed",
+                  "structured_doc_unreadable",
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Fallback Reason",
+            "description": "Why delta was requested but not applied, if that happened."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "content_written",
+              "content_unchanged",
+              "content_preserved_no_new_facts",
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied"
+            ],
+            "title": "Outcome",
+            "description": "What the refresh did with the document."
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/MentalModelTraceToolCall"
+            },
+            "type": "array",
+            "title": "Tool Calls",
+            "description": "Reflect tool calls made during the refresh."
+          },
+          "llm_calls": {
+            "items": {
+              "$ref": "#/components/schemas/LLMCallTrace"
+            },
+            "type": "array",
+            "title": "Llm Calls",
+            "description": "LLM calls made during the refresh."
+          },
+          "delta_operations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelDeltaOperations"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structured operations emitted, in delta mode."
+          },
+          "retraction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelRetraction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Facts the document cited that no longer exist, when the refresh found any."
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Token usage across the refresh's LLM calls."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Wall-clock duration of the refresh.",
+            "default": 0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Conditions worth a human's attention, in plain language."
+          }
+        },
+        "type": "object",
+        "required": [
+          "effective_mode",
+          "outcome"
+        ],
+        "title": "MentalModelRefreshTrace",
+        "description": "Execution trace of a mental model refresh, recorded when trigger.keep_trace is on.\n\nDeliberately shaped like reflect's trace \u2014 the calls the agent made, plus the\nrefresh-specific decision \u2014 and nothing more. This is persisted on the mental\nmodel row and re-read on every fetch, so anything derivable from elsewhere is\nleft out: the evidence lives in ``reflect_response.based_on``, and the\nresolved scope and snapshot window are reported by the dry run."
+      },
+      "MentalModelRefreshWindow": {
+        "properties": {
+          "created_after": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created After",
+            "description": "Lower bound on when a memory last changed. Set only in delta mode, where it is the model's last_memory_seen_at \u2014 so a delta refresh only sees memories written or edited since the newest one the previous refresh saw."
+          },
+          "created_before": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Before",
+            "description": "Database-time snapshot bounding the refresh. Memories written or edited after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh."
+          },
+          "watermark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark",
+            "description": "The last_memory_seen_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible."
+          }
+        },
+        "type": "object",
+        "required": [
+          "created_before"
+        ],
+        "title": "MentalModelRefreshWindow",
+        "description": "The time window a refresh read memories from."
       },
       "MentalModelResponse": {
         "properties": {
@@ -11174,7 +12486,20 @@
                 "type": "null"
               }
             ],
-            "title": "Last Refreshed At"
+            "title": "Last Refreshed At",
+            "description": "When a refresh last finished for this model \u2014 wall-clock, in ISO format. Advances on every refresh that completes, including one that found nothing new and preserved the content, and on a direct edit of `content`. A refresh that failed leaves it alone. This is the field to answer 'have I already refreshed this?'; it says nothing about whether the model is behind the data, which is `last_memory_seen_at` / `is_stale`."
+          },
+          "last_memory_seen_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Memory Seen At",
+            "description": "How far through the bank's memories this model is written \u2014 the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. At or after the bank's `last_memory_write_at` (GET /stats) the model is provably up to date; when it is older, `is_stale` settles it against the model's own scope. Null for a model no refresh has stamped yet."
           },
           "created_at": {
             "anyOf": [
@@ -11210,7 +12535,7 @@
               }
             ],
             "title": "Is Stale",
-            "description": "True when new memories matching this mental model's tag/fact_type scope have been ingested since last_refreshed_at, or consolidation has pending items. Only populated when detail=full."
+            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at \u2014 the same check that decides whether a scheduled refresh does any work, so a model flagged here is one a refresh would actually rewrite. Populated on both the single read and the list. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
           }
         },
         "type": "object",
@@ -11221,6 +12546,132 @@
         ],
         "title": "MentalModelResponse",
         "description": "Response model for a mental model (stored reflect response)."
+      },
+      "MentalModelRetraction": {
+        "properties": {
+          "fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Fact Ids",
+            "description": "Ids the document's based_on cites that no longer exist in the bank."
+          },
+          "fact_texts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Fact Texts",
+            "description": "What those facts said, as the document recorded them. The rows themselves are gone \u2014 an observation swept away with its source keeps no history \u2014 so this copy is the only surviving record."
+          },
+          "applied": {
+            "type": "boolean",
+            "title": "Applied",
+            "description": "Whether the pass that removes them ran to completion (zero edits still counts)."
+          },
+          "deferred_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deferred Reason",
+            "description": "Why removal was postponed, when it was. Re-ingested facts return under new ids once consolidation catches up, so a retraction seen while facts are still pending is not acted on \u2014 removing content before the replacements land would delete claims that are still true."
+          }
+        },
+        "type": "object",
+        "required": [
+          "applied"
+        ],
+        "title": "MentalModelRetraction",
+        "description": "Facts the document cited that no longer exist, and what was done about them.\n\nA retraction is the one refresh input that is *invisible* in every other\nreport: the fact is gone from the bank, so it appears in no recall, no tool\ncall, and no supporting-fact list. Without this, a refresh that quietly\ndeleted a paragraph \u2014 or quietly declined to \u2014 leaves no evidence of why."
+      },
+      "MentalModelTraceToolCall": {
+        "properties": {
+          "tool": {
+            "type": "string",
+            "title": "Tool",
+            "description": "Tool name: recall, search_observations, get_mental_model, expand, \u2026"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "The agent's stated reason for the call."
+          },
+          "input": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Input",
+            "description": "Tool input parameters."
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output",
+            "description": "What the tool returned. Present on a dry run, which stores nothing; omitted from the trace persisted by a real refresh to keep that row bounded."
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "The refresh window's lower bound as given to this call \u2014 the delta watermark. Named for what it actually filters: the predicate is on the memory's updated_at, so a memory merely touched since the last refresh qualifies. Null means the tool applies no time bound at all, so its results are not limited to the window (mental-model lookup and chunk expansion behave this way)."
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count",
+            "description": "Number of items the tool returned, when countable."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Execution time in milliseconds."
+          },
+          "iteration": {
+            "type": "integer",
+            "title": "Iteration",
+            "description": "Agent loop iteration (1-based) this call belongs to.",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool",
+          "duration_ms"
+        ],
+        "title": "MentalModelTraceToolCall",
+        "description": "One reflect tool call made during a refresh.\n\n``output`` is carried only by the dry run, which persists nothing. The trace\nstored on the model row keeps ``result_count`` instead: it is re-read on every\nfetch, so embedding full recall payloads there would bloat the row without\nbound. Raw prompts and responses are available separately via LLM request\ntracing."
       },
       "MentalModelTrigger-Input": {
         "properties": {
@@ -11251,6 +12702,19 @@
             ],
             "title": "Refresh Cron",
             "description": "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation \u2014 a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule."
+          },
+          "min_refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Refresh Interval Seconds",
+            "description": "Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor)."
           },
           "fact_types": {
             "anyOf": [
@@ -11375,6 +12839,25 @@
             ],
             "title": "Recall Chunks Max Tokens",
             "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema",
+            "description": "Optional JSON Schema for structured output. When set, each refresh runs the same structured-output extraction as reflect's response_schema and stores the parsed result under reflect_response.structured_output alongside the markdown content."
+          },
+          "keep_trace": {
+            "type": "boolean",
+            "title": "Keep Trace",
+            "description": "If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.",
+            "default": false
           }
         },
         "type": "object",
@@ -11410,6 +12893,19 @@
             ],
             "title": "Refresh Cron",
             "description": "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation \u2014 a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule."
+          },
+          "min_refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Refresh Interval Seconds",
+            "description": "Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor)."
           },
           "fact_types": {
             "anyOf": [
@@ -11534,6 +13030,25 @@
             ],
             "title": "Recall Chunks Max Tokens",
             "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema",
+            "description": "Optional JSON Schema for structured output. When set, each refresh runs the same structured-output extraction as reflect's response_schema and stores the parsed result under reflect_response.structured_output alongside the markdown content."
+          },
+          "keep_trace": {
+            "type": "boolean",
+            "title": "Keep Trace",
+            "description": "If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.",
+            "default": false
           }
         },
         "type": "object",
@@ -11755,6 +13270,29 @@
             "title": "Filename",
             "description": "Original filename for file-conversion operations (file_convert_retain); null for other task types."
           },
+          "mental_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Id",
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed \u2014 `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`."
+          },
+          "details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshMentalModelOperationDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field \u2014 new operation types add their own shape here rather than flattening fields onto the operation."
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -11808,7 +13346,7 @@
               }
             ],
             "title": "Next Retry At",
-            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup \u2014 for example, an extension may have raised DeferOperation to park the task until some backpressure window opens. Always null for completed tasks."
+            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup \u2014 a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation until some backpressure window opens. It is not cleared when the task finally runs, so on a terminal operation it is a record of the last wait rather than a pending one: read it together with status."
           },
           "progress": {
             "anyOf": [
@@ -11937,7 +13475,7 @@
               }
             ],
             "title": "Next Retry At",
-            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked (e.g. by an extension raising DeferOperation) rather than awaiting immediate pickup."
+            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked \u2014 a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation \u2014 rather than awaiting immediate pickup."
           },
           "progress": {
             "anyOf": [
@@ -11962,6 +13500,17 @@
             ],
             "title": "Result Metadata",
             "description": "Internal metadata for debugging. Structure may change without notice. Not for production use."
+          },
+          "details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshMentalModelOperationDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field \u2014 new operation types add their own shape here rather than flattening fields onto the operation."
           },
           "child_operations": {
             "anyOf": [
@@ -12003,7 +13552,7 @@
           "completed_at": "2024-01-15T10:31:30Z",
           "created_at": "2024-01-15T10:30:00Z",
           "operation_id": "550e8400-e29b-41d4-a716-446655440000",
-          "operation_type": "refresh_mental_models",
+          "operation_type": "refresh_mental_model",
           "status": "completed",
           "updated_at": "2024-01-15T10:31:30Z"
         }
@@ -12052,6 +13601,7 @@
             {
               "created_at": "2024-01-15T10:30:00Z",
               "id": "550e8400-e29b-41d4-a716-446655440000",
+              "items_count": 5,
               "status": "pending",
               "task_type": "retain"
             }
@@ -12277,6 +13827,18 @@
             ],
             "title": "Source Facts",
             "description": "Source facts for observation-type results, keyed by fact ID"
+          },
+          "source_facts_truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Facts Truncated",
+            "description": "Whether the source_facts map was cut short by the token budget. When true, some IDs in results[].source_fact_ids have no entry in source_facts \u2014 the budget ran out, the references are not dangling. Only set when source facts were requested."
           }
         },
         "type": "object",
@@ -12860,7 +14422,7 @@
               }
             ],
             "title": "Tags",
-            "description": "Filter memories by tags during reflection. If not specified, all memories are considered."
+            "description": "Scope raw facts, observations, mental models, and tagged directives during reflection. With no tags, memory retrieval is unfiltered while only untagged/global directives are loaded. Use tags=[] with tags_match='exact' to select the untagged/global scope."
           },
           "tags_match": {
             "type": "string",
@@ -12872,7 +14434,7 @@
               "exact"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.",
             "default": "any"
           },
           "tag_groups": {
@@ -12901,7 +14463,7 @@
               }
             ],
             "title": "Tag Groups",
-            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
+            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags."
           },
           "apply_all_directives": {
             "type": "boolean",
@@ -13174,6 +14736,56 @@
         "type": "object",
         "title": "ReflectTrace",
         "description": "Execution trace of LLM and tool calls during reflection."
+      },
+      "RefreshMentalModelOperationDetails": {
+        "properties": {
+          "operation_type": {
+            "type": "string",
+            "const": "refresh_mental_model",
+            "title": "Operation Type",
+            "description": "Discriminator: which operation type this detail describes.",
+            "default": "refresh_mental_model"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "content_written",
+              "content_unchanged",
+              "content_preserved_no_new_facts",
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied",
+              "refresh_failed_structured_output"
+            ],
+            "title": "Outcome",
+            "description": "What the refresh did with the document: rewrote it (`content_written`), produced a document identical to the stored one (`content_unchanged`), had no new facts to read at all (`content_preserved_no_new_facts`), or refused to write (the `refresh_failed_*` values)."
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "empty_candidate",
+                  "structured_doc_unreadable",
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped",
+                  "delta_not_applied",
+                  "structured_output_failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason",
+            "description": "Why the refresh refused to write, finer-grained than the outcome \u2014 it distinguishes an op call that failed from one whose operations were all rejected, and from a baseline document that could not be read. Null unless `outcome` is one of the `refresh_failed_*` values."
+          }
+        },
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "title": "RefreshMentalModelOperationDetails",
+        "description": "What a refresh_mental_model operation did, on the operation record itself.\n\nReported under an async operation's ``details``, which is keyed by\n``operation_type``: each type that has a typed outcome to report contributes\nits own shape there, rather than every type's fields being flattened onto the\noperation. Today refresh is the only one.\n\nThis exists because ``result_metadata`` \u2014 the only per-refresh record kept\nindefinitely \u2014 could not say what a refresh did (#3274), and is documented as\ndebug-only and unstable, so it is not something a caller can build on."
       },
       "ReprocessDocumentResponse": {
         "properties": {
@@ -13869,7 +15481,13 @@
               }
             ],
             "title": "Entities",
-            "description": "Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged."
+            "description": "Replace the fact's entities. How each name is matched to an entity is governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged."
+          },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.",
+            "default": true
           },
           "state": {
             "anyOf": [
@@ -14046,6 +15664,17 @@
               }
             ],
             "title": "Max Tokens"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Refresh settings to change. Applied as a patch: only the fields present in this object are updated, and the rest keep the page's current values \u2014 so moving a page onto a schedule does not reset how it refreshes. Setting refresh_cron clears refresh_after_consolidation and vice versa, since a page refreshes on one or the other, never both."
           }
         },
         "type": "object",
@@ -14181,14 +15810,18 @@
         "title": "VersionResponse",
         "description": "Response model for the version/info endpoint.",
         "example": {
-          "api_version": "0.4.0",
+          "api_version": "0.9.0",
           "features": {
+            "audit_log": false,
             "bank_config_api": false,
+            "bank_llm_health": true,
             "document_export_api": true,
             "document_import_api": true,
             "file_upload_api": true,
+            "llm_trace": false,
             "mcp": true,
             "observations": false,
+            "store_document_text": true,
             "worker": true
           }
         }

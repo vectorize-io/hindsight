@@ -689,7 +689,6 @@ class OracleConnection(DatabaseConnection):
                 "max_tokens",
                 "priority",
                 "proof_count",
-                "access_count",
                 "importance_score",
                 "decay_factor",
                 "chunk_index",

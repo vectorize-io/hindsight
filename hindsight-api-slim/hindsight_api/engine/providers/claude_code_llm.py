@@ -11,7 +11,8 @@ import json
 import logging
 import tempfile
 import time
-from typing import Any
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Any, Callable
 
 from pydantic import ValidationError
 
@@ -19,6 +20,7 @@ from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterfac
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +79,12 @@ class ClaudeCodeLLM(LLMInterface):
         api_key: str,  # Will be ignored, uses CLI auth
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         **kwargs: Any,
     ):
         """Initialize Claude Code LLM provider."""
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
+        self._warn_reasoning_effort_unsupported()
 
         # Verify Claude Agent SDK is available
         try:
@@ -162,6 +165,7 @@ class ClaudeCodeLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -255,16 +259,18 @@ class ClaudeCodeLLM(LLMInterface):
                 # Collect streaming response
                 full_text = ""
 
-                async for message in query(prompt=user_content, options=options):
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                full_text += block.text
-                    elif isinstance(message, ResultMessage) and message.is_error:
-                        # Surface the CLI's actual error text (e.g. quota
-                        # exhaustion) instead of the SDK's subtype-based
-                        # fallback exception (issue #2702).
-                        raise RuntimeError(_result_error_detail(message))
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.claude_code.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    async for message in query(prompt=user_content, options=options):
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    full_text += block.text
+                        elif isinstance(message, ResultMessage) and message.is_error:
+                            # Surface the CLI's actual error text (e.g. quota
+                            # exhaustion) instead of the SDK's subtype-based
+                            # fallback exception (issue #2702).
+                            raise RuntimeError(_result_error_detail(message))
 
                 # The Claude Agent SDK doesn't report exact counts; stash the same
                 # char/4 estimate the success path traces so a later parse/validate
@@ -402,6 +408,7 @@ class ClaudeCodeLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support using Claude Agent SDK.
@@ -578,47 +585,49 @@ class ClaudeCodeLLM(LLMInterface):
                 full_text = ""
                 tool_calls: list[LLMToolCall] = []
 
-                # Use ClaudeSDKClient for tool calling support
-                # Note: query() does NOT support custom tools, only ClaudeSDKClient does
-                async with ClaudeSDKClient(options=options) as client:
-                    # Send the query
-                    await client.query(user_content)
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.claude_code.tools.attempt={attempt + 1}/{max_retries + 1}")
+                    # Use ClaudeSDKClient for tool calling support
+                    # Note: query() does NOT support custom tools, only ClaudeSDKClient does
+                    async with ClaudeSDKClient(options=options) as client:
+                        # Send the query
+                        await client.query(user_content)
 
-                    # Receive response
-                    async for message in client.receive_response():
-                        if isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
-                                    full_text += block.text
-                                elif isinstance(block, ToolUseBlock):
-                                    # SDK returns tool names with MCP prefix (mcp__hindsight_tools__{name})
-                                    # Strip the prefix to return original tool name expected by caller
-                                    tool_name = block.name
-                                    if tool_name.startswith("mcp__hindsight_tools__"):
-                                        tool_name = tool_name.replace("mcp__hindsight_tools__", "", 1)
+                        # Receive response
+                        async for message in client.receive_response():
+                            if isinstance(message, AssistantMessage):
+                                for block in message.content:
+                                    if isinstance(block, TextBlock):
+                                        full_text += block.text
+                                    elif isinstance(block, ToolUseBlock):
+                                        # SDK returns tool names with MCP prefix (mcp__hindsight_tools__{name})
+                                        # Strip the prefix to return original tool name expected by caller
+                                        tool_name = block.name
+                                        if tool_name.startswith("mcp__hindsight_tools__"):
+                                            tool_name = tool_name.replace("mcp__hindsight_tools__", "", 1)
 
-                                    tool_calls.append(
-                                        LLMToolCall(
-                                            id=block.id,
-                                            name=tool_name,
-                                            arguments=block.input,
+                                        tool_calls.append(
+                                            LLMToolCall(
+                                                id=block.id,
+                                                name=tool_name,
+                                                arguments=block.input,
+                                            )
                                         )
-                                    )
-                            if tool_calls:
-                                # This round proposed tool call(s). Stop consuming the
-                                # stream so the SDK does not run another turn against our
-                                # placeholder handlers (issue #2966) — the caller executes
-                                # the real tools and calls us again with the results.
-                                break
-                        elif isinstance(message, ResultMessage) and message.is_error:
-                            # With max_turns=1 the CLI reports error_max_turns whenever
-                            # the model spent its single turn issuing a tool call (there
-                            # was no follow-up turn to emit final text). That is expected
-                            # here and not a failure: we already captured the tool call
-                            # above and break before reaching this branch. Only a genuine
-                            # error with nothing to return should surface (issue #2702).
-                            if not tool_calls:
-                                raise RuntimeError(_result_error_detail(message))
+                                if tool_calls:
+                                    # This round proposed tool call(s). Stop consuming the
+                                    # stream so the SDK does not run another turn against our
+                                    # placeholder handlers (issue #2966) — the caller executes
+                                    # the real tools and calls us again with the results.
+                                    break
+                            elif isinstance(message, ResultMessage) and message.is_error:
+                                # With max_turns=1 the CLI reports error_max_turns whenever
+                                # the model spent its single turn issuing a tool call (there
+                                # was no follow-up turn to emit final text). That is expected
+                                # here and not a failure: we already captured the tool call
+                                # above and break before reaching this branch. Only a genuine
+                                # error with nothing to return should surface (issue #2702).
+                                if not tool_calls:
+                                    raise RuntimeError(_result_error_detail(message))
 
                 # Record metrics
                 duration = time.time() - start_time
@@ -680,3 +689,6 @@ class ClaudeCodeLLM(LLMInterface):
     async def cleanup(self) -> None:
         """Clean up resources (no HTTP client to close for Claude Agent SDK)."""
         pass
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

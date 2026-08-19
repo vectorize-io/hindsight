@@ -23,7 +23,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from .base import DeletePredicate, MemoriesExtension, MemoryPatch, ScanPage, StoredMemory
+from .base import (
+    DeletePredicate,
+    EntityPrunePassResult,
+    MemoriesExtension,
+    MemoryPatch,
+    MemoryScopeWatermark,
+    RecallArms,
+    RelinkPassResult,
+    ScanPage,
+    StoredMemory,
+)
 from .pg import counts, curation, graph, reads, writes
 
 
@@ -71,7 +81,135 @@ class PostgresMemories(MemoriesExtension):
     async def update_memories(self, bank_id: str, patches: list[MemoryPatch], txn=None) -> None:
         """No-op: the caller's UPDATE already wrote the row it holds open."""
 
-    # ------------------------------------------------------------------ recall arms
+    # ------------------------------------------------------------------ recall
+
+    async def recall_unified(
+        self,
+        *,
+        conn,
+        bank_id: str,
+        fact_types: list[str],
+        query_embedding: str,
+        query_text: str,
+        limit: int,
+        temporal_window: "tuple[datetime, datetime] | None" = None,
+        temporal_semantic_threshold: float = 0.1,
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+        tag_groups: list | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        min_semantic: float | None = None,
+        min_keyword: float | None = None,
+        enable_graph: bool = True,
+    ) -> "dict[str, RecallArms]":
+        """Run every recall arm for Postgres by orchestrating the split per-arm SQL internally.
+
+        The per-arm split is Postgres's own business, kept off the interface: this reproduces the
+        exact orchestration recall used before it was unified — one dense+BM25 UNION query and the
+        temporal query share a single connection, then the graph retriever runs per fact_type on the
+        pool in parallel, seeded by the same dense results. Result is byte-identical to running the
+        arms separately; fusion/rerank still happen downstream.
+        """
+        import asyncio
+
+        from ..db_utils import acquire_with_retry
+        from ..search.retrieval import get_default_graph_retriever
+
+        # `conn` is the connection pool: this store owns the per-arm orchestration and acquires its
+        # own connections from it (and runs the graph arm on it).
+        pool = conn
+
+        # graph_seed_min_similarity restricts which dense hits seed the graph arm; only the graph
+        # arm consumes the seeds, so it is resolved only when that arm runs. It does not affect the
+        # semantic/bm25 lists, so the dense+BM25 result is identical whether or not it is passed.
+        graph_seed_min_similarity = None
+        retriever = None
+        if enable_graph:
+            from ...config import get_config
+
+            graph_seed_min_similarity = get_config().graph_seed_min_similarity
+            # Resolving the retriever can lazily construct one, so only do it when the arm is on.
+            retriever = get_default_graph_retriever()
+
+        # Semantic + BM25 (+ temporal) share ONE connection, exactly as before: the dense/keyword
+        # UNION runs first, then the temporal query on the same connection, which is then released
+        # before the graph arm opens its own connections.
+        async with acquire_with_retry(pool) as db_conn:
+            semantic_bm25 = await self.search(
+                conn=db_conn,
+                bank_id=bank_id,
+                fact_types=fact_types,
+                query_embedding=query_embedding,
+                query_text=query_text,
+                limit=limit,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                created_after=created_after,
+                created_before=created_before,
+                min_semantic=min_semantic,
+                min_keyword=min_keyword,
+                graph_seed_min_similarity=graph_seed_min_similarity,
+            )
+
+            temporal_by_ft: dict[str, list] = {}
+            if temporal_window is not None:
+                start_date, end_date = temporal_window
+                temporal_by_ft = await self.temporal_search(
+                    conn=db_conn,
+                    bank_id=bank_id,
+                    fact_types=fact_types,
+                    query_embedding=query_embedding,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=limit,
+                    semantic_threshold=temporal_semantic_threshold,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    created_after=created_after,
+                    created_before=created_before,
+                )
+
+        # Graph per fact_type in parallel, on the pool, after the dense connection is released —
+        # seeded by the dense results (preselected_semantic_seeds), matching the prior path.
+        graph_by_ft: dict[str, list] = {ft: [] for ft in fact_types}
+        if enable_graph:
+            assert retriever is not None  # only resolved when the arm is on
+
+            async def _run_graph(ft: str) -> list:
+                results, _timing = await retriever.retrieve(
+                    pool=pool,
+                    query_embedding_str=query_embedding,
+                    bank_id=bank_id,
+                    fact_type=ft,
+                    budget=limit,
+                    query_text=query_text,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    created_after=created_after,
+                    created_before=created_before,
+                    preselected_semantic_seeds=semantic_bm25[ft].graph_seeds,
+                )
+                return results
+
+            # gather preserves input order, so zip back onto fact_types positionally.
+            graph_lists = await asyncio.gather(*[_run_graph(ft) for ft in fact_types])
+            graph_by_ft = dict(zip(fact_types, graph_lists))
+
+        return {
+            ft: RecallArms(
+                semantic=semantic_bm25[ft].semantic,
+                bm25=semantic_bm25[ft].bm25,
+                graph=graph_by_ft.get(ft, []),
+                temporal=temporal_by_ft.get(ft, []),
+            )
+            for ft in fact_types
+        }
+
+    # ---- per-arm SQL helpers, private to Postgres (called only by recall_unified) ----
 
     async def search(
         self,
@@ -91,6 +229,14 @@ class PostgresMemories(MemoriesExtension):
         min_keyword: float | None = None,
         graph_seed_min_similarity: float | None = None,
     ) -> "dict[str, SemanticBm25Result]":
+        """The dense + keyword arms, as one UNION query.
+
+        How deep the ANN scan goes is not decided here: the connection carries
+        ``hnsw.iterative_scan``, which lets the scan resume until this query's own LIMIT
+        is met (see ``_ANN_TUNING_HIGH_RECALL``). Before that was enabled the scan
+        stopped at ``hnsw.ef_search`` rows — a fixed 200 — so a larger recall budget
+        widened the SQL and changed nothing.
+        """
         # Imported here: retrieval imports this package, so a module-level import
         # would close the cycle.
         from ..search.retrieval import retrieve_semantic_bm25_combined_sql
@@ -273,6 +419,19 @@ class PostgresMemories(MemoriesExtension):
             tag_groups=tag_groups,
         )
 
+    async def any_memory_updated_since_batch(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        scopes: list[MemoryScopeWatermark],
+    ) -> dict[str, bool]:
+        return await reads.any_memory_updated_since_batch(conn=conn, fq_table=fq_table, bank_id=bank_id, scopes=scopes)
+
+    async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
+        return await reads.live_memory_ids(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+
     # -- count surfaces --
 
     async def consolidation_freshness(self, *, conn, fq_table, bank_id: str) -> dict[str, Any]:
@@ -322,7 +481,7 @@ class PostgresMemories(MemoriesExtension):
         ops,
         fq_table,
         bank_id: str,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         consolidation_state: str | None = None,
         state: str | None = None,
@@ -477,12 +636,25 @@ class PostgresMemories(MemoriesExtension):
     ) -> dict[str, list[dict[str, str]]]:
         return await graph.entity_map_for_units(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
 
+    async def resolve_entity_names(self, *, conn, fq_table, bank_id: str, entity_ids: list[str]) -> dict[str, str]:
+        return await graph.resolve_entity_names(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=entity_ids)
+
     # ------------------------------------------------------------------ maintenance
 
     async def record_unit_entities(
-        self, *, conn, ops, fq_table, bank_id: str | None = None, unit_ids: list[Any], entity_ids: list[Any]
+        self,
+        *,
+        conn,
+        ops,
+        fq_table,
+        bank_id: str | None = None,
+        unit_ids: list[Any],
+        entity_ids: list[Any],
+        txn=None,
     ) -> None:
-        # The join is keyed by global unit id, so bank_id is not needed here.
+        # The join is keyed by global unit id, so bank_id is not needed here. `txn` is inert: this
+        # posting is an ordinary INSERT in the caller's own transaction, which is already the unit
+        # of atomicity — there is no second store to coordinate with.
         await ops.bulk_insert_unit_entities(conn, fq_table("unit_entities"), unit_ids, entity_ids)
 
     async def enqueue_relink_victims(
@@ -496,14 +668,25 @@ class PostgresMemories(MemoriesExtension):
             include_affected_units=include_affected_units,
         )
 
-    async def relink_pass(self, *, backend, fq_table, bank_id: str, config) -> dict:
-        return await graph.relink_pass(backend=backend, fq_table=fq_table, bank_id=bank_id, config=config)
+    async def relink_pass(
+        self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None
+    ) -> RelinkPassResult:
+        return await graph.relink_pass(
+            backend=backend, fq_table=fq_table, bank_id=bank_id, config=config, deadline=deadline
+        )
 
-    async def prune_orphan_entities(self, *, conn, fq_table, bank_id: str) -> int:
-        return await graph.prune_orphan_entities(conn=conn, fq_table=fq_table, bank_id=bank_id)
+    async def enqueue_entity_prune_candidates(self, *, conn, fq_table, bank_id: str, affected_unit_ids: list) -> int:
+        return await graph.enqueue_entity_prune_candidates(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            affected_unit_ids=affected_unit_ids,
+        )
 
-    async def prune_stale_cooccurrences(self, *, conn, fq_table, bank_id: str) -> int:
-        return await graph.prune_stale_cooccurrences(conn=conn, fq_table=fq_table, bank_id=bank_id)
+    async def entity_prune_pass(
+        self, *, backend, fq_table, bank_id: str, deadline: float | None = None
+    ) -> EntityPrunePassResult:
+        return await graph.entity_prune_pass(backend=backend, fq_table=fq_table, bank_id=bank_id, deadline=deadline)
 
 
 __all__ = ["PostgresMemories"]

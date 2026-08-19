@@ -247,10 +247,10 @@ async def _run() -> None:
         # ------------------------------------------------------------------
         _log(7, total_steps, "Listing mental models ...")
         models = await engine.list_mental_models(bank_id=bank_id, request_context=ctx)
-        assert len(models) > 0, "Should have at least one mental model"
-        found = any((m.get("mental_model_id") or m.get("id")) == mm_id for m in models)
+        assert models.total > 0, "Should have at least one mental model"
+        found = any((m.get("mental_model_id") or m.get("id")) == mm_id for m in models.items)
         assert found, f"Mental model {mm_id} not found in list"
-        print(f"    -> found {len(models)} mental model(s)")
+        print(f"    -> found {models.total} mental model(s)")
 
         # ------------------------------------------------------------------
         # 8. Delete bank (cleanup)

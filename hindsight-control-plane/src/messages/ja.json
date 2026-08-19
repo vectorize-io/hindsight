@@ -51,6 +51,7 @@
       "select": "メモリバンクを選択...",
       "search": "メモリバンクを検索...",
       "empty": "メモリバンクがありません。",
+      "noSearchResults": "検索に一致するバンクはありません。",
       "create": "新しいバンクを作成",
       "switchTitle": "メモリバンクを切り替え",
       "returnTo": "{bank}に戻る",
@@ -277,7 +278,7 @@
     "mentalModels": "メンタルモデル",
     "noMentalModels": "メンタルモデルなし",
     "upToDate": "最新",
-    "stale": "古い",
+    "needsRefresh": "要更新",
     "total": "合計",
     "activity": "アクティビティ",
     "memoriesIngested": "取り込まれたメモリ",
@@ -336,7 +337,7 @@
     "retainMissionDescription": "抽出中にこのバンクが注目すべき内容。抽出ルールを置き換えることなくLLMを誘導します — どの抽出モードとも並行して機能します。",
     "retainMissionPlaceholder": "例：技術的な決定、API設計の選択、アーキテクチャのトレードオフを常に含める。会議の段取り、挨拶、社交的なやり取りは無視する。",
     "extractionModeLabel": "抽出モード",
-    "extractionModeDescription": "ファクトの抽出の積極性：簡潔（デフォルト、選択的）、詳細（すべてをキャプチャ）、カスタム（独自の抽出ルールを記述）",
+    "extractionModeDescription": "リテイン時のファクト抽出方法：簡潔（既定・選択的）、詳細（すべて取得）、逐語（原文の表現を保持）、チャンク（LLMを完全に省略し各チャンクをそのまま保存）、カスタム（独自の抽出ルールを記述）",
     "customExtractionPromptLabel": "カスタム抽出プロンプト",
     "customExtractionPromptDescription": "組み込みの抽出ルールを完全に置き換えます。抽出モードがカスタムに設定されている場合のみ有効です。",
     "entitiesTitle": "エンティティ",
@@ -409,6 +410,7 @@
     "mcpGroupDocuments": "ドキュメント",
     "mcpGroupOperations": "オペレーション",
     "mcpGroupTags": "タグ",
+    "mcpGroupKnowledgeBase": "ナレッジベース",
     "retainSectionDescription": "デフォルトの抽出設定と名前付き戦略。retain リクエストで戦略名を渡すと、項目ごとにデフォルトを上書きできます。",
     "defaultStrategyLabel": "デフォルト戦略",
     "defaultStrategyDescription": "リクエストで戦略が指定されていない場合、自動的に適用されます。",
@@ -420,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "1 つの観測を生成する際に考慮されるソースファクトの最大トークン数。空欄でサーバーのデフォルトを使用します。",
     "maxObservationsPerScopeLabel": "スコープごとの最大観測数",
     "maxObservationsPerScopeDescription": "統合後にスコープごとに保存される観測数の上限。空欄でサーバーのデフォルトを使用します。",
+    "mentalModelMinRefreshIntervalLabel": "メンタルモデルの最小更新間隔",
+    "mentalModelMinRefreshIntervalDescription": "このバンク内で同じメンタルモデルが自動更新される最小間隔（秒）。それより早く発生した更新はキューに入りウィンドウが閉じるまで待機し、以降のトリガーはそれに統合されます。つまり retain が連続しても更新は 1 回で済みます。手動更新は常に即時実行されます。空欄にするとサーバー既定値、0 は無制限です。個々のモデルは自身の更新設定でこれを上書きできます。",
+    "mentalModelsTitle": "メンタルモデルとナレッジページ",
+    "mentalModelsDescription": "このバンクのメンタルモデルと、それを基にしたナレッジページを最新に保つ方法。",
+    "mentalModelsFailedToSave": "メンタルモデル設定の保存に失敗しました",
     "serverDefault": "サーバーのデフォルト",
     "addStrategy": "戦略を追加",
     "nameLabel": "名前",
@@ -457,7 +464,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "プロンプトインジェクション検出:エージェントの動作を上書きする試みをブロック",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "サイズ異常:疑わしく大きいペイロードを拒否",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "保護されたタグ名前空間:不変のアイデンティティタグを強制",
-    "memoryDefenseEnterpriseCta": "デモをリクエスト"
+    "memoryDefenseEnterpriseCta": "デモをリクエスト",
+    "recallTitle": "リコールパイプライン",
+    "recallDescription": "このバンクのリコール時に実行される検索ステージ",
+    "recallServerDefault": "サーバーのデフォルト",
+    "recallFailedToSave": "リコールパイプラインの設定を保存できませんでした",
+    "recallTemporalRetrievalLabel": "時間検索",
+    "recallTemporalRetrievalDescription": "日付を考慮したクエリ解析を実行します。無効にすると時間的検索も省略されます。このバンクの内容に意味のある日付が含まれない場合に有用です。",
+    "recallGraphRetrievalLabel": "グラフ検索",
+    "recallGraphRetrievalDescription": "リコール時にエンティティとリンクの関係をたどります。無効にすると関係性による検索と引き換えに低レイテンシになります。",
+    "recallRerankingLabel": "リランキング",
+    "recallRerankingDescription": "統合された候補をクロスエンコーダで再ランク付けします。無効にするとRRFの順序をそのまま返します。高速ですが精度は下がります。",
+    "extractionModeConcise": "簡潔",
+    "extractionModeVerbose": "詳細",
+    "extractionModeVerbatim": "逐語",
+    "extractionModeChunks": "チャンク（LLMなし）",
+    "extractionModeCustom": "カスタム"
   },
   "bankOperations": {
     "title": "バックグラウンド操作",
@@ -473,13 +495,15 @@
     "unknown": "不明",
     "notAvailable": "N/A",
     "operationDetailsLoadError": "操作の詳細を読み込めませんでした",
+    "deferredUntilTitle": "{time} まで延期",
     "status": {
       "all": "すべて",
       "pending": "保留中",
       "processing": "処理中",
       "completed": "完了",
       "failed": "失敗",
-      "cancelled": "キャンセル済み"
+      "cancelled": "キャンセル済み",
+      "deferred": "延期中"
     },
     "operationType": {
       "all": "すべてのタイプ",
@@ -488,7 +512,10 @@
       "refreshMentalModel": "メンタルモデル更新",
       "fileConvertRetain": "ファイル変換",
       "webhookDelivery": "Webhook 配信",
-      "graphMaintenance": "グラフメンテナンス"
+      "graphMaintenance": "グラフメンテナンス",
+      "vectorIndexMaintenance": "ベクトルインデックスのメンテナンス",
+      "exportDocuments": "ドキュメントのエクスポート",
+      "importDocuments": "ドキュメントのインポート"
     },
     "table": {
       "id": "操作 ID",
@@ -502,7 +529,8 @@
     "action": {
       "cancel": "キャンセル",
       "retry": "再試行",
-      "delete": "削除"
+      "delete": "削除",
+      "download": "ダウンロード"
     },
     "pagination": "{total} 件中 {start}-{end} 件を表示",
     "paginationPrevious": "前へ",
@@ -518,6 +546,7 @@
       "progress": "進捗",
       "lastHeartbeat": "最終更新"
     },
+    "outcomeDetails": "結果の詳細",
     "metadata": "メタデータ",
     "error": "エラー",
     "rawPayloadParentHelp": "これは親操作です。生のペイロードは各サブバッチに保存されています。子操作を開いてペイロードを確認してください。",
@@ -697,6 +726,7 @@
     "exportIncludeObservationsHint": "合成された観測もエクスポートします。オフの場合、インポート先バンクが統合時に再生成します。",
     "importDialogTitle": "ドキュメントをインポート",
     "importDialogDescription": "バンクからエクスポートした .zip をアップロードします。通常のドキュメントアップロードではなく、ファクトはこのバンクで再埋め込み・再リンクされます。インポートはバックグラウンドで実行されます。",
+    "importFileHint": "この .zip はエクスポート（このバンクまたは別のバンク）で作成されたものである必要があります。PDF・Word・テキストファイルを追加する場合は「ドキュメントを追加 → ファイルをアップロード」を使ってください。",
     "actionsButton": "アクション",
     "importConflictLabel": "ドキュメントが既に存在する場合",
     "importConflictSkip": "スキップ — 既存のドキュメントを保持",
@@ -809,6 +839,9 @@
     "optionsRefreshCronLabel": "スケジュール更新 (cron)",
     "optionsRefreshCronPlaceholder": "分 時 日 月 曜日  ·  例: 0 3 * * *（毎日 03:00 UTC）",
     "optionsRefreshCronDescription": "固定の UTC cron スケジュールで更新します。新しいメモリでの更新とは相互に排他的です。スケジュールされた更新は、新しいメモリがこのモデルのスコープを変更した場合にのみ実行されます。無効にするには空のままにします。",
+    "optionsMinRefreshIntervalLabel": "最小更新間隔（秒）",
+    "optionsMinRefreshIntervalPlaceholder": "デフォルト（継承）",
+    "optionsMinRefreshIntervalDescription": "自動更新の実行頻度の下限。ウィンドウ内に発生したトリガーはキューに入り、ウィンドウが閉じるまで待機し、以降のトリガーはそれに統合されます。つまり retain が連続しても更新は 1 回で済みます。手動更新は常に即時実行されます。0 または空 = 下限なし。",
     "optionsSectionTags": "タグ",
     "optionsTagsLabel": "タグ",
     "optionsTagsPlaceholder": "例：project-x、team-alpha（カンマ区切り）",
@@ -850,7 +883,10 @@
     "clearDialogConfirm": "クリア",
     "actionClearContent": "内容をクリア",
     "emptyContent": "まだコンテンツがありません。このメンタルモデルを更新してコンテンツを生成します。",
-    "selectModelPrompt": "メンタルモデルを選択して内容を表示します。"
+    "selectModelPrompt": "メンタルモデルを選択して内容を表示します。",
+    "optionsSectionTroubleshooting": "トラブルシューティング",
+    "optionsKeepTraceLabel": "更新トレースを保持",
+    "optionsKeepTraceDescription": "各更新がどのように結果に至ったかを記録します（モード、スコープ、時間範囲、取得した事実と使用した事実、デルタ操作）。スケジュール実行された更新を後から診断する唯一の方法です。"
   },
   "cronPreview": {
     "invalid": "無効な cron 式",
@@ -936,7 +972,8 @@
     "observationTextField": "テキスト",
     "observationTagsField": "タグ",
     "observationSourceMemoriesField": "ソースメモリ（{count}件）",
-    "observationIdField": "ID"
+    "observationIdField": "ID",
+    "structuredOutputTitle": "構造化出力"
   },
   "searchDebug": {
     "noBankSelected": "バンクが選択されていません",
@@ -1458,7 +1495,13 @@
     "factTypeWorld": "世界",
     "factTypeExperience": "経験",
     "factTypeObservation": "オブザベーション",
-    "actionClearContent": "内容をクリア"
+    "actionClearContent": "内容をクリア",
+    "structuredOutput": "構造化出力",
+    "responseSchemaTitle": "構造化出力スキーマ",
+    "refreshTrace": "更新トレース",
+    "traceNotCaptured": "この更新のトレースは記録されていません。モデル設定で「更新トレースを保持」を有効にしてください。",
+    "actionDryRun": "ドライランを実行",
+    "actionDryRunRunning": "ドライラン実行中…"
   },
   "constellation": {
     "instructions": "スクロールでズーム · ドラッグで移動 · ホバーで探索 · クリックで選択",
@@ -1656,7 +1699,8 @@
         "refresh": "メンタルモデルの更新に失敗しました",
         "history": "メンタルモデル履歴の取得に失敗しました",
         "notFound": "メンタルモデルが見つかりません",
-        "clear": "メンタルモデルのクリアに失敗しました"
+        "clear": "メンタルモデルのクリアに失敗しました",
+        "dryRunRefresh": "メンタルモデル更新のドライランに失敗しました"
       },
       "observations": {
         "list": "観察の一覧取得に失敗しました",
@@ -1755,7 +1799,7 @@
     "createPageTitle": "New page",
     "autoBadge": "auto",
     "inSync": "In sync",
-    "needsRefresh": "Needs refresh",
+    "needsRefresh": "要更新",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1786,5 +1830,53 @@
     "pagesEmptyCta": "Create your first page",
     "recentDocsTitle": "Recent documents",
     "recentDocsEmpty": "No documents yet"
+  },
+  "schemaBuilder": {
+    "title": "構造化出力スキーマ",
+    "subtitle": "フィールドを視覚的に追加するか、生の JSON を編集します。モデルはこの形式のオブジェクトを返します。",
+    "visualTab": "ビジュアル",
+    "codeTab": "コード",
+    "addField": "フィールドを追加",
+    "namePlaceholder": "フィールド名",
+    "descriptionPlaceholder": "説明（任意）",
+    "required": "必須",
+    "removeField": "フィールドを削除",
+    "emptyState": "出力を定義するには、フィールドを少なくとも 1 つ追加してください。",
+    "duplicateNames": "フィールド名は一意である必要があります。",
+    "visualUnavailable": "このスキーマはビジュアルエディタには複雑すぎます。コードとして編集してください。",
+    "invalidJson": "JSON 構文が無効です。",
+    "cancel": "キャンセル",
+    "apply": "適用",
+    "openBuilder": "スキーマを作成",
+    "edit": "編集",
+    "clear": "スキーマを削除",
+    "fieldsSummary": "{count} 個のフィールド",
+    "invalidSchema": "無効なスキーマです。ビルダーを開いて修正してください。",
+    "fieldDescription": "設定すると、回答はこのスキーマに一致する structured_output としても返されます。",
+    "itemsLabel": "各要素"
+  },
+  "mentalModelDiagnostics": {
+    "fallbackNoBaseline": "編集対象の既存コンテンツがありません",
+    "fallbackQueryChanged": "ソースクエリが変更されました",
+    "fallbackDocUnreadable": "保存された文書を読み取れませんでした",
+    "fallbackOpsFailed": "デルタ操作の呼び出しが失敗しました",
+    "fallbackOpsAllSkipped": "すべてのデルタ操作が拒否されました",
+    "outcomeWritten": "新しいコンテンツを書き込み",
+    "outcomePreserved": "新しい事実なし、コンテンツを維持",
+    "outcomeFailed": "結果が空のため更新は失敗します",
+    "outcomeDeltaNotApplied": "デルタが適用されず更新は失敗します",
+    "warningsTitle": "警告",
+    "traceResults": "{count} 件の結果",
+    "executionTraceTitle": "実行トレース",
+    "noOperations": "オペレーションなし",
+    "responseGenerated": "レスポンスが生成されました",
+    "agentDecided": "エージェントが決定しました",
+    "toolInputLabel": "入力：",
+    "executionTraceDescription": "LLM 呼び出し {iterations} 回 • 合計 {totalMs}ms",
+    "executingTools": "呼び出したツール: {count}",
+    "resultTitle": "ドライラン — {name}",
+    "toolOutputLabel": "出力：",
+    "toolWindowBound": "範囲: {time} 以降に更新された記憶のみ",
+    "toolWindowUnbounded": "範囲: なし — このツールは時間で絞り込まれません"
   }
 }

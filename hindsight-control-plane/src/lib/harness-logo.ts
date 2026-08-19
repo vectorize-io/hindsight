@@ -73,6 +73,10 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
     src: "/img/harness/devin-cli.svg",
     invertOnDark: true,
   },
+  // The DeepSeek Harness mark, taken from that project's own favicon (MIT). Its
+  // upstream copy carries a prefers-color-scheme rule; that was dropped so the
+  // control plane's own theme decides, like every other monochrome mark here.
+  dsh: { id: "dsh", label: "DeepSeek Harness", src: "/img/harness/dsh.svg", invertOnDark: true },
   // Retired: the Gemini CLI harness was replaced by `antigravity-cli`, so nothing
   // emits this id any more. The entry stays because documents retained while it
   // did are still in people's banks, and they should keep their logo.
@@ -83,6 +87,12 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
   "grok-build": { id: "grok-build", label: "Grok Build", src: "/img/harness/grok-build.svg" },
   kilo: { id: "kilo", label: "Kilo CLI", src: "/img/harness/kilo.svg" },
   opencode: { id: "opencode", label: "OpenCode", src: "/img/harness/opencode.png" },
+  "prime-agent": {
+    id: "prime-agent",
+    label: "Prime Agent",
+    src: "/img/harness/prime-agent.svg",
+    invertOnDark: true,
+  },
 };
 
 const HARNESS_TAG_PREFIX = "harness:";

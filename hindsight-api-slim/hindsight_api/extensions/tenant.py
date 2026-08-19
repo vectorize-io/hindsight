@@ -67,6 +67,17 @@ class TenantExtension(Extension, ABC):
 
     The returned schema_name is used for fully-qualified table names in queries,
     enabling tenant isolation at the database level.
+
+    By default the only request data reaching authenticate() is the Authorization
+    header, surfaced as RequestContext.api_key. A deployment that authenticates on
+    something else — say a per-caller identity assertion sent alongside a shared
+    bearer token by a proxy — can opt those headers in:
+
+        HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS=x-user-assertion
+
+    They then arrive in RequestContext.extra_headers, keyed by lower-cased name,
+    on both the HTTP and MCP transports. Unset by default, so extensions receive
+    no header data unless an operator asks for it.
     """
 
     @abstractmethod

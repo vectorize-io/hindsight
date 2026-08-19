@@ -21,8 +21,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { deriveBankId } from "./bank";
 import type { Config } from "./config";
 import { applyBankConfig, loadConfig } from "./config";
-import { diag } from "./diag";
-import { log, setLogLevel } from "./log";
+import { diag, diagFilePath } from "./diag";
+import { describeError, log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
@@ -33,6 +33,7 @@ import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
 import {
   readSessionCache,
   sessionCacheFile,
+  sessionRootDir,
   writeSessionCache,
   type SessionCache,
 } from "./session-cache";
@@ -58,7 +59,7 @@ export interface HookSpec {
 
 /** Minimal client shape `buildHookOutput` needs — `HindsightClient` satisfies it structurally. */
 interface HookClient {
-  reflect(query: string, opts: { budget?: string; timeoutMs?: number }): Promise<string>;
+  reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
 }
@@ -102,6 +103,10 @@ export async function buildHookOutput(args: {
   // instructs the agent to call hindsight_reflect itself when a new goal is set.
   let reflectAnswer = cached.reflectAnswer;
   let reflectRanThisTurn = false;
+  // Set ONLY by the catch below. An empty answer is not a failure: reflect can legitimately have
+  // nothing to say on a sparse bank (diag records that as reflect_empty), and reporting it as a
+  // failure would tell the user the plugin broke on exactly the sessions where it did not.
+  let reflectFailed = false;
   const deferInitialReflect = cached.deferInitialReflect === true;
   if (deferInitialReflect) {
     // A new bank has no useful history yet. Do not burn the once-per-session synthesis on prompt
@@ -112,7 +117,10 @@ export async function buildHookOutput(args: {
     const t0 = Date.now();
     try {
       reflectAnswer = await client.reflect(buildReflectQuery(prompt), {
-        budget: "high",
+        // Automatic reflection runs inside a hard 25s hook window. Hindsight's low budget is the
+        // supported default for bounded reflect calls; callers that explicitly invoke the MCP
+        // tool still get the deeper high-budget path.
+        budget: "low",
         timeoutMs: Math.min(cfg.reflectTimeoutMs, HOOK_REFLECT_CAP_MS),
       });
       diag(harness, reflectAnswer ? "reflect_ok" : "reflect_empty", {
@@ -125,12 +133,13 @@ export async function buildHookOutput(args: {
       });
     } catch (e) {
       reflectAnswer = ""; // ran and failed — don't retry every turn; the diag trail records it
+      reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
-        error: String((e as Error)?.message || e).slice(0, 200),
+        error: describeError(e),
       });
       diag(harness, "reflect_failed", {
         ms: Date.now() - t0,
-        error: String((e as Error)?.message || e).slice(0, 200),
+        error: describeError(e),
         query: prompt.slice(0, 80),
       });
     }
@@ -151,7 +160,7 @@ export async function buildHookOutput(args: {
         client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",
         {
           ms: Date.now() - t0,
-          error: String((e as Error)?.message || e).slice(0, 200),
+          error: describeError(e),
         }
       );
     }
@@ -190,6 +199,12 @@ export async function buildHookOutput(args: {
     notice =
       `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
       `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
+  } else if (reflectFailed) {
+    // The failure is already in the diag trail and plugin.log, but both are files nobody is
+    // tailing mid-session, so a memory-less session looked exactly like a healthy one (#3443).
+    // One terse line pointing at the trail — not an explanation, and not advice to the agent:
+    // this fires at most once per session, on the turn reflect ran.
+    notice = `${brandWord()} · no memory this turn — see ${diagFilePath()}`;
   }
 
   return { context: kept.length ? kept.join("\n\n") : undefined, notice, pagesKnown: pages.length };
@@ -225,14 +240,21 @@ export async function runHook(
   const out = (context: string | undefined, notice?: string) =>
     process.stdout.write(JSON.stringify(spec.emit(context ?? "", notice, ev)));
 
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness));
+  const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
+  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) {
     log.debug(spec.harness, "hook skipped: bank disabled via banks override", { bank: bankId });
     return;
   }
-  const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
+  const client = makeClient({
+    apiUrl: cfg.apiUrl,
+    apiToken: cfg.apiToken,
+    bank: bankId,
+    maxParallelRetains: cfg.maxParallelRetains,
+    observationScopes: cfg.observationScopes,
+  });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 
   // Safety net on EVERY harness: on the session's FIRST prompt (no cache file yet), fire the

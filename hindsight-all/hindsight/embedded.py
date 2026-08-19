@@ -64,15 +64,26 @@ class HindsightEmbedded:
     - create_directive(), list_directives(), etc.
     - And all async variants (aretain, arecall, areflect, etc.)
 
+    Only the settings you pass explicitly are forwarded to the daemon. Anything
+    left at its default is resolved by the daemon instead, in this order: the
+    profile's .env file, then the parent process environment, then the daemon's
+    own default. That is what lets a client constructed without credentials run
+    against a profile (or a shell) that already has them configured, rather than
+    overwriting them with placeholders (#3253).
+
     Args:
         profile: Profile name for data isolation (default: "default")
-        llm_provider: LLM provider ("groq", "openai", "ollama", "gemini", "anthropic", "lmstudio")
-        llm_api_key: API key for the LLM provider
-        llm_model: Model name to use
+        llm_provider: LLM provider ("groq", "openai", "ollama", "gemini", "anthropic",
+            "lmstudio", "github-copilot"). Omit to inherit; the server default is "openai".
+        llm_api_key: API key for the LLM provider. Omit to inherit; pass "" to
+            explicitly run without a key (local services that need no auth).
+        llm_model: Model name to use. Omit to inherit; the server picks a default
+            for the resolved provider.
         llm_base_url: Optional custom base URL for LLM API
         database_url: Optional database URL override (default: profile-specific pg0)
-        idle_timeout: Seconds before daemon auto-exits when idle (default: 0, disabled)
-        log_level: Daemon log level (default: "info")
+        idle_timeout: Seconds before daemon auto-exits when idle. Omit to inherit
+            (daemon default: 0, disabled).
+        log_level: Daemon log level. Omit to inherit (daemon default: "info").
         ui: Whether to start the control plane web UI alongside the daemon (default: False)
         ui_port: Port for the UI. Defaults to daemon_port + 10000.
         ui_hostname: Hostname to bind the UI to. Defaults to "0.0.0.0".
@@ -81,13 +92,13 @@ class HindsightEmbedded:
     def __init__(
         self,
         profile: str = "default",
-        llm_provider: str = "groq",
-        llm_api_key: str = "",
-        llm_model: str = "openai/gpt-oss-120b",
+        llm_provider: Optional[str] = None,
+        llm_api_key: Optional[str] = None,
+        llm_model: Optional[str] = None,
         llm_base_url: Optional[str] = None,
         database_url: Optional[str] = None,
-        idle_timeout: int = 0,
-        log_level: str = "info",
+        idle_timeout: Optional[int] = None,
+        log_level: Optional[str] = None,
         ui: bool = False,
         ui_port: Optional[int] = None,
         ui_hostname: str = "0.0.0.0",
@@ -95,29 +106,50 @@ class HindsightEmbedded:
         """
         Initialize the embedded client (daemon starts on first use).
 
+        Every LLM/daemon setting left as None is omitted from the daemon config so
+        the daemon resolves it from the profile .env, then the parent environment,
+        then its own default.
+
         Args:
             profile: Profile name for data isolation
-            llm_provider: LLM provider
-            llm_api_key: API key for the LLM provider
-            llm_model: Model name to use
+            llm_provider: LLM provider. Omit to inherit.
+            llm_api_key: API key for the LLM provider. Omit to inherit; pass "" to
+                explicitly run without a key.
+            llm_model: Model name to use. Omit to inherit.
             llm_base_url: Optional custom base URL for LLM API
             database_url: Optional database URL override
-            idle_timeout: Seconds before daemon auto-exits when idle (0 = disabled)
-            log_level: Daemon log level
+            idle_timeout: Seconds before daemon auto-exits when idle (0 = disabled).
+                Omit to inherit.
+            log_level: Daemon log level. Omit to inherit.
             ui: Whether to start the control plane web UI alongside the daemon
             ui_port: Port for the UI (defaults to daemon_port + 10000)
             ui_hostname: Hostname to bind the UI to (defaults to "0.0.0.0")
         """
         self.profile = profile
 
-        # Build config dict for daemon (matches CLI format)
-        self.config = {
-            "HINDSIGHT_API_LLM_PROVIDER": llm_provider,
-            "HINDSIGHT_API_LLM_API_KEY": llm_api_key,
-            "HINDSIGHT_API_LLM_MODEL": llm_model,
-            "HINDSIGHT_API_LOG_LEVEL": log_level,
-            "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT": str(idle_timeout),
-        }
+        # Build the config dict for the daemon (matches CLI format), omitting
+        # every setting the caller did not specify. An omitted key is inherited
+        # by the daemon from the profile .env / parent environment; sending a
+        # placeholder instead would overwrite it, and _register_profile would
+        # then persist that placeholder into the profile's .env file (#3253).
+        # An explicit "" is still an override — that is how a local LLM service
+        # with no authentication clears an inherited API key.
+        self.config: dict[str, str] = {}
+
+        if llm_provider is not None:
+            self.config["HINDSIGHT_API_LLM_PROVIDER"] = llm_provider
+
+        if llm_api_key is not None:
+            self.config["HINDSIGHT_API_LLM_API_KEY"] = llm_api_key
+
+        if llm_model is not None:
+            self.config["HINDSIGHT_API_LLM_MODEL"] = llm_model
+
+        if log_level is not None:
+            self.config["HINDSIGHT_API_LOG_LEVEL"] = log_level
+
+        if idle_timeout is not None:
+            self.config["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(idle_timeout)
 
         if llm_base_url:
             self.config["HINDSIGHT_API_LLM_BASE_URL"] = llm_base_url

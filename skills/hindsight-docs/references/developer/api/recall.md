@@ -258,6 +258,9 @@ When `include_chunks` is enabled, chunks are fetched based on the top-scored rer
 
 When enabled and `types` includes `observation`, each observation result is accompanied by the original contributing facts it was synthesized from. Source facts are returned in a top-level `source_facts` dict keyed by fact ID, and each observation result carries a `source_fact_ids` list for cross-referencing. Facts are deduplicated across observations. The `max_tokens` sub-option (default `4096`) limits the total token budget for source facts.
 
+> **📝 Note**
+>
+The budget is spent in result order, so when it runs out it is the lowest-ranked results that lose their source facts — the top results always keep theirs. `source_fact_ids` always lists every source, so an ID may have no entry in `source_facts`; the response sets `source_facts_truncated: true` when that is the budget's doing rather than a missing fact. Raise `max_tokens` (or set it to `-1`) if you need every source resolved.
 ### Python
 
 ```python
@@ -322,7 +325,8 @@ Enabled by default. When active, each returned fact includes the canonical names
 
 ### tags
 
-Filters recall to only memories that match the specified tags. When omitted, all memories regardless of tags are eligible. Tag filtering is applied at the database level across all four retrieval strategies, not as a post-processing step.
+Filters recall to memories in the requested tag scope. `tags` defaults to `null` and
+`tags_match` defaults to `any`.
 
 The `tags_match` parameter controls the filtering logic:
 
@@ -334,6 +338,22 @@ The `tags_match` parameter controls the filtering logic:
 | `all_strict` | Excluded | Memory has **all** of the specified tags |
 | `exact` | Excluded | Memory has **exactly** the specified tag set |
 
+The defaults and empty-filter behavior are important:
+
+| `tags` | `tags_match` | Eligible memories |
+|--------|--------------|-------------------|
+| Omitted, `null`, or `[]` | Omitted (`any`) | All tagged and untagged memories |
+| Omitted, `null`, or `[]` | `any`, `all`, `any_strict`, or `all_strict` | All tagged and untagged memories; an empty tag list means no filter |
+| Omitted, `null`, or `[]` | `exact` | Only untagged/global memories |
+| Non-empty | `any` or `all` | Matching tagged memories plus untagged/global memories |
+| Non-empty | `any_strict` or `all_strict` | Matching tagged memories only |
+| Non-empty | `exact` | Memories whose complete tag set exactly equals `tags` |
+
+> **📝 MCP empty-scope behavior**
+>
+For the MCP `recall` tool, `tags_match` is forwarded only when `tags` is present.
+To select the untagged/global scope through MCP, pass both `tags: []` and
+`tags_match: "exact"` rather than omitting `tags`.
 #### Scenario setup
 
 Consider a bank with these four memories:
@@ -543,7 +563,13 @@ With any other `tags_match` mode, absent or empty `tags` means "no tag filter" (
 
 `tag_groups` is a list of compound boolean tag filters. The groups in the list are AND-ed together at the top level. Each group is a recursive boolean expression: a **leaf** node `{tags, match}`, or a **compound** node `{and: [...]}`, `{or: [...]}`, or `{not: ...}`.
 
-`tag_groups` and `tags` / `tags_match` can be used simultaneously — they are AND-ed together.
+`tag_groups` defaults to `null`. The public REST and MCP request models treat
+`tag_groups` and `tags` as mutually exclusive: if both are present, the request is
+rejected. Use `tag_groups` by itself for compound filtering and normally leave the
+top-level `tags_match` at its default, `any`. Each `tag_groups` leaf has its own
+`match` value. The exception is top-level `tags_match: "exact"`: because exact
+matching gives absent flat tags a meaning, it adds a global-only flat constraint
+that is AND-ed with the compound expression.
 
 #### Leaf node
 
@@ -700,6 +726,10 @@ Each field is also a valid [`min_scores`](#min_scores) floor.
 ### source_facts
 
 A dict keyed by fact ID containing full `RecallResult` objects for the source facts that contributed to observation results. Only present when `include.source_facts` is enabled. Facts are deduplicated — if two observations share a source fact, it appears once.
+
+### source_facts_truncated
+
+Whether the token budget cut the `source_facts` map short. When `true`, some IDs in `results[].source_fact_ids` have no entry in `source_facts` because the budget ran out — the references are not dangling. Only present when `include.source_facts` is enabled.
 
 ### chunks
 

@@ -954,7 +954,8 @@ class MetricsCollector(MetricsCollectorBase):
         self.meter.create_observable_gauge(
             name="hindsight.consolidation.backlog",
             callbacks=[get_consolidation_backlog],
-            description="Source memories (experience/world) not yet consolidated into observations",
+            description="Source memories (experience/world) still queued for consolidation into "
+            "observations; excludes permanently failed ones, which are in hindsight.consolidation.failed",
             unit="{memories}",
         )
         self.meter.create_observable_gauge(
@@ -1043,6 +1044,14 @@ class MetricsCollector(MetricsCollectorBase):
                 #   idx_memory_units_consolidation_failed  WHERE consolidation_failed_at IS NOT NULL ...
                 # GROUP BY bank_id still composes — bank_id is each index's lead column.
                 #
+                # The backlog gauge is disjoint from the failed gauge: it carries the
+                # consolidator's own `consolidation_failed_at IS NULL` (see
+                # reads.find_unconsolidated), so a permanently failed fact does not hold
+                # the backlog above zero forever and "backlog > 0 for N minutes" stays an
+                # alertable condition. That extra term is not in the partial index's
+                # predicate, so it is a cheap recheck on the rows the index already
+                # returned — the failed set is tiny by construction.
+                #
                 # The backlog count runs with seqscan disabled in a scoped
                 # transaction. The partial index matches its predicate, but
                 # `consolidated_at IS NULL` is true for a large fraction of the
@@ -1059,7 +1068,8 @@ class MetricsCollector(MetricsCollectorBase):
                         rows = await conn.fetch(
                             f"SELECT {bank_sel}COUNT(*) AS count "
                             f'FROM "{schema}".memory_units '
-                            "WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')"
+                            "WHERE consolidated_at IS NULL AND consolidation_failed_at IS NULL "
+                            "AND fact_type IN ('experience', 'world')"
                             f"{bank_grp}"
                         )
                     for row in rows:

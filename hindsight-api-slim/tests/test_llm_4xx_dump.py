@@ -116,6 +116,39 @@ def test_dump_pydantic_config_with_separate_contents(monkeypatch, caplog):
     assert "gemini hi" in caplog.text  # content preview
 
 
+# ── force: always-on structural profile for deterministic rejections ───────────
+
+
+def test_force_dumps_structural_profile_when_flag_off(monkeypatch, caplog):
+    """A forced dump (deterministic 400) logs even with the opt-in flag off, but
+    carries only the structural profile — config + per-part sizes, no previews."""
+    _disable(monkeypatch)
+    request = {"messages": [{"role": "user", "content": "secret memory content"}]}
+    with caplog.at_level(logging.ERROR):
+        _dump(err=SimpleNamespace(status_code=400), request=request, force=True)
+    assert "[LLM_4XX_DUMP]" in caplog.text
+    assert '"chars": 21' in caplog.text  # per-part size is logged
+    assert "secret memory content" not in caplog.text  # but user content is not
+    assert "preview" not in caplog.text
+
+
+def test_force_is_still_noop_on_non_4xx(monkeypatch, caplog):
+    """force bypasses the opt-in flag, not the 4xx gate."""
+    _disable(monkeypatch)
+    with caplog.at_level(logging.ERROR):
+        _dump(err=SimpleNamespace(status_code=500), request={"messages": []}, force=True)
+    assert "[LLM_4XX_DUMP]" not in caplog.text
+
+
+def test_force_includes_previews_when_flag_also_on(monkeypatch, caplog):
+    """With the opt-in flag on, a forced dump still gets the full preview."""
+    _enable(monkeypatch)
+    request = {"messages": [{"role": "user", "content": "visible content"}]}
+    with caplog.at_level(logging.ERROR):
+        _dump(err=SimpleNamespace(status_code=400), request=request, force=True)
+    assert '"preview": "visible content"' in caplog.text
+
+
 # ── safety: truncation + never-raise ───────────────────────────────────────────
 
 

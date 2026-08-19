@@ -9,7 +9,7 @@ import os
 import re
 import time
 import uuid
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from json_repair import repair_json
@@ -29,7 +29,15 @@ from ..config import (
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
-from .llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice, LLMToolChoiceMode
+from .cache_affinity import parse_cache_affinity
+from .llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+)
+from .llm_interface import (
+    OutputTooLongError as OutputTooLongError,
+)
 
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
@@ -107,6 +115,27 @@ def _semaphores_for_scope(scope: str) -> list[asyncio.Semaphore]:
     return [per_op, _global_llm_semaphore]
 
 
+@asynccontextmanager
+async def _attempt_permits(scope: str):
+    """Hold configured LLM concurrency permits for one upstream attempt."""
+    from ..worker.stage import get_stage, set_stage
+
+    async with AsyncExitStack() as stack:
+        for sem in _semaphores_for_scope(scope):
+            await stack.enter_async_context(sem)
+        try:
+            yield
+        except BaseException:
+            # A failed attempt exits here with its permits released while the
+            # provider classifies the error and sleeps out its backoff. Suffix
+            # the stage so `attempt=N` always means "permits held, request in
+            # flight" (#3002); the next attempt re-stamps after re-acquiring.
+            stage = get_stage()
+            if stage is not None and not stage.endswith(".backoff"):
+                set_stage(f"{stage}.backoff")
+            raise
+
+
 def _request_params(
     *,
     max_completion_tokens: int | None = None,
@@ -164,16 +193,11 @@ def sanitize_text(text: str | None) -> str | None:
 sanitize_llm_output = sanitize_text
 
 
-class OutputTooLongError(Exception):
-    """
-    Bridge exception raised when LLM output exceeds token limits.
-
-    This wraps provider-specific errors (e.g., OpenAI's LengthFinishReasonError)
-    to allow callers to handle output length issues without depending on
-    provider-specific implementations.
-    """
-
-    pass
+# ``OutputTooLongError`` is re-exported from ``llm_interface`` (the canonical
+# definition the providers raise) so that ``fact_extraction`` and ``multi_llm``,
+# which import it from here, catch/inspect the very same class. Do NOT redefine
+# it locally: a shadow class silently breaks ``except OutputTooLongError`` on the
+# real provider path (see issue #3172).
 
 
 def parse_llm_json(raw: str) -> Any:
@@ -240,6 +264,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "llamacpp",
         "openai-codex",
         "claude-code",
+        "github-copilot",
         "mock",
         "none",
         "vertexai",
@@ -247,6 +272,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "litellmrouter",
         "bedrock",
         "nous",
+        "xai-oauth",
     }
 )
 
@@ -272,7 +298,7 @@ def create_llm_provider(
     api_key: str,
     base_url: str,
     model: str,
-    reasoning_effort: str,
+    reasoning_effort: str | None,
     groq_service_tier: str | None = None,
     openai_service_tier: str | None = None,
     bedrock_service_tier: str | None = None,
@@ -287,6 +313,8 @@ def create_llm_provider(
     gemini_service_tier: str | None = None,
     timeout: float | None = None,
     ollama_num_ctx: int | None = None,
+    cache_affinity: str | None = None,
+    structured_output_forced_tool: bool = False,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -296,7 +324,9 @@ def create_llm_provider(
         api_key: API key (may be None for local providers or OAuth providers).
         base_url: Base URL for the API.
         model: Model name.
-        reasoning_effort: Reasoning effort level for supported providers.
+        reasoning_effort: Reasoning effort level for supported providers, or None when
+            the operator configured none (providers then fall back to the default level
+            and may skip the parameter entirely).
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
         bedrock_service_tier: Bedrock service tier (for Bedrock provider) - None (default), "flex", "priority", or "reserved".
@@ -310,9 +340,20 @@ def create_llm_provider(
             for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
         default_headers: Custom headers passed to provider SDK clients (used by operators
             routing through proxies / request-tracing middleware). Wired into the Anthropic
-            provider (SDK ``default_headers``) and the LiteLLM-backed providers — ``litellm``,
-            ``litellmrouter`` and ``bedrock`` — as the LiteLLM ``extra_headers`` completion
-            kwarg; other providers may opt in as needed.
+            provider, the ``OpenAICompatibleLLM`` branch, ``fireworks``, ``nous`` and the
+            Responses API (SDK ``default_headers``), and into the LiteLLM-backed providers —
+            ``litellm``, ``litellmrouter`` and ``bedrock`` — as the LiteLLM ``extra_headers``
+            completion kwarg; other providers may opt in as needed.
+        cache_affinity: Backend prompt-cache pinning mode, forwarded to the
+            ``OpenAICompatibleLLM`` branch, ``fireworks`` and ``nous`` (all three share the
+            OpenAI-compatible wire format): "none" (default), "xai_conv_id",
+            "openai_prompt_cache_key", or "auto". Providers on other branches do their own
+            cache work or none at all. See ``engine/cache_affinity.py``.
+        structured_output_forced_tool: Ask the LiteLLM-backed providers (``litellm``,
+            ``litellmrouter``, ``bedrock``) for structured output via a forced tool call
+            instead of ``response_format``. For backends that reject the response_format
+            route — see ``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``. Other
+            providers ignore it.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
@@ -334,12 +375,14 @@ def create_llm_provider(
         CodexLLM,
         FireworksLLM,
         GeminiLLM,
+        GitHubCopilotLLM,
         LiteLLMLLM,
         LiteLLMRouterLLM,
         LlamaCppLLM,
         MockLLM,
         NoneLLM,
         OpenAICompatibleLLM,
+        OpenAIResponsesLLM,
     )
 
     provider_lower = provider.lower()
@@ -357,6 +400,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "claude-code":
@@ -366,6 +410,16 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+        )
+
+    elif provider_lower == "github-copilot":
+        return GitHubCopilotLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            timeout=timeout,
         )
 
     elif provider_lower == "mock":
@@ -423,6 +477,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             timeout=timeout,
+            structured_output_forced_tool=structured_output_forced_tool,
         )
 
     elif provider_lower == "litellmrouter":
@@ -443,6 +498,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             timeout=timeout,
+            structured_output_forced_tool=structured_output_forced_tool,
         )
 
     elif provider_lower == "bedrock":
@@ -458,6 +514,7 @@ def create_llm_provider(
             default_headers=default_headers,
             bedrock_service_tier=bedrock_service_tier,
             timeout=timeout,
+            structured_output_forced_tool=structured_output_forced_tool,
         )
 
     elif provider_lower == "llamacpp":
@@ -470,6 +527,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
             model_path=config.llamacpp_model_path,
             gpu_layers=config.llamacpp_gpu_layers,
             context_size=config.llamacpp_context_size,
@@ -489,12 +547,16 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
+            cache_affinity=cache_affinity,
         )
 
     elif provider_lower == "nous":
         # Nous Portal is OpenAI-compatible on the wire; NousLLM adds rotating
         # inference:invoke JWT auth read natively from ~/.hermes/auth.json
         # (no static api_key, no hermes_cli dependency — same shape as Codex).
+        # default_headers/cache_affinity ride NousLLM's **kwargs passthrough to
+        # OpenAICompatibleLLM.__init__ unchanged (see NousLLM.__init__).
         from hindsight_api.engine.providers.nous_llm import NousLLM
 
         return NousLLM(
@@ -504,6 +566,41 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
+            cache_affinity=cache_affinity,
+            timeout=timeout,
+        )
+
+    elif provider_lower == "xai-oauth":
+        # SuperGrok subscription lane: api.x.ai spoken plainly, but the
+        # credential is a device-code OAuth grant with proactive/reactive
+        # refresh over a shared on-disk store, and xAI's 403 shapes need their
+        # own classification — neither fits the OpenAI SDK client, hence its
+        # own provider.
+        from hindsight_api.engine.providers.xai_oauth_llm import XaiOAuthLLM
+
+        return XaiOAuthLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            timeout=timeout,
+        )
+
+    elif provider_lower == "openai-responses":
+        # OpenAI Responses API (/v1/responses). Unlike chat/completions, it
+        # supports reasoning + function tools together, so reflect's tool loop
+        # can run with a real reasoning_effort. See OpenAIResponsesLLM.
+        return OpenAIResponsesLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            openai_service_tier=openai_service_tier,
+            extra_body=extra_body,
+            default_headers=default_headers,
             timeout=timeout,
         )
 
@@ -531,6 +628,8 @@ def create_llm_provider(
             groq_service_tier=groq_service_tier,
             openai_service_tier=openai_service_tier,
             extra_body=extra_body,
+            default_headers=default_headers,
+            cache_affinity=cache_affinity,
             ollama_num_ctx=ollama_num_ctx,
             timeout=timeout,
         )
@@ -552,7 +651,7 @@ class LLMProvider:
         api_key: str,
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         groq_service_tier: str | None = None,
         openai_service_tier: str | None = None,
         bedrock_service_tier: str | None = None,
@@ -570,6 +669,8 @@ class LLMProvider:
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
         ollama_num_ctx: int | None = None,
+        cache_affinity: str | None = None,
+        structured_output_forced_tool: bool = False,
     ):
         """
         Initialize LLM provider.
@@ -579,7 +680,8 @@ class LLMProvider:
             api_key: API key.
             base_url: Base URL for the API.
             model: Model name.
-            reasoning_effort: Reasoning effort level for supported providers.
+            reasoning_effort: Reasoning effort level for supported providers, or None
+                when the operator configured none.
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             bedrock_service_tier: Bedrock service tier (None, "flex", "priority", "reserved") - from config.
@@ -591,6 +693,11 @@ class LLMProvider:
                 (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware.
+            cache_affinity: Backend prompt-cache pinning mode for the OpenAI-compatible and
+                Fireworks providers ("none", "xai_conv_id", "openai_prompt_cache_key",
+                "auto"). Validated here for every provider so a typo never fails silently;
+                providers on other factory branches ignore it. Used verbatim — callers
+                resolve the per-operation/global fallback.
             litellmrouter_config: Provider-specific config for ``provider="litellmrouter"``.
                 JSON object passed verbatim to ``litellm.Router(**config)`` — see
                 https://docs.litellm.ai/docs/routing. Ignored unless ``provider == "litellmrouter"``.
@@ -611,6 +718,9 @@ class LLMProvider:
                 ``max_retries``. ``None`` keeps each method's own fallback.
             max_backoff: Default maximum retry backoff (seconds), same resolution as
                 ``max_retries``. ``None`` keeps each method's own fallback.
+            structured_output_forced_tool: Structured output via a forced tool call
+                instead of ``response_format``, for the LiteLLM-backed providers - from
+                config (``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``).
 
         This constructor uses every argument as passed and does not read global
         ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
@@ -639,6 +749,9 @@ class LLMProvider:
         self.openai_service_tier = openai_service_tier
         self.bedrock_service_tier = bedrock_service_tier
         self.gemini_service_tier = gemini_service_tier
+        # Structured-output transport for the LiteLLM-backed providers. Used verbatim —
+        # the caller resolves the server-level default, like the fields above.
+        self.structured_output_forced_tool = structured_output_forced_tool
         self.ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
@@ -653,10 +766,16 @@ class LLMProvider:
         # Used verbatim — callers resolve the global fallback (see _member_to_llm /
         # the per-op builds in MemoryEngine, and LLMProvider.from_env).
         self.default_headers = default_headers
+        # Backend prompt-cache pinning mode. Validated here rather than only at the
+        # provider so a typo fails for every provider, not just the ones that act on
+        # it — the setting has no visible effect in the response, so a silent
+        # fallback to "none" would be indistinguishable from it working.
+        self.cache_affinity = parse_cache_affinity(cache_affinity).value
 
         # Validate provider
         valid_providers = [
             "openai",
+            "openai-responses",
             "groq",
             "ollama",
             "ollama-cloud",
@@ -667,6 +786,7 @@ class LLMProvider:
             "vertexai",
             "openai-codex",
             "claude-code",
+            "github-copilot",
             "mock",
             "none",
             "minimax",
@@ -682,6 +802,7 @@ class LLMProvider:
             "atlas",
             "fireworks",
             "nous",
+            "xai-oauth",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -786,6 +907,8 @@ class LLMProvider:
             litellmrouter_config=router_config,
             ollama_num_ctx=self.ollama_num_ctx,
             timeout=self.timeout,
+            cache_affinity=self.cache_affinity,
+            structured_output_forced_tool=self.structured_output_forced_tool,
         )
 
         # Backward compatibility: Keep mock provider properties
@@ -951,10 +1074,18 @@ class LLMProvider:
         # hand so the error path below can attach it if parsing/validation fails.
         usage_token = set_response_usage(None)
         try:
+            # Providers that own retry loops acquire the shared permits for each
+            # upstream attempt so backoff never occupies request capacity.
+            attempt_gated = self._provider_impl.supports_attempt_scoped_concurrency()
             async with AsyncExitStack() as stack:
-                for sem in _semaphores_for_scope(scope):
-                    await stack.enter_async_context(sem)
-                set_stage(base_stage)
+                if not attempt_gated:
+                    for sem in _semaphores_for_scope(scope):
+                        await stack.enter_async_context(sem)
+                    # Permits in hand — only now leave `.queued`. Attempt-gated
+                    # providers acquire permits per attempt instead, so they keep
+                    # `.queued` until their first `attempt=N` stamp lands after
+                    # the permit acquire inside attempt_context (#3002).
+                    set_stage(base_stage)
 
                 # cached_prefix is only set for providers that returned a handle
                 # from get_or_create_cached_prefix() (e.g. Gemini); it's None for
@@ -963,6 +1094,7 @@ class LLMProvider:
                 cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
                 try:
                     # Delegate to provider implementation
+                    attempt_kwarg = {"attempt_context": lambda: _attempt_permits(scope)} if attempt_gated else {}
                     result = await self._provider_impl.call(
                         messages=messages,
                         response_format=response_format,
@@ -976,6 +1108,7 @@ class LLMProvider:
                         strict_schema=strict_schema,
                         return_usage=return_usage,
                         **cache_kwarg,
+                        **attempt_kwarg,
                     )
                 except Exception as e:
                     # The provider call may have succeeded (and incurred token
@@ -1087,10 +1220,15 @@ class LLMProvider:
         # hand so the error path below can attach it if parsing/validation fails.
         usage_token = set_response_usage(None)
         try:
+            attempt_gated = self._provider_impl.supports_attempt_scoped_concurrency()
             async with AsyncExitStack() as stack:
-                for sem in _semaphores_for_scope(scope):
-                    await stack.enter_async_context(sem)
-                set_stage(base_stage)
+                if not attempt_gated:
+                    for sem in _semaphores_for_scope(scope):
+                        await stack.enter_async_context(sem)
+                    # Permits in hand — only now leave `.queued`; attempt-gated
+                    # providers stay `.queued` until their first post-acquire
+                    # `attempt=N` stamp (see call() above, #3002).
+                    set_stage(base_stage)
 
                 # cached_prefix is only set for providers that returned a handle
                 # from get_or_create_cached_prefix() / create_incremental_cache();
@@ -1103,6 +1241,7 @@ class LLMProvider:
                 )
                 try:
                     # Delegate to provider implementation
+                    attempt_kwarg = {"attempt_context": lambda: _attempt_permits(scope)} if attempt_gated else {}
                     result = await self._provider_impl.call_with_tools(
                         messages=messages,
                         tools=tools,
@@ -1114,6 +1253,7 @@ class LLMProvider:
                         max_backoff=max_backoff,
                         tool_choice=tool_choice,
                         **cache_kwarg,
+                        **attempt_kwarg,
                     )
                 except Exception as e:
                     # The provider call may have succeeded (and incurred token
@@ -1308,15 +1448,17 @@ class LLMProvider:
         # does so without building the full HindsightConfig, keeping from_env() a
         # lightweight env-only loader (see test_llm_provider_from_env_keeps_lightweight_loader).
         from ..config import (
+            DEFAULT_LLM_CACHE_AFFINITY,
             DEFAULT_LLM_GROQ_SERVICE_TIER,
             DEFAULT_LLM_OPENAI_SERVICE_TIER,
             DEFAULT_LLM_PROMPT_CACHE_ENABLED,
             DEFAULT_LLM_PROVIDER,
-            DEFAULT_LLM_REASONING_EFFORT,
+            DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
             DEFAULT_LLM_TIMEOUT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
             ENV_LLM_BEDROCK_SERVICE_TIER,
+            ENV_LLM_CACHE_AFFINITY,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_GEMINI_SAFETY_SETTINGS,
@@ -1329,11 +1471,13 @@ class LLMProvider:
             ENV_LLM_PROMPT_CACHE_ENABLED,
             ENV_LLM_PROVIDER,
             ENV_LLM_REASONING_EFFORT,
+            ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
             ENV_LLM_TIMEOUT,
             ENV_LLM_VERTEXAI_PROJECT_ID,
             ENV_LLM_VERTEXAI_REGION,
             ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
             _get_default_model_for_provider,
+            _parse_boolean_env,
             _parse_llm_router_config,
             _parse_optional_positive_int,
             parse_gemini_service_tier,
@@ -1345,14 +1489,15 @@ class LLMProvider:
         if not api_key and not requires_api_key(provider):
             pass  # Provider handles its own auth
         elif not api_key:
-            raise ValueError(
-                f"{ENV_LLM_API_KEY} environment variable is required (unless using openai-codex, claude-code, or litellm)"
-            )
+            raise ValueError(f"{ENV_LLM_API_KEY} environment variable is required for provider '{provider}'")
 
         base_url = os.getenv(ENV_LLM_BASE_URL, "")
         model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(provider)
         extra_body = json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null"))
         default_headers = json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null"))
+        # Same default as HindsightConfig.from_env: this entry point must not
+        # resolve to a different mode than the engine's own config path.
+        cache_affinity = os.getenv(ENV_LLM_CACHE_AFFINITY, DEFAULT_LLM_CACHE_AFFINITY) or None
         prompt_cache_enabled = os.getenv(
             ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
         ).lower() in (
@@ -1367,9 +1512,10 @@ class LLMProvider:
             api_key=api_key,
             base_url=base_url,
             model=model,
-            reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
+            reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT) or None,
             extra_body=extra_body,
             default_headers=default_headers,
+            cache_affinity=cache_affinity,
             groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
             openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
@@ -1386,6 +1532,10 @@ class LLMProvider:
             vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,
             vertexai_service_account_key=os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY) or None,
             timeout=float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT))),
+            structured_output_forced_tool=_parse_boolean_env(
+                ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
+                DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
+            ),
         )
 
 

@@ -3,7 +3,7 @@ title: "The Fully Open Agent Memory Stack: Self-Hosting Hermes + Hindsight"
 authors: [benfrank241]
 slug: "2026/07/17/hermes-hindsight-open-stack"
 date: 2026-07-17T12:00
-tags: [hindsight, hermes, agent-memory, open-source, self-hosted, persistent-memory]
+tags: [hindsight, hermes, agent-memory, open-source, self-hosted, persistent-memory, tutorial]
 description: "Most agent-plus-memory stacks have a closed core: a frontier API model, a proprietary memory service, or both. Hermes and Hindsight are the exception. Every layer is open source and can run on your own hardware with no external calls."
 image: /img/blog/hermes-hindsight-open-stack.png
 hide_table_of_contents: true

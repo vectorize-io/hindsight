@@ -90,7 +90,8 @@ class TestAgentProfile:
         await memory.get_bank_profile(agent_id_2, request_context=request_context)
         await memory.get_bank_profile(agent_id_3, request_context=request_context)
 
-        agents = await memory.list_banks(request_context=request_context)
+        page = await memory.list_banks(search_query="test_list", limit=1000, request_context=request_context)
+        agents = page["banks"]
 
         agent_ids = [a["bank_id"] for a in agents]
         assert agent_id_1 in agent_ids

@@ -20,6 +20,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 **Supported providers:**
 
 - OpenAI
+- OpenAI Responses
 - Anthropic
 - Google Gemini
 - Vertex AI
@@ -38,9 +39,11 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Requesty
 - OpenAI Codex
 - Claude Code
+- GitHub Copilot
 - AWS Bedrock
 - Fireworks AI
 - Nous Portal
+- SuperGrok (OAuth)
 - OpenAI Compatible
 - LiteLLM (100+)
 
@@ -48,9 +51,29 @@ Also supports **any OpenAI-compatible API** (e.g., Azure OpenAI, Together AI, Fi
 
 > **💡 OpenAI-Compatible Providers**
 >
-Hindsight works with any provider that exposes an OpenAI-compatible API (e.g., Azure OpenAI). Simply set `HINDSIGHT_API_LLM_PROVIDER=openai` and configure `HINDSIGHT_API_LLM_BASE_URL` to point to your provider's endpoint.
+Hindsight works with any provider that exposes an OpenAI-compatible API. Set `HINDSIGHT_API_LLM_PROVIDER=openai` and point `HINDSIGHT_API_LLM_BASE_URL` at the endpoint that serves `/chat/completions` — for most providers that is the URL ending in `/v1`, **not** the account or resource root.
+
+**Azure OpenAI does not serve the API at the resource root**, so `https://<resource>.openai.azure.com` on its own returns `404 Resource not found`. See [Azure OpenAI Setup](#azure-openai-setup) for the two URL shapes that work.
+
+The `openai` provider talks to the **Chat Completions API** (`/v1/chat/completions`). For the newer **Responses API** (`/v1/responses`), use `HINDSIGHT_API_LLM_PROVIDER=openai-responses` — see the tip below. Both accept a custom `HINDSIGHT_API_LLM_BASE_URL`, so an OpenAI-compatible endpoint that exposes `/v1/responses` works the same way as a Chat Completions one.
 
 See [Configuration](./configuration#llm-provider) for setup examples.
+> **💡 OpenAI Responses API (reasoning + tools together)**
+>
+Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions.
+
+Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
+
+Recommended for reasoning models (gpt-5.x, o-series) that use tools. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
+
+See [Configuration](./configuration#llm-provider) for setup examples.
+> **ℹ️ Reasoning/thinking models and `max_tokens`**
+>
+On a thinking model (Gemini 2.5+/3.x, GPT-5/o-series, Grok reasoning, Claude extended thinking) the provider's output budget covers **reasoning tokens plus visible output** — the reasoning is billed against the same `max_output_tokens`/`max_completion_tokens` cap. A small cap can therefore be fully consumed by reasoning, leaving the visible answer truncated mid-word.
+
+Hindsight keeps the reflect/mental-model `max_tokens` meaning **visible page length**: it is applied as a prompt-level target plus a post-hoc rewrite, **not** as a hard cap on the provider call. Reflect's synthesis call is uncapped by default so reasoning never starves the answer. If you want a hard cost ceiling on that call, set `HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS` — but leave enough headroom above your page length for reasoning, or thinking models will truncate again.
+
+When a Gemini call does hit its cap, Hindsight logs a `truncated at max_output_tokens` warning instead of returning the half-written text as a silent success.
 > **💡 AWS Bedrock**
 >
 Set `HINDSIGHT_API_LLM_PROVIDER=bedrock` to use AWS Bedrock models directly. Model names use Bedrock model IDs (e.g., `us.amazon.nova-2-lite-v1:0`). No API key is required — authentication uses AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME`) or IAM roles. For 50% cost savings on throughput, set `HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER=flex` (see [Configuration](./configuration#llm-provider)).
@@ -80,6 +103,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | Provider | Batch API | Explicit prompt caching |
 |----------|:---------:|:-----------------------:|
 | OpenAI (`openai`) | ✅ | — |
+| OpenAI Responses (`openai-responses`) | — | — |
 | Anthropic (`anthropic`) | — | — |
 | Google Gemini (`gemini`) | ✅ | ✅ |
 | Vertex AI (`vertexai`) | — | ✅ |
@@ -98,9 +122,11 @@ Beyond basic generation, some providers support optional features that lower cos
 | Requesty (`requesty`) | — | — |
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
+| GitHub Copilot (`github-copilot`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
 | Fireworks AI (`fireworks`) | ✅ | — |
 | Nous Portal (`nous`) | — | — |
+| SuperGrok (OAuth) (`xai-oauth`) | — | — |
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
@@ -143,6 +169,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | Provider | Default Model |
 |----------|--------------|
 | `openai` | `gpt-4o-mini` |
+| `openai-responses` | `gpt-5.6` |
 | `anthropic` | `claude-haiku-4-5` |
 | `gemini` | `gemini-3.5-flash` |
 | `vertexai` | `google/gemini-3.1-flash-lite` |
@@ -161,9 +188,11 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `requesty` | `openai/gpt-4o-mini` |
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
+| `github-copilot` | `gpt-5.6-terra` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
 | `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
 | `nous` | `deepseek/deepseek-v4-flash` |
+| `xai-oauth` | `grok-4.5` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:
@@ -218,10 +247,18 @@ export HINDSIGHT_API_LLM_PROVIDER=groq
 export HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=openai/gpt-oss-20b
 
-# OpenAI
+# OpenAI (Chat Completions API, /v1/chat/completions)
 export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gpt-4o
+
+# OpenAI Responses API (/v1/responses) — reasoning + tools together
+export HINDSIGHT_API_LLM_PROVIDER=openai-responses
+export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6           # reasoning model; e.g. gpt-5.6-terra
+export HINDSIGHT_API_LLM_REASONING_EFFORT=high   # sent alongside tools, unlike Completions
+# Optional: point at any OpenAI-compatible endpoint exposing /v1/responses
+# export HINDSIGHT_API_LLM_BASE_URL=https://your-gateway.example.com/v1
 
 # Gemini
 export HINDSIGHT_API_LLM_PROVIDER=gemini
@@ -278,6 +315,12 @@ export HINDSIGHT_API_LLM_PROVIDER=nous
 export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash  # any Nous-hosted slug
 # No API key needed — reads a rotating JWT from ~/.hermes/auth.json (see "Nous Portal Setup" below)
 
+# SuperGrok subscription via device-code OAuth (no API key; the subscription lane, not
+# xAI API support — for an api.x.ai API key use `openai` with a base URL instead)
+export HINDSIGHT_API_LLM_PROVIDER=xai-oauth
+# export HINDSIGHT_API_LLM_MODEL=grok-4.5  # defaults to grok-4.5
+# No API key needed — reads an OAuth grant from ~/.hindsight/xai_oauth.json (see "SuperGrok Subscription Setup" below)
+
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
 export HINDSIGHT_API_LLM_MODEL=gemini-3.1-flash-lite
@@ -289,6 +332,34 @@ export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
 ```
 
 **Note:** The LLM is the primary bottleneck for retain operations. See [Performance](./performance) for optimization strategies.
+
+---
+
+### GitHub Copilot Setup
+
+Use a GitHub Copilot subscription for Hindsight's extraction, consolidation, and reflection calls through the official GitHub Copilot SDK.
+
+**Prerequisites:**
+- An active GitHub Copilot entitlement
+- Copilot CLI signed in under the same operating-system user that runs Hindsight
+
+**Configure Hindsight:**
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=github-copilot
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6-terra
+# No HINDSIGHT_API_LLM_API_KEY is needed.
+```
+
+The provider starts one shared Copilot runtime for all Hindsight LLM lanes. That runtime uses a hook-free temporary `COPILOT_HOME` containing only the signed-in account selection; the credential itself is resolved by the runtime from the system keychain or an existing `gh` CLI login. Each call then uses an isolated transient session with repository instructions, skills, Copilot memory, built-in tools, and the cross-session store disabled. This prevents the memory integration from recursively retaining its own extraction calls.
+
+For automation, the Copilot SDK also accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`. With one of those set, Copilot CLI never has to have been run on the host, so containers and CI images work with no `~/.copilot` at all. GitHub Actions and server-to-server deployments must have the appropriate Copilot organization policy and token permissions.
+
+**Important notes:**
+- Usage counts against the authenticated account or organization's Copilot allowance and AI Credits.
+- `HINDSIGHT_API_LLM_BASE_URL` optionally points to an existing headless Copilot runtime, such as `http://127.0.0.1:4321`; it is not an LLM-provider endpoint for this provider.
+- GitHub-hosted Copilot sessions do not expose temperature or maximum-output-token controls through the SDK, so those Hindsight settings are not applied.
+- Embeddings and reranking continue to use Hindsight's separately configured providers; their local defaults require no API key.
 
 ---
 
@@ -506,6 +577,158 @@ You can use any model supported by Claude Code CLI.
 
 ---
 
+### SuperGrok Subscription Setup (device-code OAuth)
+
+Serve LLM calls from a **SuperGrok subscription** (device-code OAuth) — no API
+key. For API-key access to `api.x.ai`, use `provider: openai` with
+`HINDSIGHT_API_LLM_BASE_URL=https://api.x.ai/v1`; **this provider is the
+subscription lane**, the same category as `openai-codex` (ChatGPT subscription)
+and `claude-code` (Claude subscription). Both routes reach the same published
+endpoint, so the credential is the whole difference: a flat-rate consumer
+subscription authorized once in a browser, instead of a per-token metered key.
+
+Authentication is xAI's own OIDC issuer at `https://auth.x.ai` using the RFC
+8628 device-code flow, with the public OAuth client id published in xAI's
+Apache-2.0 Grok CLI sources. Hindsight keeps its own credential file and never
+reads or writes the Grok CLI's `~/.grok/auth.json`.
+
+> **📝 Subscription entitlement**
+>
+
+xAI may restrict `api.x.ai` access by SuperGrok subscription tier: an OAuth
+grant can be valid and still be refused with HTTP 403. Hindsight reports that
+as a distinct entitlement error naming the cause rather than as a credential
+failure, and it neither re-tries nor discards the token. If you hit it, verify
+the account tier or use an API-key provider instead.
+
+Usage counts against your SuperGrok subscription limits. When the account's
+spending limit stops a call, Hindsight raises a distinct quota error and leaves
+the credential alone.
+
+**Prerequisites:**
+- An active SuperGrok subscription
+- A browser on the machine you run the login from (the device-code flow needs
+  an interactive approval; the running service never performs one)
+
+**Setup steps:**
+
+1. **Log in once, on the host that will own the credential:**
+   ```bash
+   python -m hindsight_api.engine.providers.xai_oauth_auth login
+   ```
+   The command prints a verification URL and a user code, waits for approval,
+   then writes `~/.hindsight/xai_oauth.json` with owner-only permissions.
+
+2. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=xai-oauth
+   # export HINDSIGHT_API_LLM_MODEL=grok-4.5   # defaults to grok-4.5
+   # No API key needed
+   ```
+
+3. **Start Hindsight:**
+   ```bash
+   hindsight-api
+   ```
+
+**Important notes:**
+- The access token is refreshed automatically: proactively 60 seconds before
+  expiry (or before the configured request timeout, whichever is longer), and
+  once reactively on an HTTP 401. Several configured lanes share one credential
+  file safely — the refresh takes an advisory lock and re-reads the file under
+  it, so siblings do not each refresh.
+- A running service **never** starts the device-code flow. When only a login can
+  restore service, calls fail with the exact command to run.
+- Unlike reaching `api.x.ai` through `provider: openai`, this provider sends the
+  member's configured `reasoning_effort`, so that setting takes effect here.
+  The one value not forwarded is `none`: xAI rejects it outright (HTTP 400),
+  so this lane expresses it the way the API expects — by omitting the field.
+- Only non-streaming calls are implemented. Streaming responses omit
+  `prompt_tokens_details`, so cached-token accounting would read low.
+
+**Optional environment overrides:**
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `HINDSIGHT_API_XAI_OAUTH_BASE_URL` | Point at a different upstream. Takes precedence over `HINDSIGHT_API_LLM_BASE_URL`. | `https://api.x.ai/v1` |
+| `HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH` | Relocate the credential store. Both the read and the write follow it. | `~/.hindsight/xai_oauth.json` |
+| `HINDSIGHT_API_XAI_OAUTH_CLIENT_ID` | Override the OAuth client id used for login and refresh. | xAI's published public client id |
+| `HINDSIGHT_API_XAI_OAUTH_SCOPE` | Override the scope string requested at login. | `openid profile email offline_access grok-cli:access api:access` |
+| `HINDSIGHT_API_XAI_OAUTH_REFRESH_SKEW_SECONDS` | Refresh this many seconds before expiry. Widen it for deployments that touch the provider rarely. | `60` |
+| `HINDSIGHT_API_XAI_OAUTH_REFRESH_TIMEOUT_SECONDS` | Per-request timeout for discovery, login and refresh calls. | `20` |
+
+#### Deployment note
+
+The credential is a host-local file, and only the interactive login can create
+it. A containerized engine therefore needs the store mounted from a host where
+the login was run (or the login run inside the container once, interactively)
+and `HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH` pointed at it. The mount must be
+**writable**: unlike the Grok CLI's own file, this store is where Hindsight
+persists each rotated token, so a read-only mount degrades to failing once the
+current token expires.
+
+xAI issues a **new refresh token on every refresh** and retires the one it
+replaces. Replicas must therefore share the one credential file rather than
+each starting from its own copy of a single login's output: a copy stops
+working as soon as another replica refreshes, and the login has to be repeated.
+A single shared writable volume is the supported shape; if you cannot provide
+one, run one replica on this provider and give the others an API-key lane.
+
+---
+
+### Azure OpenAI Setup
+
+Azure OpenAI is reached through the **`openai`** provider — there is no `azure`
+provider, and setting one fails at startup with
+`Invalid LLM provider: azure`.
+
+The one thing that trips people up is the base URL. Azure does not serve the
+OpenAI API at the resource root, so the endpoint shown in the Azure portal is
+not usable on its own:
+
+| `HINDSIGHT_API_LLM_BASE_URL` | Result |
+|---|---|
+| `https://<resource>.openai.azure.com` | `404 Resource not found` |
+| `https://<resource>.openai.azure.com/openai/deployments/<deployment>` | `404 Resource not found` (no `api-version`) |
+| `https://<resource>.openai.azure.com/openai/v1` | works |
+| `https://<resource>.openai.azure.com/openai/deployments/<deployment>?api-version=<version>` | works |
+
+**Recommended — the v1 surface:**
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_API_KEY=<azure-openai-resource-key>
+export HINDSIGHT_API_LLM_MODEL=<deployment-name>
+export HINDSIGHT_API_LLM_BASE_URL=https://<resource>.openai.azure.com/openai/v1
+```
+
+**Or the deployment-scoped form.** Keep the `api-version` query string — Hindsight
+parses it out of the base URL and passes it to the SDK:
+
+```bash
+export HINDSIGHT_API_LLM_BASE_URL=https://<resource>.openai.azure.com/openai/deployments/<deployment>?api-version=2025-01-01-preview
+```
+
+**Important notes:**
+- `HINDSIGHT_API_LLM_MODEL` is your **deployment name**, not the model name. A
+  `gpt-4o` deployed as `my-gpt4o` is configured as `my-gpt4o`.
+- The key is the Azure OpenAI **resource** key (`az cognitiveservices account
+  keys list -n <resource> -g <group>`). An API Management subscription key is a
+  different credential: with APIM in front, the base URL must be the APIM route
+  and APIM has to forward the `api-key` header. Test against the Azure endpoint
+  directly first to isolate which layer is failing.
+- Gateways and proxies must preserve the same path shape (`/openai/v1` or
+  `/openai/deployments/...?api-version=`).
+- Azure OpenAI accepts `prompt_cache_key` on GPT deployments (it improves cache
+  routing on GPT-5.6 and later), but the same `*.openai.azure.com` endpoint also
+  serves non-OpenAI Foundry models (DeepSeek, Llama, Mistral) that reject it with
+  `unrecognized_request_argument`. The host alone can't tell the two apart, so
+  [`HINDSIGHT_API_LLM_CACHE_AFFINITY`](./configuration#llm-provider) resolves
+  `auto` to `none` for Azure hosts. If your deployment serves an OpenAI model,
+  set it explicitly to `openai_prompt_cache_key`.
+
+---
+
 ### Vertex AI Setup (Google Cloud)
 
 Google Cloud's Vertex AI provides access to Gemini models via the native Google GenAI SDK.
@@ -679,6 +902,8 @@ export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=openai/text-embedding-3-small
 ```
 
 See [Configuration](./configuration#embeddings) for all options including Azure OpenAI and custom endpoints.
+
+For a runnable Docker Compose setup that serves both embeddings and reranking from self-hosted TEI sidecars, see [`docker/docker-compose/tei/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/tei).
 
 ---
 

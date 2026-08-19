@@ -1,7 +1,7 @@
 """Tests for the temporal-recall entry-point selection (Option A: similarity-gated +
 window coverage).
 
-`retrieve_temporal_combined` selects in-window entry points by *embedding similarity*
+`retrieve_temporal_combined_sql` selects in-window entry points by *embedding similarity*
 (not recency) and then narrows them to span the window's time range via
 `_select_with_temporal_coverage`. This replaced an earlier recency-ranked selection that
 biased toward the end of the window and, on banks with dense/near-uniform dates, degraded
@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import hindsight_api.engine.search.retrieval as retrieval_module
-from hindsight_api.engine.search.retrieval import _select_with_temporal_coverage, retrieve_temporal_combined
+from hindsight_api.engine.search.retrieval import _select_with_temporal_coverage, retrieve_temporal_combined_sql
 from hindsight_api.engine.task_backend import fq_table
 
 EMBED_DIM = 384
@@ -130,7 +130,7 @@ async def test_temporal_recall_selects_by_similarity_not_recency(memory):
         before = await _insert_unit(conn, bank_id, "before", "world", datetime(2024, 12, 1, tzinfo=UTC), _SIM_100)
         after = await _insert_unit(conn, bank_id, "after", "world", datetime(2025, 3, 1, tzinfo=UTC), _SIM_100)
 
-        results = await retrieve_temporal_combined(conn, _QUERY, bank_id, ["world"], start, end, budget=100)
+        results = await retrieve_temporal_combined_sql(conn, _QUERY, bank_id, ["world"], start, end, budget=100)
 
     by_id = {r.id: r for r in results.get("world", [])}
     # Similarity wins over recency: the oldest, most-relevant unit is selected.
@@ -162,7 +162,7 @@ async def test_temporal_recall_covers_window_range(memory):
         jul = await _insert_unit(conn, bank_id, "jul", "world", datetime(2025, 7, 15, tzinfo=UTC), _SIM_090)
         octo = await _insert_unit(conn, bank_id, "oct", "world", datetime(2025, 10, 15, tzinfo=UTC), _SIM_090)
 
-        results = await retrieve_temporal_combined(conn, _QUERY, bank_id, ["world"], start, end, budget=100)
+        results = await retrieve_temporal_combined_sql(conn, _QUERY, bank_id, ["world"], start, end, budget=100)
 
     ids = {r.id for r in results.get("world", [])}
     # Without coverage, the top-10 by similarity would be 10 January units and the Apr/Jul/Oct
@@ -181,13 +181,13 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
     graph_call_kwargs: list[set[str]] = []
 
     @asynccontextmanager
-    async def fake_acquire_with_retry(pool):
+    async def fake_acquire_with_retry(pool, *args, **kwargs):
         yield object()
 
-    async def fake_semantic_bm25_combined(*args, **kwargs):
+    async def fake_semantic_bm25_combined_sql(*args, **kwargs):
         return {"world": retrieval_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
 
-    async def fake_temporal_combined(*args, **kwargs):
+    async def fake_temporal_combined_sql(*args, **kwargs):
         temporal_thresholds.append(kwargs["semantic_threshold"])
         return {"world": []}
 
@@ -196,17 +196,20 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
             graph_call_kwargs.append(set(kwargs))
             return [], None
 
-    monkeypatch.setattr(retrieval_module, "acquire_with_retry", fake_acquire_with_retry)
-    monkeypatch.setattr(retrieval_module, "retrieve_semantic_bm25_combined", fake_semantic_bm25_combined)
-    monkeypatch.setattr(retrieval_module, "retrieve_temporal_combined", fake_temporal_combined)
-    monkeypatch.setattr(
-        retrieval_module,
-        "get_config",
-        lambda: SimpleNamespace(
-            graph_seed_min_similarity=0.3,
-            temporal_semantic_min_similarity=0.24,
-        ),
-    )
+    fake_config = SimpleNamespace(graph_seed_min_similarity=0.3, temporal_semantic_min_similarity=0.24)
+
+    # The per-arm SQL orchestration now lives in PostgresMemories.recall_unified, so stub the seams
+    # it uses: the shared connection acquire, the dense+BM25 SQL, the temporal SQL, and the graph
+    # retriever (installed via the module-global cache, restored automatically).
+    from hindsight_api.engine.memories.postgres import PostgresMemories
+
+    monkeypatch.setattr("hindsight_api.engine.memories._memories", PostgresMemories({}))
+    monkeypatch.setattr("hindsight_api.engine.db_utils.acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(retrieval_module, "retrieve_semantic_bm25_combined_sql", fake_semantic_bm25_combined_sql)
+    monkeypatch.setattr(retrieval_module, "retrieve_temporal_combined_sql", fake_temporal_combined_sql)
+    monkeypatch.setattr(retrieval_module, "_default_graph_retriever", FakeGraphRetriever())
+    monkeypatch.setattr(retrieval_module, "get_config", lambda: fake_config)
+    monkeypatch.setattr("hindsight_api.config.get_config", lambda: fake_config)
     monkeypatch.setattr(
         "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
         lambda *args, **kwargs: (start, end),
@@ -219,7 +222,6 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
         bank_id="test_temporal_min_semantic_decoupling",
         fact_types=["world"],
         thinking_budget=10,
-        graph_retriever=FakeGraphRetriever(),
         min_semantic=0.5,
     )
 

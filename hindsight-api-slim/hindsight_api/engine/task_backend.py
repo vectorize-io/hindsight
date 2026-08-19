@@ -238,7 +238,6 @@ class BrokerTaskBackend(TaskBackend):
             logger.debug(f"submit_task UPDATE for operation {operation_id} (no-op if payload already set)")
         else:
             # Insert new operation (for tasks without pre-created records)
-            # e.g., access_count_update tasks
             import uuid
 
             new_id = uuid.uuid4()

@@ -130,7 +130,7 @@ export HINDSIGHT_API_REFLECT_LLM_MODEL=<small-fast-model>
 export HINDSIGHT_API_RETAIN_LLM_MODEL=<structured-output-model>
 ```
 
-If your model exposes a reasoning/thinking budget, keep it low (the default) — extra reasoning tokens are pure latency for the extraction and consolidation paths:
+If your model exposes a reasoning/thinking budget, set it low — extra reasoning tokens are pure latency for the extraction and consolidation paths. Nothing is sent unless you set it, so an unconfigured deployment runs at whatever effort the model defaults to (`none` is the value that switches thinking off entirely, where the backend supports it):
 
 ```bash
 export HINDSIGHT_API_LLM_REASONING_EFFORT=low

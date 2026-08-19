@@ -51,6 +51,7 @@
       "select": "Select a memory bank...",
       "search": "Search memory banks...",
       "empty": "No memory banks yet.",
+      "noSearchResults": "No banks match your search.",
       "create": "Create new bank",
       "switchTitle": "Switch memory bank",
       "returnTo": "Return to {bank}",
@@ -277,7 +278,7 @@
     "mentalModels": "Mental Models",
     "noMentalModels": "No mental models",
     "upToDate": "Up to date",
-    "stale": "Stale",
+    "needsRefresh": "Needs refresh",
     "total": "Total",
     "activity": "Activity",
     "memoriesIngested": "Memories ingested",
@@ -336,7 +337,7 @@
     "retainMissionDescription": "What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode.",
     "retainMissionPlaceholder": "e.g. Always include technical decisions, API design choices, and architectural trade-offs. Ignore meeting logistics, greetings, and social exchanges.",
     "extractionModeLabel": "Extraction Mode",
-    "extractionModeDescription": "How aggressively to extract facts: concise (default, selective), verbose (capture everything), custom (write your own extraction rules)",
+    "extractionModeDescription": "How facts are extracted during retain: concise (default, selective), verbose (capture everything), verbatim (keep the wording as written), chunks (skip the LLM entirely and store each chunk as-is), custom (write your own extraction rules)",
     "customExtractionPromptLabel": "Custom Extraction Prompt",
     "customExtractionPromptDescription": "Replaces the built-in extraction rules entirely. Only active when Extraction Mode is set to custom.",
     "entitiesTitle": "Entities",
@@ -409,6 +410,7 @@
     "mcpGroupDocuments": "Documents",
     "mcpGroupOperations": "Operations",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Knowledge base",
     "retainSectionDescription": "Default extraction settings and named strategies. Pass a strategy name on retain requests to override defaults per-item.",
     "defaultStrategyLabel": "Default strategy",
     "defaultStrategyDescription": "Applied automatically when no strategy is specified on a request.",
@@ -420,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "Maximum tokens of source facts considered when generating a single observation. Leave blank to use the server default.",
     "maxObservationsPerScopeLabel": "Max Observations Per Scope",
     "maxObservationsPerScopeDescription": "Cap on the number of observations stored per scope after consolidation. Leave blank to use the server default.",
+    "mentalModelMinRefreshIntervalLabel": "Mental Model Min Refresh Interval",
+    "mentalModelMinRefreshIntervalDescription": "Minimum seconds between two automatic refreshes of the same mental model in this bank. A refresh triggered sooner is queued and waits out the window, and further triggers fold into it — so a burst of retains costs one refresh instead of one per retain. Manual refreshes always run immediately. Leave blank to use the server default; 0 means no limit. A single model can override this in its own refresh settings.",
+    "mentalModelsTitle": "Mental Models & Knowledge Pages",
+    "mentalModelsDescription": "How the mental models in this bank — and the knowledge pages backed by them — are kept up to date.",
+    "mentalModelsFailedToSave": "Failed to save mental model settings",
     "serverDefault": "Server default",
     "addStrategy": "Add strategy",
     "nameLabel": "Name",
@@ -457,7 +464,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "Prompt injection detection: block attempts to override agent behavior",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Size anomaly: reject suspiciously large payloads",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Protected tag namespaces: enforce immutable identity tags",
-    "memoryDefenseEnterpriseCta": "Request a Demo"
+    "memoryDefenseEnterpriseCta": "Request a Demo",
+    "recallTitle": "Recall Pipeline",
+    "recallDescription": "Which retrieval stages run during recall for this bank",
+    "recallServerDefault": "Server Default",
+    "recallFailedToSave": "Failed to save recall pipeline settings",
+    "recallTemporalRetrievalLabel": "Temporal Retrieval",
+    "recallTemporalRetrievalDescription": "Run date-aware query analysis. Disabling also skips the temporal retrieval arm. Useful when this bank's content carries no meaningful dates.",
+    "recallGraphRetrievalLabel": "Graph Retrieval",
+    "recallGraphRetrievalDescription": "Traverse entity and link relationships during recall. Disabling trades relational recall for lower latency.",
+    "recallRerankingLabel": "Reranking",
+    "recallRerankingDescription": "Rerank fused candidates with the cross-encoder. Disabling returns the RRF-fused order directly — faster, but less precise.",
+    "extractionModeConcise": "Concise",
+    "extractionModeVerbose": "Verbose",
+    "extractionModeVerbatim": "Verbatim",
+    "extractionModeChunks": "Chunks (no LLM)",
+    "extractionModeCustom": "Custom"
   },
   "bankOperations": {
     "title": "Background Operations",
@@ -473,13 +495,15 @@
     "unknown": "Unknown",
     "notAvailable": "N/A",
     "operationDetailsLoadError": "Failed to load operation details",
+    "deferredUntilTitle": "Deferred until {time}",
     "status": {
       "all": "All",
       "pending": "Pending",
       "processing": "Processing",
       "completed": "Completed",
       "failed": "Failed",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "deferred": "Deferred"
     },
     "operationType": {
       "all": "All types",
@@ -488,7 +512,10 @@
       "refreshMentalModel": "Mental Model Refresh",
       "fileConvertRetain": "Convert File",
       "webhookDelivery": "Webhook Delivery",
-      "graphMaintenance": "Graph Maintenance"
+      "graphMaintenance": "Graph Maintenance",
+      "vectorIndexMaintenance": "Vector index maintenance",
+      "exportDocuments": "Export Documents",
+      "importDocuments": "Import Documents"
     },
     "table": {
       "id": "Operation ID",
@@ -502,7 +529,8 @@
     "action": {
       "cancel": "Cancel",
       "retry": "Retry",
-      "delete": "Delete"
+      "delete": "Delete",
+      "download": "Download"
     },
     "pagination": "Showing {start}-{end} of {total}",
     "paginationPrevious": "Previous",
@@ -518,6 +546,7 @@
       "progress": "Progress",
       "lastHeartbeat": "Last heartbeat"
     },
+    "outcomeDetails": "Outcome details",
     "metadata": "Metadata",
     "error": "Error",
     "rawPayloadParentHelp": "This is a parent operation — the raw payload is stored on each sub-batch. Open a child operation to inspect its payload.",
@@ -697,6 +726,7 @@
     "exportIncludeObservationsHint": "Also export synthesized observations. If left off, the target bank regenerates them during consolidation.",
     "importDialogTitle": "Import documents",
     "importDialogDescription": "Upload a .zip archive previously exported from a bank. This isn't a regular document upload — facts are re-embedded and re-linked in this bank. The import runs in the background.",
+    "importFileHint": "The .zip must be one produced by Export — from this bank or another one. To add PDFs, Word or text files, use \"Add Document → Upload Files\" instead.",
     "actionsButton": "Actions",
     "importConflictLabel": "If a document already exists",
     "importConflictSkip": "Skip — keep the existing document",
@@ -809,6 +839,9 @@
     "optionsRefreshCronLabel": "Scheduled refresh (cron)",
     "optionsRefreshCronPlaceholder": "min hour day month weekday  ·  e.g. 0 3 * * * (daily 03:00 UTC)",
     "optionsRefreshCronDescription": "Refresh on a fixed UTC cron schedule. Mutually exclusive with refreshing on new memories. A scheduled refresh only runs when new memories changed this model's scope. Leave empty to disable.",
+    "optionsMinRefreshIntervalLabel": "Minimum refresh interval (seconds)",
+    "optionsMinRefreshIntervalPlaceholder": "Default (inherit)",
+    "optionsMinRefreshIntervalDescription": "Floor on how often automatic refreshes run. A trigger firing sooner is queued and parked until the window closes, and further triggers fold into it — so a burst of retains costs one refresh. Manual refreshes always run immediately. 0 or empty = no floor.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",
     "optionsTagsPlaceholder": "e.g., project-x, team-alpha (comma-separated)",
@@ -850,7 +883,10 @@
     "clearDialogConfirm": "Clear",
     "actionClearContent": "Clear Content",
     "emptyContent": "No content yet. Refresh this mental model to generate content.",
-    "selectModelPrompt": "Select a mental model to view its content."
+    "selectModelPrompt": "Select a mental model to view its content.",
+    "optionsSectionTroubleshooting": "Troubleshooting",
+    "optionsKeepTraceLabel": "Keep refresh traces",
+    "optionsKeepTraceDescription": "Record how each refresh reached its result — mode, scope, time window, facts retrieved versus used, and delta operations. The only way to diagnose scheduled refreshes after they run."
   },
   "cronPreview": {
     "invalid": "Invalid cron expression",
@@ -936,7 +972,8 @@
     "observationTextField": "Text",
     "observationTagsField": "Tags",
     "observationSourceMemoriesField": "Source Memories ({count})",
-    "observationIdField": "ID"
+    "observationIdField": "ID",
+    "structuredOutputTitle": "Structured Output"
   },
   "searchDebug": {
     "noBankSelected": "No Bank Selected",
@@ -1458,7 +1495,13 @@
     "factTypeWorld": "world",
     "factTypeExperience": "experience",
     "factTypeObservation": "observation",
-    "actionClearContent": "Clear Content"
+    "actionClearContent": "Clear Content",
+    "structuredOutput": "Structured Output",
+    "responseSchemaTitle": "Structured output schema",
+    "refreshTrace": "Refresh trace",
+    "traceNotCaptured": "No trace recorded for this refresh. Turn on “Keep refresh traces” in the model's settings to record how each refresh reaches its result.",
+    "actionDryRun": "Run dry run",
+    "actionDryRunRunning": "Running dry run…"
   },
   "constellation": {
     "instructions": "Scroll to zoom · Drag to pan · Hover to explore · Click to select",
@@ -1656,7 +1699,8 @@
         "refresh": "Failed to refresh mental model",
         "history": "Failed to fetch mental model history",
         "notFound": "Mental model not found",
-        "clear": "Failed to clear mental model"
+        "clear": "Failed to clear mental model",
+        "dryRunRefresh": "Failed to dry-run mental model refresh"
       },
       "observations": {
         "list": "Failed to list observations",
@@ -1786,5 +1830,53 @@
     "pagesEmptyCta": "Create your first page",
     "recentDocsTitle": "Recent documents",
     "recentDocsEmpty": "No documents yet"
+  },
+  "schemaBuilder": {
+    "title": "Structured output schema",
+    "subtitle": "Add fields visually, or edit the raw JSON. The model returns an object in this shape.",
+    "visualTab": "Visual",
+    "codeTab": "Code",
+    "addField": "Add field",
+    "namePlaceholder": "field name",
+    "descriptionPlaceholder": "description (optional)",
+    "required": "Required",
+    "removeField": "Remove field",
+    "emptyState": "Add at least one field to define the output.",
+    "duplicateNames": "Field names must be unique.",
+    "visualUnavailable": "This schema is too advanced for the visual editor — edit it as code.",
+    "invalidJson": "Invalid JSON syntax.",
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "openBuilder": "Build schema",
+    "edit": "Edit",
+    "clear": "Remove schema",
+    "fieldsSummary": "{count, plural, one {# field} other {# fields}}",
+    "invalidSchema": "Invalid schema — open the builder to fix it.",
+    "fieldDescription": "When set, the answer is also returned as structured_output matching this schema.",
+    "itemsLabel": "each item"
+  },
+  "mentalModelDiagnostics": {
+    "fallbackNoBaseline": "No existing content to edit",
+    "fallbackQueryChanged": "The source query changed",
+    "fallbackDocUnreadable": "The stored document could not be read",
+    "fallbackOpsFailed": "The delta operations call failed",
+    "fallbackOpsAllSkipped": "Every delta operation was rejected",
+    "outcomeWritten": "New content written",
+    "outcomePreserved": "No new facts, content kept",
+    "outcomeFailed": "Empty result, refresh fails",
+    "outcomeDeltaNotApplied": "Delta not applied, refresh fails",
+    "warningsTitle": "Warnings",
+    "traceResults": "{count} results",
+    "executionTraceTitle": "Execution Trace",
+    "noOperations": "No operations",
+    "responseGenerated": "Response generated",
+    "agentDecided": "Agent decided",
+    "toolInputLabel": "Input:",
+    "executionTraceDescription": "{iterations} LLM calls • {totalMs}ms total",
+    "executingTools": "Tools called: {count}",
+    "resultTitle": "Dry run — {name}",
+    "toolOutputLabel": "Output:",
+    "toolWindowBound": "window: only memories updated after {time}",
+    "toolWindowUnbounded": "window: none — this tool is not time-bounded"
   }
 }

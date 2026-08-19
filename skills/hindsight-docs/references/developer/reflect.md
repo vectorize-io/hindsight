@@ -31,7 +31,7 @@ Unlike simple retrieval, reflect is an **agentic system** that:
 1. **Autonomously gathers evidence** — The agent decides what information it needs and calls appropriate tools
 2. **Uses hierarchical retrieval** — Checks mental models first, then observations, then raw facts
 3. **Applies disposition** — Shapes reasoning based on the bank's personality traits
-4. **Enforces directives** — Hard rules that must be followed in all responses
+4. **Enforces applicable directives** — Global rules and rules matching the reflect tag scope
 5. **Cites sources** — Returns which memories and observations were used
 
 ### The Agentic Loop
@@ -166,7 +166,11 @@ Different use cases benefit from different disposition configurations:
 
 ## Directives: Hard Rules
 
-While disposition traits *influence* reasoning style, **directives** are hard rules that the agent *must* follow. Directives are injected into the prompt and enforced in every response.
+While disposition traits *influence* reasoning style, **directives** are hard
+rules that the agent *must* follow when they apply to the current reflect scope.
+Untagged directives are global; tagged directives require matching reflect
+tags. See [Memory Banks: Directives](api/memory-banks.md#directives) for
+the full matching and default-behavior tables.
 
 ### When to Use Directives
 
@@ -227,6 +231,65 @@ When you call `reflect()`:
 ```
 
 The agent automatically gathers evidence, validates citations, and generates a grounded response.
+
+---
+
+## Structured Output
+
+Reflect returns prose by default. Pass a `response_schema` (a JSON Schema **object** with a
+`properties` map) to *also* get a machine-readable version of the same answer:
+
+```json
+{
+  "query": "How does Alice fit the research lead role?",
+  "response_schema": {
+    "type": "object",
+    "properties": {
+      "recommendation": { "type": "string" },
+      "strengths": { "type": "array", "items": { "type": "string" } },
+      "confidence": { "type": "number" }
+    },
+    "required": ["recommendation"]
+  }
+}
+```
+
+The response then carries **both** the prose and the structured view:
+
+```json
+{
+  "text": "Based on Alice's ML expertise and her work at Google, she'd be an excellent fit...",
+  "structured_output": {
+    "recommendation": "Strong fit for research lead",
+    "strengths": ["5 years of ML experience", "Search ranking at Google"],
+    "confidence": 0.9
+  }
+}
+```
+
+**How it works.** The agent first reasons to a natural-language answer, then a second pass
+extracts that answer into JSON matching your schema. `structured_output` is therefore always a
+faithful projection of `text` — you get the readable answer **and** a typed object to program
+against, never one instead of the other.
+
+**Schema rules.** The schema must be an object with at least one property. Each property's `type`
+is one of `string`, `number`, `integer`, `boolean`, `array`, or `object`, and `required` lists
+property names. Invalid schemas are rejected before the call runs, so a malformed schema fails
+fast instead of silently returning nothing.
+
+### Structured output for mental models
+
+A pinned mental model can carry its own `response_schema` in its trigger config. Every refresh
+then stores a `structured_output` next to the markdown content — extracted from the **final
+stored document**. This matters for delta-mode (surgical) refreshes: the structured view reflects
+the whole merged document, not just the facts that changed in that refresh.
+
+### Building a schema (no code)
+
+In the control plane, the reflect view and the mental-model dialogs include a **Build schema**
+editor with a **Visual** mode (add fields — name, type, required, description) and a **Code** mode
+(raw JSON). The page itself shows only whether a schema is set; all editing happens in the
+builder, so you never hand-write JSON unless you want to.
 
 ---
 

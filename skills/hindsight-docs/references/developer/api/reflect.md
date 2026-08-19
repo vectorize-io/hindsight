@@ -88,7 +88,7 @@ Limits the length of the final generated response. Defaults to `4096`. This does
 
 ### response_schema
 
-An optional JSON Schema object. When provided, the LLM generates a response that conforms to the schema and the response includes a `structured_output` field with the result parsed accordingly. The `text` field will be empty since only a single structured LLM call is made. Use this when you need to process the response programmatically rather than display it as prose.
+An optional JSON Schema **object** with a non-empty `properties` map (nested objects and arrays are supported). When provided, the response includes a `structured_output` field **in addition to** the markdown `text`: the agent reasons to its answer, then a second pass extracts that answer into JSON matching your schema. `structured_output` is therefore a faithful projection of `text` — you get the readable answer *and* a typed object to program against, never one instead of the other. Invalid schemas (not an object, or no properties) are rejected before the call runs.
 
 ### Python
 
@@ -174,8 +174,43 @@ rm -f schema.json
 
 ### tags
 
-Filters which memories the agent can access during reflection. Works identically to [recall tags](./recall#tags) — only memories matching the specified tags are considered. The `tags_match` parameter controls the matching logic (`any`, `all`, `any_strict`, `all_strict`, `exact`) with the same semantics as recall.
+Defines the visibility scope used throughout the reflect agent. It filters raw
+facts, observations, and mental models that the agent can retrieve. The same
+`tags` and `tags_match` values also select which tagged directives are injected
+into the reflect prompt.
 
+`tags` defaults to `null`, `tags_match` defaults to `any`, and `tag_groups`
+defaults to `null`. For non-empty tags, raw facts, observations, and mental
+models use the same matching modes as [recall tags](./recall#tags). Directives
+have one additional rule: untagged directives are global and remain eligible
+whenever a tag scope is supplied, including with a strict or exact match.
+
+| Reflect configuration | Raw facts and observations | Mental models | Active directives |
+|-----------------------|----------------------------|---------------|-------------------|
+| Omit `tags`, `tags_match`, and `tag_groups` | All tagged and untagged data | All tagged and untagged models | Untagged/global directives only |
+| `tags: []`, default `tags_match: "any"` | All tagged and untagged data | All tagged and untagged models | Untagged/global directives only |
+| No tags, `tags_match: "exact"` | Untagged/global data only | Untagged/global models only | Untagged/global directives only |
+| Non-empty `tags`, `any` or `all` | Matching tagged data plus untagged/global data | Matching models plus untagged/global models | Matching tagged directives plus untagged/global directives |
+| Non-empty `tags`, `any_strict` or `all_strict` | Matching tagged data only | Matching tagged models only | Matching tagged directives plus untagged/global directives |
+| Non-empty `tags`, `exact` | Data with exactly the requested tag set | Models with exactly the requested tag set | Exactly matching tagged directives plus untagged/global directives |
+| Non-empty `tag_groups`, default top-level `tags_match` | Data matching the compound expression | Models matching the compound expression | Matching tagged directives plus untagged/global directives |
+
+The first row is intentionally asymmetric: an unscoped reflect can search all
+memories, but it does not load tagged directives. To create a directive that
+applies to every reflect call, leave its `tags` empty. To create a scoped
+directive, assign tags and pass a matching scope to `reflect`.
+
+> **📝 `isolation_mode`**
+>
+`isolation_mode` is an internal `list_directives` option, not a public reflect
+request parameter. Reflect always enables it. When neither `tags` nor
+`tag_groups` is supplied, it limits directive loading to untagged directives.
+There is currently no per-request switch to disable it.
+> **📝 MCP omitted tags**
+>
+The MCP `reflect` tool forwards `tags_match` only when `tags` is present. To
+request the empty exact scope through MCP, pass `tags: []` together with
+`tags_match: "exact"`.
 ### Python
 
 ```python
@@ -210,6 +245,51 @@ hindsight memory reflect my-bank "What feedback did the user give?" \
 ```go
 # Section 'reflect-with-tags' not found in api/reflect.go
 ```
+
+#### Common scope examples
+
+Unscoped reflect searches all memories but applies only global directives:
+
+```json
+{
+  "query": "Summarize the current project status"
+}
+```
+
+A project scope includes global data and directives alongside matching
+`project:a` data and directives:
+
+```json
+{
+  "query": "Summarize the current project status",
+  "tags": ["project:a"]
+}
+```
+
+A strict project scope excludes untagged memories, observations, and mental
+models. Global directives still apply:
+
+```json
+{
+  "query": "Summarize the current project status",
+  "tags": ["project:a"],
+  "tags_match": "all_strict"
+}
+```
+
+### tag_groups
+
+Provides compound tag filtering with recursive `and`, `or`, and `not`
+expressions. It affects the same reflect data sources and directive selection as
+flat `tags`. `tag_groups` and `tags` are mutually exclusive in the public REST
+request. Each leaf supplies its own matching mode and defaults to
+`any_strict`; the top-level groups are AND-ed. Normally leave the top-level
+`tags_match` at its default, `any`. Setting it to `exact` while using
+`tag_groups` additionally constrains facts, observations, and mental models to
+the global flat scope before applying the compound expression.
+
+The MCP `reflect` tool currently exposes flat `tags` and `tags_match`, but not
+`tag_groups`.
 
 ### include
 
@@ -271,7 +351,7 @@ When enabled, the response includes a `trace` object with the full execution log
 
 ### text
 
-The synthesized answer as a well-formatted markdown string. This is the primary output of reflect. Empty when `response_schema` is provided (use `structured_output` instead in that case).
+The synthesized answer as a well-formatted markdown string. This is the primary output of reflect. Still returned when `response_schema` is provided — `structured_output` is derived from it, not a replacement for it.
 
 ### structured_output
 

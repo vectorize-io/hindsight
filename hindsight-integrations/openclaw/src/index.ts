@@ -1302,19 +1302,45 @@ export function resolveBankIdForKnowledgeTools(
   return { bankId, resolvedCtx };
 }
 
+/**
+ * Render the event window a memory carries. `mentioned_at` says when the fact
+ * was stated; `occurred_start`/`occurred_end` say when the event itself
+ * happened, which is what the agent needs to order past events against each
+ * other. Either bound can be absent, so each case gets its own wording rather
+ * than an open-ended range the model has to guess at.
+ */
+function formatOccurredWindow(
+  start: string | null | undefined,
+  end: string | null | undefined
+): string {
+  if (start && end) {
+    return start === end ? ` [occurred: ${start}]` : ` [occurred: ${start} → ${end}]`;
+  }
+  if (start) return ` [occurred from: ${start}]`;
+  if (end) return ` [occurred until: ${end}]`;
+  return "";
+}
+
 export function formatMemories(results: MemoryResult[]): string {
   if (!results || results.length === 0) return "";
   return results
     .map((r) => {
       const type = r.type ? ` [${r.type}]` : "";
       const date = r.mentioned_at ? ` (${r.mentioned_at})` : "";
-      return `- ${r.text}${type}${date}`;
+      const occurred = formatOccurredWindow(r.occurred_start, r.occurred_end);
+      const doc = r.document_id ? ` [doc:${r.document_id}]` : "";
+      return `- ${r.text}${type}${date}${occurred}${doc}`;
     })
     .join("\n\n");
 }
 
 // Providers that authenticate via OAuth or run locally — no API key needed.
-const NO_KEY_REQUIRED_PROVIDERS = new Set(["ollama", "openai-codex", "claude-code"]);
+const NO_KEY_REQUIRED_PROVIDERS = new Set([
+  "ollama",
+  "openai-codex",
+  "claude-code",
+  "github-copilot",
+]);
 
 export function detectLLMConfig(pluginConfig?: PluginConfig): {
   provider?: string;
@@ -2457,7 +2483,8 @@ export default function (api: MoltbotPluginAPI) {
           `[Hindsight] After topK (${pluginConfig.recallTopK ?? "unlimited"}): ${results.length} results injected`
         );
 
-        // Format memories as JSON with all fields from recall
+        // Format memories as a bullet list (text + type + date + occurred window +
+        // [doc:<document_id>], each part present only when the memory carries it)
         const memoriesFormatted = formatMemories(results);
 
         const contextMessage = `<hindsight_memories>

@@ -64,10 +64,30 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: "profile" as NavItem, label: tBank("bankConfiguration"), icon: Settings },
   ];
 
+  // Toggle when the user clicks the aside chrome itself — nav links and the
+  // collapse button stop propagation so clicking an item navigates without
+  // also flipping the collapsed state.
+  const toggleCollapsed = () => setIsCollapsed((v) => !v);
+
   return (
     <aside
+      onClick={toggleCollapsed}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        // Only when the aside itself has focus. Without this guard, pressing
+        // Enter on a focused nav link bubbles up here and collapses the rail
+        // on every keyboard navigation.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleCollapsed();
+        }
+      }}
+      aria-label={isCollapsed ? t("expandSidebar") : t("collapseSidebar")}
+      aria-expanded={!isCollapsed}
       className={cn(
-        "bg-card border-r border-border flex flex-col transition-all duration-300",
+        "bg-card border-r border-border flex flex-col h-full transition-all duration-300 cursor-pointer select-none",
         isCollapsed ? "w-16" : "w-64"
       )}
     >
@@ -83,6 +103,9 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
                 <Link
                   href={href}
                   onClick={(e) => {
+                    // Don't bubble — clicking an item navigates, it doesn't
+                    // toggle the sidebar.
+                    e.stopPropagation();
                     // For left-click, prevent default and use the callback
                     // This allows the parent to handle navigation without full page reload
                     if (e.button === 0 && !e.ctrlKey && !e.metaKey) {
@@ -94,7 +117,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
                     // Middle-click or Ctrl/Cmd+click will naturally open in new tab
                   }}
                   className={cn(
-                    "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all",
+                    "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all cursor-pointer",
                     isActive
                       ? "bg-primary-gradient text-white shadow-sm"
                       : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -111,7 +134,8 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
         </ul>
       </nav>
 
-      {/* Collapse/Expand button at bottom */}
+      {/* Collapse/Expand button at bottom — kept as an explicit affordance
+          alongside the ambient click-to-toggle on the aside chrome. */}
       <div className="p-3 border-t border-border">
         {apiVersion && (
           <div
@@ -125,9 +149,13 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
           </div>
         )}
         <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
+          onClick={(e) => {
+            // Don't double-toggle when the aside's onClick also fires.
+            e.stopPropagation();
+            toggleCollapsed();
+          }}
           className={cn(
-            "w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors",
+            "w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer",
             isCollapsed && "justify-center px-0"
           )}
           title={isCollapsed ? t("expandSidebar") : t("collapseSidebar")}

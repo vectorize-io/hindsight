@@ -26,9 +26,10 @@ import logging
 import os
 import re
 import time
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
@@ -36,6 +37,12 @@ from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinish
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
+from hindsight_api.engine.cache_affinity import (
+    CacheAffinityMode,
+    apply_cache_affinity,
+    parse_cache_affinity,
+    resolve_cache_affinity,
+)
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
@@ -183,8 +190,8 @@ def _strip_code_fences(content: str) -> str:
 # Reasoning/thinking tags emitted by extended-thinking models. Some providers
 # (e.g. MiniMax-M3) leak the chain-of-thought wrapped in these tags into the
 # response body instead of a separate reasoning_content field. Each entry is
-# (open_tag, close_tag); the open tag also matches when the close tag is missing
-# (truncated output) so a dangling block is removed to end-of-string.
+# (open_tag, close_tag); a line-start open tag also matches when the close tag is
+# missing (truncated output) so a dangling block is removed to end-of-string.
 _REASONING_TAG_PAIRS: tuple[tuple[str, str], ...] = (
     ("<think>", "</think>"),
     ("<thinking>", "</thinking>"),
@@ -207,7 +214,11 @@ def _strip_reasoning_tags(text: str) -> str:
     Handles two cases:
     1. Closed blocks: ``<think>...</think>`` removed wherever they appear.
     2. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
-       truncated mid-thought) is removed from the open tag to end-of-string.
+       truncated mid-thought) is removed to end-of-string, but only when it starts
+       its own line (line-start, possibly indented). Inline occurrences (e.g. a
+       JSON value quoting ``<think>`` verbatim) are real content and must be kept
+       -- an unanchored greedy ``.*`` to end-of-string deleted every inline tag
+       plus all following content, surfacing as ``Unterminated string`` in retain.
 
     Returns the input unchanged (modulo surrounding whitespace) when no tags are
     present.
@@ -217,9 +228,14 @@ def _strip_reasoning_tags(text: str) -> str:
     for open_tag, close_tag in _REASONING_TAG_PAIRS:
         open_re = re.escape(open_tag)
         close_re = re.escape(close_tag)
-        # Closed blocks first, then any remaining unclosed (truncated) block.
+        # Closed blocks first.
         text = re.sub(rf"{open_re}.*?{close_re}", "", text, flags=re.DOTALL)
-        text = re.sub(rf"{open_re}.*", "", text, flags=re.DOTALL)
+        # Unclosed (truncated) blocks: strip only when the open tag starts its own
+        # line, from there to end-of-string. The line-start anchor preserves inline
+        # literals (e.g. a JSON value quoting ``<think>``) so valid JSON is not
+        # corrupted; DOTALL-to-end still removes a multi-line truncated block whole,
+        # so leaked reasoning does not survive past its first line.
+        text = re.sub(rf"(^|\n)[ \t]*{open_re}.*", "", text, flags=re.DOTALL)
     return text.strip()
 
 
@@ -525,11 +541,13 @@ class OpenAICompatibleLLM(LLMInterface):
         api_key: str,
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         timeout: float | None = None,
         groq_service_tier: str | None = None,
         extra_body: dict[str, Any] | None = None,
         *,
+        default_headers: dict[str, str] | None = None,
+        cache_affinity: str | None = None,
         ollama_num_ctx: int | None = None,
         **kwargs: Any,
     ):
@@ -548,6 +566,11 @@ class OpenAICompatibleLLM(LLMInterface):
             timeout: Request timeout in seconds (uses env var or 120s default).
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto").
             extra_body: Extra body params merged into every API call.
+            default_headers: Custom headers passed to the AsyncOpenAI client (proxies,
+                request-tracing middleware). None sends no extra headers.
+            cache_affinity: Backend prompt-cache pinning mode — "none" (default),
+                "xai_conv_id", "openai_prompt_cache_key", or "auto" (resolved once here
+                from the provider + base-URL host). See ``engine/cache_affinity.py``.
             ollama_num_ctx: Native Ollama context window override. None lets Ollama use
                 the model/server default.
             **kwargs: Additional provider-specific parameters.
@@ -642,8 +665,18 @@ class OpenAICompatibleLLM(LLMInterface):
         # Get timeout config
         self.timeout = timeout or float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
 
+        # Backend prompt-cache pinning. "auto" is resolved ONCE here rather than
+        # per call: base_url is immutable after construction, so the answer can
+        # never change, and resolving per call would re-parse the URL on every
+        # request. Invalid values raise here so a typo fails at startup.
+        self._cache_affinity: CacheAffinityMode = resolve_cache_affinity(
+            parse_cache_affinity(cache_affinity), self.provider, self.base_url
+        )
+
         # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
         client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
+        if default_headers:
+            client_kwargs["default_headers"] = default_headers
         if self.base_url:
             parsed = urlparse(self.base_url)
             if parsed.query:
@@ -660,7 +693,21 @@ class OpenAICompatibleLLM(LLMInterface):
         self._client = AsyncOpenAI(**client_kwargs)
         logger.info(
             f"OpenAI-compatible client initialized: provider={self.provider}, model={self.model}, "
-            f"base_url={self.base_url or 'default'}"
+            f"base_url={self.base_url or 'default'}, "
+            f"reasoning_effort={self.reasoning_effort if self._sends_reasoning_effort() else 'not sent'}"
+        )
+        if self.reasoning_effort is not None and not self._sends_reasoning_effort():
+            # Never drop a configured value silently: the variable is set, documented and
+            # visible in the environment, so every signal the operator has says it is in
+            # force. Saying so once at startup is what turns this into a seconds-long
+            # diagnosis instead of a source-reading exercise (issue #3449).
+            logger.warning(
+                f"reasoning_effort={self.reasoning_effort!r} is not sent to the model: "
+                f"{self.model!r} is a known non-reasoning model that rejects the parameter"
+            )
+        logger.debug(
+            f"Cache affinity resolved: provider={self.provider}, base_url={self.base_url or 'default'}, "
+            f"mode={self._cache_affinity.value}"
         )
 
     def _drops_tool_choice_required(self) -> bool:
@@ -699,8 +746,45 @@ class OpenAICompatibleLLM(LLMInterface):
         except Exception as e:
             raise RuntimeError(f"Connection verification failed for {self.provider}/{self.model}: {e}") from e
 
+    def _sends_reasoning_effort(self) -> bool:
+        """Whether ``reasoning_effort`` is attached to requests.
+
+        The operator decides, not a model name. ``provider=openai`` with a custom base_url
+        can serve any model under any name — vLLM, Ollama, llama.cpp, TGI — so the name
+        carries no capability signal, and gating on it made every
+        ``HINDSIGHT_API_*_REASONING_EFFORT`` variable a silent no-op on exactly those
+        deployments (issue #3449). Unset means unset: no level is invented for a model
+        just because its name is recognisable.
+        """
+        return self.reasoning_effort is not None and not self._rejects_reasoning_effort()
+
+    def _rejects_reasoning_effort(self) -> bool:
+        """Whether the model is a known product that rejects ``reasoning_effort`` outright.
+
+        The one place a name still overrides an explicit setting, and it matches only
+        OpenAI's own non-reasoning products — names invented by OpenAI, so a self-hosted
+        model is not going to collide with one by accident. Sending the parameter to
+        gpt-4o is an immediate HTTP 400, so honouring the setting there would trade a
+        silently ignored value for a hard failure. The drop is logged at startup.
+        """
+        model_lower = self.model.lower()
+        return any(x in model_lower for x in ["gpt-4o", "gpt-4.1", "gpt-4-", "gpt-3.5"])
+
     def _supports_reasoning_model(self) -> bool:
-        """Check if the current model is a reasoning model (o1, o3, GPT-5, DeepSeek)."""
+        """Check if the current model is a reasoning model (o1, o3, GPT-5, DeepSeek).
+
+        **Deprecated as a capability check — this list is frozen. Do not add models to
+        it.** Guessing capability from a name never worked outside OpenAI's own products:
+        ``provider=openai`` with a custom base_url serves anything under any name, so the
+        list could only ever grow stale while silently discarding what operators asked
+        for (issue #3449). Reasoning effort is now purely the operator's call, via
+        ``HINDSIGHT_API_LLM_REASONING_EFFORT`` and its per-operation variants — a new
+        model needs configuration, not a new substring here.
+
+        All that is left is the request *shape* a recognised OpenAI reasoning model
+        requires regardless of effort: the max-completion-tokens floor, the parameter
+        name, temperature suppression.
+        """
         model_lower = self.model.lower()
         if "deepseek" in model_lower:
             # DeepSeek v4-flash is the non-thinking route. Treating every
@@ -769,6 +853,7 @@ class OpenAICompatibleLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -796,8 +881,18 @@ class OpenAICompatibleLLM(LLMInterface):
             OutputTooLongError: If output exceeds token limits.
             Exception: Re-raises API errors after retries exhausted.
         """
-        # Handle Ollama with native API for structured output (better schema enforcement)
-        if self.provider == "ollama" and response_format is not None:
+        # Ollama's native /api/chat is the only endpoint that can carry a context
+        # window: the OpenAI-compatible handler decodes a fixed field set (model,
+        # messages, max_tokens, temperature, seed, top_p, ...) and silently drops
+        # everything else, so num_ctx has no representation on /v1/chat/completions
+        # and nesting it under an "options" object there is a no-op
+        # (ollama/ollama#6544). Structured output goes native for schema
+        # enforcement; a configured num_ctx sends the free-form calls -- including
+        # verify_connection()'s startup probe -- there too. Ollama keys a loaded
+        # model instance by context size, so a request at the server default
+        # reloads the model and re-tunes it for every other consumer of a shared
+        # host (issue #3599).
+        if self.provider == "ollama" and (response_format is not None or self.ollama_num_ctx is not None):
             return await self._call_ollama_native(
                 messages=messages,
                 response_format=response_format,
@@ -809,6 +904,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 skip_validation=skip_validation,
                 scope=scope,
                 return_usage=return_usage,
+                attempt_context=attempt_context,
             )
 
         start_time = time.time()
@@ -837,8 +933,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 temperature = max(0.01, min(temperature, 1.0))
             call_params["temperature"] = temperature
 
-        # Set reasoning_effort for reasoning models
-        if is_reasoning_model:
+        # Set reasoning_effort when configured, or for models recognised as reasoning models
+        if self._sends_reasoning_effort():
             call_params["reasoning_effort"] = self.reasoning_effort
 
         # Provider-specific parameters
@@ -895,6 +991,14 @@ class OpenAICompatibleLLM(LLMInterface):
                     call_params["response_format"] = {"type": "json_object"}
 
         apply_bank_attribution(call_params)
+        # Cache pinning, alongside the other identity injection above and, like
+        # call_params itself, built ONCE before the retry loop so every attempt
+        # carries it. Note the hash-point: when no trace context is bound the id
+        # falls back to hashing the first message, and the soft-schema branch
+        # above has already appended the response schema to it. That is
+        # deterministic (the schema text is fixed per response_format), so the id
+        # stays stable across the calls of one run.
+        apply_cache_affinity(call_params, self._cache_affinity)
 
         last_exception = None
 
@@ -902,10 +1006,11 @@ class OpenAICompatibleLLM(LLMInterface):
             # Surface attempt count in worker stage so JSON-schema retry loops
             # are visible from logs (small models on strict structured output
             # often loop here). Cheap no-op outside worker context.
-            set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 if response_format is not None:
-                    response = await self._client.chat.completions.create(**call_params)
+                    async with attempt_context() if attempt_context is not None else nullcontext():
+                        set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                        response = await self._client.chat.completions.create(**call_params)
                     # Stash usage before parse/validate, which may raise locally
                     # even though the provider charged for these tokens (#2387).
                     stash_response_usage(_usage_from_openai_response(response))
@@ -961,7 +1066,9 @@ class OpenAICompatibleLLM(LLMInterface):
                     else:
                         result = response_format.model_validate(json_data)
                 else:
-                    response = await self._client.chat.completions.create(**call_params)
+                    async with attempt_context() if attempt_context is not None else nullcontext():
+                        set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                        response = await self._client.chat.completions.create(**call_params)
                     stash_response_usage(_usage_from_openai_response(response))
                     result, first_choice = _content_or_error(
                         response,
@@ -1174,6 +1281,7 @@ class OpenAICompatibleLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support.
@@ -1262,10 +1370,15 @@ class OpenAICompatibleLLM(LLMInterface):
         # here is not a neutral default: OpenAI rejects function tools on a
         # reasoning model unless reasoning_effort is present and set to "none",
         # so leaving it out fails exactly like sending an unsupported value.
-        if self._supports_reasoning_model():
+        if self._sends_reasoning_effort():
             call_params["reasoning_effort"] = self.reasoning_effort
 
-        # Provider-specific parameters
+        # Provider-specific parameters. Note for Ollama: unlike call(), this path
+        # has no native /api/chat equivalent here, so a configured ollama_num_ctx
+        # cannot reach the server — the OpenAI-compatible endpoint has no field for
+        # it and sending one under "options" is silently dropped (issue #3599).
+        # Porting tool calls to the native API means translating the tool-call
+        # request and response shapes both ways, so it is deliberately not done.
         extra_body: dict[str, Any] = {**self._config_extra_body}
         self._apply_provider_extra_body_defaults(extra_body)
         if self.provider == "groq":
@@ -1274,13 +1387,15 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["extra_body"] = extra_body
 
         apply_bank_attribution(call_params)
+        apply_cache_affinity(call_params, self._cache_affinity)
 
         last_exception = None
 
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._client.chat.completions.create(**call_params)
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await self._client.chat.completions.create(**call_params)
 
                 message = response.choices[0].message
                 finish_reason = response.choices[0].finish_reason
@@ -1419,7 +1534,7 @@ class OpenAICompatibleLLM(LLMInterface):
     async def _call_ollama_native(
         self,
         messages: list[dict[str, str]],
-        response_format: Any,
+        response_format: Any | None,
         max_completion_tokens: int | None,
         temperature: float | None,
         max_retries: int,
@@ -1428,12 +1543,16 @@ class OpenAICompatibleLLM(LLMInterface):
         skip_validation: bool,
         scope: str = "memory",
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
-        Call Ollama using native API with JSON schema enforcement.
+        Call Ollama using its native API.
 
         Ollama's native API supports passing a full JSON schema in the 'format' parameter,
         which provides better structured output control than the OpenAI-compatible API.
+        ``response_format=None`` runs the same request without a schema and returns the
+        message text, so free-form calls can reach the one endpoint that honours
+        ``options.num_ctx``.
         """
         start_time = time.time()
 
@@ -1454,7 +1573,9 @@ class OpenAICompatibleLLM(LLMInterface):
             "model": self.model,
             "messages": messages,
             "stream": False,
-            "think": False,  # Disable thinking for reasoning models (qwen3.5, etc.)
+            # Disable thinking by default (qwen3.5, etc.). Override via
+            # extra_body, e.g. {"think": "low"} for gpt-oss models (see #3246).
+            "think": False,
         }
 
         # Add schema as format parameter for structured output
@@ -1471,6 +1592,16 @@ class OpenAICompatibleLLM(LLMInterface):
             options["num_predict"] = max_completion_tokens
         if temperature is not None:
             options["temperature"] = temperature
+
+        # Merge configured extra_body into the native payload. Ollama's native
+        # /api/chat body has two tiers, unlike the OpenAI-compatible endpoint
+        # where the SDK flattens everything to top-level: native top-level
+        # fields (think, keep_alive, ...) pass through directly, while an
+        # "options" sub-dict merges into Ollama's generation options
+        # (seed, top_p, num_ctx, ...). User values win over the defaults above.
+        extra_body = dict(self._config_extra_body)
+        options.update(extra_body.pop("options", {}))
+        payload.update(extra_body)
         payload["options"] = options
 
         last_exception = None
@@ -1482,41 +1613,55 @@ class OpenAICompatibleLLM(LLMInterface):
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             for attempt in range(max_retries + 1):
-                set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                 try:
-                    response = await client.post(native_url, json=payload, headers=headers)
+                    async with attempt_context() if attempt_context is not None else nullcontext():
+                        set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                        response = await client.post(native_url, json=payload, headers=headers)
                     response.raise_for_status()
 
                     result = response.json()
                     content = result.get("message", {}).get("content", "")
 
-                    # Strip markdown code fences if present (safety net —
-                    # Ollama with schema enforcement usually returns bare JSON,
-                    # but some models may still wrap in fences)
-                    clean_content = _strip_code_fences(content)
-                    try:
-                        json_data = json.loads(clean_content)
-                    except json.JSONDecodeError:
-                        # Fallback to raw content
-                        try:
-                            json_data = json.loads(content)
-                        except json.JSONDecodeError as json_err:
-                            content_preview = content[:500] if content else "<empty>"
-                            if content and len(content) > 700:
-                                content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
-                            logger.warning(
-                                f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
-                                f"  Model: ollama/{self.model}\n"
-                                f"  Content length: {len(content) if content else 0} chars\n"
-                                f"  Content preview: {content_preview!r}"
+                    if response_format is None:
+                        # Free-form output: no schema, nothing to parse. Reasoning
+                        # models still wrap their chain-of-thought in <think> tags
+                        # in the message body, so strip them exactly like the
+                        # OpenAI-compatible path does.
+                        text = _strip_reasoning_tags(content)
+                        if not text:
+                            raise ProviderResponseError(
+                                f"Provider returned empty message content (ollama/{self.model}, "
+                                f"scope={scope}, done_reason={result.get('done_reason')})",
+                                retryable=True,
                             )
-                            if attempt < max_retries:
-                                backoff = min(initial_backoff * (2**attempt), max_backoff)
-                                await asyncio.sleep(backoff)
-                                last_exception = json_err
-                                continue
-                            else:
-                                raise
+                    else:
+                        # Strip markdown code fences if present (safety net —
+                        # Ollama with schema enforcement usually returns bare JSON,
+                        # but some models may still wrap in fences)
+                        clean_content = _strip_code_fences(content)
+                        try:
+                            json_data = json.loads(clean_content)
+                        except json.JSONDecodeError:
+                            # Fallback to raw content
+                            try:
+                                json_data = json.loads(content)
+                            except json.JSONDecodeError as json_err:
+                                content_preview = content[:500] if content else "<empty>"
+                                if content and len(content) > 700:
+                                    content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
+                                logger.warning(
+                                    f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
+                                    f"  Model: ollama/{self.model}\n"
+                                    f"  Content length: {len(content) if content else 0} chars\n"
+                                    f"  Content preview: {content_preview!r}"
+                                )
+                                if attempt < max_retries:
+                                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                    await asyncio.sleep(backoff)
+                                    last_exception = json_err
+                                    continue
+                                else:
+                                    raise
 
                     # Extract token usage from Ollama response
                     duration = time.time() - start_time
@@ -1536,11 +1681,31 @@ class OpenAICompatibleLLM(LLMInterface):
                         success=True,
                     )
 
-                    # Validate against Pydantic model or return raw JSON
-                    if skip_validation:
+                    # Return text as-is, or validate against the Pydantic model
+                    if response_format is None:
+                        validated_result = text
+                    elif skip_validation:
                         validated_result = json_data
                     else:
                         validated_result = response_format.model_validate(json_data)
+
+                    # Record trace span. The native path carries every Ollama
+                    # structured call and, once num_ctx is set, the free-form ones
+                    # too, so without this those calls are missing from traces.
+                    from hindsight_api.tracing import _serialize_for_span, get_span_recorder
+
+                    get_span_recorder().record_llm_call(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=payload["messages"],
+                        response_content=_serialize_for_span(validated_result),
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        duration=duration,
+                        finish_reason=result.get("done_reason"),
+                        error=None,
+                    )
 
                     if return_usage:
                         token_usage = TokenUsage(
@@ -1550,6 +1715,16 @@ class OpenAICompatibleLLM(LLMInterface):
                         )
                         return validated_result, token_usage
                     return validated_result
+
+                except ProviderResponseError as e:
+                    last_exception = e
+                    if e.retryable and attempt < max_retries:
+                        logger.warning(f"Ollama response error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                        backoff = min(initial_backoff * (2**attempt), max_backoff)
+                        await asyncio.sleep(backoff)
+                        continue
+                    logger.error(f"Ollama response error after {attempt + 1} attempts: {e}")
+                    raise
 
                 except httpx.HTTPStatusError as e:
                     last_exception = e
@@ -1721,3 +1896,6 @@ class OpenAICompatibleLLM(LLMInterface):
         """Clean up resources (close OpenAI client connections)."""
         if hasattr(self, "_client") and self._client:
             await self._client.close()
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

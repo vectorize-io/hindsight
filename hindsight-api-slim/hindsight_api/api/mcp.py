@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
 from hindsight_api import __version__ as HINDSIGHT_VERSION
+from hindsight_api.api.passthrough_headers import collect_passthrough_headers
 from hindsight_api.config import DEFAULT_MCP_RECALL_DESCRIPTION, DEFAULT_MCP_RETAIN_DESCRIPTION, _get_raw_config
 from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.extensions import MCPExtension, load_extension
@@ -52,6 +53,11 @@ _current_api_key_id: ContextVar[str | None] = ContextVar("current_api_key_id", d
 # Context variable for MCP pre-authentication flag (set when MCP_AUTH_TOKEN validates)
 _current_mcp_authenticated: ContextVar[bool] = ContextVar("current_mcp_authenticated", default=False)
 
+# Context variable for the headers an operator opted into forwarding to extensions
+# (HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS). Defaults to None rather than {}
+# so no single dict is shared as a default across requests.
+_current_extra_headers: ContextVar[dict[str, str] | None] = ContextVar("current_extra_headers", default=None)
+
 
 def get_current_bank_id() -> str | None:
     """Get the current bank_id from context."""
@@ -76,6 +82,15 @@ def get_current_api_key_id() -> str | None:
 def get_current_mcp_authenticated() -> bool:
     """Get whether the request was pre-authenticated by MCP transport auth."""
     return _current_mcp_authenticated.get()
+
+
+def get_current_extra_headers() -> dict[str, str]:
+    """Get the allowlisted passthrough headers for the current request.
+
+    Returns a copy: every RequestContext built during the request owns its dict,
+    so extension code mutating one cannot alter what the next tool call sees.
+    """
+    return dict(_current_extra_headers.get() or {})
 
 
 def _build_mcp_tool_descriptions(extra_instructions: str | None) -> tuple[str | None, str | None]:
@@ -139,6 +154,13 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
             "update_bank",
             "delete_bank",
             "clear_memories",
+            "get_knowledge_base_tree",
+            "search_knowledge_base",
+            "get_knowledge_page",
+            "create_knowledge_folder",
+            "create_knowledge_page",
+            "update_knowledge_node",
+            "delete_knowledge_node",
         }
     )
     base_tools: frozenset[str] | None = None if multi_bank else _SINGLE_BANK_TOOLS
@@ -159,6 +181,7 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
         tenant_id_resolver=get_current_tenant_id,  # Propagate tenant_id for usage metering
         api_key_id_resolver=get_current_api_key_id,  # Propagate api_key_id for usage metering
         mcp_authenticated_resolver=get_current_mcp_authenticated,  # Propagate MCP pre-auth flag
+        extra_headers_resolver=get_current_extra_headers,  # Propagate allowlisted headers to extensions
         include_bank_id_param=multi_bank,
         tools=base_tools,
         retain_description=retain_description,
@@ -378,6 +401,16 @@ class MCPMiddleware:
                 return header_value.decode()
         return None
 
+    def _get_extra_headers(self, scope: dict) -> dict[str, str]:
+        """Collect the headers an operator opted into forwarding to extensions.
+
+        Shares ``collect_passthrough_headers`` with the HTTP transport, so both
+        agree on decoding and on what a duplicated header means. Empty unless
+        HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS names a header the request
+        actually carries.
+        """
+        return collect_passthrough_headers(scope.get("headers", []), _get_raw_config().extension_passthrough_headers)
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -412,6 +445,11 @@ class MCPMiddleware:
             # Support both "Bearer <token>" and direct token
             auth_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else auth_header.strip()
 
+        # Resolved before authentication so authenticate_mcp() can read a
+        # passthrough header, not just the bearer token. Named for the request
+        # side: _send_error()'s `extra_headers` below is *response* headers.
+        passthrough_headers = self._get_extra_headers(scope)
+
         # Authenticate: check legacy MCP_AUTH_TOKEN first, then TenantExtension
         tenant_context = None
         auth_tenant_id: str | None = None
@@ -431,7 +469,7 @@ class MCPMiddleware:
         else:
             # Use TenantExtension.authenticate_mcp() for auth
             try:
-                auth_context = RequestContext(api_key=auth_token)
+                auth_context = RequestContext(api_key=auth_token, extra_headers=dict(passthrough_headers))
                 tenant_context = await self.tenant_extension.authenticate_mcp(auth_context)
                 # Capture tenant_id and api_key_id set by authenticate() for usage metering
                 auth_tenant_id = auth_context.tenant_id
@@ -483,6 +521,8 @@ class MCPMiddleware:
         api_key_id_token = _current_api_key_id.set(auth_api_key_id) if auth_api_key_id else None
         # Store MCP pre-authentication flag to skip tenant re-validation
         mcp_auth_token = _current_mcp_authenticated.set(mcp_pre_authenticated)
+        # Store the allowlisted passthrough headers so per-tool RequestContexts carry them
+        extra_headers_token = _current_extra_headers.set(passthrough_headers)
         try:
             new_scope = scope.copy()
             new_scope["path"] = new_path
@@ -528,6 +568,7 @@ class MCPMiddleware:
             if api_key_id_token is not None:
                 _current_api_key_id.reset(api_key_id_token)
             _current_mcp_authenticated.reset(mcp_auth_token)
+            _current_extra_headers.reset(extra_headers_token)
             if schema_token is not None:
                 _current_schema.reset(schema_token)
 

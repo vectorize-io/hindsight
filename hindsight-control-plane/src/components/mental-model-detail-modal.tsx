@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { client, MentalModel } from "@/lib/api";
+import { client, MentalModel, MentalModelDryRunRefreshResult } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,6 +19,7 @@ import {
   FileText,
   History as HistoryIcon,
   Settings,
+  FlaskConical,
   ChevronLeft,
   ChevronRight,
   MoreVertical,
@@ -32,6 +33,12 @@ import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
+import {
+  ExecutionTimeline,
+  MentalModelDryRunDialog,
+  TraceSummary,
+} from "./mental-model-diagnostics-view";
+import type { MentalModelRefreshTrace } from "@/lib/api";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
@@ -70,6 +77,8 @@ type ReflectResponseSnapshot = {
   text?: string;
   based_on?: Record<string, BasedOnFact[]>;
   mental_models?: unknown[];
+  /** How this version was produced. Only present when trigger.keep_trace was on. */
+  trace?: MentalModelRefreshTrace;
 } | null;
 
 type HistoryEntry = {
@@ -538,12 +547,14 @@ function MentalModelHistoryView({
   history,
   currentContent,
   currentBasedOn,
+  currentTrace,
   onViewMemory,
   onViewDirective,
 }: {
   history: HistoryEntry[];
   currentContent: string;
   currentBasedOn: Record<string, BasedOnFact[]> | undefined;
+  currentTrace: MentalModelRefreshTrace | undefined;
   onViewMemory: (id: string) => void;
   onViewDirective: (id: string) => void;
 }) {
@@ -555,6 +566,10 @@ function MentalModelHistoryView({
   const afterBasedOn =
     idx === 0 ? currentBasedOn : history[idx - 1].previous_reflect_response?.based_on;
   const snapshot = entry.previous_reflect_response ?? null;
+  // The refresh being shown is the one that produced the "after" side: for the
+  // newest entry that is the model's current trace, otherwise the snapshot taken
+  // when the next refresh replaced it.
+  const afterTrace = idx === 0 ? currentTrace : history[idx - 1].previous_reflect_response?.trace;
 
   return (
     <div className="space-y-4">
@@ -566,6 +581,12 @@ function MentalModelHistoryView({
             {idx === 0 ? t("versionCurrent") : ""}
           </span>{" "}
           &middot; {t("changedAt", { date: new Date(entry.changed_at).toLocaleString() })}
+          {afterTrace && (
+            <>
+              {" "}
+              &middot; <TraceSummary trace={afterTrace} />
+            </>
+          )}
         </span>
         <div className="flex items-center gap-1">
           <Button
@@ -615,6 +636,17 @@ function MentalModelHistoryView({
           <p className="text-sm text-muted-foreground italic">{t("basedOnNotCaptured")}</p>
         )}
       </div>
+
+      {/* How this version was produced — recorded only when trigger.keep_trace
+          was on for the refresh that wrote it. */}
+      <div>
+        <SectionLabel>{t("refreshTrace")}</SectionLabel>
+        {afterTrace ? (
+          <ExecutionTimeline trace={afterTrace} />
+        ) : (
+          <p className="text-sm text-muted-foreground italic">{t("traceNotCaptured")}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -651,6 +683,8 @@ export function MentalModelDetailModal({
 
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [dryRunning, setDryRunning] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<MentalModelDryRunRefreshResult | null>(null);
 
   useEffect(() => {
     if (!mentalModelId || !currentBank) return;
@@ -694,6 +728,20 @@ export function MentalModelDetailModal({
 
     loadHistory();
   }, [activeTab, mentalModel, currentBank, history]);
+
+  // A dry run changes nothing, so it is an action with a transient result rather
+  // than a tab: run it, show the preview, throw it away.
+  const handleDryRun = async () => {
+    if (!currentBank || !mentalModel) return;
+    setDryRunning(true);
+    try {
+      setDryRunResult(await client.dryRunRefreshMentalModel(currentBank, mentalModel.id));
+    } catch (err) {
+      console.error("Error running mental model dry run:", err);
+    } finally {
+      setDryRunning(false);
+    }
+  };
 
   const handleReload = async () => {
     if (!currentBank || !mentalModel) return;
@@ -842,6 +890,12 @@ export function MentalModelDetailModal({
                       <RefreshCw className="h-4 w-4 mr-2" />
                       {t("actionRefreshManually")}
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleDryRun} disabled={dryRunning}>
+                      <FlaskConical
+                        className={`h-4 w-4 mr-2 ${dryRunning ? "animate-pulse" : ""}`}
+                      />
+                      {dryRunning ? t("actionDryRunRunning") : t("actionDryRun")}
+                    </DropdownMenuItem>
                     {onClear && (
                       <DropdownMenuItem onClick={() => onClear(mentalModel)}>
                         <Eraser className="h-4 w-4 mr-2" />
@@ -906,6 +960,14 @@ export function MentalModelDetailModal({
                     </div>
                     <CompactMarkdown className="p-4">{mentalModel.content}</CompactMarkdown>
                   </div>
+                  {mentalModel.reflect_response?.structured_output && (
+                    <div>
+                      <SectionLabel>{t("structuredOutput")}</SectionLabel>
+                      <pre className="rounded-lg border border-border bg-muted/30 p-4 text-xs font-mono overflow-auto max-h-[400px] whitespace-pre-wrap break-words">
+                        {JSON.stringify(mentalModel.reflect_response.structured_output, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                   <div>
                     <SectionLabel>
                       {basedOnCount > 0
@@ -938,6 +1000,9 @@ export function MentalModelDetailModal({
                       history={history}
                       currentContent={mentalModel.content}
                       currentBasedOn={basedOn}
+                      currentTrace={
+                        mentalModel.reflect_response?.trace as MentalModelRefreshTrace | undefined
+                      }
                       onViewMemory={(id) => setViewMemoryId(id)}
                       onViewDirective={(id) => setViewDirectiveId(id)}
                     />
@@ -950,6 +1015,30 @@ export function MentalModelDetailModal({
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <MentalModelDryRunDialog
+        result={dryRunResult}
+        mentalModelName={mentalModel?.name ?? ""}
+        currentBasedOn={basedOn as Record<string, unknown[]> | undefined}
+        onClose={() => setDryRunResult(null)}
+        renderPreviewDiff={({ before, after, beforeBasedOn, afterBasedOn }) => (
+          <>
+            <div>
+              <SectionLabel>{t("contentDiff")}</SectionLabel>
+              <SideBySideDiff before={before} after={after} />
+            </div>
+            <div>
+              <SectionLabel>{t("basedOnDiff")}</SectionLabel>
+              <BasedOnDiff
+                before={beforeBasedOn as Record<string, BasedOnFact[]> | undefined}
+                after={afterBasedOn as Record<string, BasedOnFact[]> | undefined}
+                onViewMemory={(id) => setViewMemoryId(id)}
+                onViewDirective={(id) => setViewDirectiveId(id)}
+              />
+            </div>
+          </>
+        )}
+      />
 
       {viewMemoryId && (
         <MemoryDetailModal memoryId={viewMemoryId} onClose={() => setViewMemoryId(null)} />
@@ -1190,6 +1279,16 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
           <InfoCard title={t("tagGroupsTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
             <pre className="text-xs font-mono bg-muted/40 rounded p-3 overflow-x-auto border border-border/60">
               {JSON.stringify(tagGroups, null, 2)}
+            </pre>
+          </InfoCard>
+        </div>
+      )}
+
+      {trigger.response_schema && (
+        <div className="md:col-span-2">
+          <InfoCard title={t("responseSchemaTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
+            <pre className="text-xs font-mono bg-muted/40 rounded p-3 overflow-x-auto border border-border/60">
+              {JSON.stringify(trigger.response_schema, null, 2)}
             </pre>
           </InfoCard>
         </div>

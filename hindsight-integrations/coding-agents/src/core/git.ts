@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { projectNameOf } from "./bank";
 import type { HindsightClient } from "./hindsight";
+import type { RetainStamp } from "./retain-stamp";
 import { pool } from "./util";
 
 const US = "\x1f";
@@ -68,7 +69,8 @@ export async function retainCommit(
   client: HindsightClient,
   repo: string,
   sha: string,
-  repoName: string
+  repoName: string,
+  stamp?: RetainStamp
 ): Promise<void> {
   const [h, an, ae, aISO, cISO, subj, body] = git(
     repo,
@@ -83,26 +85,39 @@ export async function retainCommit(
     `REF-ID: git:${sha.slice(0, 12)}\n` +
     `Git commit ${sha.slice(0, 12)} in the ${repoName} repository (${an}, ${aISO}).\n\n` +
     `Message:\n${msg}\n\nDiff:\n${diff}`;
-  await client.retain(content, `git commit in ${repoName}`, `git:${sha}`, ["source:git"], "git", {
-    timestamp: aISO, // the memory's timestamp is the commit's author date
-    metadata: {
-      source: "git",
-      repo: repoName,
-      commit: h,
-      short_sha: sha.slice(0, 12),
-      author: an,
-      author_email: ae,
-      authored_at: aISO,
-      committed_at: cISO,
-      subject: subj,
-    },
-  });
+  await client.retain(
+    content,
+    `git commit in ${repoName}`,
+    `git:${sha}`,
+    [...new Set([...(stamp?.tags ?? []), "source:git"])],
+    "git",
+    {
+      timestamp: aISO, // the memory's timestamp is the commit's author date
+      metadata: {
+        ...stamp?.metadata,
+        source: "git",
+        repo: repoName,
+        commit: h,
+        short_sha: sha.slice(0, 12),
+        author: an,
+        author_email: ae,
+        authored_at: aISO,
+        committed_at: cISO,
+        subject: subj,
+      },
+    }
+  );
 }
 
 export async function ingestGit(
   client: HindsightClient,
   repo: string,
-  opts: { limit?: number; concurrency?: number; log?: (m: string) => void } = {}
+  opts: {
+    limit?: number;
+    concurrency?: number;
+    log?: (m: string) => void;
+    stampFor?: () => RetainStamp;
+  } = {}
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   // NEWEST-first: recent commits (the project's own decision commits) extract before the ancient
@@ -116,7 +131,7 @@ export async function ingestGit(
     shas,
     opts.concurrency ?? 8,
     async (sha) => {
-      await retainCommit(client, repo, sha, repoName);
+      await retainCommit(client, repo, sha, repoName, opts.stampFor?.());
     },
     (i, e) => {
       failures++;
@@ -164,6 +179,21 @@ export function gitLogText(repo: string, limit: number): string {
 }
 
 /**
+ * The author date (strict ISO 8601) of the newest commit `gitLogText` would include — i.e. the newest
+ * non-merge commit reachable from HEAD, matching that function's traversal. This is the aggregated
+ * document's temporal anchor: without it the retain API stamps "now" and the extraction prompt gets
+ * `Event Date: Unknown`, so every extracted fact lands with a null occurred_start/occurred_end.
+ * Null on an empty repo, a non-repo, or any git error — the caller then omits the timestamp.
+ */
+export function gitLogNewestAuthorDate(repo: string): string | null {
+  try {
+    return git(repo, "log", "-n", "1", "--no-merges", "--format=%aI").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Ingest the aggregated commit-message history (last `opts.limit` commits, no diffs) as ONE document —
  * a single retain/extraction op, orders of magnitude cheaper than per-commit full-diff ingestion. The
  * document_id is `gitlog:<repoName>` so a re-seed replaces it (idempotent) rather than duplicating.
@@ -173,7 +203,7 @@ export function gitLogText(repo: string, limit: number): string {
 export async function ingestGitLog(
   client: HindsightClient,
   repo: string,
-  opts: { limit: number; log?: (m: string) => void } = { limit: 300 }
+  opts: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp } = { limit: 300 }
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   const text = gitLogText(repo, opts.limit);
@@ -188,13 +218,30 @@ export async function ingestGitLog(
     // The gitlog-head:<sha> tag makes freshness a single tag query: the deepen engine re-upserts
     // this document (same id — replaces, never duplicates) only when HEAD has moved past it.
     const head = gitHeadSha(repo);
+    const stamp = opts.stampFor?.();
+    const tags = [
+      ...new Set([
+        ...(stamp?.tags ?? []),
+        "source:git",
+        "source:git-log",
+        ...(head ? [`gitlog-head:${head}`] : []),
+      ]),
+    ];
     await client.retain(
       text,
       `git commit-message history (last ${n}) for ${repoName}`,
       `gitlog:${repoName}`,
-      ["source:git", "source:git-log", ...(head ? [`gitlog-head:${head}`] : [])],
+      tags,
       "gitlog",
-      { async: true }
+      {
+        // Anchor the document in time on the newest commit it contains, so extraction can date the
+        // facts it pulls out of these messages. Previously no timestamp was passed at all: retain
+        // then stamped "now", the extraction prompt got `Event Date: Unknown`, and every fact landed
+        // with a null occurred_start/occurred_end — invisible to temporal search (#3602).
+        timestamp: gitLogNewestAuthorDate(repo) ?? undefined,
+        // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+        metadata: Object.keys(stamp?.metadata ?? {}).length ? stamp?.metadata : undefined,
+      }
     );
     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);
     return 0;

@@ -29,7 +29,14 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api.engine.memories import create_memories, get_memories, set_memories
-from hindsight_api.engine.memories.base import MemoriesExtension, ScanPage, StoredMemory
+from hindsight_api.engine.memories.base import (
+    EntityPrunePassResult,
+    MemoriesExtension,
+    RecallArms,
+    RelinkPassResult,
+    ScanPage,
+    StoredMemory,
+)
 from hindsight_api.engine.memories.postgres import PostgresMemories
 
 
@@ -48,6 +55,12 @@ class InMemoryMemories(MemoriesExtension):
     # It also owns the document/chunk bodies, so the retain and read paths route those through the
     # document methods below — exercising that half of the seam too.
     owns_document_store = True
+    # When True the store carries each unit's entity ids on the recall result (a backend that
+    # resolves the unit->entity posting inline), so recall builds the entity map from the result
+    # and resolves only names via ``resolve_entity_names``. When False the result carries no ids
+    # (the default store) and recall re-fetches via ``entity_map_for_units``. Both must produce
+    # identical output — the parametrized entity tests pin that.
+    carries_entity_ids_on_result = False
 
     def __init__(self, config: dict[str, str] | None = None):
         super().__init__(config or {})
@@ -126,6 +139,9 @@ class InMemoryMemories(MemoriesExtension):
                 tags=list(row.tags) or None,
                 metadata=row.metadata,
                 proof_count=row.proof_count,
+                # A store that resolves the posting inline carries the ids on the result (a list,
+                # possibly empty); otherwise leave it None so recall re-fetches via the map path.
+                entity_ids=list(row.entity_ids) if self.carries_entity_ids_on_result else None,
                 similarity=score if semantic else None,
                 bm25_score=None if semantic else score,
             )
@@ -145,6 +161,73 @@ class InMemoryMemories(MemoriesExtension):
     ):
         self.calls.append("temporal_search")
         return {ft: [] for ft in fact_types}
+
+    async def recall_unified(
+        self,
+        *,
+        conn,
+        bank_id,
+        fact_types,
+        query_embedding,
+        query_text,
+        limit,
+        temporal_window=None,
+        temporal_semantic_threshold=0.1,
+        tags=None,
+        tags_match="any",
+        tag_groups=None,
+        created_after=None,
+        created_before=None,
+        min_semantic=None,
+        min_keyword=None,
+        enable_graph=True,
+    ):
+        # The one recall interface. This store owns its links (no separate graph arm), so it
+        # answers dense/keyword from its own ``search`` and, when a window is given, temporal from
+        # its own ``temporal_search`` — the same seam the engine drove per-arm before it unified.
+        self.calls.append("recall_unified")
+        sb = await self.search(
+            conn=conn,
+            bank_id=bank_id,
+            fact_types=fact_types,
+            query_embedding=query_embedding,
+            query_text=query_text,
+            limit=limit,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+            created_after=created_after,
+            created_before=created_before,
+            min_semantic=min_semantic,
+            min_keyword=min_keyword,
+        )
+        temporal: dict[str, list] = {ft: [] for ft in fact_types}
+        if temporal_window is not None:
+            start_date, end_date = temporal_window
+            temporal = await self.temporal_search(
+                conn=conn,
+                bank_id=bank_id,
+                fact_types=fact_types,
+                query_embedding=query_embedding,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                semantic_threshold=temporal_semantic_threshold,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                created_after=created_after,
+                created_before=created_before,
+            )
+        return {
+            ft: RecallArms(
+                semantic=sb[ft].semantic,
+                bm25=sb[ft].bm25,
+                graph=[],
+                temporal=temporal.get(ft, []),
+            )
+            for ft in fact_types
+        }
 
     # -- addressed reads -----------------------------------------------------
 
@@ -210,19 +293,32 @@ class InMemoryMemories(MemoriesExtension):
         # matching registry row, so the direct-call tests (conn=None) still get the recall shape.
         wanted = {str(u): list(self.rows[str(u)].entity_ids) for u in unit_ids if str(u) in self.rows}
         all_ids = {e for ids in wanted.values() for e in ids}
-        names: dict[str, str] = {}
-        if conn is not None and all_ids:
-            try:
-                as_uuids = [uuid.UUID(e) for e in all_ids]
-            except (ValueError, AttributeError, TypeError):
-                as_uuids = None
-            if as_uuids:
-                rows = await conn.fetch(
-                    f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = ANY($1::uuid[])",
-                    as_uuids,
-                )
-                names = {str(r["id"]): r["canonical_name"] for r in rows}
-        return {uid: [{"entity_id": e, "canonical_name": names.get(e, e)} for e in ids] for uid, ids in wanted.items()}
+        names = await self.resolve_entity_names(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=all_ids)
+        # A unit with no entities is omitted, not mapped to [] — same as the default store, so
+        # its fact keeps entities=None downstream rather than an empty list.
+        return {
+            uid: [{"entity_id": e, "canonical_name": names.get(e, e)} for e in ids]
+            for uid, ids in wanted.items()
+            if ids
+        }
+
+    async def resolve_entity_names(self, *, conn, fq_table, bank_id, entity_ids):
+        # The store owns the memory rows (and their entity ids), but the *names* live in the
+        # shared entity registry, which this store does not stand in for — resolve them through
+        # the connection recall hands us, bank-scoped, exactly as a store that owns its rows (but
+        # not the registry) would. No connection or no ids means no names to resolve.
+        if not entity_ids or conn is None:
+            return {}
+        try:
+            as_uuids = [uuid.UUID(str(e)) for e in set(entity_ids)]
+        except (ValueError, AttributeError, TypeError):
+            return {}
+        rows = await conn.fetch(
+            f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = ANY($1::uuid[]) AND bank_id = $2",
+            as_uuids,
+            bank_id,
+        )
+        return {str(r["id"]): r["canonical_name"] for r in rows}
 
     async def any_memory_updated_since(
         self, *, conn, fq_table, bank_id, since, fact_types=None, tags=None, tags_match="any", tag_groups=None
@@ -231,6 +327,13 @@ class InMemoryMemories(MemoriesExtension):
         if fact_types:
             rows = [r for r in rows if r.fact_type in fact_types]
         return any(r.created_at is not None and r.created_at > since for r in rows)
+
+    async def live_memory_ids(self, *, conn, fq_table, bank_id, unit_ids):
+        # "Live" for this stub is simply "present in self.rows" — the retraction
+        # check only ever asks whether the id still resolves, so a store that keeps
+        # memories itself answers from its own keyspace with no archive to consult.
+        wanted = {str(u) for u in unit_ids}
+        return {unit_id for unit_id in self.rows if unit_id in wanted}
 
     # -- observations --------------------------------------------------------
 
@@ -593,12 +696,99 @@ async def test_maintenance_passes_are_optional(restore_default_store):
     """
     store = InMemoryMemories({})
     assert await store.enqueue_relink_victims(conn=None, fq_table=None, bank_id="b", affected_unit_ids=["x"]) == 0
-    assert await store.relink_pass(backend=None, fq_table=None, bank_id="b", config=None) == {}
-    assert await store.prune_orphan_entities(conn=None, fq_table=None, bank_id="b") == 0
-    assert await store.prune_stale_cooccurrences(conn=None, fq_table=None, bank_id="b") == 0
+    assert await store.relink_pass(backend=None, fq_table=None, bank_id="b", config=None) == RelinkPassResult()
+    assert (
+        await store.enqueue_entity_prune_candidates(conn=None, fq_table=None, bank_id="b", affected_unit_ids=["x"]) == 0
+    )
+    assert await store.entity_prune_pass(backend=None, fq_table=None, bank_id="b") == EntityPrunePassResult()
     # And recording entity postings is a no-op rather than an error: the posting
     # travels on the memory for a store that owns it.
     await store.record_unit_entities(conn=None, ops=None, fq_table=None, unit_ids=["u"], entity_ids=["e"])
+
+
+# ---------------------------------------------------------------------------
+# Per-bank store capabilities. A store may route different banks to different
+# backends, so every BANK-SCOPED call site asks per bank —
+# writes_memory_rows_in_sql_for(bank_id) / owns_document_store_for(bank_id) —
+# rather than reading the process-global class attribute. The class attribute
+# stays the single-store default the _for methods fall back to.
+# ---------------------------------------------------------------------------
+
+
+def test_per_bank_capability_defaults_to_the_class_attribute():
+    """A single-store extension needs no override: the _for methods return the class attr, so
+    every existing store keeps its exact behaviour for every bank."""
+    pg = PostgresMemories({})
+    assert (pg.writes_memory_rows_in_sql, pg.owns_document_store) == (True, False)
+    assert pg.writes_memory_rows_in_sql_for("any-bank") is True
+    assert pg.owns_document_store_for("any-bank") is False
+
+    mem = InMemoryMemories({})  # owns its rows AND its document store
+    assert mem.writes_memory_rows_in_sql_for("any-bank") is False
+    assert mem.owns_document_store_for("any-bank") is True
+
+
+def test_a_store_answers_capabilities_per_bank():
+    """The point of the _for methods: a store that keeps some banks in SQL and others in a
+    separate store answers PER BANK, so mixed banks in one process each take the right path."""
+
+    class PerBankStore(InMemoryMemories):
+        name = "per-bank"
+        # The loop-level class attr stays False so cross-store txn recovery still runs; the
+        # per-bank answer is what every bank-scoped site consults.
+        writes_memory_rows_in_sql = False
+
+        def __init__(self, config=None):
+            super().__init__(config)
+            self.sql_banks = {"legacy-bank"}
+
+        def writes_memory_rows_in_sql_for(self, bank_id):
+            return bank_id in self.sql_banks
+
+        def owns_document_store_for(self, bank_id):
+            return bank_id not in self.sql_banks
+
+    store = PerBankStore({})
+    # A SQL-backed bank looks like Postgres (host does inline SQL, keeps documents in SQL)...
+    assert store.writes_memory_rows_in_sql_for("legacy-bank") is True
+    assert store.owns_document_store_for("legacy-bank") is False
+    # ...a store-backed bank owns its rows and its document store.
+    assert store.writes_memory_rows_in_sql_for("new-bank") is False
+    assert store.owns_document_store_for("new-bank") is True
+    # The process-level gate (cross-store recovery loop) still fires off the class attr.
+    assert store.writes_memory_rows_in_sql is False
+
+
+def test_assert_writable_defaults_to_allowing_everything():
+    """No existing store needs a change: the default is a no-op, so a store that has never heard
+    of write windows keeps taking every write."""
+    import asyncio
+
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        PostgresMemories({}).assert_writable("any-bank")
+    )
+
+
+async def test_retain_refuses_a_bank_the_store_has_closed_to_writes(restore_default_store):
+    """A retain writes documents, chunks and entities through SQL paths that never reach the
+    memories interface, so a store cannot close a bank from its own methods alone. `retain_batch`
+    asks first — and asks BEFORE anything is written, which is what this pins: every other
+    argument here is None, so a guard that ran even one step late would raise something else.
+    """
+    from hindsight_api.engine.memories.base import StoreWriteUnavailable
+    from hindsight_api.engine.retain import orchestrator
+
+    class ClosedForWrites(InMemoryMemories):
+        name = "closed"
+
+        async def assert_writable(self, bank_id):
+            if bank_id == "frozen-bank":
+                raise StoreWriteUnavailable(f"bank {bank_id} is mid-cutover")
+
+    set_memories(ClosedForWrites({}))
+
+    with pytest.raises(StoreWriteUnavailable, match="mid-cutover"):
+        await orchestrator.retain_batch(None, None, None, None, None, "frozen-bank", [{"content": "hello"}], None)
 
 
 # ---------------------------------------------------------------------------
@@ -860,13 +1050,23 @@ async def test_recall_include_source_facts_hydrates_from_store(memory, request_c
     assert by_id[obs_id].source_fact_ids == [src_id]
 
 
-async def test_recall_include_entities_hydrates_names_from_registry(memory, request_context, restore_default_store):
-    """include_entities must resolve the memory's inline entity ids to NAMES from the PG registry.
+@pytest.mark.parametrize("carries_ids_on_result", [False, True], ids=["map-refetch", "ids-on-result"])
+async def test_recall_include_entities_hydrates_names_from_registry(
+    carries_ids_on_result, memory, request_context, restore_default_store
+):
+    """include_entities must resolve the memory's inline entity ids to NAMES from the registry.
 
     The store owns the memory rows (and the entity ids on them), but the entity name registry stays
     in Postgres — so the names can only come back by resolving through it, not from the dict.
+
+    Parametrized over both recall paths, which MUST agree:
+    - ``map-refetch``: the result carries no entity ids, so recall re-fetches the map via
+      ``entity_map_for_units`` (the default store's behaviour);
+    - ``ids-on-result``: the store carries the ids on the result, so recall builds the map from
+      them and resolves only names via ``resolve_entity_names`` — no re-fetch.
     """
     store = InMemoryMemories({})
+    store.carries_entity_ids_on_result = carries_ids_on_result
     set_memories(store)
     bank_id = f"seam-entities-{uuid.uuid4().hex[:8]}"
     fact_id = str(uuid.uuid4())
@@ -899,6 +1099,84 @@ async def test_recall_include_entities_hydrates_names_from_registry(memory, requ
     finally:
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
+
+
+@pytest.mark.parametrize("carries_ids_on_result", [False, True], ids=["map-refetch", "ids-on-result"])
+async def test_recall_include_entities_omits_entityless_unit(
+    carries_ids_on_result, memory, request_context, restore_default_store
+):
+    """A unit with no entities is OMITTED, not emitted as ``entities=[]`` — in both recall paths.
+
+    One entity-bearing unit and one entity-less unit in the same recall: the bearing unit resolves
+    to its registry name, the entity-less unit comes back with ``entities is None`` (never ``[]``),
+    and the aggregate ``entities`` dict holds only the one real entity. The ``ids-on-result`` fast
+    path and the ``map-refetch`` path must agree exactly.
+    """
+    store = InMemoryMemories({})
+    store.carries_entity_ids_on_result = carries_ids_on_result
+    set_memories(store)
+    bank_id = f"seam-entities-omit-{uuid.uuid4().hex[:8]}"
+    with_entity_id = str(uuid.uuid4())
+    without_entity_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        ent_id = await conn.fetchval(
+            "INSERT INTO entities (bank_id, canonical_name, mention_count) VALUES ($1, $2, 1) RETURNING id",
+            bank_id,
+            "Quantum Lab",
+        )
+    store.rows[with_entity_id] = _stored(
+        with_entity_id, "the quantum lab published its results", "world", entity_ids=[str(ent_id)]
+    )
+    store.rows[without_entity_id] = _stored(without_entity_id, "the cafeteria changed its menu", "world", entity_ids=[])
+
+    try:
+        result = await memory.recall_async(
+            bank_id=bank_id,
+            query="lab and cafeteria",
+            fact_type=["world"],
+            max_tokens=4096,
+            include_entities=True,
+            max_entity_tokens=2000,
+            request_context=request_context,
+        )
+        by_id = {str(r.id): r for r in result.results}
+        assert with_entity_id in by_id and without_entity_id in by_id, f"both facts expected; got {list(by_id)}"
+        assert by_id[with_entity_id].entities == ["Quantum Lab"]
+        assert by_id[without_entity_id].entities is None, (
+            f"entity-less unit must be omitted (entities=None), not entities=[]; "
+            f"got {by_id[without_entity_id].entities!r}"
+        )
+        assert result.entities and list(result.entities) == ["Quantum Lab"]
+    finally:
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
+
+
+@pytest.mark.parametrize(
+    "ids_by_unit, names, expected",
+    [
+        # entity-less unit is omitted, not mapped to []
+        ({"u1": ["e1"], "u2": []}, {"e1": "Alpha"}, {"u1": [{"entity_id": "e1", "canonical_name": "Alpha"}]}),
+        # a repeated id yields one row, first-seen order preserved
+        (
+            {"u1": ["e1", "e2", "e1"]},
+            {"e1": "Alpha", "e2": "Beta"},
+            {"u1": [{"entity_id": "e1", "canonical_name": "Alpha"}, {"entity_id": "e2", "canonical_name": "Beta"}]},
+        ),
+        # an id with no resolved name is dropped; a unit left with none is omitted
+        ({"u1": ["e1", "eX"], "u2": ["eX"]}, {"e1": "Alpha"}, {"u1": [{"entity_id": "e1", "canonical_name": "Alpha"}]}),
+        # nothing to resolve -> empty map
+        ({"u1": []}, {}, {}),
+    ],
+)
+def test_entity_map_from_results_shape(ids_by_unit, names, expected):
+    """The pure fast-path helper mirrors entity_map_for_units: per-unit order-preserving dedupe,
+    unresolved ids dropped, entity-less units omitted (never ``[]``). DB-free."""
+    from hindsight_api.engine.memory_engine import _entity_map_from_results
+
+    assert _entity_map_from_results(ids_by_unit, names) == expected
 
 
 async def test_recall_all_enrichments_together_through_store(memory, request_context, restore_default_store):

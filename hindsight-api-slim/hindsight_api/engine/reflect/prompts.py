@@ -8,6 +8,7 @@ The reflect agent uses hierarchical retrieval:
 """
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from .tokenization import count_cl100k_tokens
@@ -18,6 +19,20 @@ _FINAL_PROMPT_CONTEXT_FRACTION = 0.8
 
 _DEFAULT_ROLE = "You are a reflection agent that answers questions by reasoning over retrieved memories."
 _DEFAULT_FINAL_ROLE = "You are a thoughtful assistant that synthesizes answers from retrieved memories."
+
+
+def _current_utc_datetime() -> str:
+    """Return the current UTC date and time for time-relative reflect reasoning.
+
+    Minute precision (not seconds) so requests within the same minute share an
+    identical prompt string — the finest granularity that still keeps prompt
+    caching viable for bursty traffic.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _current_datetime_section() -> str:
+    return f"## Current Date and Time\nThe current date and time is {_current_utc_datetime()}."
 
 
 def _extract_directive_rules(directives: list[dict[str, Any]]) -> list[str]:
@@ -392,6 +407,13 @@ def build_system_prompt_for_tools(
         ]
     )
 
+    # Volatile "now" reference goes here — after all the static instructions and
+    # right before the bank-specific/custom data. Everything above is identical
+    # across banks and requests, so it stays a cacheable prefix; only this
+    # timestamp and the custom tail below fall outside the cache.
+    parts.append("")
+    parts.append(_current_datetime_section())
+
     parts.append("")
     parts.append(f"## Memory Bank: {name}")
 
@@ -421,25 +443,153 @@ def build_system_prompt_for_tools(
     return "\n".join(parts)
 
 
-def build_final_prompt(
-    query: str,
-    context_history: list[dict],
-    bank_profile: dict,
-    additional_context: str | None = None,
-    max_context_tokens: int = 100_000,
-) -> str:
-    """Build the final prompt when forcing a text response (no tools)."""
-    parts = []
+#: Result-list keys a tool output can carry; an over-budget block is split on
+#: these entry boundaries so no retrieved evidence is dropped.
+_SPLITTABLE_RESULT_KEYS = ("observations", "memories", "results")
 
-    # Bank identity
+#: Above this many synthesis chunks the retrieval volume is pathological
+#: (each chunk is ~0.8 * max_context_tokens); we still process everything,
+#: but loudly, so the real cause (an unbounded tool result) gets looked at.
+_SPLIT_SYNTHESIS_WARN_CHUNKS = 4
+
+#: Floor for the per-chunk budget during splitting. A tiny configured
+#: ``max_context_tokens`` (tests use 1) would otherwise shred the history into
+#: one chunk per result entry — an LLM call per fact. A ~1k-token prompt is
+#: safe for any real model, so the floor caps fan-out without dropping data.
+_MIN_SPLIT_CHUNK_TOKENS = 1024
+
+_FINAL_INSTRUCTIONS = (
+    "Provide a thoughtful answer by synthesizing and reasoning from the retrieved data above. "
+    "You can make reasonable inferences from the memories, but don't completely fabricate information. "
+    "If the exact answer isn't stated, use what IS stated to give the best possible answer. "
+    "Only say 'I don't have information' if the retrieved data is truly unrelated to the question.\n\n"
+    "IMPORTANT: Output ONLY the final answer. Do NOT include meta-commentary like "
+    '"I\'ll search..." or "Let me analyze...". Do NOT explain your reasoning process. '
+    "Just provide the direct synthesized answer."
+)
+
+
+def _render_history_block(entry: dict) -> str:
+    """Render one context-history entry as a fenced JSON block."""
+    tool = entry["tool"]
+    output = entry["output"]
+    try:
+        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        output_str = str(output)
+    return f"\n### From {tool}:\n```json\n{output_str}\n```"
+
+
+def _cut_entry_to_budget(entry: dict, token_budget: int) -> dict:
+    """Token-bound one indivisible over-budget entry by cutting its serialized text.
+
+    Only reachable when a single result entry (or a list-less output like a
+    document expand) alone exceeds the whole per-chunk budget — the one case
+    where "split, don't drop" cannot be honored without exceeding the model's
+    window. The cut text is wrapped back into an output dict so the entry
+    renders like any other block.
+    """
+    output = entry["output"]
+    try:
+        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        output_str = str(output)
+    tokens = count_cl100k_tokens(output_str)
+    while output_str and tokens > token_budget:
+        # Proportional shrink with a safety margin; the loop guards against the
+        # estimate landing high, and always makes progress.
+        keep = min(len(output_str) - 1, max(1, int(len(output_str) * token_budget / tokens * 0.95)))
+        output_str = output_str[:keep]
+        tokens = count_cl100k_tokens(output_str)
+    return {**entry, "output": {"truncated": True, "content": output_str}}
+
+
+def split_context_history(context_history: list[dict], max_context_tokens: int) -> list[list[dict]]:
+    """Partition tool-result history into chunks that each fit the prompt budget.
+
+    Greedy chronological packing: blocks keep their order, and a chunk closes
+    when the next block would push its rendered size past the budget. A single
+    block bigger than the whole budget is split on result-entry boundaries
+    (``observations``/``memories``/``results``) into synthetic partial blocks,
+    so evidence is split across chunks rather than dropped — the failure mode
+    of the old ``break`` was answering from nothing while citing everything
+    (#3122). Only an *indivisible* over-budget entry gets token-cut.
+
+    Returns at least one chunk when history is non-empty; every original
+    result entry appears in exactly one chunk.
+    """
+    budget = max(_MIN_SPLIT_CHUNK_TOKENS, int(max_context_tokens * _FINAL_PROMPT_CONTEXT_FRACTION))
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_tokens = 0
+
+    def _close_current() -> None:
+        nonlocal current, current_tokens
+        if current:
+            chunks.append(current)
+            current = []
+            current_tokens = 0
+
+    def _append_block(entry: dict, tokens: int) -> None:
+        nonlocal current_tokens
+        if current and current_tokens + tokens > budget:
+            _close_current()
+        current.append(entry)
+        current_tokens += tokens
+
+    for entry in context_history:
+        tokens = count_cl100k_tokens(_render_history_block(entry))
+        if tokens <= budget:
+            _append_block(entry, tokens)
+            continue
+
+        # Over-budget block: split it on result-entry boundaries.
+        output = entry["output"]
+        split_key = next(
+            (
+                k
+                for k in _SPLITTABLE_RESULT_KEYS
+                if isinstance(output, dict) and isinstance(output.get(k), list) and output.get(k)
+            ),
+            None,
+        )
+        if split_key is None:
+            cut = _cut_entry_to_budget(entry, budget)
+            _append_block(cut, count_cl100k_tokens(_render_history_block(cut)))
+            continue
+
+        items = output[split_key]
+        piece: list = []
+        for item in items:
+            candidate = {**entry, "output": {**output, split_key: piece + [item]}}
+            if piece and count_cl100k_tokens(_render_history_block(candidate)) > budget:
+                partial = {**entry, "output": {**output, split_key: piece}}
+                _append_block(partial, count_cl100k_tokens(_render_history_block(partial)))
+                piece = []
+                candidate = {**entry, "output": {**output, split_key: [item]}}
+            single_tokens = count_cl100k_tokens(_render_history_block(candidate))
+            if not piece and single_tokens > budget:
+                cut = _cut_entry_to_budget({**entry, "output": {**output, split_key: [item]}}, budget)
+                _append_block(cut, count_cl100k_tokens(_render_history_block(cut)))
+            else:
+                piece.append(item)
+        if piece:
+            partial = {**entry, "output": {**output, split_key: piece}}
+            _append_block(partial, count_cl100k_tokens(_render_history_block(partial)))
+
+    _close_current()
+    return chunks
+
+
+def _bank_identity_section(bank_profile: dict, additional_context: str | None) -> list[str]:
+    """The shared bank-identity/disposition/context head of a synthesis prompt."""
     name = bank_profile.get("name", "Assistant")
     mission = bank_profile.get("mission", "")
 
-    parts.append(f"## Memory Bank Context\nName: {name}")
+    parts = [f"## Memory Bank Context\nName: {name}"]
     if mission:
         parts.append(f"Mission: {mission}")
 
-    # Disposition traits if present
     disposition = bank_profile.get("disposition", {})
     if disposition:
         traits = []
@@ -452,9 +602,51 @@ def build_final_prompt(
         if traits:
             parts.append(f"Disposition: {', '.join(traits)}")
 
-    # Additional context from caller
     if additional_context:
         parts.append(f"\n## Additional Context\n{additional_context}")
+    return parts
+
+
+def _length_directive(max_tokens: int | None) -> str | None:
+    """Soft visible-length directive for a synthesis prompt, or None.
+
+    ``max_tokens`` is the desired *visible* length of the answer (e.g. a mental
+    model page's ``max_tokens``). It is communicated as a prompt directive
+    rather than enforced by truncating the provider call: on thinking models the
+    provider budget is consumed by reasoning tokens, so a hard cap cuts the page
+    off mid-word (#3365). The hard length guarantee is the post-hoc rewrite in
+    the agent; this directive just steers the model toward the target so the
+    rewrite rarely has to fire.
+    """
+    if max_tokens is None:
+        return None
+    return (
+        "\n## Length\n"
+        f"Aim for a complete, self-contained answer of approximately {max_tokens} tokens. "
+        "Finishing cleanly matters more than length: end on a complete sentence and NEVER stop "
+        "mid-word, mid-list, or mid-code-fence. If you near the budget, wrap up gracefully rather "
+        "than cutting off."
+    )
+
+
+def build_final_prompt(
+    query: str,
+    context_history: list[dict],
+    bank_profile: dict,
+    additional_context: str | None = None,
+    max_context_tokens: int = 100_000,
+    max_tokens: int | None = None,
+) -> str:
+    """Build the final prompt when forcing a text response (no tools).
+
+    ``max_tokens`` is the soft visible-length target (see ``_length_directive``).
+
+    Callers overflow-proof this via ``split_context_history``: when the whole
+    history fits one chunk this renders it directly, and the per-block budget
+    walk below never trims. (The walk is kept as a defensive bound for direct
+    callers that skip splitting.)
+    """
+    parts = _bank_identity_section(bank_profile, additional_context)
 
     # Tool call history — include as many entries as fit within the token budget,
     # preferring the most recent calls (they tend to be the most targeted).
@@ -465,13 +657,7 @@ def build_final_prompt(
         rendered: list[str] = []
         truncated = False
         for entry in reversed(context_history):
-            tool = entry["tool"]
-            output = entry["output"]
-            try:
-                output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
-            except (TypeError, ValueError):
-                output_str = str(output)
-            block = f"\n### From {tool}:\n```json\n{output_str}\n```"
+            block = _render_history_block(entry)
             block_tokens = count_cl100k_tokens(block)
             if block_tokens > token_budget:
                 truncated = True
@@ -489,16 +675,92 @@ def build_final_prompt(
     parts.append(f"\n## Question\n{query}")
 
     # Final instructions
+    parts.append("\n## Instructions\n" + _FINAL_INSTRUCTIONS)
+
+    length_directive = _length_directive(max_tokens)
+    if length_directive is not None:
+        parts.append(length_directive)
+
+    return "\n".join(parts)
+
+
+#: System prompt for the intermediate (map) calls of split synthesis. They do
+#: NOT answer the question — they compress one chunk of retrieved data into
+#: dated, cited claims that the reduce call can reason over. Dates and ids are
+#: mandatory because conflicting facts can land in different chunks: only the
+#: reduce call sees every chunk's claims, and it needs each claim's
+#: ``mentioned_at`` to apply the latest-statement-wins supersession rule.
+CLAIMS_SYSTEM_PROMPT = (
+    "You extract evidence from retrieved memory data. You MUST ONLY use information "
+    "from the provided data. NEVER make up names, people, events, or entities.\n\n"
+    "Output a markdown bulleted list of factual claims relevant to the question. For EVERY claim:\n"
+    "- state the fact in one sentence, in the same language as the question;\n"
+    "- append its provenance in parentheses, exactly: "
+    "(mentioned_at: <ISO date or unknown>; occurred: <ISO date/range or unknown>; memory_ids: <comma-separated ids>)\n\n"
+    "Rules:\n"
+    "- Be exhaustive over RELEVANT evidence; skip clearly irrelevant entries.\n"
+    "- Do NOT synthesize, conclude, resolve conflicts, or answer the question — report conflicting "
+    "claims as separate bullets with their dates; a later pass reconciles them.\n"
+    "- Copy memory ids exactly as they appear in the data.\n"
+    "- If nothing in the data is relevant, output exactly: (no relevant evidence)"
+)
+
+
+def build_chunk_claims_prompt(query: str, chunk: list[dict]) -> str:
+    """Build the user prompt for one intermediate (map) call of split synthesis."""
+    parts = ["## Retrieved Data (extract relevant claims from this data)"]
+    for entry in chunk:
+        parts.append(_render_history_block(entry))
+    parts.append(f"\n## Question\n{query}")
     parts.append(
         "\n## Instructions\n"
-        "Provide a thoughtful answer by synthesizing and reasoning from the retrieved data above. "
-        "You can make reasonable inferences from the memories, but don't completely fabricate information. "
-        "If the exact answer isn't stated, use what IS stated to give the best possible answer. "
-        "Only say 'I don't have information' if the retrieved data is truly unrelated to the question.\n\n"
-        "IMPORTANT: Output ONLY the final answer. Do NOT include meta-commentary like "
-        '"I\'ll search..." or "Let me analyze...". Do NOT explain your reasoning process. '
-        "Just provide the direct synthesized answer."
+        "List every claim in the retrieved data relevant to the question, one bullet per claim, "
+        "each with its (mentioned_at: ...; occurred: ...; memory_ids: ...) provenance. "
+        "Do not answer the question."
     )
+    return "\n".join(parts)
+
+
+def build_reduce_prompt(
+    query: str,
+    claim_sections: list[str],
+    bank_profile: dict,
+    additional_context: str | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    """Build the final prompt that synthesizes the answer from per-chunk claims.
+
+    The retrieved data exceeded the context budget, so it was split into chunks
+    and each chunk was compressed to dated, cited claims by a parallel LLM call.
+    This prompt hands ALL the claim sets to one model. Conflicting facts may sit
+    in different sections — that is why the claims carry ``mentioned_at``: the
+    supersession rule (latest statement wins) must be applied across sections,
+    not within one.
+    """
+    parts = _bank_identity_section(bank_profile, additional_context)
+
+    parts.append(
+        "\n## Retrieved Evidence (synthesize and reason from these claims)\n"
+        "The retrieved data was processed in parallel passes; each section below holds one pass's "
+        "extracted claims with provenance dates and memory ids. Treat the sections as ONE evidence "
+        "pool: related and conflicting claims may appear in different sections."
+    )
+    for i, section in enumerate(claim_sections, 1):
+        parts.append(f"\n### Evidence pass {i}:\n{section}")
+
+    parts.append(f"\n## Question\n{query}")
+
+    parts.append(
+        "\n## Instructions\n"
+        "When claims about the same fact conflict, the claim with the LATEST mentioned_at date is "
+        "authoritative — later statements supersede earlier ones, regardless of which section they "
+        "appear in. If equally-recent claims disagree and nothing resolves them, say so explicitly "
+        "rather than picking one.\n\n" + _FINAL_INSTRUCTIONS
+    )
+
+    length_directive = _length_directive(max_tokens)
+    if length_directive is not None:
+        parts.append(length_directive)
 
     return "\n".join(parts)
 
@@ -570,6 +832,9 @@ def build_final_system_prompt(
     parts.append(_FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section))
     parts.append(_FINAL_LANGUAGE_RULE)
     parts.append(build_directives_reminder(directives) if directives else "")
+    # Volatile "now" reference last, so the static/per-bank instructions above
+    # remain a cacheable prefix and only this timestamp falls outside the cache.
+    parts.append(_current_datetime_section())
 
     return "\n\n".join(p.strip() for p in parts if p.strip()) + output_language_directive(llm_output_language)
 
@@ -586,7 +851,7 @@ You will be given:
 2. CURRENT DOCUMENT (JSON) — the existing structured mental model. Each section
    has a stable ``id``, a ``heading``, a ``level`` (1..6), and an ordered list
    of ``blocks``. Blocks are typed: ``paragraph``, ``bullet_list``,
-   ``ordered_list``, or ``code``.
+   ``ordered_list``, ``code``, or ``table``.
 3. NEW INFORMATION SYNTHESIS (markdown) — a synthesis showing how the new facts
    relate to the document's topic. Use it to understand context and relevance,
    but do NOT copy its formatting or wording wholesale.
@@ -648,6 +913,7 @@ Block shapes
 - ``{"type": "bullet_list", "items": ["...", "..."]}``
 - ``{"type": "ordered_list", "items": ["...", "..."]}``
 - ``{"type": "code", "language": "json", "text": "..."}``
+- ``{"type": "table", "headers": ["col1", "col2"], "rows": [["a", "b"], ["c", "d"]]}``
 
 OUTPUT FORMAT
 Return ONLY a single JSON object on its own, with no prose before or after,
@@ -793,6 +1059,159 @@ def build_structured_delta_prompt(
         f"## NEW INFORMATION SYNTHESIS (context for how new facts relate to the topic)\n"
         f"```markdown\n{candidate}\n```\n\n"
         f"## SUPPORTING FACTS (new since last refresh — integrate these)\n{facts_body}"
+        f"{budget_hint}{truncation_note}\n\n"
+        f"{task_footer}"
+    )
+
+
+STRUCTURED_RETRACTION_SYSTEM_PROMPT = """You are removing *retracted information* from an existing structured document.
+
+You will be given:
+1. TOPIC — the question this document answers.
+2. CURRENT DOCUMENT (JSON) — the existing document. Each section has a stable
+   ``id``, a ``heading``, a ``level`` (1..6), and an ordered list of ``blocks``.
+   Blocks are typed: ``paragraph``, ``bullet_list``, ``ordered_list``, ``code``,
+   or ``table``.
+3. RETRACTED FACTS — facts this document was built from that have since been
+   removed from the memory bank. They are no longer true, no longer supported,
+   or were withdrawn. The document may still state them.
+4. STILL-SUPPORTED FACTS — other facts this document is built on that remain
+   valid. They are listed so you can tell which content survives.
+
+Your task: output a JSON object ``{"operations": [...]}`` that removes from
+CURRENT DOCUMENT anything that rests on the RETRACTED FACTS, and nothing else.
+
+RULES
+- **Remove only what the retracted facts support.** If a sentence, bullet, row, or
+  section states a retracted fact, remove it (``remove_block``, ``remove_section``)
+  or rewrite it to drop just that claim (``replace_block``,
+  ``replace_section_blocks``) when the block also carries content that survives.
+- **When in doubt, keep it.** The document was written from far more facts than you
+  are shown, and blocks do not record which fact they came from. Content that merely
+  looks related to a retracted fact, or that could plausibly rest on evidence you
+  cannot see, must be left exactly as it is. Removing something still true is worse
+  than leaving something stale: the deletion is not recoverable, and no later pass
+  can restore it.
+- **A restated fact was not retracted.** If a retracted fact's content also appears
+  in STILL-SUPPORTED FACTS, the underlying information was re-ingested rather than
+  withdrawn — only its identifier changed. Keep that content.
+- **Do not add anything.** No ``append_block``, no ``insert_block``, no
+  ``add_section``. This pass only takes away.
+- **Do not tidy.** No rewording, reordering, or reformatting of surviving content.
+  Never leave a note saying something was removed — the document must read as though
+  the retracted claim was never there.
+- If removing a block would leave its section empty and the section exists only for
+  that content, remove the section instead.
+- Output ``{"operations": []}`` when nothing in the document rests on the retracted
+  facts. That is a normal, expected answer.
+
+ALLOWED OPERATIONS (each line shows the JSON shape)
+- ``{"op": "remove_block", "section_id": "...", "index": N}``
+- ``{"op": "remove_section", "section_id": "..."}``
+- ``{"op": "replace_block", "section_id": "...", "index": N, "block": {...}}``
+- ``{"op": "replace_section_blocks", "section_id": "...", "blocks": [...]}``
+
+Block shapes
+- ``{"type": "paragraph", "text": "..."}``
+- ``{"type": "bullet_list", "items": ["...", "..."]}``
+- ``{"type": "ordered_list", "items": ["...", "..."]}``
+- ``{"type": "code", "language": "json", "text": "..."}``
+- ``{"type": "table", "headers": ["col1", "col2"], "rows": [["a", "b"], ["c", "d"]]}``
+
+IMPORTANT: ``remove_block`` operations are applied in the order you emit them, and
+each one shifts the indices of every later block in that section. When removing
+several blocks from the same section, emit them in DESCENDING index order.
+
+OUTPUT FORMAT
+Return ONLY a single JSON object, with no prose before or after, no markdown code
+fences, no commentary. The object must have exactly one top-level key,
+``operations``, whose value is an array of operation objects (empty array when
+nothing changes).
+
+JSON STRING RULES (critical)
+- Every ``text`` and ``items`` string must be valid JSON: escape ``"`` as ``\\"``,
+  backslashes as ``\\\\``, and newlines as ``\\n``.
+- Do not append extra ``]`` or ``}`` after the closing ``}`` of the root object."""
+
+
+def build_structured_retraction_prompt(
+    *,
+    current_document_json: str,
+    retracted_facts: list[dict[str, Any]],
+    surviving_facts: list[dict[str, Any]],
+    source_query: str,
+    max_output_tokens: int | None = None,
+    max_input_tokens: int | None = None,
+) -> str:
+    """Build the user prompt for the retraction ("unsay") pass of a delta refresh.
+
+    ``retracted_facts`` and ``surviving_facts`` are stored ``based_on`` entries —
+    ``{id, text, type, context}``. The retracted ones are quoted from the document's
+    own record because the rows themselves are gone: an observation swept away with
+    its source keeps no history, so this copy is all that is left of what it said.
+
+    ``surviving_facts`` are passed so the model can tell re-ingestion from
+    withdrawal. When a document is re-retained its facts return under fresh ids, and
+    the old ids read as retracted even though nothing was actually withdrawn; seeing
+    the same content on both lists is what stops that from deleting live content.
+    """
+
+    def _lines(facts: list[dict[str, Any]]) -> str:
+        out: list[str] = []
+        for fact in facts:
+            text = (fact.get("text") or "").strip().replace("\n", " ")
+            out.append(f"- [{fact.get('type', '')}] {text}")
+        return "\n".join(out)
+
+    retracted_block = _lines(retracted_facts) or "(none)"
+    surviving_block = _lines(surviving_facts) or "(none listed)"
+
+    budget_hint = ""
+    if max_output_tokens is not None:
+        budget_hint = (
+            f"\n\n## Output budget\n"
+            f"Your JSON response must fit within ~{max_output_tokens} tokens. If more "
+            "removals are needed than fit, prefer the highest-leverage ones first "
+            "(``replace_section_blocks`` over many block-level ops) so the response "
+            "always parses as valid JSON."
+        )
+
+    task_footer = (
+        "## Task\n"
+        "Output a JSON object matching the operations schema, removing content that "
+        "rests on the RETRACTED FACTS. Leave everything else untouched. Emit "
+        '``{"operations": []}`` if nothing in the document rests on them.'
+    )
+
+    # Reuse the delta fitter: same three oversized inputs (document, and two fact
+    # lists standing in for synthesis + facts), same budget split, so a large
+    # document cannot push the retracted list out of the window.
+    input_cap = max_input_tokens if max_input_tokens is not None else _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS
+    doc_json, surviving_body, retracted_body, input_truncated = _fit_structured_delta_prompt_parts(
+        source_query=source_query,
+        current_document_json=current_document_json,
+        candidate_markdown=surviving_block,
+        facts_block=retracted_block,
+        budget_hint=budget_hint,
+        task_footer=task_footer,
+        max_input_tokens=input_cap,
+    )
+    truncation_note = ""
+    if input_truncated:
+        truncation_note = (
+            "\n\n*Note: Document or fact lists were truncated to fit the model context "
+            "window. Prefer minimal, high-leverage operations, and keep anything you "
+            "cannot confidently attribute to a retracted fact.*"
+        )
+
+    return (
+        f"## Topic\n{source_query}\n\n"
+        f"## CURRENT DOCUMENT (apply ops to this; reference section ids as listed)\n"
+        f"```json\n{doc_json}\n```\n\n"
+        f"## STILL-SUPPORTED FACTS (these remain valid — do not remove content resting on them)\n"
+        f"{surviving_body}\n\n"
+        f"## RETRACTED FACTS (no longer in the memory bank — remove content resting on these)\n"
+        f"{retracted_body}"
         f"{budget_hint}{truncation_note}\n\n"
         f"{task_footer}"
     )

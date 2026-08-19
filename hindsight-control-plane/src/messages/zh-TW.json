@@ -51,6 +51,7 @@
       "select": "選擇記憶庫...",
       "search": "搜尋記憶庫...",
       "empty": "還沒有記憶庫。",
+      "noSearchResults": "沒有符合搜尋的記憶庫。",
       "create": "建立新記憶庫",
       "switchTitle": "切換記憶庫",
       "returnTo": "返回 {bank}",
@@ -277,7 +278,7 @@
     "mentalModels": "心智模型",
     "noMentalModels": "沒有心智模型",
     "upToDate": "最新",
-    "stale": "已過期",
+    "needsRefresh": "需要更新",
     "total": "總計",
     "activity": "活動",
     "memoriesIngested": "已匯入記憶",
@@ -336,7 +337,7 @@
     "retainMissionDescription": "此記憶庫在擷取期間應關注的內容。在不取代擷取規則的情況下引導 LLM — 可與任何擷取模式搭配使用。",
     "retainMissionPlaceholder": "例如：始終包含技術決策、API 設計選擇和架構權衡。忽略會議事務、問候語和社交交流。",
     "extractionModeLabel": "擷取模式",
-    "extractionModeDescription": "事實擷取的詳細程度：精簡（預設，選擇性擷取）、詳細（擷取所有內容）、自訂（撰寫自訂擷取規則）",
+    "extractionModeDescription": "retain 時擷取事實的方式：簡潔（預設，選擇性擷取）、詳盡（全部擷取）、逐字（保留原文措辭）、分塊（完全略過 LLM，按原樣儲存每個分塊）、自訂（撰寫自己的擷取規則）",
     "customExtractionPromptLabel": "自訂擷取提示詞",
     "customExtractionPromptDescription": "完全取代內建擷取規則。僅在擷取模式設為自訂時生效。",
     "entitiesTitle": "實體",
@@ -409,6 +410,7 @@
     "mcpGroupDocuments": "文件",
     "mcpGroupOperations": "操作",
     "mcpGroupTags": "標籤",
+    "mcpGroupKnowledgeBase": "知識庫",
     "retainSectionDescription": "預設擷取設定和命名策略。在 retain 請求中傳入策略名稱，可逐項覆寫預設值。",
     "defaultStrategyLabel": "預設策略",
     "defaultStrategyDescription": "當請求未指定策略時自動應用。",
@@ -420,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "產生單一觀察時考量的來源事實最大 Token 數。留空則使用伺服器預設值。",
     "maxObservationsPerScopeLabel": "每個範圍的最大觀察數",
     "maxObservationsPerScopeDescription": "合併後每個範圍儲存的觀察數上限。留空使用伺服器預設值。",
+    "mentalModelMinRefreshIntervalLabel": "心智模型最小重新整理間隔",
+    "mentalModelMinRefreshIntervalDescription": "本記憶庫中同一個心智模型兩次自動重新整理之間的最小秒數。更早觸發的重新整理會排入佇列並等待窗口結束，之後的觸發會併入其中——因此一連串 retain 只需一次重新整理，而不是每次 retain 一次。手動重新整理一律立即執行。留空則使用伺服器預設值；0 表示不限制。個別模型可在自身的重新整理設定中覆寫此值。",
+    "mentalModelsTitle": "心智模型與知識頁面",
+    "mentalModelsDescription": "本記憶庫中的心智模型，以及以其為基礎的知識頁面，如何保持最新。",
+    "mentalModelsFailedToSave": "儲存心智模型設定失敗",
     "serverDefault": "伺服器預設值",
     "addStrategy": "新增策略",
     "nameLabel": "名稱",
@@ -457,7 +464,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "提示詞注入偵測:阻止覆寫代理行為的嘗試",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "大小異常:拒絕可疑的過大負載",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "受保護的標籤命名空間:強制使用不可變的身份標籤",
-    "memoryDefenseEnterpriseCta": "申請示範"
+    "memoryDefenseEnterpriseCta": "申請示範",
+    "recallTitle": "召回流程",
+    "recallDescription": "此記憶庫召回時執行的檢索階段",
+    "recallServerDefault": "伺服器預設值",
+    "recallFailedToSave": "儲存召回流程設定失敗",
+    "recallTemporalRetrievalLabel": "時間檢索",
+    "recallTemporalRetrievalDescription": "執行日期感知的查詢分析。停用後也會略過時間檢索分支。當此記憶庫的內容不含有意義的日期時很有用。",
+    "recallGraphRetrievalLabel": "圖檢索",
+    "recallGraphRetrievalDescription": "在召回時走訪實體與連結關係。停用可用關聯檢索換取更低的延遲。",
+    "recallRerankingLabel": "重新排序",
+    "recallRerankingDescription": "使用交叉編碼器對融合後的候選重新排序。停用後直接回傳 RRF 排序，較快但精確度較低。",
+    "extractionModeConcise": "簡潔",
+    "extractionModeVerbose": "詳盡",
+    "extractionModeVerbatim": "逐字",
+    "extractionModeChunks": "分塊（不用 LLM）",
+    "extractionModeCustom": "自訂"
   },
   "bankOperations": {
     "title": "背景作業",
@@ -473,13 +495,15 @@
     "unknown": "未知",
     "notAvailable": "不適用",
     "operationDetailsLoadError": "無法載入操作詳情",
+    "deferredUntilTitle": "延後至 {time}",
     "status": {
       "all": "全部",
       "pending": "待處理",
       "processing": "處理中",
       "completed": "已完成",
       "failed": "失敗",
-      "cancelled": "已取消"
+      "cancelled": "已取消",
+      "deferred": "已延後"
     },
     "operationType": {
       "all": "所有類型",
@@ -488,7 +512,10 @@
       "refreshMentalModel": "心智模型重新整理",
       "fileConvertRetain": "轉換檔案",
       "webhookDelivery": "Webhook 投遞",
-      "graphMaintenance": "圖譜維護"
+      "graphMaintenance": "圖譜維護",
+      "vectorIndexMaintenance": "向量索引維護",
+      "exportDocuments": "匯出文件",
+      "importDocuments": "匯入文件"
     },
     "table": {
       "id": "操作 ID",
@@ -502,7 +529,8 @@
     "action": {
       "cancel": "取消",
       "retry": "重試",
-      "delete": "刪除"
+      "delete": "刪除",
+      "download": "下載"
     },
     "pagination": "顯示第 {start}-{end} 筆，共 {total} 筆",
     "paginationPrevious": "上一頁",
@@ -518,6 +546,7 @@
       "progress": "進度",
       "lastHeartbeat": "最後心跳"
     },
+    "outcomeDetails": "結果詳情",
     "metadata": "中繼資料",
     "error": "錯誤",
     "rawPayloadParentHelp": "這是父級操作，原始酬載存放在每個子批次上。開啟子操作以檢視其酬載。",
@@ -697,6 +726,7 @@
     "exportIncludeObservationsHint": "一併匯出合成的觀測。若關閉，目標庫會在整合時重新產生。",
     "importDialogTitle": "匯入文件",
     "importDialogDescription": "上傳先前從某個庫匯出的 .zip 檔案。這不是一般的文件上傳——事實會在此庫中重新嵌入並關聯。匯入會在背景執行。",
+    "importFileHint": "該 .zip 必須是由匯出動作產生的（本庫或其他庫）。若要新增 PDF、Word 或文字檔案，請改用「新增文件 → 上傳檔案」。",
     "actionsButton": "操作",
     "importConflictLabel": "當文件已存在時",
     "importConflictSkip": "略過 — 保留現有文件",
@@ -809,6 +839,9 @@
     "optionsRefreshCronLabel": "定時重新整理 (cron)",
     "optionsRefreshCronPlaceholder": "分 時 日 月 週  ·  例如 0 3 * * *（每天 03:00 UTC）",
     "optionsRefreshCronDescription": "依固定的 UTC cron 排程重新整理。與有新記憶時重新整理互斥。只有當新記憶改變此模型的範圍時，定時重新整理才會執行。留空即停用。",
+    "optionsMinRefreshIntervalLabel": "最小重新整理間隔（秒）",
+    "optionsMinRefreshIntervalPlaceholder": "預設（繼承）",
+    "optionsMinRefreshIntervalDescription": "自動重新整理的頻率下限。在窗口內觸發的重新整理會排入佇列並暫緩到窗口結束，之後的觸發會併入其中——因此一連串 retain 只需一次重新整理。手動重新整理一律立即執行。0 或留空 = 無下限。",
     "optionsSectionTags": "標籤",
     "optionsTagsLabel": "標籤",
     "optionsTagsPlaceholder": "例如：project-x, team-alpha（逗號分隔）",
@@ -850,7 +883,10 @@
     "clearDialogConfirm": "清除",
     "actionClearContent": "清除內容",
     "emptyContent": "尚無內容。重新整理此心智模型以產生內容。",
-    "selectModelPrompt": "選擇一個心智模型以檢視其內容。"
+    "selectModelPrompt": "選擇一個心智模型以檢視其內容。",
+    "optionsSectionTroubleshooting": "問題排查",
+    "optionsKeepTraceLabel": "保留重新整理追蹤",
+    "optionsKeepTraceDescription": "記錄每次重新整理如何得出結果：模式、範圍、時間範圍、擷取到的事實與實際使用的事實，以及增量操作。這是事後診斷排程重新整理的唯一方式。"
   },
   "cronPreview": {
     "invalid": "無效的 cron 運算式",
@@ -936,7 +972,8 @@
     "observationTextField": "文字",
     "observationTagsField": "標籤",
     "observationSourceMemoriesField": "來源記憶（{count}）",
-    "observationIdField": "ID"
+    "observationIdField": "ID",
+    "structuredOutputTitle": "結構化輸出"
   },
   "searchDebug": {
     "noBankSelected": "未選擇記憶庫",
@@ -1458,7 +1495,13 @@
     "factTypeWorld": "世界",
     "factTypeExperience": "經驗",
     "factTypeObservation": "觀察",
-    "actionClearContent": "清除內容"
+    "actionClearContent": "清除內容",
+    "structuredOutput": "結構化輸出",
+    "responseSchemaTitle": "結構化輸出結構描述",
+    "refreshTrace": "重新整理追蹤",
+    "traceNotCaptured": "本次重新整理沒有記錄追蹤。請在模型設定中開啟「保留重新整理追蹤」。",
+    "actionDryRun": "執行試執行",
+    "actionDryRunRunning": "試執行中…"
   },
   "constellation": {
     "instructions": "滾動縮放 · 拖曳平移 · 懸停探索 · 按一下選取",
@@ -1656,7 +1699,8 @@
         "refresh": "重新整理心智模型失敗",
         "history": "取得心智模型歷史失敗",
         "notFound": "找不到心智模型",
-        "clear": "清除心智模型失敗"
+        "clear": "清除心智模型失敗",
+        "dryRunRefresh": "心智模型重新整理試執行失敗"
       },
       "observations": {
         "list": "列出觀察失敗",
@@ -1755,7 +1799,7 @@
     "createPageTitle": "New page",
     "autoBadge": "auto",
     "inSync": "In sync",
-    "needsRefresh": "Needs refresh",
+    "needsRefresh": "需要更新",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1786,5 +1830,53 @@
     "pagesEmptyCta": "Create your first page",
     "recentDocsTitle": "Recent documents",
     "recentDocsEmpty": "No documents yet"
+  },
+  "schemaBuilder": {
+    "title": "結構化輸出結構描述",
+    "subtitle": "以視覺化方式新增欄位，或直接編輯 JSON。模型會傳回此結構的物件。",
+    "visualTab": "視覺化",
+    "codeTab": "程式碼",
+    "addField": "新增欄位",
+    "namePlaceholder": "欄位名稱",
+    "descriptionPlaceholder": "描述（選填）",
+    "required": "必填",
+    "removeField": "移除欄位",
+    "emptyState": "至少新增一個欄位以定義輸出。",
+    "duplicateNames": "欄位名稱必須唯一。",
+    "visualUnavailable": "此結構對視覺化編輯器來說過於複雜，請以程式碼方式編輯。",
+    "invalidJson": "JSON 語法無效。",
+    "cancel": "取消",
+    "apply": "套用",
+    "openBuilder": "建立結構",
+    "edit": "編輯",
+    "clear": "移除結構描述",
+    "fieldsSummary": "{count} 個欄位",
+    "invalidSchema": "結構描述無效——開啟建立器進行修正。",
+    "fieldDescription": "設定後，回答也會以符合此結構的 structured_output 形式傳回。",
+    "itemsLabel": "每個元素"
+  },
+  "mentalModelDiagnostics": {
+    "fallbackNoBaseline": "沒有可編輯的既有內容",
+    "fallbackQueryChanged": "來源查詢已變更",
+    "fallbackDocUnreadable": "無法讀取已儲存的文件",
+    "fallbackOpsFailed": "增量操作呼叫失敗",
+    "fallbackOpsAllSkipped": "所有增量操作均遭拒絕",
+    "outcomeWritten": "寫入新內容",
+    "outcomePreserved": "沒有新事實，保留內容",
+    "outcomeFailed": "結果為空，重新整理失敗",
+    "outcomeDeltaNotApplied": "未套用增量，重新整理失敗",
+    "warningsTitle": "警告",
+    "traceResults": "{count} 筆結果",
+    "executionTraceTitle": "執行追蹤",
+    "noOperations": "沒有操作",
+    "responseGenerated": "已產生回應",
+    "agentDecided": "代理已決策",
+    "toolInputLabel": "輸入：",
+    "executionTraceDescription": "{iterations} 次 LLM 呼叫 • 共 {totalMs} 毫秒",
+    "executingTools": "呼叫的工具：{count}",
+    "resultTitle": "試執行 — {name}",
+    "toolOutputLabel": "輸出：",
+    "toolWindowBound": "範圍：僅 {time} 之後更新的記憶",
+    "toolWindowUnbounded": "範圍：無 — 此工具不受時間限制"
   }
 }

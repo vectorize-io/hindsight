@@ -112,6 +112,21 @@ type DocStorageEdits = {
   store_document_text: boolean | null;
 };
 
+// Mental models and the knowledge pages backed by them. null = inherit the
+// server default.
+type MentalModelsEdits = {
+  mental_model_min_refresh_interval_seconds: number | null;
+};
+
+// Recall pipeline stages. null = inherit the server default (all three ship
+// enabled); explicit false switches that stage off for this bank, trading
+// recall breadth for latency. Semantic + BM25 always run.
+type RecallEdits = {
+  enable_temporal_retrieval: boolean | null;
+  enable_graph_retrieval: boolean | null;
+  enable_reranking: boolean | null;
+};
+
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
 
 const GEMINI_HARM_CATEGORY_VALUES = [
@@ -206,6 +221,19 @@ function getMcpToolGroups(t: (key: string) => string): McpToolGroup[] {
       tools: ["list_operations", "get_operation", "cancel_operation"],
     },
     { key: "tags", label: t("mcpGroupTags"), tools: ["list_tags"] },
+    {
+      key: "knowledgeBase",
+      label: t("mcpGroupKnowledgeBase"),
+      tools: [
+        "get_knowledge_base_tree",
+        "search_knowledge_base",
+        "get_knowledge_page",
+        "create_knowledge_folder",
+        "create_knowledge_page",
+        "update_knowledge_node",
+        "delete_knowledge_node",
+      ],
+    },
   ];
 }
 
@@ -242,6 +270,13 @@ const MCP_ALL_TOOLS: string[] = [
   "get_operation",
   "cancel_operation",
   "list_tags",
+  "get_knowledge_base_tree",
+  "search_knowledge_base",
+  "get_knowledge_page",
+  "create_knowledge_folder",
+  "create_knowledge_page",
+  "update_knowledge_node",
+  "delete_knowledge_node",
 ];
 const ALL_TOOLS: string[] = MCP_ALL_TOOLS;
 
@@ -300,6 +335,21 @@ function docStorageSlice(overrides: Record<string, any>): DocStorageEdits {
   };
 }
 
+function mentalModelsSlice(overrides: Record<string, any>): MentalModelsEdits {
+  return {
+    mental_model_min_refresh_interval_seconds:
+      overrides.mental_model_min_refresh_interval_seconds ?? null,
+  };
+}
+
+function recallSlice(overrides: Record<string, any>): RecallEdits {
+  return {
+    enable_temporal_retrieval: overrides.enable_temporal_retrieval ?? null,
+    enable_graph_retrieval: overrides.enable_graph_retrieval ?? null,
+    enable_reranking: overrides.enable_reranking ?? null,
+  };
+}
+
 const DEFAULT_PROFILE: ProfileData = {
   reflect_mission: "",
   disposition_skepticism: 3,
@@ -334,6 +384,10 @@ export function BankConfigView() {
   const [geminiEdits, setGeminiEdits] = useState<GeminiEdits>(geminiSlice({}));
   const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
   const [docStorageEdits, setDocStorageEdits] = useState<DocStorageEdits>(docStorageSlice({}));
+  const [recallEdits, setRecallEdits] = useState<RecallEdits>(recallSlice({}));
+  const [mentalModelsEdits, setMentalModelsEdits] = useState<MentalModelsEdits>(
+    mentalModelsSlice({})
+  );
 
   // Per-section saving/error state
   const [retainSaving, setRetainSaving] = useState(false);
@@ -342,12 +396,16 @@ export function BankConfigView() {
   const [mcpSaving, setMcpSaving] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
   const [securityPrivacySaving, setSecurityPrivacySaving] = useState(false);
+  const [recallSaving, setRecallSaving] = useState(false);
+  const [mentalModelsSaving, setMentalModelsSaving] = useState(false);
   const [retainError, setRetainError] = useState<string | null>(null);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [reflectError, setReflectError] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
   const [geminiError, setGeminiError] = useState<string | null>(null);
   const [securityPrivacyError, setSecurityPrivacyError] = useState<string | null>(null);
+  const [recallError, setRecallError] = useState<string | null>(null);
+  const [mentalModelsError, setMentalModelsError] = useState<string | null>(null);
 
   // Dirty tracking
   const retainDirty = useMemo(
@@ -382,6 +440,14 @@ export function BankConfigView() {
     () => JSON.stringify(docStorageEdits) !== JSON.stringify(docStorageSlice(baseOverrides)),
     [docStorageEdits, baseOverrides]
   );
+  const recallDirty = useMemo(
+    () => JSON.stringify(recallEdits) !== JSON.stringify(recallSlice(baseOverrides)),
+    [recallEdits, baseOverrides]
+  );
+  const mentalModelsDirty = useMemo(
+    () => JSON.stringify(mentalModelsEdits) !== JSON.stringify(mentalModelsSlice(baseOverrides)),
+    [mentalModelsEdits, baseOverrides]
+  );
   useEffect(() => {
     if (bankId) loadAll();
   }, [bankId]);
@@ -415,6 +481,8 @@ export function BankConfigView() {
       setGeminiEdits(geminiSlice(cfg));
       setAuditEdits(auditSlice(overrides));
       setDocStorageEdits(docStorageSlice(overrides));
+      setRecallEdits(recallSlice(overrides));
+      setMentalModelsEdits(mentalModelsSlice(overrides));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -526,6 +594,55 @@ export function BankConfigView() {
       setSecurityPrivacyError(err.message || t("securityPrivacyFailedToSave"));
     } finally {
       setSecurityPrivacySaving(false);
+    }
+  };
+
+  const saveRecall = async () => {
+    if (!bankId) return;
+    setRecallSaving(true);
+    setRecallError(null);
+    try {
+      // Same tombstone convention as the sections above: a null clears the bank
+      // override server-side, so the stage falls back to the server default.
+      await client.updateBankConfig(bankId, { ...recallEdits });
+      setBaseOverrides((prev) => {
+        const next = { ...prev };
+        for (const key of [
+          "enable_temporal_retrieval",
+          "enable_graph_retrieval",
+          "enable_reranking",
+        ] as const) {
+          if (recallEdits[key] === null) delete next[key];
+          else next[key] = recallEdits[key];
+        }
+        return next;
+      });
+    } catch (err: any) {
+      setRecallError(err.message || t("recallFailedToSave"));
+    } finally {
+      setRecallSaving(false);
+    }
+  };
+
+  const saveMentalModels = async () => {
+    if (!bankId) return;
+    setMentalModelsSaving(true);
+    setMentalModelsError(null);
+    try {
+      // Same tombstone convention as the sections above: a null clears the bank
+      // override server-side, so the setting falls back to the server default.
+      await client.updateBankConfig(bankId, { ...mentalModelsEdits });
+      setBaseOverrides((prev) => {
+        const next = { ...prev };
+        const value = mentalModelsEdits.mental_model_min_refresh_interval_seconds;
+        if (value === null) delete next.mental_model_min_refresh_interval_seconds;
+        else next.mental_model_min_refresh_interval_seconds = value;
+        return next;
+      });
+    } catch (err: any) {
+      setMentalModelsError(err.message || t("mentalModelsFailedToSave"));
+    } finally {
+      setMentalModelsSaving(false);
     }
   };
 
@@ -780,6 +897,35 @@ export function BankConfigView() {
           />
         </ConfigSection>
 
+        {/* Mental Models & Knowledge Pages Section */}
+        <ConfigSection
+          title={t("mentalModelsTitle")}
+          description={t("mentalModelsDescription")}
+          error={mentalModelsError}
+          dirty={mentalModelsDirty}
+          saving={mentalModelsSaving}
+          onSave={saveMentalModels}
+        >
+          <FieldRow
+            label={t("mentalModelMinRefreshIntervalLabel")}
+            description={t("mentalModelMinRefreshIntervalDescription")}
+          >
+            <Input
+              type="number"
+              min={0}
+              value={mentalModelsEdits.mental_model_min_refresh_interval_seconds ?? ""}
+              onChange={(e) =>
+                setMentalModelsEdits({
+                  mental_model_min_refresh_interval_seconds: e.target.value
+                    ? parseInt(e.target.value, 10)
+                    : null,
+                })
+              }
+              placeholder={t("serverDefault")}
+            />
+          </FieldRow>
+        </ConfigSection>
+
         {/* MCP Tools Section */}
         <ConfigSection
           title={t("mcpToolsTitle")}
@@ -885,6 +1031,46 @@ export function BankConfigView() {
           </FieldRow>
         </ConfigSection>
 
+        {/* Recall Section — per-bank retrieval pipeline stages */}
+        <ConfigSection
+          title={t("recallTitle")}
+          description={t("recallDescription")}
+          error={recallError}
+          dirty={recallDirty}
+          saving={recallSaving}
+          onSave={saveRecall}
+        >
+          {(
+            [
+              ["enable_temporal_retrieval", "recallTemporalRetrieval"],
+              ["enable_graph_retrieval", "recallGraphRetrieval"],
+              ["enable_reranking", "recallReranking"],
+            ] as const
+          ).map(([field, key]) => (
+            <FieldRow key={field} label={t(`${key}Label`)} description={t(`${key}Description`)}>
+              {/* Tri-state: inherit the server default, or override per bank. */}
+              <Select
+                value={recallEdits[field] === null ? INHERIT_SENTINEL : String(recallEdits[field])}
+                onValueChange={(v) =>
+                  setRecallEdits({
+                    ...recallEdits,
+                    [field]: v === INHERIT_SENTINEL ? null : v === "true",
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT_SENTINEL}>{t("recallServerDefault")}</SelectItem>
+                  <SelectItem value="true">{t("enabled")}</SelectItem>
+                  <SelectItem value="false">{t("disabled")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          ))}
+        </ConfigSection>
+
         {/* Models Section */}
         <ConfigSection
           title={t("modelsTitle")}
@@ -948,7 +1134,17 @@ export function BankConfigView() {
 
 type RetainFormValues = RetainStrategyValues<LabelGroup[]>;
 
-const EXTRACTION_MODES = ["concise", "verbose", "verbatim", "chunks", "custom"];
+// Value/label pairs rather than bare values: the option list is user-facing, so
+// the labels are translated while the values stay the API's mode strings.
+function getExtractionModes(t: (key: string) => string): { value: string; label: string }[] {
+  return [
+    { value: "concise", label: t("extractionModeConcise") },
+    { value: "verbose", label: t("extractionModeVerbose") },
+    { value: "verbatim", label: t("extractionModeVerbatim") },
+    { value: "chunks", label: t("extractionModeChunks") },
+    { value: "custom", label: t("extractionModeCustom") },
+  ];
+}
 const INHERIT_SENTINEL = "__inherit__";
 
 function RetainStrategyForm({
@@ -982,9 +1178,9 @@ function RetainStrategyForm({
                 <span className="text-muted-foreground italic">{t("inherited")}</span>
               </SelectItem>
             )}
-            {EXTRACTION_MODES.map((opt) => (
-              <SelectItem key={opt} value={opt}>
-                {opt}
+            {getExtractionModes(t).map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
               </SelectItem>
             ))}
           </SelectContent>
@@ -1138,29 +1334,39 @@ function RetainStrategiesPanel({
       {/* Tab bar */}
       <div className="border-b border-border px-6 flex items-stretch gap-1 flex-wrap">
         {/* Default tab */}
+        {/* Active tab is marked with the brand gradient, which can't be
+            expressed as a border colour — so the active underline is an
+            absolutely-positioned bar and the border-b-2 is kept transparent
+            purely to carry the subtle hover underline on inactive tabs. */}
         <button
           type="button"
           onClick={() => setSelectedTab("default")}
-          className={`relative py-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px ${
+          className={`relative py-3 px-4 text-sm font-semibold transition-colors border-b-2 border-transparent -mb-px ${
             selectedTab === "default"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground hover:border-border"
           }`}
         >
           {t("default")}
+          {selectedTab === "default" && (
+            <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-primary-gradient" />
+          )}
         </button>
 
         {/* Named strategy tabs */}
         {local.map((s) => (
           <div
             key={s.id}
-            className={`relative flex items-center gap-2 py-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px cursor-pointer ${
+            className={`relative flex items-center gap-2 py-3 px-4 text-sm font-semibold transition-colors border-b-2 border-transparent -mb-px cursor-pointer ${
               selectedTab === s.id
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:border-border"
             }`}
             onClick={() => setSelectedTab(s.id)}
           >
+            {selectedTab === s.id && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-primary-gradient" />
+            )}
             <span className="font-mono">
               {s.name || <span className="italic font-normal opacity-50">{t("unnamed")}</span>}
             </span>

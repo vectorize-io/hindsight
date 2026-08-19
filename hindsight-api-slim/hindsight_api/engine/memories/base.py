@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from ...extensions.base import Extension
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ..search.retrieval import GraphRetriever, SemanticBm25Result
+    from ..search.retrieval import GraphRetriever
 
 
 class MemoryTxn:
@@ -61,6 +61,21 @@ class MemoryTxn:
     system subclasses this to carry whatever it needs to defer the writes'
     visibility until the caller's transaction is known to have committed. The base is
     deliberately empty: only the store that minted a handle interprets it."""
+
+
+class StoreWriteUnavailable(RuntimeError):
+    """The store cannot accept writes for this bank *right now*, but will shortly.
+
+    Distinct from a failure: nothing is wrong, the bank is briefly closed to writes — a store
+    migrating a bank between backends holds it for a few seconds while it takes the final delta
+    and flips. The caller should retry rather than surface an error, which is why the API maps
+    this to 503 with a `Retry-After` rather than a 5xx that reads as a bug.
+
+    Raised from :meth:`MemoriesExtension.assert_writable` and from bank-scoped write methods.
+    """
+
+    #: Seconds a caller should wait before retrying. A cutover freeze is drain + a reconcile.
+    retry_after: int = 30
 
 
 # Keys used in an implementation's opaque metadata bag for the `memory_units`
@@ -77,6 +92,30 @@ META_METADATA_JSON = "metadata_json"
 META_OBSERVATION_SCOPES = "observation_scopes"
 META_TEXT_SIGNALS = "text_signals"
 META_CREATED_AT = "created_at"
+#: When the memory last changed, and the contract every write path owes it (#3490):
+#: a write that changes what the memory *is* — text, context, dates, fact_type, tags,
+#: metadata, embedding, an observation's sources — stamps ``updated_at``, so a consumer
+#: chasing ``WHERE updated_at > watermark`` sees the change. Those consumers are
+#: incremental export, cache invalidation, the mental-model staleness check
+#: (:meth:`any_memory_updated_since`) and its delta refresh — and recall's own
+#: ``created_after`` / ``created_before`` window, which despite the name filters on this
+#: column, so what stamps it also decides what a date-bounded recall returns.
+#:
+#: The consolidation *scheduler* is the one deliberate exception: when a pass records
+#: that it folded a fact (or requeues one whose observation went away) it writes only
+#: ``consolidated_at`` / ``consolidation_failed_at``, which are scheduler state rather
+#: than the memory. Stamping there would make every pass look like an edit to every fact
+#: it folded — re-flagging mental models stale and re-feeding unchanged facts to a delta
+#: refresh. :meth:`MemoriesExtension.mark_consolidated` and the requeue sites that clear
+#: the markers inline therefore leave the column alone.
+#:
+#: The exemption is that *situation*, not the two columns: a write that clears the markers
+#: as part of a real change to the memory still stamps — :meth:`restore_memory` brings an
+#: archived memory back and resets it for re-consolidation in one statement, and that is an
+#: edit. A store that owns memories itself is expected to keep the same contract.
+#:
+#: No timestamp can report a hard delete; a consumer that must catch those needs a
+#: content fingerprint, not a watermark.
 META_UPDATED_AT = "updated_at"
 # Observation bookkeeping. `source_memory_ids` is a JSON list: an implementation
 # with no edge relation carries an observation's sources denormalised.
@@ -359,6 +398,68 @@ def build_fact_records(
     return records
 
 
+@dataclass(frozen=True)
+class MemoryScopeWatermark:
+    """One "has this scope changed?" question, for the batched staleness check.
+
+    ``key`` is opaque to the store — it is whatever the caller wants the answer
+    reported under (a mental-model id, a knowledge-page id) — and the scope
+    fields are the same ones :meth:`MemoriesExtension.any_memory_updated_since`
+    takes for a single model, so the two surfaces cannot drift apart.
+    """
+
+    key: str
+    since: datetime
+    fact_types: list[str] | None = None
+    tags: list[str] | None = None
+    tags_match: str = "any"
+    tag_groups: list | None = None
+
+
+@dataclass
+class RelinkPassResult:
+    """What one relink drain got through.
+
+    ``queue_exhausted`` is False when the pass stopped on its deadline (or the
+    runaway-iteration cap) with rows still queued — not a failure, since every
+    batch commits before the next is claimed, but the caller needs to know the
+    queue is not empty so it can arrange for the rest to be picked up.
+    """
+
+    units_processed: int = 0
+    links_added: int = 0
+    queue_exhausted: bool = True
+
+
+@dataclass
+class EntityPrunePassResult:
+    """What one entity-prune drain got through.
+
+    ``entities_examined`` counts candidates claimed, not rows deleted: most
+    candidates turn out to be alive and are kept, which is the pass working as
+    intended rather than wasted effort.
+    """
+
+    entities_examined: int = 0
+    orphan_entities_pruned: int = 0
+    stale_cooccurrences_pruned: int = 0
+    queue_exhausted: bool = True
+
+
+@dataclass
+class RecallArms:
+    """One fact_type's per-arm candidate lists from :meth:`MemoriesExtension.recall_unified`.
+
+    Each list holds ``RetrievalResult`` items, unfused — RRF/rerank happen downstream.
+    ``temporal`` is empty unless a window was given; ``graph`` is empty when that arm is off.
+    """
+
+    semantic: list = field(default_factory=list)
+    bm25: list = field(default_factory=list)
+    graph: list = field(default_factory=list)
+    temporal: list = field(default_factory=list)
+
+
 class MemoriesExtension(Extension, ABC):
     """Storage + retrieval for memory units and their links, behind one interface.
 
@@ -393,6 +494,35 @@ class MemoriesExtension(Extension, ABC):
     #: ``list_chunk_texts`` / ``count_chunks`` / ``document_content_hash`` methods below instead of
     #: the inline SQL. Cold, never-searched, key-based — see docs/documents-chunks.md.
     owns_document_store: bool = False
+
+    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`writes_memory_rows_in_sql`. Defaults to the class attribute, so a
+        single-store extension needs no override. A store that keeps different banks in different
+        backends (some in SQL, some not) overrides this to answer PER BANK; every *bank-scoped* call
+        site consults this instead of the class attribute, so mixed banks each take the correct path.
+        (The few process-level gates — e.g. "is cross-store txn recovery relevant at all" — keep
+        reading the class attribute.)"""
+        return self.writes_memory_rows_in_sql
+
+    def owns_document_store_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`owns_document_store`. Defaults to the class attribute; a store
+        that keeps some banks in a separate backend overrides it. See :meth:`writes_memory_rows_in_sql_for`."""
+        return self.owns_document_store
+
+    async def assert_writable(self, bank_id: str) -> None:
+        """Refuse the operation if the store cannot take writes for this bank right now.
+
+        Called at the entry to a *multi-store* operation — retain, which writes documents, chunks
+        and entities through paths that are not this interface at all. Every write that does go
+        through a store method is already covered by the method itself; this exists for the ones
+        that are not, so a store can close a bank completely rather than only partly.
+
+        The default is a no-op, so no existing store needs a change. A store that migrates banks
+        between backends raises :class:`StoreWriteUnavailable` while a bank is mid-cutover: the
+        window is seconds, and a retain that started before it and writes after it would land in
+        the store that is about to stop being authoritative.
+        """
+        return None
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -606,10 +736,10 @@ class MemoriesExtension(Extension, ABC):
         """Apply partial updates. Only the fields set on each patch change."""
         raise NotImplementedError
 
-    # ------------------------------------------------------------------ recall arms
+    # ------------------------------------------------------------------ recall
 
     @abstractmethod
-    async def search(
+    async def recall_unified(
         self,
         *,
         conn,
@@ -618,6 +748,8 @@ class MemoriesExtension(Extension, ABC):
         query_embedding: str,
         query_text: str,
         limit: int,
+        temporal_window: "tuple[datetime, datetime] | None" = None,
+        temporal_semantic_threshold: float = 0.1,
         tags: list[str] | None = None,
         tags_match: str = "any",
         tag_groups: list | None = None,
@@ -625,40 +757,24 @@ class MemoriesExtension(Extension, ABC):
         created_before: datetime | None = None,
         min_semantic: float | None = None,
         min_keyword: float | None = None,
-        graph_seed_min_similarity: float | None = None,
-    ) -> "dict[str, SemanticBm25Result]":
-        """Run the semantic + BM25 arms.
+        enable_graph: bool = True,
+    ) -> "dict[str, RecallArms]":
+        """Run ALL retrieval arms for every fact_type — the whole recall interface, in one call.
 
-        Returns ``{fact_type: SemanticBm25Result(semantic, bm25, graph_seeds)}`` of
-        ``RetrievalResult`` — the contract ``retrieve_semantic_bm25_combined`` has.
-        ``graph_seed_min_similarity`` restricts which semantic hits seed the graph
-        arm (Postgres populates ``graph_seeds``; a store with its own graph arm
-        leaves it ``None``).
-        """
+        Returns ``{fact_type: RecallArms(semantic, bm25, graph, temporal)}`` of
+        ``RetrievalResult``: the four per-arm candidate lists, unfused (RRF/rerank happen
+        downstream, unchanged). ``temporal`` is empty unless ``temporal_window`` is given;
+        ``graph`` is empty when ``enable_graph`` is False.
 
-    @abstractmethod
-    async def temporal_search(
-        self,
-        *,
-        conn,
-        bank_id: str,
-        fact_types: list[str],
-        query_embedding: str,
-        start_date: datetime,
-        end_date: datetime,
-        limit: int,
-        semantic_threshold: float = 0.1,
-        tags: list[str] | None = None,
-        tags_match: str = "any",
-        tag_groups: list | None = None,
-        created_after: datetime | None = None,
-        created_before: datetime | None = None,
-    ) -> dict[str, list]:
-        """Run the temporal arm over ``[start_date, end_date]``.
+        This is the ONE method recall goes through — how a store answers the arms is entirely its
+        own business. Postgres runs the split per-arm SQL orchestration behind this (a dense+BM25
+        UNION query, a graph retriever per type, a temporal query); a store that owns its index
+        answers every arm from a single query with no per-arm round-trips. Either way the caller
+        sees only this method and its per-arm result.
 
-        Returns ``{fact_type: [RetrievalResult]}``: entry points whose effective
-        time — ``COALESCE(occurred_start, mentioned_at, occurred_end)`` — falls in
-        the window, spread one hop and scored by proximity to it.
+        ``conn`` is the store's connection handle for the call. Postgres treats it as the pool it
+        acquires its own connections from and runs the graph arm on; a store that reaches its index
+        another way (e.g. over the network) ignores it.
         """
 
     def graph_retriever(self) -> "GraphRetriever | None":
@@ -808,6 +924,9 @@ class MemoriesExtension(Extension, ABC):
 
         ``failed`` stamps the failure marker instead, so a memory the LLM could
         not consolidate is not retried forever.
+
+        This is scheduler state, not an edit: it must leave the memory's
+        ``updated_at`` alone (see :data:`META_UPDATED_AT`).
         """
 
     @abstractmethod
@@ -836,6 +955,19 @@ class MemoriesExtension(Extension, ABC):
         """
 
     @abstractmethod
+    async def resolve_entity_names(self, *, conn, fq_table, bank_id: str, entity_ids: list[str]) -> dict[str, str]:
+        """``{entity_id: canonical_name}`` for the given ids, from the ``entities`` registry.
+
+        The label half of :meth:`entity_map_for_units`, split out so a backend that
+        already carries a unit's entity ids on the recalled result can turn those ids
+        into names without re-fetching the memories — recall then builds the entity map
+        from the result's ids plus this one lookup. Bank-scoped, and ids with no registry
+        row are simply absent from the result. The concrete SQL is the store's, next to
+        :meth:`entity_map_for_units`, because the query dialect belongs to the backend,
+        not this interface.
+        """
+
+    @abstractmethod
     async def any_memory_updated_since(
         self,
         *,
@@ -856,6 +988,54 @@ class MemoriesExtension(Extension, ABC):
         so the same scope that gates a refresh decides whether one is due.
         """
 
+    async def any_memory_updated_since_batch(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        scopes: list[MemoryScopeWatermark],
+    ) -> dict[str, bool]:
+        """:meth:`any_memory_updated_since` for many scopes at once, keyed by ``scope.key``.
+
+        The knowledge tree and the mental-model list both need the answer for
+        every model in a bank on one read, and asking one at a time makes the
+        round-trips, not the scans, the cost. A store that can answer them
+        together should override this; the default is the honest loop, so a
+        store only has to implement the single-scope method to work correctly.
+
+        Duplicate keys are not meaningful — the caller owns the keyspace, and a
+        repeat simply overwrites. An empty ``scopes`` list returns ``{}`` without
+        touching the connection.
+        """
+        return {
+            scope.key: await self.any_memory_updated_since(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                since=scope.since,
+                fact_types=scope.fact_types,
+                tags=scope.tags,
+                tags_match=scope.tags_match,
+                tag_groups=scope.tag_groups,
+            )
+            for scope in scopes
+        }
+
+    async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
+        """Which of ``unit_ids`` still exist among the bank's live memories.
+
+        Backs the retraction check behind the mental-model refresh: a document's
+        grounding is a set of ids on ``reflect_response.based_on``, and one that no
+        longer answers here has been retracted. Invalidated, deleted, and swept-as-
+        stale are deliberately not distinguished — from the document's point of view
+        all three mean the same thing, so this asks only whether the row is live.
+
+        Ids that are not memory ids (or do not parse) read as absent rather than
+        raising, so callers may pass a mixed set.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ count surfaces
     #
     # The stats/admin views that aggregate memories by a key: consolidation
@@ -866,11 +1046,18 @@ class MemoriesExtension(Extension, ABC):
     # uses of `count_memories`.
 
     async def consolidation_freshness(self, *, conn, fq_table, bank_id: str) -> dict[str, Any]:
-        """``{"last_consolidated_at", "pending", "failed"}`` for a bank.
+        """``{"last_consolidated_at", "last_memory_write_at", "pending", "failed"}`` for a bank.
 
         ``pending`` / ``failed`` count the world/experience facts not yet folded
         into an observation, and those the LLM gave up on. Backs
         ``get_bank_freshness``, which reflect() calls often, so keep it cheap.
+
+        ``last_memory_write_at`` is the newest write time (``updated_at``) across
+        the bank's memories, or None for an empty bank. It is the bank-wide
+        counterpart of :meth:`any_memory_updated_since`: a mental model whose
+        ``last_memory_seen_at`` is at or after it cannot be stale, whatever its
+        scope — which is how the stats and knowledge-tree surfaces answer "is
+        this up to date" for many models without a scoped scan each.
         """
         raise NotImplementedError
 
@@ -922,7 +1109,7 @@ class MemoriesExtension(Extension, ABC):
         ops,
         fq_table,
         bank_id: str,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         consolidation_state: str | None = None,
         state: str | None = None,
@@ -984,6 +1171,9 @@ class MemoriesExtension(Extension, ABC):
 
         Returns the restored memory (so the caller can recompute its embedding —
         the archive need not keep one), or ``None`` if it was not archived.
+
+        Bringing a memory back is an edit, so this stamps ``updated_at`` even though
+        it also resets the consolidation markers (see :data:`META_UPDATED_AT`).
         """
 
     @abstractmethod
@@ -994,6 +1184,10 @@ class MemoriesExtension(Extension, ABC):
         the store whose write is the row itself — reverting or editing a memory has
         to put a freshly computed vector back on it, so this is a real write for
         both. ``embedding`` is a float list or the pgvector literal.
+
+        The vector is part of the memory, so this stamps ``updated_at`` itself rather
+        than leaning on the edit statement its in-tree callers happen to pair it with
+        (see :data:`META_UPDATED_AT`).
         """
 
     async def clear_unit_entities(self, *, conn, fq_table, bank_id: str, unit_id: str) -> None:
@@ -1111,7 +1305,15 @@ class MemoriesExtension(Extension, ABC):
     # join table to sweep, so those passes are no-ops for it.
 
     async def record_unit_entities(
-        self, *, conn, ops, fq_table, bank_id: str | None = None, unit_ids: list[Any], entity_ids: list[Any]
+        self,
+        *,
+        conn,
+        ops,
+        fq_table,
+        bank_id: str | None = None,
+        unit_ids: list[Any],
+        entity_ids: list[Any],
+        txn: "MemoryTxn | None" = None,
     ) -> None:
         """Record the unit→entity postings for a batch of memories.
 
@@ -1122,6 +1324,14 @@ class MemoriesExtension(Extension, ABC):
         the memory (rather than in a global join table) needs to know which
         namespace the units live in — the Postgres join is keyed by global unit id
         and ignores it.
+
+        ``txn`` is the caller's write-group handle. For a store that keeps the
+        posting ON the memory this call is a re-write of rows the same write-group
+        already created, so it belongs to that group: passing the handle keeps the
+        two writes atomic together and — for a store that records what its groups
+        wrote — keeps this write inside the group's accounting. Ignored by the
+        Postgres store, whose posting is an ordinary row in the caller's own
+        transaction.
         """
 
     async def enqueue_relink_victims(
@@ -1136,17 +1346,28 @@ class MemoriesExtension(Extension, ABC):
         """
         return 0
 
-    async def relink_pass(self, *, backend, fq_table, bank_id: str, config) -> dict:
-        """Top up links for queued victims. ``{}`` when there is nothing to relink."""
-        return {}
+    async def relink_pass(
+        self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None
+    ) -> "RelinkPassResult":
+        """Top up links for queued victims. All-zero when there is nothing to relink."""
+        return RelinkPassResult()
 
-    async def prune_orphan_entities(self, *, conn, fq_table, bank_id: str) -> int:
-        """Delete `entities` rows no live memory references. Returns the count."""
+    async def enqueue_entity_prune_candidates(self, *, conn, fq_table, bank_id: str, affected_unit_ids: list) -> int:
+        """Queue the entities ``affected_unit_ids`` reference as prune candidates.
+
+        Zero for a store that never wrote `unit_entities`: it has no entity
+        postings to lose, so nothing can become an orphan.
+        """
         return 0
 
-    async def prune_stale_cooccurrences(self, *, conn, fq_table, bank_id: str) -> int:
-        """Delete co-occurrence rows whose witnessing memories are all gone."""
-        return 0
+    async def entity_prune_pass(
+        self, *, backend, fq_table, bank_id: str, deadline: float | None = None
+    ) -> "EntityPrunePassResult":
+        """Prune queued candidate entities and the co-occurrences they stranded.
+
+        All-zero when the store keeps no entity postings and so queues nothing.
+        """
+        return EntityPrunePassResult()
 
 
 __all__ = [
@@ -1166,10 +1387,12 @@ __all__ = [
     "META_UPDATED_AT",
     "CausalEdgeRecord",
     "DeletePredicate",
+    "EntityPrunePassResult",
     "FactRecord",
     "MemoriesExtension",
     "MemoryPatch",
     "MemoryTxn",
+    "RelinkPassResult",
     "ScanPage",
     "StoredMemory",
     "build_fact_records",

@@ -8,7 +8,8 @@ it raises a clear error instead of a confusing connection failure.
 """
 
 import logging
-from typing import Any
+from contextlib import AbstractAsyncContextManager
+from typing import Any, Callable
 
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from ..response_models import LLMToolCallResult
@@ -48,6 +49,7 @@ class NoneLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Raise LLMNotAvailableError — no LLM is configured."""
         raise LLMNotAvailableError(
@@ -66,6 +68,7 @@ class NoneLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """Raise LLMNotAvailableError — no LLM is configured."""
         raise LLMNotAvailableError(

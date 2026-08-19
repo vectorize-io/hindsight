@@ -4,23 +4,72 @@
   padding: 2rem 2rem 6rem;
 }
 
-/* ── Category strip ──────────────────────────────── */
+@media (max-width: 640px) {
+  .blogPage {
+    padding: 1.5rem 1.25rem 4rem;
+  }
+}
+
+/* ── Controls (categories + search) ──────────────── */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 2.5rem;
+}
+
 .categoryStrip {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-bottom: 2.5rem;
   padding-bottom: 0.25rem;
 }
 
+/* Don't rename to anything containing "searchInput": custom.css strips all
+   borders from [class*="searchInput"] (!important) to restyle the navbar
+   search widget, and CSS-module hashed names keep the substring. */
+.postFilterInput {
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.85rem;
+  font-family: inherit;
+  color: var(--ifm-font-color-base);
+  min-width: 220px;
+  transition: border-color 0.15s ease;
+}
+
+.postFilterInput:focus {
+  outline: none;
+  border-color: var(--ifm-color-primary);
+}
+
+.postFilterInput::placeholder {
+  color: var(--ifm-color-emphasis-500);
+}
+
 @media (max-width: 640px) {
+  .controls {
+    margin-bottom: 2rem;
+  }
+
+  .postFilterInput {
+    order: -1;
+    width: 100%;
+    min-width: 0;
+  }
+
   .categoryStrip {
     flex-wrap: nowrap;
     overflow-x: auto;
-    margin-left: -2rem;
-    margin-right: -2rem;
-    padding: 0 2rem 0.5rem;
+    margin-left: -1.25rem;
+    margin-right: -1.25rem;
+    padding: 0 1.25rem 0.5rem;
     scrollbar-width: thin;
+    width: 100vw;
   }
 }
 
@@ -137,9 +186,8 @@
 @media (max-width: 640px) {
   .grid {
     grid-template-columns: 1fr;
-    gap: 2rem;
+    gap: 1.25rem;
   }
-
 }
 
 /* ── Card ────────────────────────────────────────── */
@@ -196,6 +244,19 @@
   gap: 0.5rem;
 }
 
+.cardBadge {
+  align-self: flex-start;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ifm-color-primary);
+  border: 1px solid var(--ifm-color-primary);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+}
+
 .cardTitle {
   font-size: 1.25rem;
   font-weight: 700;
@@ -241,34 +302,46 @@
   margin-right: 0.35rem;
 }
 
-/* ── Pagination ──────────────────────────────────── */
-.pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1.5rem;
-  margin-top: 4rem;
+/* ── Compact horizontal cards on mobile ──────────── */
+@media (max-width: 640px) {
+  .card {
+    flex-direction: row;
+    gap: 0.9rem;
+    align-items: flex-start;
+  }
+
+  .cardImageWrapper {
+    width: 120px;
+    flex-shrink: 0;
+    aspect-ratio: 4 / 3;
+  }
+
+  .cardBody {
+    padding: 0;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+
+  .cardTitle {
+    font-size: 0.95rem;
+    line-height: 1.4;
+  }
+
+  .cardBadge {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.5rem;
+  }
+
+  .cardDescription {
+    display: none;
+  }
+
+  .cardFooter {
+    margin-top: 0.15rem;
+  }
 }
 
-.paginationButton {
-  padding: 0.5rem 1.25rem;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 8px;
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--ifm-color-primary);
-  text-decoration: none !important;
-  background: none;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.paginationButton:hover {
-  background: var(--ifm-color-primary-lightest);
-  border-color: var(--ifm-color-primary);
-}
-
-.paginationInfo {
-  font-size: 0.875rem;
-  color: var(--ifm-color-emphasis-600);
+/* ── Infinite scroll sentinel ────────────────────── */
+.scrollSentinel {
+  height: 1px;
 }

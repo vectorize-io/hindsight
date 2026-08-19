@@ -8,10 +8,12 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 from ...config import _get_raw_config
 from ..memory_engine import fq_table
-from .bank_utils import DEFAULT_DISPOSITION, create_bank_vector_indexes
+from ..metadata_utils import drop_null_values
+from .bank_utils import DEFAULT_DISPOSITION
 from .fact_extraction import _sanitize_text
 from .types import ProcessedFact
 
@@ -130,25 +132,26 @@ async def ensure_bank_exists(conn, bank_id: str, ops=None) -> None:
         conn: Database connection
         bank_id: Bank identifier
     """
-    # Generate internal_id here so we control the value and can use it
-    # immediately for HNSW index creation without a RETURNING round-trip.
-    internal_id = uuid.uuid4()
-    inserted = await conn.fetchval(
+    # internal_id is generated here rather than defaulted server-side so the
+    # value is known without a RETURNING round-trip; the vector-index sweep
+    # derives index names from it.
+    #
+    # No vector-index DDL on this path. A fresh bank holds no rows, so it cannot
+    # meet the size threshold that earns a per-(bank, fact_type) partial index;
+    # the maintenance sweep builds one if the bank later grows into it. See
+    # issue #3485.
+    await conn.execute(
         f"""
         INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
         VALUES ($1, $2, $3::jsonb, $4, $5)
         ON CONFLICT (bank_id) DO NOTHING
-        RETURNING bank_id
         """,
         bank_id,
         bank_id,  # Default name is the bank_id (matches get_or_create_bank_profile)
         json.dumps(DEFAULT_DISPOSITION),
         "",
-        internal_id,
+        uuid.uuid4(),
     )
-    if inserted:
-        # Fresh insert — create per-bank vector indexes
-        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
 
 async def delete_stale_observations_for_memories(
@@ -269,15 +272,30 @@ async def handle_document_tracking(
                     f"[RETAIN] Document {document_id} re-ingested: invalidated "
                     f"{invalidated} observation(s) derived from {len(existing_unit_ids)} outgoing memory_units"
                 )
+            else:
+                # Logged even at zero: "the sweep matched nothing" and "the sweep never ran"
+                # are the two candidates whenever orphan observations are reported, and
+                # without this line they look identical from the outside (issue #3294).
+                logger.debug(
+                    f"[RETAIN] Document {document_id} re-ingested: no observations derived from "
+                    f"{len(existing_unit_ids)} outgoing memory_units"
+                )
             # Capture link-recompute victims BEFORE the cascade. Same staleness
             # applies on upsert as on explicit delete: surviving units in OTHER
             # documents that linked to these doomed units are about to lose
             # those links. ``ops`` may be None for older callers that haven't
             # been wired up — skip enqueue in that case rather than crash.
             if ops is not None:
-                from ..graph_maintenance import enqueue_relink_victims
+                from ..graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
-                await enqueue_relink_victims(conn, bank_id, [str(uid) for uid in existing_unit_ids])
+                doomed_ids = [str(uid) for uid in existing_unit_ids]
+                await enqueue_relink_victims(conn, bank_id, doomed_ids)
+                # Same timing, different target: the entities these units are
+                # about to stop referencing may have no other posting. The
+                # re-ingest re-resolves entities from scratch, so the ones the
+                # new facts don't name again are orphans the moment this
+                # cascade lands.
+                await enqueue_entity_prune_candidates(conn, bank_id, doomed_ids)
 
         # Explicitly delete memory_units by document_id BEFORE deleting the
         # document row. The CASCADE from documents→chunks→memory_units only
@@ -371,7 +389,7 @@ async def _upsert_document_row(
     # the bulky body is written to the store up front (orchestrator._store_document_bodies).
     from ..memories import get_memories
 
-    if get_memories().owns_document_store:
+    if get_memories().owns_document_store_for(bank_id):
         original_text = None
     await conn.execute(
         f"""
@@ -394,16 +412,24 @@ async def _upsert_document_row(
     )
 
 
-async def update_memory_units_tags(
+async def update_memory_units_metadata_and_tags(
     conn,
     bank_id: str,
     document_id: str,
     tags: list[str],
+    metadata: dict[str, Any],
 ) -> int:
-    """
-    Update tags on all memory_units belonging to a document.
+    """Update document-level attributes on existing memory units.
 
-    Used during delta retain to propagate tag changes to unchanged facts.
+    Delta retain preserves unchanged chunks and their facts. Propagate the
+    current document tags and metadata so its optimized result matches a full
+    replace.
+
+    ``metadata`` arrives as the raw retain_params bag (the document row keeps
+    the caller's input verbatim), so null-valued keys are dropped here — the
+    same normalization ``RetainContent`` applies to freshly extracted facts
+    (issue #3209). Without it a re-retain would leave surviving units carrying
+    nulls while the units around them do not.
 
     Returns:
         Number of memory units updated.
@@ -411,7 +437,7 @@ async def update_memory_units_tags(
     from ..memories import MemoryPatch, get_memories
 
     store = get_memories()
-    if not store.writes_memory_rows_in_sql:
+    if not store.writes_memory_rows_in_sql_for(bank_id):
         # A store that keeps memories outside SQL: page the document's memories and patch each
         # one's tags through the store — the UPDATE below is a no-op on its empty memory_units.
         page = await store.scan_memories(
@@ -425,12 +451,13 @@ async def update_memory_units_tags(
     result = await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
-        SET tags = $3, updated_at = NOW()
+        SET tags = $3, metadata = $4, updated_at = NOW()
         WHERE bank_id = $1 AND document_id = $2
         """,
         bank_id,
         document_id,
         tags or [],
+        json.dumps(drop_null_values(metadata)),
     )
     # result is a status string like "UPDATE 5"
     try:

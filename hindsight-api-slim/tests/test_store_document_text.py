@@ -67,6 +67,7 @@ def store_document_text_disabled(memory):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_text_storage_disabled_nulls_text_but_keeps_memories(
     memory, request_context, store_document_text_disabled
 ):
@@ -230,6 +231,7 @@ def test_store_document_text_is_bank_configurable():
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_store_document_text_per_bank_override(memory, request_context):
     """The flag is overridable per bank: one bank drops raw text while another,
     on the same server default, keeps it."""

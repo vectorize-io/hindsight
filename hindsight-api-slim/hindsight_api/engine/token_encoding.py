@@ -11,6 +11,7 @@ counts are unaffected; this only stops the encoder from rejecting valid input. E
 call site in the engine routes through ``get_token_encoding()``, so the fix is global.
 """
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 import tiktoken
@@ -44,3 +45,27 @@ def get_token_encoding() -> _SafeEncoding:
 def count_tokens(text: str) -> int:
     """Count cl100k_base tokens in ``text`` (tolerant of special-token literals)."""
     return len(get_token_encoding().encode(text))
+
+
+@dataclass(frozen=True)
+class TokenTruncation:
+    """Result of :func:`truncate_to_tokens`."""
+
+    text: str  # the (possibly truncated) text
+    original_tokens: int  # token count of the input before any truncation
+
+
+def truncate_to_tokens(text: str, max_tokens: int) -> TokenTruncation:
+    """Truncate ``text`` to at most ``max_tokens`` cl100k_base tokens.
+
+    tiktoken is an approximation of any given provider's tokenizer, so set
+    ``max_tokens`` with a little headroom below the model's real limit.
+
+    ``original_tokens`` is the input's token count (so the caller can report how
+    much was dropped) whether or not truncation occurred.
+    """
+    enc = get_token_encoding()
+    tokens = enc.encode(text)
+    if len(tokens) <= max_tokens:
+        return TokenTruncation(text=text, original_tokens=len(tokens))
+    return TokenTruncation(text=enc.decode(tokens[:max_tokens]), original_tokens=len(tokens))

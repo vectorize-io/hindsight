@@ -8,7 +8,6 @@ Configuration via environment variables - see hindsight_api.config for all env v
 
 import asyncio
 import logging
-import os
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -20,8 +19,8 @@ from ..config import (
     DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_ALIBABA_MODEL,
     DEFAULT_RERANKER_COHERE_MODEL,
+    DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
-    DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
     DEFAULT_RERANKER_GOOGLE_MODEL,
     DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC,
@@ -35,16 +34,7 @@ from ..config import (
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
     DEFAULT_ZEROENTROPY_BASE_URL,
-    ENV_RERANKER_ALIBABA_API_KEY,
-    ENV_RERANKER_COHERE_API_KEY,
-    ENV_RERANKER_FLASHRANK_CACHE_DIR,
-    ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA,
-    ENV_RERANKER_FLASHRANK_MODEL,
-    ENV_RERANKER_GOOGLE_PROJECT_ID,
-    ENV_RERANKER_PROVIDER,
-    ENV_RERANKER_SILICONFLOW_API_KEY,
-    ENV_RERANKER_TEI_URL,
-    ENV_RERANKER_ZEROENTROPY_API_KEY,
+    RerankerMemberConfig,
 )
 from .bank_attribution import reranker_bank_attribution_headers
 from .local_device import (
@@ -69,6 +59,15 @@ class CrossEncoderModel(ABC):
     def provider_name(self) -> str:
         """Return a human-readable name for this provider (e.g., 'local', 'tei')."""
         pass
+
+    @property
+    def blocking_init(self) -> bool:
+        """Whether ``initialize()`` blocks the event loop (loads a model in-process).
+
+        Callers run those in a thread pool. Remote providers leave this False, and
+        so does :class:`MultiCrossEncoder` — it offloads its own members.
+        """
+        return False
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -161,6 +160,10 @@ class LocalSTCrossEncoder(CrossEncoderModel):
     @property
     def provider_name(self) -> str:
         return "local"
+
+    @property
+    def blocking_init(self) -> bool:
+        return True
 
     async def initialize(self) -> None:
         """Load the cross-encoder model and initialize the executor."""
@@ -870,6 +873,7 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         max_length: int = 512,
         max_concurrent: int = 4,
         cpu_mem_arena: bool = False,
+        batch_size: int = DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE,
     ):
         """
         Initialize FlashRank cross-encoder.
@@ -883,11 +887,16 @@ class FlashRankCrossEncoder(CrossEncoderModel):
                           When True, ONNX pre-allocates a memory arena that never
                           shrinks, causing RSS to grow monotonically. False trades
                           slightly slower per-call allocation for bounded RSS.
+            batch_size: Passages per forward pass. Default: 32. See
+                        ``_predict_sync`` for why this must stay bounded.
         """
         self.model_name = model_name or DEFAULT_RERANKER_FLASHRANK_MODEL
         self.cache_dir = cache_dir or DEFAULT_RERANKER_FLASHRANK_CACHE_DIR
         self.max_length = max_length
         self.cpu_mem_arena = cpu_mem_arena
+        # A non-positive size would mean "one pass for everything", which is the
+        # unbounded behaviour this batching exists to prevent.
+        self.batch_size = max(1, batch_size)
         self._ranker = None
         self._device_type: str = "cpu"  # FlashRank runs on CPU via ONNX Runtime
         FlashRankCrossEncoder._max_concurrent = max_concurrent
@@ -960,7 +969,21 @@ class FlashRankCrossEncoder(CrossEncoderModel):
             logger.info("Reranker: FlashRank provider initialized (using existing executor)")
 
     def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
-        """Synchronous predict - processes each query group."""
+        """Synchronous predict — each query group, in bounded batches.
+
+        FlashRank scores every passage of a request in one ONNX forward pass, and
+        that pass allocates attention tensors sized ``batch * heads * seq^2``. At
+        the default reranker candidate cap that is gigabytes per call, which OOM-
+        killed containers on large banks (issue #3355): the burst scales with the
+        candidate pool the retrieval arms produce, not with how much work the
+        caller asked for. FlashRank also pads a request to its longest passage, so
+        one long candidate inflates the sequence length for every other one.
+
+        Splitting into ``batch_size`` chunks bounds the peak the same way the
+        local and TEI providers already do. Scores are identical either way —
+        passages are scored independently, so batching changes only the
+        allocation profile.
+        """
         if not pairs:
             return []
 
@@ -977,20 +1000,25 @@ class FlashRankCrossEncoder(CrossEncoderModel):
             all_scores = [0.0] * len(pairs)
 
             for query, indexed_texts in query_groups.items():
-                # Build passages list for FlashRank
-                passages = [{"id": i, "text": text} for i, (_, text) in enumerate(indexed_texts)]
                 global_indices = [idx for idx, _ in indexed_texts]
 
-                # Create rerank request
-                request = RerankRequest(query=query, passages=passages)
-                results = self._ranker.rerank(request)
+                for start in range(0, len(indexed_texts), self.batch_size):
+                    batch = indexed_texts[start : start + self.batch_size]
 
-                # Map scores back to original positions
-                for result in results:
-                    local_idx = result["id"]
-                    score = result["score"]
-                    global_idx = global_indices[local_idx]
-                    all_scores[global_idx] = score
+                    # Build passages list for FlashRank. Ids are batch-local, so
+                    # `start` shifts them back onto the query group's indices.
+                    passages = [{"id": i, "text": text} for i, (_, text) in enumerate(batch)]
+
+                    # Create rerank request
+                    request = RerankRequest(query=query, passages=passages)
+                    results = self._ranker.rerank(request)
+
+                    # Map scores back to original positions
+                    for result in results:
+                        local_idx = result["id"]
+                        score = result["score"]
+                        global_idx = global_indices[start + local_idx]
+                        all_scores[global_idx] = score
 
             return all_scores
         finally:
@@ -1575,132 +1603,247 @@ class AlibabaCloudCrossEncoder(CrossEncoderModel):
         return await self._client.predict(pairs)
 
 
-def create_cross_encoder_from_env() -> CrossEncoderModel:
-    """
-    Create a CrossEncoderModel instance based on configuration.
+class MultiCrossEncoder(CrossEncoderModel):
+    """Failover across an ordered chain of cross-encoders.
 
-    Reads configuration via get_config() to ensure consistency across the codebase.
+    Member 0 is the primary (the unindexed ``HINDSIGHT_API_RERANKER_*`` config);
+    members 1..N are the indexed fallbacks. Each ``predict`` tries members in order
+    and returns the first usable set of scores, so an unreachable reranker costs
+    ranking quality (whatever the next member gives) instead of the whole recall.
+    Put ``rrf`` last to degrade to the fusion order rather than failing.
+
+    Each member keeps its own retry budget, so we only advance after a member has
+    exhausted its retries and raised. A member that fails to initialize is not
+    fatal — that is the point of the chain — it is retried lazily on the next
+    request that reaches it.
+    """
+
+    def __init__(self, members: list[CrossEncoderModel]) -> None:
+        if len(members) < 2:
+            raise ValueError("MultiCrossEncoder requires at least two members")
+        self._members = members
+        self._ready = [False] * len(members)
+        self._locks = [asyncio.Lock() for _ in members]
+        self._active = 0
+
+    @property
+    def provider_name(self) -> str:
+        """The provider of the member that last served a request (primary before any).
+
+        Callers use this to detect a passthrough reranker, so it has to track the
+        member actually serving rather than name the chain: a chain that has
+        degraded to its ``rrf`` member is passthrough. Concurrent requests share it,
+        so a request that fails over can briefly mislabel a neighbour — this only
+        tunes downstream scoring, never correctness.
+        """
+        return self._members[self._active].provider_name
+
+    async def _initialize_member(self, index: int) -> None:
+        """Initialize one member, off the event loop when it loads a model in-process."""
+        member = self._members[index]
+        if member.blocking_init:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: asyncio.run(member.initialize()))
+        else:
+            await member.initialize()
+        self._ready[index] = True
+
+    async def _ensure_member_ready(self, index: int) -> None:
+        async with self._locks[index]:
+            if not self._ready[index]:
+                await self._initialize_member(index)
+
+    async def initialize(self) -> None:
+        """Initialize every member, tolerating members that are down.
+
+        Members initialize concurrently so one unreachable member cannot eat the
+        startup budget the others need. Failures are logged and retried on use.
+        """
+        results = await asyncio.gather(
+            *(self._ensure_member_ready(i) for i in range(len(self._members))),
+            return_exceptions=True,
+        )
+        for index, result in enumerate(results):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Reranker member %d (%s) failed to initialize: %s; it will be retried on use",
+                    index,
+                    self._members[index].provider_name,
+                    result,
+                )
+        if not any(self._ready):
+            logger.error("Reranker: no member of the failover chain initialized; recall will retry them per request")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Score ``pairs`` with the first member that answers usably."""
+        last_exc: BaseException | None = None
+        for index, member in enumerate(self._members):
+            try:
+                if not self._ready[index]:
+                    await self._ensure_member_ready(index)
+                scores = await member.predict(pairs)
+                if len(scores) != len(pairs):
+                    raise RuntimeError(f"returned {len(scores)} scores for {len(pairs)} pairs")
+            except Exception as e:  # noqa: BLE001 - re-raised below if no member answers
+                last_exc = e
+                remaining = len(self._members) - index - 1
+                logger.warning(
+                    "Reranker member %d (%s) failed: %s%s",
+                    index,
+                    member.provider_name,
+                    e,
+                    f"; trying next member ({remaining} left)" if remaining else "; no members left",
+                )
+                continue
+            if index != self._active:
+                logger.info(
+                    "Reranker: now serving from member %d (%s)",
+                    index,
+                    member.provider_name,
+                )
+            self._active = index
+            return scores
+        # All members failed; surface the last error (loop ran at least once).
+        assert last_exc is not None
+        raise last_exc
+
+
+def create_cross_encoder(member: RerankerMemberConfig) -> CrossEncoderModel:
+    """
+    Create a CrossEncoderModel for one member of the reranker chain.
+
+    ``member`` is the primary (index 0, the unindexed ``HINDSIGHT_API_RERANKER_*``
+    config) or an indexed fallback. Missing-setting errors name the member's own
+    env var, so a chain misconfiguration points at the exact indexed variable.
+
+    Args:
+        member: Resolved settings for this member
 
     Returns:
         Configured CrossEncoderModel instance
     """
-    from ..config import get_config
-
-    config = get_config()
-    provider = config.reranker_provider.lower()
+    provider = member.provider.lower()
 
     if provider == "tei":
-        url = config.reranker_tei_url
+        url = member.tei_url
         if not url:
-            raise ValueError(f"{ENV_RERANKER_TEI_URL} is required when {ENV_RERANKER_PROVIDER} is 'tei'")
+            raise ValueError(f"{member.env_name('TEI_URL')} is required when {member.env_name('PROVIDER')} is 'tei'")
         return RemoteTEICrossEncoder(
             base_url=url,
-            timeout=config.reranker_tei_http_timeout,
-            batch_size=config.reranker_tei_batch_size,
-            max_concurrent=config.reranker_tei_max_concurrent,
+            timeout=member.tei_http_timeout,
+            batch_size=member.tei_batch_size,
+            max_concurrent=member.tei_max_concurrent,
         )
     elif provider == "local":
         return LocalSTCrossEncoder(
-            model_name=config.reranker_local_model,
-            max_concurrent=config.reranker_local_max_concurrent,
-            force_cpu=config.reranker_local_force_cpu,
-            trust_remote_code=config.reranker_local_trust_remote_code,
-            fp16=config.reranker_local_fp16,
-            bucket_batching=config.reranker_local_bucket_batching,
-            batch_size=config.reranker_local_batch_size,
-            allow_mps=config.reranker_local_allow_mps,
+            model_name=member.local_model,
+            max_concurrent=member.local_max_concurrent,
+            force_cpu=member.local_force_cpu,
+            trust_remote_code=member.local_trust_remote_code,
+            fp16=member.local_fp16,
+            bucket_batching=member.local_bucket_batching,
+            batch_size=member.local_batch_size,
+            allow_mps=member.local_allow_mps,
         )
     elif provider == "cohere":
-        api_key = config.reranker_cohere_api_key
-        if not api_key:
-            raise ValueError(f"{ENV_RERANKER_COHERE_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'cohere'")
-        return CohereCrossEncoder(
-            api_key=api_key,
-            model=config.reranker_cohere_model,
-            base_url=config.reranker_cohere_base_url,
-            timeout=config.reranker_cohere_timeout,
-        )
-    elif provider == "openrouter":
-        api_key = config.reranker_openrouter_api_key
+        api_key = member.cohere_api_key
         if not api_key:
             raise ValueError(
-                "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY, HINDSIGHT_API_OPENROUTER_API_KEY, "
-                f"or HINDSIGHT_API_LLM_API_KEY is required when {ENV_RERANKER_PROVIDER} is 'openrouter'"
+                f"{member.env_name('COHERE_API_KEY')} is required when {member.env_name('PROVIDER')} is 'cohere'"
             )
         return CohereCrossEncoder(
             api_key=api_key,
-            model=config.reranker_openrouter_model,
-            base_url=config.reranker_openrouter_base_url,
-            timeout=config.reranker_openrouter_timeout,
+            model=member.cohere_model,
+            base_url=member.cohere_base_url,
+            timeout=member.cohere_timeout,
+        )
+    elif provider == "openrouter":
+        api_key = member.openrouter_api_key
+        if not api_key:
+            shared = ", HINDSIGHT_API_OPENROUTER_API_KEY, or HINDSIGHT_API_LLM_API_KEY" if member.index == 0 else ""
+            raise ValueError(
+                f"{member.env_name('OPENROUTER_API_KEY')}{shared} is required "
+                f"when {member.env_name('PROVIDER')} is 'openrouter'"
+            )
+        return CohereCrossEncoder(
+            api_key=api_key,
+            model=member.openrouter_model,
+            base_url=member.openrouter_base_url,
+            timeout=member.openrouter_timeout,
         )
     elif provider == "flashrank":
-        model = os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL)
-        cache_dir = os.environ.get(ENV_RERANKER_FLASHRANK_CACHE_DIR, DEFAULT_RERANKER_FLASHRANK_CACHE_DIR)
-        cpu_mem_arena = os.environ.get(
-            ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA, str(DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA)
-        ).lower() in ("true", "1", "yes")
-        return FlashRankCrossEncoder(model_name=model, cache_dir=cache_dir, cpu_mem_arena=cpu_mem_arena)
+        return FlashRankCrossEncoder(
+            model_name=member.flashrank_model,
+            cache_dir=member.flashrank_cache_dir,
+            cpu_mem_arena=member.flashrank_cpu_mem_arena,
+            batch_size=member.flashrank_batch_size,
+        )
     elif provider == "litellm":
         return LiteLLMCrossEncoder(
-            api_base=config.reranker_litellm_api_base,
-            api_key=config.reranker_litellm_api_key,
-            model=config.reranker_litellm_model,
-            max_tokens_per_doc=config.reranker_litellm_max_tokens_per_doc,
-            timeout=config.reranker_litellm_timeout,
+            api_base=member.litellm_api_base,
+            api_key=member.litellm_api_key,
+            model=member.litellm_model,
+            max_tokens_per_doc=member.litellm_max_tokens_per_doc,
+            timeout=member.litellm_timeout,
         )
     elif provider == "litellm-sdk":
         return LiteLLMSDKCrossEncoder(
-            api_key=config.reranker_litellm_sdk_api_key or None,
-            model=config.reranker_litellm_sdk_model,
-            api_base=config.reranker_litellm_sdk_api_base,
-            max_tokens_per_doc=config.reranker_litellm_max_tokens_per_doc,
-            timeout=config.reranker_litellm_sdk_timeout,
+            api_key=member.litellm_sdk_api_key or None,
+            model=member.litellm_sdk_model,
+            api_base=member.litellm_sdk_api_base,
+            max_tokens_per_doc=member.litellm_max_tokens_per_doc,
+            timeout=member.litellm_sdk_timeout,
         )
     elif provider == "zeroentropy":
-        api_key = config.reranker_zeroentropy_api_key
+        api_key = member.zeroentropy_api_key
         if not api_key:
             raise ValueError(
-                f"{ENV_RERANKER_ZEROENTROPY_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'zeroentropy'"
+                f"{member.env_name('ZEROENTROPY_API_KEY')} is required "
+                f"when {member.env_name('PROVIDER')} is 'zeroentropy'"
             )
         return ZeroEntropyCrossEncoder(
             api_key=api_key,
-            model=config.reranker_zeroentropy_model,
-            base_url=config.reranker_zeroentropy_base_url,
-            timeout=config.reranker_zeroentropy_timeout,
+            model=member.zeroentropy_model,
+            base_url=member.zeroentropy_base_url,
+            timeout=member.zeroentropy_timeout,
         )
     elif provider == "siliconflow":
-        api_key = config.reranker_siliconflow_api_key
+        api_key = member.siliconflow_api_key
         if not api_key:
             raise ValueError(
-                f"{ENV_RERANKER_SILICONFLOW_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'siliconflow'"
+                f"{member.env_name('SILICONFLOW_API_KEY')} is required "
+                f"when {member.env_name('PROVIDER')} is 'siliconflow'"
             )
         return SiliconFlowCrossEncoder(
             api_key=api_key,
-            model=config.reranker_siliconflow_model,
-            base_url=config.reranker_siliconflow_base_url,
-            timeout=config.reranker_siliconflow_timeout,
+            model=member.siliconflow_model,
+            base_url=member.siliconflow_base_url,
+            timeout=member.siliconflow_timeout,
         )
     elif provider == "google":
-        project_id = config.reranker_google_project_id
+        project_id = member.google_project_id
         if not project_id:
+            shared = " (or HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID)" if member.index == 0 else ""
             raise ValueError(
-                f"{ENV_RERANKER_GOOGLE_PROJECT_ID} (or HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID) "
-                f"is required when {ENV_RERANKER_PROVIDER} is 'google'"
+                f"{member.env_name('GOOGLE_PROJECT_ID')}{shared} "
+                f"is required when {member.env_name('PROVIDER')} is 'google'"
             )
         return GoogleCrossEncoder(
             project_id=project_id,
-            model=config.reranker_google_model,
-            service_account_key=config.reranker_google_service_account_key,
-            timeout=config.reranker_google_timeout,
+            model=member.google_model,
+            service_account_key=member.google_service_account_key,
+            timeout=member.google_timeout,
         )
     elif provider == "alibaba":
-        api_key = config.reranker_alibaba_api_key
+        api_key = member.alibaba_api_key
         if not api_key:
-            raise ValueError(f"{ENV_RERANKER_ALIBABA_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'alibaba'")
+            raise ValueError(
+                f"{member.env_name('ALIBABA_API_KEY')} is required when {member.env_name('PROVIDER')} is 'alibaba'"
+            )
         return AlibabaCloudCrossEncoder(
             api_key=api_key,
-            model=config.reranker_alibaba_model,
-            timeout=config.reranker_alibaba_timeout,
+            model=member.alibaba_model,
+            timeout=member.alibaba_timeout,
         )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
@@ -1710,3 +1853,23 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         raise ValueError(
             f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )
+
+
+def create_cross_encoder_from_env() -> CrossEncoderModel:
+    """
+    Create the configured reranker, based on configuration.
+
+    Reads configuration via get_config() to ensure consistency across the codebase.
+    With no ``HINDSIGHT_API_RERANKER_<n>_*`` members configured (the default) this
+    is the single configured reranker; otherwise the chain is wrapped in a
+    :class:`MultiCrossEncoder` that fails over across members in order.
+
+    Returns:
+        Configured CrossEncoderModel instance
+    """
+    from ..config import get_config
+
+    chain = get_config().reranker_chain()
+    if len(chain) == 1:
+        return create_cross_encoder(chain[0])
+    return MultiCrossEncoder([create_cross_encoder(member) for member in chain])

@@ -50,7 +50,9 @@ def _month_end(year: int, month: int) -> datetime:
     return datetime(year, month, calendar.monthrange(year, month)[1])
 
 
-def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRange | None:
+def _extract_non_chinese_period(
+    query: str, reference_date: datetime
+) -> DateRange | NoTemporalConstraintSentinel | None:
     if re.search(r"\b(yesterday|ayer|ieri|hier|gestern|вчера)\b", query, re.IGNORECASE):
         d = reference_date - timedelta(days=1)
         return _constraint(d, d)
@@ -162,6 +164,11 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
         match = re.search(rf"\b({pattern})\s+(\d{{4}})\b", query, re.IGNORECASE)
         if match:
             year = int(match.group(2))
+            if year < datetime.min.year:
+                # "june 0000" — an explicit but unrepresentable year. Treat it
+                # as no constraint rather than crashing recall or letting the
+                # dateparser fallback invent a different date (issue #3217).
+                return NO_TEMPORAL_CONSTRAINT
             start = datetime(year, month_num, 1)
             return _constraint(start, _month_end(year, month_num))
 

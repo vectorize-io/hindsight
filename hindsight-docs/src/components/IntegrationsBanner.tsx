@@ -32,7 +32,7 @@ const ITEMS: BannerItem[] = [
   // Integrations
   {label: 'MCP Server',    imgSrc: '/img/icons/mcp.png',       href: '/sdks/integrations/local-mcp'},
   {label: 'LiteLLM',      imgSrc: '/img/icons/litellm.png',    href: '/sdks/integrations/litellm'},
-  {label: 'Claude Code',  imgSrc: '/img/icons/claudecode.svg', href: '/sdks/integrations/claude-code'},
+  {label: 'Coding Agents', imgSrc: '/img/icons/hindsight.png', href: '/sdks/integrations/coding-agents'},
   {label: 'Grok Build',   imgSrc: '/img/icons/grok-build.svg', href: '/sdks/integrations/grok-build'},
   {label: 'OpenClaw',     imgSrc: '/img/icons/openclaw.png',   href: '/sdks/integrations/openclaw'},
   {label: 'Vercel AI',    icon: SiVercel,                      href: '/sdks/integrations/ai-sdk'},

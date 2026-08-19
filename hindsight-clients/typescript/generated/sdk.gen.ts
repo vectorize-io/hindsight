@@ -68,15 +68,24 @@ import type {
   DeleteWebhookData,
   DeleteWebhookErrors,
   DeleteWebhookResponses,
+  DownloadFileData,
+  DownloadFileErrors,
+  DownloadFileResponses,
   DryRunExtractMemoriesData,
   DryRunExtractMemoriesErrors,
   DryRunExtractMemoriesResponses,
+  DryRunRefreshMentalModelData,
+  DryRunRefreshMentalModelErrors,
+  DryRunRefreshMentalModelResponses,
   ExportBankTemplateData,
   ExportBankTemplateErrors,
   ExportBankTemplateResponses,
   ExportDocumentsData,
   ExportDocumentsErrors,
   ExportDocumentsResponses,
+  ExportDocumentsSyncRemovedData,
+  ExportDocumentsSyncRemovedErrors,
+  ExportDocumentsSyncRemovedResponses,
   ExportKnowledgeBaseData,
   ExportKnowledgeBaseErrors,
   ExportKnowledgeBaseResponses,
@@ -118,6 +127,8 @@ import type {
   GetKnowledgePageData,
   GetKnowledgePageErrors,
   GetKnowledgePageResponses,
+  GetLivenessData,
+  GetLivenessResponses,
   GetMemoriesTimeseriesData,
   GetMemoriesTimeseriesErrors,
   GetMemoriesTimeseriesResponses,
@@ -136,6 +147,8 @@ import type {
   GetOperationStatusData,
   GetOperationStatusErrors,
   GetOperationStatusResponses,
+  GetReadinessData,
+  GetReadinessResponses,
   GetVersionData,
   GetVersionResponses,
   HealthEndpointHealthGetData,
@@ -261,7 +274,8 @@ import type {
 export type Options<
   TData extends TDataShape = TDataShape,
   ThrowOnError extends boolean = boolean,
-> = Options2<TData, ThrowOnError> & {
+  TResponse = unknown,
+> = Options2<TData, ThrowOnError, TResponse> & {
   /**
    * You can provide a client instance returned by `createClient()` instead of
    * individual options. This might be also useful if you want to implement a
@@ -278,13 +292,39 @@ export type Options<
 /**
  * Health check endpoint
  *
- * Checks the health of the API and database connection
+ * Readiness check: verifies the API can reach the database. Alias of /health/ready. Use /health/live for liveness probes — this one fails whenever the database is unreachable, which must gate traffic, not restart the process.
  */
 export const healthEndpointHealthGet = <ThrowOnError extends boolean = false>(
   options?: Options<HealthEndpointHealthGetData, ThrowOnError>
 ) =>
   (options?.client ?? client).get<HealthEndpointHealthGetResponses, unknown, ThrowOnError>({
     url: "/health",
+    ...options,
+  });
+
+/**
+ * Readiness probe
+ *
+ * Returns 200 when the API can serve traffic (database reachable), 503 otherwise. Identical to /health, which stays supported as its alias.
+ */
+export const getReadiness = <ThrowOnError extends boolean = false>(
+  options?: Options<GetReadinessData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<GetReadinessResponses, unknown, ThrowOnError>({
+    url: "/health/ready",
+    ...options,
+  });
+
+/**
+ * Liveness probe
+ *
+ * Returns 200 whenever the process can serve a request. Performs no database access, so a slow or unreachable database never restarts the pod. Point livenessProbe here and readinessProbe at /health.
+ */
+export const getLiveness = <ThrowOnError extends boolean = false>(
+  options?: Options<GetLivenessData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<GetLivenessResponses, unknown, ThrowOnError>({
+    url: "/health/live",
     ...options,
   });
 
@@ -451,9 +491,9 @@ export const reflect = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * List all memory banks
+ * List memory banks
  *
- * Get a list of all agents with their profiles
+ * List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.
  */
 export const listBanks = <ThrowOnError extends boolean = false>(
   options?: Options<ListBanksData, ThrowOnError>
@@ -669,6 +709,27 @@ export const refreshMentalModel = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh", ...options });
 
 /**
+ * Dry-run mental model refresh (preview, no persistence)
+ *
+ * Preview what a refresh would do to this mental model WITHOUT changing it — no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.
+ *
+ * This is the production refresh pipeline with two writes skipped — the content and the watermark — and nothing about it is configurable, so what it reports is what the next refresh will do. Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.
+ *
+ * It costs the same LLM tokens as a refresh and is validated the same way.
+ */
+export const dryRunRefreshMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<DryRunRefreshMentalModelData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    DryRunRefreshMentalModelResponses,
+    DryRunRefreshMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh",
+    ...options,
+  });
+
+/**
  * Clear mental model content
  *
  * Clear a mental model's content so the next refresh performs a full re-synthesis. This is useful for delta-mode models that have accumulated drift over many incremental refreshes. After clearing, call the /refresh endpoint to trigger a clean full rebuild.
@@ -795,7 +856,7 @@ export const deleteKnowledgeNode = <ThrowOnError extends boolean = false>(
 /**
  * Rename/move a knowledge-base node or update a page's options
  *
- * Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question.
+ * Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
  */
 export const updateKnowledgeNode = <ThrowOnError extends boolean = false>(
   options: Options<UpdateKnowledgeNodeData, ThrowOnError>
@@ -816,7 +877,7 @@ export const updateKnowledgeNode = <ThrowOnError extends boolean = false>(
 /**
  * List directives
  *
- * List hard rules that are injected into prompts.
+ * List directive definitions. Unlike reflect, an omitted tag filter returns all directives.
  */
 export const listDirectives = <ThrowOnError extends boolean = false>(
   options: Options<ListDirectivesData, ThrowOnError>
@@ -829,7 +890,7 @@ export const listDirectives = <ThrowOnError extends boolean = false>(
 /**
  * Create directive
  *
- * Create a hard rule that will be injected into prompts.
+ * Create a global or tag-scoped hard rule for reflect prompts.
  */
 export const createDirective = <ThrowOnError extends boolean = false>(
   options: Options<CreateDirectiveData, ThrowOnError>
@@ -1214,17 +1275,20 @@ export const exportBankTemplate = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/export", ...options });
 
 /**
- * Export documents
+ * Export documents (removed — use POST .../document-transfer/export)
  *
- * Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.
+ * **Removed.** The synchronous whole-bank export loaded the entire bank into memory and held a database connection for the full request, which could exhaust memory and take down the shared API on large banks. Use the asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead: it returns an operation_id, runs the export in the background, and exposes a download URL on completion.
+ *
+ * @deprecated
  */
-export const exportDocuments = <ThrowOnError extends boolean = false>(
-  options: Options<ExportDocumentsData, ThrowOnError>
+export const exportDocumentsSyncRemoved = <ThrowOnError extends boolean = false>(
+  options: Options<ExportDocumentsSyncRemovedData, ThrowOnError>
 ) =>
-  (options.client ?? client).get<ExportDocumentsResponses, ExportDocumentsErrors, ThrowOnError>({
-    url: "/v1/default/banks/{bank_id}/document-transfer",
-    ...options,
-  });
+  (options.client ?? client).get<
+    ExportDocumentsSyncRemovedResponses,
+    ExportDocumentsSyncRemovedErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/document-transfer", ...options });
 
 /**
  * Import documents (async)
@@ -1242,6 +1306,32 @@ export const importDocuments = <ThrowOnError extends boolean = false>(
       "Content-Type": null,
       ...options.headers,
     },
+  });
+
+/**
+ * Export documents (async)
+ *
+ * Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true also carries consolidated observations (whole-bank export only).
+ */
+export const exportDocuments = <ThrowOnError extends boolean = false>(
+  options: Options<ExportDocumentsData, ThrowOnError>
+) =>
+  (options.client ?? client).post<ExportDocumentsResponses, ExportDocumentsErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/document-transfer/export",
+    ...options,
+  });
+
+/**
+ * Download a stored file (async export archive)
+ *
+ * Stream a file previously written to file storage — currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.
+ */
+export const downloadFile = <ThrowOnError extends boolean = false>(
+  options: Options<DownloadFileData, ThrowOnError>
+) =>
+  (options.client ?? client).get<DownloadFileResponses, DownloadFileErrors, ThrowOnError>({
+    url: "/v1/default/files/download/{key}",
+    ...options,
   });
 
 /**
@@ -1342,7 +1432,7 @@ export const getBankConfig = <ThrowOnError extends boolean = false>(
 /**
  * Update bank configuration
  *
- * Update configuration overrides for a bank. Only hierarchical fields can be overridden (LLM settings, retention parameters, etc.). Keys can be provided in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER).
+ * Update configuration overrides for a bank. Only hierarchical behavioral settings can be overridden (retention parameters, recall settings, etc.). Keys can be provided in Python field format (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE).
  */
 export const updateBankConfig = <ThrowOnError extends boolean = false>(
   options: Options<UpdateBankConfigData, ThrowOnError>

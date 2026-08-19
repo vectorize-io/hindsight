@@ -65,6 +65,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import { ResponseSchemaField } from "./response-schema-field";
 import { TagFilterInput } from "./tag-filter-input";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
@@ -94,6 +95,7 @@ interface MentalModel {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
     refresh_cron?: string | null;
+    min_refresh_interval_seconds?: number | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
     exclude_mental_model_ids?: string[];
@@ -102,6 +104,8 @@ interface MentalModel {
     include_chunks?: boolean;
     recall_max_tokens?: number;
     recall_chunks_max_tokens?: number;
+    response_schema?: Record<string, unknown>;
+    keep_trace?: boolean;
   };
   last_refreshed_at: string;
   created_at: string;
@@ -155,22 +159,11 @@ export function MentalModelsView() {
 
     setLoading(true);
     try {
-      // The API caps each response at PAGE_SIZE, so page through until a short
-      // page is returned to load every mental model for this bank.
-      const PAGE_SIZE = 100;
-      const all: MentalModel[] = [];
-      for (let offset = 0; ; offset += PAGE_SIZE) {
-        const page = await client.listMentalModels(
-          currentBank,
-          selectedTags.length > 0 ? selectedTags : undefined,
-          selectedTags.length > 0 ? tagsMatch : undefined,
-          PAGE_SIZE,
-          offset
-        );
-        const items = page.items || [];
-        all.push(...items);
-        if (items.length < PAGE_SIZE) break;
-      }
+      // The API caps each response, so page through to the reported total.
+      const all = await client.listAllMentalModels(currentBank, {
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
+      });
       setMentalModels(all);
     } catch (error) {
       console.error("Error loading mental models:", error);
@@ -702,6 +695,7 @@ function CreateMentalModelDialog({
     refreshTrigger: "manual" as "manual" | "auto" | "scheduled",
     mode: "full" as "full" | "delta",
     refreshCron: "",
+    minRefreshIntervalSeconds: "",
     factTypes: [] as Array<"world" | "experience" | "observation">,
     excludeMentalModels: false,
     excludeMentalModelIds: "",
@@ -711,6 +705,8 @@ function CreateMentalModelDialog({
     includeChunks: "" as "" | "true" | "false",
     recallMaxTokens: "",
     recallChunksMaxTokens: "",
+    responseSchema: "",
+    keepTrace: false,
   });
 
   const handleCreate = async () => {
@@ -741,6 +737,9 @@ function CreateMentalModelDialog({
         }
       }
 
+      const minRefreshIntervalSeconds = form.minRefreshIntervalSeconds.trim()
+        ? parseInt(form.minRefreshIntervalSeconds, 10)
+        : undefined;
       const recallMaxTokens = form.recallMaxTokens.trim()
         ? parseInt(form.recallMaxTokens, 10)
         : undefined;
@@ -749,6 +748,12 @@ function CreateMentalModelDialog({
         : undefined;
       const includeChunks =
         form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
+
+      // response_schema is only ever set through the schema builder, which
+      // guarantees valid, usable JSON.
+      const responseSchema = form.responseSchema.trim()
+        ? JSON.parse(form.responseSchema.trim())
+        : undefined;
 
       await client.createMentalModel(currentBank, {
         id: form.id.trim() || undefined,
@@ -761,6 +766,7 @@ function CreateMentalModelDialog({
           refresh_after_consolidation: form.refreshTrigger === "auto",
           refresh_cron:
             form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
+          min_refresh_interval_seconds: minRefreshIntervalSeconds,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -769,6 +775,8 @@ function CreateMentalModelDialog({
           include_chunks: includeChunks,
           recall_max_tokens: recallMaxTokens,
           recall_chunks_max_tokens: recallChunksMaxTokens,
+          response_schema: responseSchema,
+          keep_trace: form.keepTrace,
         },
       });
 
@@ -781,6 +789,7 @@ function CreateMentalModelDialog({
         refreshTrigger: "manual",
         mode: "full",
         refreshCron: "",
+        minRefreshIntervalSeconds: "",
         factTypes: [],
         excludeMentalModels: false,
         excludeMentalModelIds: "",
@@ -789,6 +798,8 @@ function CreateMentalModelDialog({
         includeChunks: "",
         recallMaxTokens: "",
         recallChunksMaxTokens: "",
+        responseSchema: "",
+        keepTrace: false,
       });
       onCreated();
     } catch (error) {
@@ -812,6 +823,7 @@ function CreateMentalModelDialog({
             refreshTrigger: "manual",
             mode: "full",
             refreshCron: "",
+            minRefreshIntervalSeconds: "",
             factTypes: [],
             excludeMentalModels: false,
             excludeMentalModelIds: "",
@@ -820,6 +832,8 @@ function CreateMentalModelDialog({
             includeChunks: "",
             recallMaxTokens: "",
             recallChunksMaxTokens: "",
+            responseSchema: "",
+            keepTrace: false,
           });
           onClose();
         }
@@ -941,6 +955,25 @@ function CreateMentalModelDialog({
                       {t("optionsRefreshCronDescription")}
                     </p>
                     <CronSchedulePreview cron={form.refreshCron} />
+                  </div>
+                )}
+                {form.refreshTrigger !== "manual" && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      {t("optionsMinRefreshIntervalLabel")}
+                    </label>
+                    <Input
+                      type="number"
+                      value={form.minRefreshIntervalSeconds}
+                      onChange={(e) =>
+                        setForm({ ...form, minRefreshIntervalSeconds: e.target.value })
+                      }
+                      placeholder={t("optionsMinRefreshIntervalPlaceholder")}
+                      min="0"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("optionsMinRefreshIntervalDescription")}
+                    </p>
                   </div>
                 )}
                 <div className="space-y-2">
@@ -1120,6 +1153,30 @@ function CreateMentalModelDialog({
                     {t("optionsRecallChunksMaxTokensDescription")}
                   </p>
                 </div>
+                <ResponseSchemaField
+                  value={form.responseSchema}
+                  onChange={(json) => setForm({ ...form, responseSchema: json })}
+                />
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTroubleshooting")}
+                </h3>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="create-keep-trace"
+                    checked={form.keepTrace}
+                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
+                  />
+                  <label
+                    htmlFor="create-keep-trace"
+                    className="text-sm font-medium text-foreground cursor-pointer"
+                  >
+                    {t("optionsKeepTraceLabel")}
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
               </section>
             </TabsContent>
           </div>
@@ -1174,6 +1231,10 @@ function UpdateMentalModelDialog({
         : "manual") as "manual" | "auto" | "scheduled",
     mode: (mentalModel.trigger?.mode || "full") as "full" | "delta",
     refreshCron: mentalModel.trigger?.refresh_cron || "",
+    minRefreshIntervalSeconds:
+      mentalModel.trigger?.min_refresh_interval_seconds != null
+        ? String(mentalModel.trigger.min_refresh_interval_seconds)
+        : "",
     factTypes:
       (mentalModel.trigger?.fact_types as
         | Array<"world" | "experience" | "observation">
@@ -1197,6 +1258,10 @@ function UpdateMentalModelDialog({
       mentalModel.trigger?.recall_chunks_max_tokens != null
         ? String(mentalModel.trigger.recall_chunks_max_tokens)
         : "",
+    responseSchema: mentalModel.trigger?.response_schema
+      ? JSON.stringify(mentalModel.trigger.response_schema, null, 2)
+      : "",
+    keepTrace: mentalModel.trigger?.keep_trace || false,
   });
   const [form, setForm] = useState(buildFormState);
 
@@ -1234,6 +1299,9 @@ function UpdateMentalModelDialog({
         }
       }
 
+      const minRefreshIntervalSeconds = form.minRefreshIntervalSeconds.trim()
+        ? parseInt(form.minRefreshIntervalSeconds, 10)
+        : undefined;
       const recallMaxTokens = form.recallMaxTokens.trim()
         ? parseInt(form.recallMaxTokens, 10)
         : undefined;
@@ -1242,6 +1310,12 @@ function UpdateMentalModelDialog({
         : undefined;
       const includeChunks =
         form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
+
+      // response_schema is only ever set through the schema builder, which
+      // guarantees valid, usable JSON.
+      const responseSchema = form.responseSchema.trim()
+        ? JSON.parse(form.responseSchema.trim())
+        : undefined;
 
       const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
         name: form.name.trim(),
@@ -1253,6 +1327,7 @@ function UpdateMentalModelDialog({
           refresh_after_consolidation: form.refreshTrigger === "auto",
           refresh_cron:
             form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
+          min_refresh_interval_seconds: minRefreshIntervalSeconds,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -1261,6 +1336,8 @@ function UpdateMentalModelDialog({
           include_chunks: includeChunks,
           recall_max_tokens: recallMaxTokens,
           recall_chunks_max_tokens: recallChunksMaxTokens,
+          response_schema: responseSchema,
+          keep_trace: form.keepTrace,
         },
       });
 
@@ -1387,6 +1464,25 @@ function UpdateMentalModelDialog({
                       {t("optionsRefreshCronDescription")}
                     </p>
                     <CronSchedulePreview cron={form.refreshCron} />
+                  </div>
+                )}
+                {form.refreshTrigger !== "manual" && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      {t("optionsMinRefreshIntervalLabel")}
+                    </label>
+                    <Input
+                      type="number"
+                      value={form.minRefreshIntervalSeconds}
+                      onChange={(e) =>
+                        setForm({ ...form, minRefreshIntervalSeconds: e.target.value })
+                      }
+                      placeholder={t("optionsMinRefreshIntervalPlaceholder")}
+                      min="0"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("optionsMinRefreshIntervalDescription")}
+                    </p>
                   </div>
                 )}
                 <div className="space-y-2">
@@ -1566,6 +1662,30 @@ function UpdateMentalModelDialog({
                     {t("optionsRecallChunksMaxTokensDescription")}
                   </p>
                 </div>
+                <ResponseSchemaField
+                  value={form.responseSchema}
+                  onChange={(json) => setForm({ ...form, responseSchema: json })}
+                />
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTroubleshooting")}
+                </h3>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="edit-keep-trace"
+                    checked={form.keepTrace}
+                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
+                  />
+                  <label
+                    htmlFor="edit-keep-trace"
+                    className="text-sm font-medium text-foreground cursor-pointer"
+                  >
+                    {t("optionsKeepTraceLabel")}
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
               </section>
             </TabsContent>
           </div>

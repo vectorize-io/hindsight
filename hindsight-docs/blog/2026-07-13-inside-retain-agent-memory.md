@@ -3,7 +3,7 @@ title: "Inside retain(): What Actually Happens When Your Agent Remembers"
 authors: [benfrank241]
 slug: "2026/07/13/inside-retain-agent-memory"
 date: 2026-07-13T12:00
-tags: [hindsight, agent-memory, retain, observations, knowledge-graph, how-it-works]
+tags: [hindsight, agent-memory, retain, observations, knowledge-graph, how-it-works, deep-dive]
 description: "Calling retain() is one line of code. Underneath, a sentence becomes extracted facts, resolved entities, a knowledge graph, and consolidated observations. Here is the whole write path."
 image: /img/blog/inside-retain-agent-memory.png
 hide_table_of_contents: true

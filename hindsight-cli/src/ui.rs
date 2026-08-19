@@ -20,8 +20,46 @@ fn interpolate_color(start: (u8, u8, u8), end: (u8, u8, u8), t: f32) -> (u8, u8,
     )
 }
 
+/// Whether ANSI color and animation should be emitted on stdout.
+///
+/// Follows the standard CLI convention: styling is for a human at an
+/// interactive terminal. Hindsight's primary consumers are coding agents that
+/// read piped output, so escape codes there are noise at best and corrupt
+/// captured output at worst.
+///
+/// The policy itself is `colored`'s, which this binary already applies to
+/// `print_error` and everything in `errors.rs`: `CLICOLOR_FORCE` wins, then
+/// `NO_COLOR` (https://no-color.org), then `CLICOLOR` combined with a stdout
+/// tty check. Deferring to it keeps one policy across the whole binary — so
+/// `CLICOLOR_FORCE=1 hindsight ... | less -R` keeps *all* the color, not half
+/// of it — and resolves the environment once (it is a `lazy_static`) rather
+/// than on every styled string. `TERM=dumb` is the one addition: a dumb
+/// terminal is a tty, but it cannot render any of this.
+///
+/// Note this deliberately gates on *stdout* even though clap writes argument
+/// errors to stderr; the flooding this guards against is piped stdout.
+fn ansi_enabled() -> bool {
+    ansi_enabled_from(
+        colored::control::SHOULD_COLORIZE.should_colorize(),
+        std::env::var("TERM").map(|t| t == "dumb").unwrap_or(false),
+    )
+}
+
+/// Pure decision layer for [`ansi_enabled`], split out so it can be unit tested
+/// without depending on the test harness's terminal or process environment.
+fn ansi_enabled_from(colorize: bool, term_dumb: bool) -> bool {
+    colorize && !term_dumb
+}
+
 /// Color text using gradient position (0.0 = start, 1.0 = end)
 pub fn gradient(text: &str, t: f32) -> String {
+    gradient_impl(text, t, ansi_enabled())
+}
+
+fn gradient_impl(text: &str, t: f32, enabled: bool) -> String {
+    if !enabled {
+        return text.to_string();
+    }
     let (r, g, b) = interpolate_color(GRADIENT_START, GRADIENT_END, t);
     format!("\x1b[38;2;{};{};{}m{}\x1b[0m", r, g, b, text)
 }
@@ -43,6 +81,13 @@ pub fn gradient_mid(text: &str) -> String {
 
 /// Apply gradient across entire text string
 pub fn gradient_text(text: &str) -> String {
+    gradient_text_impl(text, ansi_enabled())
+}
+
+fn gradient_text_impl(text: &str, enabled: bool) -> String {
+    if !enabled {
+        return text.to_string();
+    }
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
     if len == 0 {
@@ -64,11 +109,26 @@ pub fn gradient_text(text: &str) -> String {
 
 /// Dim/gray text
 pub fn dim(text: &str) -> String {
+    dim_impl(text, ansi_enabled())
+}
+
+fn dim_impl(text: &str, enabled: bool) -> String {
+    if !enabled {
+        return text.to_string();
+    }
     format!("\x1b[38;2;128;128;128m{}\x1b[0m", text)
 }
 
-pub fn get_logo() -> &'static str {
-    LOGO
+/// Logo for clap's `before_help`. The art is raw ANSI — its shapes are drawn
+/// with colored half-blocks, so stripped of color it is a blank rectangle
+/// rather than plain-text art. It is therefore dropped entirely when stdout is
+/// not a styled terminal (e.g. `hindsight --help | cat`).
+pub fn before_help_logo() -> &'static str {
+    if ansi_enabled() {
+        LOGO
+    } else {
+        ""
+    }
 }
 
 pub fn print_section_header(title: &str) {
@@ -231,8 +291,23 @@ pub struct GradientSpinner {
 
 impl GradientSpinner {
     pub fn new(message: &str) -> Self {
+        Self::new_with(message, ansi_enabled())
+    }
+
+    fn new_with(message: &str, animate: bool) -> Self {
         let message = message.to_string();
         let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+
+        // Not an interactive terminal (piped output, NO_COLOR, TERM=dumb):
+        // keep the same type and API but spawn no thread and emit nothing.
+        if !animate {
+            running.store(false, std::sync::atomic::Ordering::Relaxed);
+            return Self {
+                message,
+                running,
+                handle: None,
+            };
+        }
 
         let msg_clone = message.clone();
         let running_clone = running.clone();
@@ -277,12 +352,13 @@ impl GradientSpinner {
 
     pub fn finish(&mut self) {
         self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        // Only a spinner that actually animated (spawned a thread) has a line
+        // to clear; the no-op variant printed nothing.
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
+            print!("\r{}\r", " ".repeat(self.message.len() + 10));
+            let _ = io::stdout().flush();
         }
-        // Clear the line
-        print!("\r{}\r", " ".repeat(self.message.len() + 10));
-        let _ = io::stdout().flush();
     }
 }
 
@@ -364,4 +440,74 @@ pub fn print_disposition(profile: &BankProfileResponse) {
     }
 
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ansi_enabled_follows_colored_policy() {
+        // `colored` says colorize (tty, no NO_COLOR, or CLICOLOR_FORCE) -> on.
+        assert!(ansi_enabled_from(true, false));
+        // `colored` says don't (piped, NO_COLOR, CLICOLOR=0) -> off.
+        assert!(!ansi_enabled_from(false, false));
+    }
+
+    #[test]
+    fn test_ansi_enabled_term_dumb() {
+        // TERM=dumb -> styling off even when `colored` would allow it.
+        assert!(!ansi_enabled_from(true, true));
+        assert!(!ansi_enabled_from(false, true));
+    }
+
+    #[test]
+    fn test_gradient_helpers_plain_when_disabled() {
+        // Disabled -> no escape codes. Injected flag, so the result does not
+        // depend on whether the test harness runs under a terminal.
+        assert!(!gradient_impl("hello", 0.5, false).contains('\x1b'));
+        assert!(!gradient_text_impl("hello world", false).contains('\x1b'));
+        assert!(!dim_impl("hello", false).contains('\x1b'));
+    }
+
+    #[test]
+    fn test_gradient_helpers_colored_when_enabled() {
+        // Enabled -> escape codes present.
+        assert!(gradient_impl("hello", 0.5, true).contains('\x1b'));
+        assert!(gradient_text_impl("hello", true).contains('\x1b'));
+        assert!(dim_impl("hello", true).contains('\x1b'));
+    }
+
+    #[test]
+    fn test_spinner_noop_when_disabled() {
+        // Disabled -> no background thread is spawned.
+        let sp = GradientSpinner::new_with("Loading...", false);
+        assert!(sp.handle.is_none());
+    }
+
+    #[test]
+    fn test_spinner_animates_when_enabled() {
+        // Enabled -> a background thread is spawned; finish() joins cleanly.
+        let mut sp = GradientSpinner::new_with("Loading...", true);
+        assert!(sp.handle.is_some());
+        sp.finish();
+    }
+
+    #[test]
+    fn test_public_helpers_are_wired_to_the_predicate() {
+        // The tests above inject the flag, so they would still pass if a
+        // caller-facing helper forgot to consult `ansi_enabled()`. This one
+        // drives the real entry points. `colored`'s override is what
+        // `ansi_enabled` reads, so forcing it off must silence all of them --
+        // and does so regardless of TERM, since the predicate is an AND.
+        colored::control::set_override(false);
+
+        assert!(!gradient("hello", 0.5).contains('\x1b'));
+        assert!(!gradient_text("hello world").contains('\x1b'));
+        assert!(!dim("hello").contains('\x1b'));
+        assert_eq!(before_help_logo(), "");
+        assert!(GradientSpinner::new("Loading...").handle.is_none());
+
+        colored::control::unset_override();
+    }
 }

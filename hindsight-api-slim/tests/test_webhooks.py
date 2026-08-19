@@ -544,7 +544,7 @@ class TestWebhookHttpApi:
         assert response.status_code == 201, response.text
         webhook_id = response.json()["id"]
 
-        banks_resp = await api_client.get("/v1/default/banks")
+        banks_resp = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert banks_resp.status_code == 200
         bank_ids = {bank["bank_id"] for bank in banks_resp.json()["banks"]}
         assert bank_id in bank_ids
@@ -669,6 +669,117 @@ class TestWebhookHttpApi:
         missing_id = str(uuid.uuid4())
         response = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{missing_id}/deliveries")
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "http://169.254.169.254/latest/meta-data/",  # cloud metadata
+            "http://127.0.0.1:8080/admin",  # loopback
+            "https://10.1.2.3/hook",  # private
+            "ftp://example.com/x",  # scheme
+        ],
+    )
+    async def test_http_create_webhook_rejects_internal_url(self, api_client: httpx.AsyncClient, bad_url: str):
+        """POST /webhooks with an internal/unsafe destination is rejected with 400 (SSRF guard)."""
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        response = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": bad_url, "event_types": ["consolidation.completed"]},
+        )
+        assert response.status_code == 400, response.text
+
+    @pytest.mark.asyncio
+    async def test_http_update_webhook_rejects_internal_url(self, api_client: httpx.AsyncClient):
+        """PATCH /webhooks/{id} to an internal destination is rejected with 400."""
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        create_resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": "https://example.com/hook", "event_types": ["consolidation.completed"]},
+        )
+        assert create_resp.status_code == 201
+        webhook_id = create_resp.json()["id"]
+        try:
+            patch_resp = await api_client.patch(
+                f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
+                json={"url": "http://169.254.169.254/latest/meta-data/"},
+            )
+            assert patch_resp.status_code == 400, patch_resp.text
+        finally:
+            await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
+
+    async def _insert_delivery_with_body(self, memory: MemoryEngine, bank_id: str, webhook_id: str) -> uuid.UUID:
+        delivery_id = uuid.uuid4()
+        now = datetime.now(timezone.utc)
+        task_payload = json.dumps(
+            {
+                "type": "webhook_delivery",
+                "bank_id": bank_id,
+                "url": "https://example.com/deliveries",
+                "event_type": "consolidation.completed",
+                "payload": "{}",
+                "webhook_id": webhook_id,
+            }
+        )
+        result_metadata = json.dumps({"last_status_code": 200, "last_response_body": "INTERNAL_SECRET_BODY"})
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO async_operations
+                  (operation_id, bank_id, operation_type, status, retry_count, task_payload, result_metadata, created_at, updated_at)
+                VALUES ($1, $2, 'webhook_delivery', 'completed', 0, $3::jsonb, $4::jsonb, $5, $5)
+                """,
+                delivery_id,
+                bank_id,
+                task_payload,
+                result_metadata,
+                now,
+            )
+        return delivery_id
+
+    @pytest.mark.asyncio
+    async def test_deliveries_hide_response_body_by_default(self, memory: MemoryEngine, api_client: httpx.AsyncClient):
+        """By default the raw upstream body is withheld; the status is still returned."""
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        create_resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": "https://example.com/deliveries", "event_types": ["consolidation.completed"]},
+        )
+        webhook_id = create_resp.json()["id"]
+        delivery_id = await self._insert_delivery_with_body(memory, bank_id, webhook_id)
+        try:
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
+            delivery = next(i for i in resp.json()["items"] if i["id"] == str(delivery_id))
+            assert delivery["last_response_body"] is None
+            assert delivery["last_response_status"] == 200  # status stays useful for debugging
+        finally:
+            async with memory._pool.acquire() as conn:
+                await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", delivery_id)
+            await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
+
+    @pytest.mark.asyncio
+    async def test_deliveries_expose_response_body_when_opted_in(
+        self, memory: MemoryEngine, api_client: httpx.AsyncClient, monkeypatch
+    ):
+        """When the operator opts in, the raw body is returned."""
+        from hindsight_api.config import _get_raw_config
+
+        monkeypatch.setattr(_get_raw_config(), "webhook_expose_response_body", True)
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        create_resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": "https://example.com/deliveries", "event_types": ["consolidation.completed"]},
+        )
+        webhook_id = create_resp.json()["id"]
+        delivery_id = await self._insert_delivery_with_body(memory, bank_id, webhook_id)
+        try:
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
+            delivery = next(i for i in resp.json()["items"] if i["id"] == str(delivery_id))
+            assert delivery["last_response_body"] == "INTERNAL_SECRET_BODY"
+        finally:
+            async with memory._pool.acquire() as conn:
+                await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", delivery_id)
+            await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @pytest.mark.asyncio
     async def test_http_update_webhook_url(self, api_client: httpx.AsyncClient):
@@ -1166,12 +1277,11 @@ class TestRetainCompletedWebhook:
                 outbox_callback=callback,
             )
 
-            async with memory._pool.acquire() as conn:
-                stored_units = await conn.fetchval(
-                    "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                    bank_id,
-                    "doc-counted",
+            stored_units = (
+                await memory.list_memory_units(
+                    bank_id, document_id="doc-counted", limit=1000, request_context=request_context
                 )
+            )["total"]
             assert stored_units > 0, "fixture precondition: the mock LLM must extract facts here"
 
             payloads = await self._retain_delivery_payloads(memory._pool, bank_id)

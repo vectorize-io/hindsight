@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .metadata_utils import as_string_metadata
+
 VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "observation"])
 
 
@@ -260,6 +262,9 @@ class MemoryFact(BaseModel):
         Also coerces non-string dict values (e.g., integer IDs stored in JSONB)
         to strings, preventing ValidationError when consolidation encounters
         metadata like {"original_id": 348} instead of {"original_id": "348"}.
+        Null-valued keys are dropped rather than stringified to "None" (issue
+        #3209), so rows written before retain normalized its input stay
+        readable without a data migration.
         """
         if v is None:
             return None
@@ -268,7 +273,7 @@ class MemoryFact(BaseModel):
 
             v = json.loads(v)
         if isinstance(v, dict):
-            return {str(k): str(val) for k, val in v.items()}
+            return as_string_metadata(v)
         return v
 
     chunk_id: str | None = Field(
@@ -352,6 +357,14 @@ class RecallResult(BaseModel):
     )
     source_facts: dict[str, MemoryFact] | None = Field(
         None, description="Source facts for observation-type results, keyed by fact ID"
+    )
+    source_facts_truncated: bool | None = Field(
+        None,
+        description=(
+            "Whether the source_facts map was cut short by the token budget. When true, some IDs in "
+            "results[].source_fact_ids have no entry in source_facts — the budget ran out, the "
+            "references are not dangling. Only set when source facts were requested."
+        ),
     )
 
 

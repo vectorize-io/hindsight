@@ -3,7 +3,7 @@ title: "One Memory, Three Surfaces: A Day With Cursor, OpenClaw, and Vapi"
 authors: [benfrank241]
 slug: "2026/07/10/shared-memory-across-ai-tools"
 date: 2026-07-10T12:00
-tags: [hindsight, agent-memory, cursor, openclaw, vapi, shared-memory, workflow]
+tags: [hindsight, agent-memory, cursor, openclaw, vapi, shared-memory, workflow, tutorial]
 description: "We pointed our code editor, our Slack agent, and our voice agent at one shared Hindsight memory. Here is a day in that workflow, and what actually changed."
 image: /img/blog/shared-memory-across-ai-tools.png
 hide_table_of_contents: true

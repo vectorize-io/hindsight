@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.8.6"
+version = "0.9.1"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 license = "MIT"
 readme = "README.md"
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 dependencies = [
     "asyncpg>=0.29.0",
     "python-dotenv>=1.0.0",
-    "openai>=1.0.0",
+    "openai>=1.66.0",  # Responses API (client.responses.create, reasoning=, text.format) for the openai-responses provider
     "pydantic>=2.0.0",
     "rich>=13.0.0",
     "langchain-text-splitters>=0.3.0",
@@ -49,8 +49,8 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.65b0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-semantic-conventions>=0.65b0",
-    "dateparser>=1.2.2",
-    "google-genai>=1.0.0",
+    "dateparser>=1.4.2",
+    "google-genai>=1.72.0",
     "google-auth>=2.0.0",
     "anthropic>=0.40.0",
     "typer>=0.9.0",
@@ -63,7 +63,17 @@ dependencies = [
     # cp314 wheel and their sdist fails to build because PyO3 0.23.5 rejects
     # any interpreter newer than 3.13. 1.93.0 adds cp314 wheels and a PyO3 that
     # builds on 3.14.
-    "litellm>=1.93.0",
+    "litellm>=1.93.0; sys_platform != 'darwin'",
+    # macOS: litellm publishes NO macOS wheels for any release >= 1.92.0 (only
+    # manylinux + win_amd64), so every install compiles the sdist's Rust/PyO3
+    # bridge — which requires a Rust toolchain most users don't have, and as of
+    # 1.95.0 (vendored aws-smithy crates) rustc >= 1.94.1 on top. Pin to the
+    # 1.91.x line, the last releases shipping pure-python py3-none-any wheels,
+    # so a plain `uvx hindsight-api` works on a stock Mac. The 1.93.0 floor's
+    # Python 3.14 rationale doesn't apply here: pure wheels install on any
+    # interpreter without building anything. Revisit when litellm ships macOS
+    # wheels (tracked upstream in BerriAI/litellm#31261).
+    "litellm>=1.91.3,<1.92; sys_platform == 'darwin'",
     "markitdown[pdf,docx,pptx,xlsx,xls]>=0.1.4", # File to markdown conversion
     "obstore>=0.4.0", # S3/GCS/Azure object storage client (Rust-backed)
     "winloop>=0.1.0; sys_platform == 'win32'",
@@ -75,25 +85,29 @@ dependencies = [
     "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "protobuf>=7.35.1", # JSON recursion depth bypass fix (>=6.33.5); requires otel>=1.44 (proto <1.44 caps protobuf<7.0)
     "pillow>=12.3.0", # Multiple HIGH image parsing vulnerabilities fixed in 12.3.0
-    "cryptography>=48.0.1", # GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
+    "cryptography>=50.0.0", # GHSA-g6cj-pr64-35w5: Bleichenbacher oracle in PKCS#7 EnvelopedData decryption (supersedes the >=48.0.1 GHSA-537c-gmf6-5ccf floor). GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix
     "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
     "orjson>=3.11.6", # Unbounded recursion DoS fix
     "python-multipart>=0.0.22", # Arbitrary file write via non-default configuration fix
     "tornado>=6.5.5", # DoS multipart/incomplete cookie validation fix
-    "aiohttp>=3.13.3", # Multiple DoS vulnerabilities
+    "aiohttp>=3.14.3", # GHSA-cq5v-8q36-5273: OOB heap read in the C response parser, plus earlier DoS fixes
     "pygments>=2.20.0", # ReDoS via inefficient GUID regex fix
     "claude-agent-sdk>=0.2.82",
+    "github-copilot-sdk>=1.0.11",
     "boto3>=1.42.74",
     "croniter>=2.0.0", # Cron parsing for scheduled mental model refresh
-    "json-repair>=0.30.0", # Structural repair of malformed LLM JSON (last-resort parse fallback)
+    "json-repair>=0.63.2", # Structural repair of malformed LLM JSON (last-resort parse fallback); >=0.60.1 also fixes the circular-$ref unbounded-CPU DoS
 ]
 
 [project.optional-dependencies]
 local-ml = [
     # Local ML models for embeddings/reranking
-    "sentence-transformers>=3.3.0",
+    # 5.0 is the floor: LocalSTEmbeddings calls SentenceTransformer.encode_query()
+    # and .encode_document(), which only exist from 5.0 onwards. On 4.x those are
+    # an AttributeError at first encode (recall/retain), not at startup.
+    "sentence-transformers>=5.0.0",
     "transformers>=5.5.0", # ReDoS fixes; 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
     # transformers enforces tokenizers<=0.23.0 with a runtime check, but has
     # shipped metadata declaring a wider range than it actually enforces. Keep
@@ -176,6 +190,7 @@ markers = [
     "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
     "integration: Live external-API integration tests (require provider credentials; skipped without)",
     "slow: Slow tests (minutes); not run in fast CI",
+    "memory_backend_incompatible: asserts Postgres-internal state a non-SQL memories backend cannot reproduce — raw memory_links row counts (the graph read path dedupes bidirectional edges), or internal columns like embedding / search_vector that are not part of the public read model. Deselect when running against an alternative memories backend with -m 'not memory_backend_incompatible'.",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

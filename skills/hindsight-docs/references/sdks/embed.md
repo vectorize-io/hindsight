@@ -119,7 +119,15 @@ The control center runs as a separate process from the memory daemon. Stopping o
 | `HINDSIGHT_API_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama` | `openai` |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-4o-mini` |
 | `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT` | Seconds before daemon auto-exits when idle (0 = never) | `0` |
+| `HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES` | Rotate the daemon log at startup when it reaches this size; `0` disables rotation | `10485760` (10 MiB) |
+| `HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT` | Retained backups; `0` truncates a full log at startup | `3` |
 | `HINDSIGHT_EMBED_CONTROL_PORT` | Default port for `hindsight-embed control start` | `7878` |
+
+The size is checked only when a daemon starts, so a single uninterrupted run is never truncated and can
+grow past `MAX_BYTES` — and at the next start that whole file is kept as the first backup. Retained size
+is therefore around `MAX_BYTES × (BACKUP_COUNT + 1)` (40 MiB by default) only for daemons that restart
+regularly; a daemon left running for weeks (the default, since it never auto-exits) keeps whatever it
+wrote. Restart it, or lower `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT`, to keep the bound meaningful.
 
 **Provider Examples:**
 
@@ -168,6 +176,16 @@ hindsight-embed daemon logs -f
 
 # Stop daemon manually
 hindsight-embed daemon stop
+```
+
+### Reclaiming Disk Space
+
+When the daemon is launched with `uvx` (the default for the npm package and the editor plugins), every Hindsight version it has run keeps its own cached Python environment — around 1.5 GB each — and these are not removed automatically. If disk space gets tight, stop the daemon before clearing the cache: unused entries can only be reclaimed while no daemon is running.
+
+```bash
+hindsight-embed daemon stop
+uv cache prune
+hindsight-embed daemon status   # starts fresh on the current version
 ```
 
 ### Control Center Commands

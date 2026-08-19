@@ -34,6 +34,7 @@ import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import { ResponseSchemaField } from "./response-schema-field";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -57,6 +58,7 @@ export function ThinkView() {
   const [factTypes, setFactTypes] = useState<FactType[]>([]);
   const [excludeMentalModels, setExcludeMentalModels] = useState(false);
   const [excludeMentalModelIds, setExcludeMentalModelIds] = useState("");
+  const [responseSchema, setResponseSchema] = useState("");
   const [feedback, setFeedback] = useState("");
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
@@ -94,8 +96,8 @@ export function ThinkView() {
     setFeedbackSubmitting(true);
     try {
       // Find existing "General Feedback" directive
-      const directives = await client.listDirectives(currentBank);
-      const existingDirective = directives.items?.find((d) => d.name === FEEDBACK_DIRECTIVE_NAME);
+      const directives = await client.listAllDirectives(currentBank);
+      const existingDirective = directives.find((d) => d.name === FEEDBACK_DIRECTIVE_NAME);
 
       if (existingDirective) {
         // Append to existing directive content
@@ -140,6 +142,11 @@ export function ThinkView() {
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
 
+      // response_schema is only ever set through the schema builder, which
+      // guarantees valid, usable JSON — so parse it directly.
+      const schemaText = responseSchema.trim();
+      const parsedSchema = schemaText ? JSON.parse(schemaText) : undefined;
+
       const data: any = await client.reflect({
         bank_id: currentBank,
         query,
@@ -151,6 +158,7 @@ export function ThinkView() {
         ...(factTypes.length > 0 && { fact_types: factTypes }),
         ...(excludeMentalModels && { exclude_mental_models: true }),
         ...(excludeIds.length > 0 && { exclude_mental_model_ids: excludeIds }),
+        ...(parsedSchema && { response_schema: parsedSchema }),
       });
       setResult(data);
     } catch (error) {
@@ -291,6 +299,13 @@ export function ThinkView() {
               />
             </div>
           </div>
+
+          {/* Structured Output Schema */}
+          <ResponseSchemaField
+            className="mt-4 pt-4 border-t"
+            value={responseSchema}
+            onChange={setResponseSchema}
+          />
         </CardContent>
       </Card>
 
@@ -389,6 +404,20 @@ export function ThinkView() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Structured Output */}
+              {result.structured_output && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">{t("structuredOutputTitle")}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="bg-muted p-4 rounded-lg overflow-auto max-h-[400px]">
+                      <JsonView src={result.structured_output} collapsed={2} theme="default" />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Directive */}
               <Card className="border-blue-200 dark:border-blue-800">

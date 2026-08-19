@@ -3,7 +3,7 @@ title: "recall vs reflect: Search Your Agent's Memory, or Ask It"
 authors: [benfrank241]
 slug: "2026/07/24/recall-vs-reflect"
 date: 2026-07-24T12:00
-tags: [hindsight, agent-memory, recall, reflect, how-it-works]
+tags: [hindsight, agent-memory, recall, reflect, how-it-works, deep-dive]
 description: "Hindsight gives your agent two ways to read its memory. recall retrieves the relevant facts (no LLM, instant). reflect reasons across them to synthesize an answer. When to use each."
 image: /img/blog/recall-vs-reflect.png
 hide_table_of_contents: true

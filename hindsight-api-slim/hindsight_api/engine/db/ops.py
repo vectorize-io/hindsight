@@ -25,6 +25,121 @@ from .base import DatabaseConnection
 from .result import ResultRow
 
 
+def document_serialization_sql(table: str, alias: str) -> str:
+    """SQL predicate keeping one document to a single in-flight retain.
+
+    A retain that targets exactly one document carries it in
+    ``serialization_key``. Appending to a document is a read-modify-write over
+    its whole text, so two concurrent retains for one document can only produce
+    a lost update or a wasted extraction — never more throughput. This
+    predicate makes the queue reflect that: a candidate is claimable only when
+    no peer for the same document is already ``processing``, and only when it
+    is the oldest claimable pending peer for that document.
+
+    Ordering, not just exclusion, is the point. Appends are cumulative, so the
+    order they commit in is the order the document ends up in; claiming them by
+    ``(created_at, operation_id)`` makes that the submission order. It also
+    stops a single claim batch from taking several peers at once, which
+    excluding busy documents alone would not prevent.
+
+    Rows with a NULL ``serialization_key`` — multi-document batches, and every
+    non-retain operation — are unaffected, and documents are independent of one
+    another, so this costs no parallelism across a busy bank: only the retains
+    that were racing each other for one document are put in a line.
+
+    A peer wedged in 'processing' holds its document until claim recovery
+    releases it, the same caveat ``graph_maintenance_bank_serialization_sql``
+    carries and the same general gap.
+
+    The candidate row is always 'pending' and the 'pending' branch is
+    strictly-older, so the subquery can never match the candidate itself. The
+    fragment carries no SQL comments on purpose — it is rewritten for Oracle by
+    regex (``db/oracle.py``).
+
+    Args:
+        table: Fully-qualified async_operations table.
+        alias: Alias of the outer candidate row in the calling query.
+    """
+    return f"""
+        ({alias}.serialization_key IS NULL OR NOT EXISTS (
+            SELECT 1 FROM {table} doc_peer
+            WHERE doc_peer.bank_id = {alias}.bank_id
+              AND doc_peer.serialization_key = {alias}.serialization_key
+              AND (
+                  doc_peer.status = 'processing'
+                  OR (doc_peer.status = 'pending'
+                      AND doc_peer.task_payload IS NOT NULL
+                      AND (doc_peer.next_retry_at IS NULL OR doc_peer.next_retry_at <= NOW())
+                      AND (doc_peer.created_at < {alias}.created_at
+                           OR (doc_peer.created_at = {alias}.created_at
+                               AND doc_peer.operation_id < {alias}.operation_id)))
+              )
+        ))
+    """
+
+
+def graph_maintenance_bank_serialization_sql(table: str, alias: str) -> str:
+    """SQL predicate serialising ``graph_maintenance`` claims per bank (#3230).
+
+    Every graph_maintenance run for a bank is interchangeable — the payload
+    carries only ``bank_id``, and ``run_graph_maintenance_job`` drains that bank's
+    queues — so a second concurrent run for one bank adds no work. It is worse than
+    useless: ``claim_graph_maintenance_batch`` locks queue rows ``FOR UPDATE``
+    *without* ``SKIP LOCKED`` (it is written assuming a single runner per bank),
+    so the runs convoy on each other's row locks while each holds a worker slot.
+
+    Same guarantee ``consolidation`` already gets from its ``bank_id != ALL(busy)``
+    exclusion, and the same caveat: a row wedged in 'processing' holds its bank
+    until something releases it (``hindsight-admin recover``, or a restart with a
+    stable ``HINDSIGHT_API_WORKER_ID`` so ``recover_own_tasks`` matches it). That
+    is a general gap in claim recovery, not specific to graph_maintenance.
+
+    Two differences from the consolidation form, both forced by the shape of this
+    problem:
+
+    * It is a **predicate**, not a separate claim phase. Pulling graph_maintenance
+      into its own phase after the generic shared-pool query would drop it below
+      every other operation type: it has no reserved-slot floor
+      (``WORKER_SLOT_TYPE_DEFAULTS`` gives consolidation 2 and graph_maintenance
+      0), and the poller's fairness pass calls ``claim_tasks`` with
+      ``shared_limit=1``, so a single pending retain would starve it indefinitely.
+      As a predicate it keeps competing by ``created_at``.
+    * It also suppresses every same-bank row but the oldest **within one batch**.
+      Excluding busy banks alone does not: with several pending rows and nothing
+      yet processing, one batch claims them all — the convoy, unchanged. Several
+      pending rows per bank are reachable through the recovery paths
+      (``_reclaim_own_processing_tasks`` resets *all* of a worker's processing
+      rows in one statement, from ``recover_own_tasks`` at startup and
+      ``release_own_tasks`` at shutdown, plus ``_schedule_retry`` /
+      ``_defer_operation`` / ``hindsight-admin recover``).
+
+    The candidate row is always 'pending' and the 'pending' branch is
+    strictly-older, so the subquery can never match the candidate itself. The
+    fragment carries no SQL comments on purpose — it is rewritten for Oracle by
+    regex (``db/oracle.py``).
+
+    Args:
+        table: Fully-qualified async_operations table.
+        alias: Alias of the outer candidate row in the calling query.
+    """
+    return f"""
+        ({alias}.operation_type <> 'graph_maintenance' OR NOT EXISTS (
+            SELECT 1 FROM {table} gm_peer
+            WHERE gm_peer.bank_id = {alias}.bank_id
+              AND gm_peer.operation_type = 'graph_maintenance'
+              AND (
+                  gm_peer.status = 'processing'
+                  OR (gm_peer.status = 'pending'
+                      AND gm_peer.task_payload IS NOT NULL
+                      AND (gm_peer.next_retry_at IS NULL OR gm_peer.next_retry_at <= NOW())
+                      AND (gm_peer.created_at < {alias}.created_at
+                           OR (gm_peer.created_at = {alias}.created_at
+                               AND gm_peer.operation_id < {alias}.operation_id)))
+              )
+        ))
+    """
+
+
 @dataclass
 class TagListingParts:
     """Backend-specific SQL fragments for the tag listing query."""
@@ -33,6 +148,57 @@ class TagListingParts:
     non_empty_check: str
     tag_col: str
     bank_prefix: str
+
+
+@dataclass(frozen=True)
+class UpdatedWindow:
+    """Recall's ``created_after``/``created_before`` bounds, as SQL for graph expansion.
+
+    Recall applies the window to ``updated_at`` — a consolidation touch makes a
+    fact current again — so link expansion has to bound the same column its seed
+    query does.  Filtering only the seeds is not enough: a single in-window seed
+    would otherwise drag its whole neighbourhood (shared entities, semantic kNN
+    links, causal links) into the results no matter how old those neighbours are.
+
+    ``first_param_index`` is where the bounds land in the owning query's param
+    list, so each call site keeps the placeholder numbering next to the params it
+    binds.  Rendering is per-alias because the same window is applied to several
+    correlation names within one query.
+    """
+
+    after: datetime | None
+    before: datetime | None
+    first_param_index: int
+
+    def clause(self, alias: str) -> str:
+        """``AND <alias>.updated_at > $n ...`` — empty when the window is unbounded."""
+        parts: list[str] = []
+        index = self.first_param_index
+        if self.after is not None:
+            parts.append(f" AND {alias}.updated_at > ${index}")
+            index += 1
+        if self.before is not None:
+            parts.append(f" AND {alias}.updated_at < ${index}")
+        return "".join(parts)
+
+    @property
+    def params(self) -> list[datetime]:
+        """The bound values, in placeholder order. Append to the owning param list."""
+        return [bound for bound in (self.after, self.before) if bound is not None]
+
+
+@dataclass(frozen=True)
+class LinkExpansionRows:
+    """The three link-expansion signals, kept apart until they are scored.
+
+    They cannot be concatenated at the SQL layer: each carries a different score
+    scale (shared-entity count, kNN weight, causal weight) and the caller applies
+    a different transformation to each before summing them.
+    """
+
+    entity: list[ResultRow]
+    semantic: list[ResultRow]
+    causal: list[ResultRow]
 
 
 class DataAccessOps(ABC):
@@ -150,8 +316,13 @@ class DataAccessOps(ABC):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         """Bulk insert entities with ON CONFLICT DO NOTHING, returning id-by-lowercase-name.
+
+        ``entity_kinds`` ("regular"/"label", parallel to ``entity_names``) is
+        stored on the row so label entities stay out of the partial trigram
+        index (#3208).
 
         PG uses INSERT ... SELECT FROM unnest() with RETURNING.
         Non-PG inserts row-by-row then SELECTs.
@@ -181,6 +352,7 @@ class DataAccessOps(ABC):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         """Lock resolved parents and re-create any pruned since Phase-1 resolution.
 
@@ -250,12 +422,16 @@ class DataAccessOps(ABC):
         mu_table: str,
         ue_table: str,
         per_entity_limit: int,
+        window: UpdatedWindow,
     ) -> str:
         """Build entity expansion CTE for link expansion retrieval.
 
         PG uses DISTINCT ON with CROSS JOIN LATERAL and GROUP BY.
         Non-PG splits into entity_scores subquery then JOINs for full columns
         (can't GROUP BY CLOB).
+
+        ``window`` narrows candidates *before* the per-entity cap, so out-of-window
+        neighbours don't consume an entity's bounded fan-out.
         """
         ...
 
@@ -264,6 +440,7 @@ class DataAccessOps(ABC):
         self,
         ml_table: str,
         mu_table: str,
+        window: UpdatedWindow,
     ) -> str:
         """Build semantic + causal expansion CTEs.
 
@@ -282,7 +459,8 @@ class DataAccessOps(ABC):
         seed_ids: list,
         budget: int,
         per_entity_limit: int,
-    ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
+        window: UpdatedWindow,
+    ) -> LinkExpansionRows:
         """Observation-specific graph expansion.
 
         PG uses native array ops (source_memory_ids column) for performance.
@@ -303,23 +481,11 @@ class DataAccessOps(ABC):
 
     # -- Bank index management -------------------------------------------
 
-    @abstractmethod
-    async def create_bank_vector_indexes(
-        self,
-        conn: DatabaseConnection,
-        table: str,
-        bank_id: str,
-        internal_id: str,
-        index_clause: str,
-        fact_types: dict[str, str],
-    ) -> None:
-        """Create per-bank partial vector indexes.
-
-        PG creates per-(bank, fact_type) partial indexes.
-        Non-PG is a no-op (uses global index).
-        """
-        ...
-
+    # No create counterpart: per-(bank, fact_type) partial vector indexes are
+    # earned by size and built by the maintenance sweep over its own autocommit
+    # connection (see engine/vector_index_health.py), never on a request path.
+    # The drop stays here because bank deletion must remove a large bank's
+    # indexes while it still knows the internal_id they are named after.
     @abstractmethod
     async def drop_bank_vector_indexes(
         self,
@@ -469,15 +635,53 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def enqueue_entity_maintenance(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        """Enqueue the entities referenced by ``unit_ids`` as prune candidates.
+
+        Reads the entity ids out of ``unit_entities`` and inserts them into
+        entity_maintenance_queue, deduplicating on the (bank_id, entity_id)
+        primary key. Returns the number of rows the insert added.
+
+        Must run inside the triggering transaction and BEFORE the rows go —
+        once the unit_entities rows are deleted (or cascaded away) there is
+        nothing left to read the entity ids from.
+        """
+        ...
+
+    @abstractmethod
+    async def claim_entity_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list:
+        """Atomically claim a batch of rows from entity_maintenance_queue and
+        remove them from the table.
+
+        Returns the claimed entity ids. Empty list when the queue for
+        ``bank_id`` is drained.
+        """
+        ...
+
+    @abstractmethod
     async def prune_orphan_entities(
         self,
         conn: DatabaseConnection,
         entities_table: str,
         ue_table: str,
         bank_id: str,
+        entity_ids: list,
     ) -> int:
-        """Delete entities in ``bank_id`` that no longer have any unit_entities
-        rows referencing them. Returns the number of rows deleted.
+        """Delete those of ``entity_ids`` in ``bank_id`` that no longer have any
+        unit_entities rows referencing them. Returns the number of rows deleted.
 
         FK ON DELETE CASCADE on entity_cooccurrences then removes any
         cooccurrence row pointing at the pruned entities.
@@ -490,11 +694,10 @@ class DataAccessOps(ABC):
         conn: DatabaseConnection,
         ec_table: str,
         ue_table: str,
-        entities_table: str,
-        bank_id: str,
+        entity_ids: list,
     ) -> int:
-        """Delete entity_cooccurrences rows in ``bank_id`` where the two
-        entities still exist but no current unit references both of them.
+        """Delete entity_cooccurrences rows incident to ``entity_ids`` where the
+        two entities still exist but no current unit references both of them.
 
         These are stale-count rows: cooccurrence was real at the time it was
         recorded, but every memory_unit that witnessed both entities has
@@ -538,6 +741,12 @@ class DataAccessOps(ABC):
         Oracle implementation uses two-step claims (query busy banks first, then
         claim excluding them) to avoid ORA-02014.
 
+        Implementations must apply :func:`graph_maintenance_bank_serialization_sql`
+        to every query that can return a ``graph_maintenance`` row, so at most one
+        such row per bank is ever in flight, and :func:`document_serialization_sql`
+        to every query that can return a ``retain`` row, so at most one retain per
+        document is ever in flight.
+
         Args:
             consolidation_bank_priority: Per-bank priority for consolidation scheduling.
                 Maps bank name patterns to integer priorities (higher = claimed first).
@@ -546,8 +755,48 @@ class DataAccessOps(ABC):
                 When set, consolidation tasks are claimed in priority tiers.
                 None preserves current behavior (pure created_at ordering).
 
-        Returns claimed rows with operation_id, operation_type, task_payload, retry_count.
-        The caller is responsible for building ClaimedTask objects.
+        Returns claimed rows with operation_id, operation_type, task_payload,
+        retry_count, bank_id and serialization_key. The caller is responsible for
+        building ClaimedTask objects.
+        """
+        ...
+
+    @abstractmethod
+    async def fetch_foldable_retain_peers(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        serialization_key: str,
+        limit: int,
+    ) -> list[ResultRow]:
+        """Lock the pending retains queued behind a just-claimed one, in order.
+
+        Called inside the claim transaction, so the rows come back locked and
+        the caller can fold some of them into the claimed execution and leave
+        the rest pending simply by not marking them (their locks release with
+        the transaction).
+
+        ``SKIP LOCKED`` matters here for liveness, not just speed: a peer some
+        other worker is already looking at must never stall this claim.
+
+        Returns rows with operation_id, task_payload and retry_count, ordered by
+        ``(created_at, operation_id)`` — the order the fold planner requires.
+        """
+        ...
+
+    @abstractmethod
+    async def mark_operations_processing(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        worker_id: str,
+        operation_ids: list,
+    ) -> None:
+        """Claim the given pending operations for ``worker_id``.
+
+        Used to fold peers into an execution that has already been claimed;
+        runs in the same transaction that locked them.
         """
         ...
 

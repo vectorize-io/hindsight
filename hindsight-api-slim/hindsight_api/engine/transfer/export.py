@@ -13,14 +13,18 @@ import io
 import json
 import logging
 import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+import anyio.to_thread
+
 from ..causal_links import CAUSAL_LINK_TYPES
 from ..db_utils import acquire_with_retry
+from ..metadata_utils import as_string_metadata
 from ..schema import fq_table
 from .schema import (
     CARRIED_HISTORY_TABLES,
@@ -31,6 +35,7 @@ from .schema import (
     TransferChunk,
     TransferDocument,
     TransferFact,
+    TransferKnowledgePage,
     TransferManifest,
     TransferObservation,
     TransferObservationSource,
@@ -81,6 +86,7 @@ _SKIP_TABLES = frozenset(
     {
         "async_operations",  # in-flight ops; drain on the source before migrating
         "graph_maintenance_queue",  # transient work queue; regenerated on import
+        "entity_maintenance_queue",  # transient work queue; regenerated on import
         "file_storage",  # raw uploads; documents.original_text is already carried
         # Curation archive of retired facts — local operational state, not part of
         # the live knowledge the export replays. Its rows mirror memory_units (stale
@@ -88,12 +94,6 @@ _SKIP_TABLES = frozenset(
         # to fresh ids, so carrying them would only produce dangling associations.
         # Revert anything worth keeping on the source before migrating.
         "invalidated_memory_units",
-        # Knowledge-base folder/page tree (client-managed metadata over the carried
-        # mental models). Not carried yet: its self-referential parent_id FK needs a
-        # parents-first (topological) restore order, which the generic per-row
-        # _restore_rows doesn't provide — a follow-up. The mental models themselves
-        # ARE carried, so the target can recreate the tree.
-        "knowledge_pages",
     }
 )
 # Derived columns dropped from carried rows so the target regenerates them with
@@ -208,11 +208,44 @@ async def export_documents(
         documents = loaded.documents
         observations = await _load_observations(conn, bank_id, loaded.unit_index) if include_observations else []
 
+    fact_total = sum(len(document.facts) for document in documents)
+    manifest = TransferManifest(
+        schema_version=SCHEMA_VERSION,
+        source_bank_id=bank_id,
+        exported_at=datetime.now(UTC),
+        document_count=len(documents),
+        fact_count=fact_total,
+        observation_count=len(observations),
+    )
+
+    # ZIP compression and per-document JSON serialisation are CPU-bound and, on a
+    # large bank, would block the event loop for seconds (issue #3321). Run the
+    # assembly in a worker thread so unrelated requests/tasks keep progressing.
+    archive_bytes = await anyio.to_thread.run_sync(_build_archive_bytes, documents, observations, manifest)
+
+    logger.info(
+        "[transfer] Exported %d document(s), %d fact(s), %d observation(s) from bank %s",
+        len(documents),
+        fact_total,
+        len(observations),
+        bank_id,
+    )
+    return archive_bytes
+
+
+def _build_archive_bytes(
+    documents: list[TransferDocument],
+    observations: list[TransferObservation],
+    manifest: TransferManifest,
+) -> bytes:
+    """Serialise the loaded documents/observations/manifest into a ZIP archive.
+
+    Pure CPU work (DEFLATE + Pydantic JSON dumps) with no I/O, so it runs off the
+    event loop via :func:`anyio.to_thread.run_sync`.
+    """
     archive = io.BytesIO()
-    fact_total = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         for index, document in enumerate(documents):
-            fact_total += len(document.facts)
             zf.writestr(
                 f"documents/{index:06d}.json",
                 document.model_dump_json(indent=2, exclude_none=False),
@@ -222,23 +255,8 @@ async def export_documents(
             payload = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
             zf.writestr("observations.json", payload)
 
-        manifest = TransferManifest(
-            schema_version=SCHEMA_VERSION,
-            source_bank_id=bank_id,
-            exported_at=datetime.now(UTC),
-            document_count=len(documents),
-            fact_count=fact_total,
-            observation_count=len(observations),
-        )
         zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
 
-    logger.info(
-        "[transfer] Exported %d document(s), %d fact(s), %d observation(s) from bank %s",
-        len(documents),
-        fact_total,
-        len(observations),
-        bank_id,
-    )
     return archive.getvalue()
 
 
@@ -266,6 +284,47 @@ async def _dump_bank_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
     """
     rows = await conn.fetch(f"SELECT * FROM {fq_table(table)} WHERE bank_id = $1", bank_id)
     return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
+
+
+async def _load_knowledge_pages(conn: Any, bank_id: str) -> list[TransferKnowledgePage]:
+    """Load the knowledge-base tree (folders + pages) as typed rows.
+
+    Ordered parents-before-children (root folders first) via a recursive walk of
+    ``parent_id`` so the archive is deterministic and import can insert in list
+    order; import re-derives a safe order regardless. IDs, ``parent_id``,
+    ``mental_model_id``, ``managed`` and ``sort_order`` are all preserved.
+    """
+    rows = await conn.fetch(
+        f"""
+        WITH RECURSIVE tree AS (
+            SELECT kp.*, 0 AS depth
+            FROM {fq_table("knowledge_pages")} kp
+            WHERE kp.bank_id = $1 AND kp.parent_id IS NULL
+            UNION ALL
+            SELECT kp.*, t.depth + 1
+            FROM {fq_table("knowledge_pages")} kp
+            JOIN tree t ON kp.parent_id = t.id AND kp.bank_id = $1
+        )
+        SELECT id, parent_id, kind, name, mental_model_id, sort_order, managed, created_at, updated_at
+        FROM tree
+        ORDER BY depth, sort_order, id
+        """,
+        bank_id,
+    )
+    return [
+        TransferKnowledgePage(
+            id=row["id"],
+            parent_id=row["parent_id"],
+            kind=row["kind"],
+            name=row["name"],
+            mental_model_id=row["mental_model_id"],
+            sort_order=row["sort_order"],
+            managed=row["managed"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+        for row in rows
+    ]
 
 
 async def _dump_history_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
@@ -314,6 +373,7 @@ async def export_bank(
     bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
     for table in CARRIED_HISTORY_TABLES:
         bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
+    knowledge_pages = await _load_knowledge_pages(conn, bank_id)
     history_rows: dict[str, list[dict]] = {}
     if include_history:
         history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in HISTORY_TABLES}
@@ -331,6 +391,14 @@ async def export_bank(
 
         for table, rows in bank_rows.items():
             zf.writestr(f"{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
+        # Typed knowledge-page tree (parent-first). Written even when empty so the
+        # importer can distinguish "no pages" from a pre-tree archive.
+        zf.writestr(
+            "knowledge_pages.json",
+            "[\n" + ",\n".join(p.model_dump_json(indent=2) for p in knowledge_pages) + "\n]\n"
+            if knowledge_pages
+            else "[]\n",
+        )
         for table, rows in history_rows.items():
             zf.writestr(f"history/{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
 
@@ -343,6 +411,7 @@ async def export_bank(
             observation_count=len(observations),
             archive_type="bank",
             mental_model_count=len(bank_rows.get("mental_models", [])),
+            knowledge_page_count=len(knowledge_pages),
             directive_count=len(bank_rows.get("directives", [])),
             webhook_count=len(bank_rows.get("webhooks", [])),
             includes_history=include_history,
@@ -352,12 +421,13 @@ async def export_bank(
 
     logger.info(
         "[transfer] Exported bank %s: %d document(s), %d fact(s), %d observation(s), "
-        "%d mental model(s), %d directive(s), %d webhook(s)%s",
+        "%d mental model(s), %d knowledge page(s), %d directive(s), %d webhook(s)%s",
         bank_id,
         len(documents),
         fact_total,
         len(observations),
         len(bank_rows.get("mental_models", [])),
+        len(knowledge_pages),
         len(bank_rows.get("directives", [])),
         len(bank_rows.get("webhooks", [])),
         " (with history)" if include_history else "",
@@ -526,7 +596,10 @@ async def _load_facts(conn: Any, bank_id: str, doc_ids: list[str], include_lifec
             occurred_start=row["occurred_start"],
             occurred_end=row["occurred_end"],
             mentioned_at=row["mentioned_at"],
-            metadata=_as_jsonb(row["metadata"]) or {},
+            # Same dict[str, str] contract as the recall path: a legacy row
+            # holding a JSON null or a raw integer must not fail the export
+            # that would let an operator move the bank (issue #3209).
+            metadata=as_string_metadata(_as_jsonb(row["metadata"])),
             tags=list(row["tags"] or []),
             observation_scopes=_as_jsonb(row["observation_scopes"]),
             chunk_index=_chunk_index_from_chunk_id(row["chunk_id"]),
@@ -539,25 +612,41 @@ async def _load_facts(conn: Any, bank_id: str, doc_ids: list[str], include_lifec
     return loaded
 
 
+# A whole-bank export can index hundreds of thousands of memory units. Passing
+# every unit id as a single ``ANY($1)`` parameter (issue #3321) inflates the
+# query, spikes memory, and pins the connection while one enormous scan runs.
+# Fetch the attach queries in bounded batches instead: each unit id belongs to
+# exactly one batch, so per-fact ordering is preserved, and awaiting between
+# batches yields the event loop.
+_ATTACH_BATCH_SIZE = 5000
+
+
+def _iter_id_batches(ids: list[Any], batch_size: int = _ATTACH_BATCH_SIZE) -> Iterator[list[Any]]:
+    """Yield ``ids`` in fixed-size chunks (bounds SQL ``ANY`` parameter size)."""
+    for start in range(0, len(ids), batch_size):
+        yield ids[start : start + batch_size]
+
+
 async def _attach_entities(conn: Any, loaded: _LoadedFacts) -> None:
     """Populate each fact's ``entities`` list with its entities' canonical names."""
     if not loaded.unit_index:
         return
-    rows = await conn.fetch(
-        f"""
-        SELECT ue.unit_id, e.canonical_name
-        FROM {fq_table("unit_entities")} ue
-        JOIN {fq_table("entities")} e ON e.id = ue.entity_id
-        WHERE ue.unit_id = ANY($1)
-        ORDER BY e.canonical_name
-        """,
-        list(loaded.unit_index.keys()),
-    )
-    for row in rows:
-        location = loaded.unit_index.get(row["unit_id"])
-        if location is None:
-            continue
-        loaded.facts_by_doc[location.document_id][location.ordinal].entities.append(row["canonical_name"])
+    for batch in _iter_id_batches(list(loaded.unit_index.keys())):
+        rows = await conn.fetch(
+            f"""
+            SELECT ue.unit_id, e.canonical_name
+            FROM {fq_table("unit_entities")} ue
+            JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+            WHERE ue.unit_id = ANY($1)
+            ORDER BY e.canonical_name
+            """,
+            batch,
+        )
+        for row in rows:
+            location = loaded.unit_index.get(row["unit_id"])
+            if location is None:
+                continue
+            loaded.facts_by_doc[location.document_id][location.ordinal].entities.append(row["canonical_name"])
 
 
 async def _attach_causal_relations(conn: Any, loaded: _LoadedFacts) -> None:
@@ -570,27 +659,32 @@ async def _attach_causal_relations(conn: Any, loaded: _LoadedFacts) -> None:
     """
     if not loaded.unit_index:
         return
-    rows = await conn.fetch(
-        f"""
-        SELECT from_unit_id, to_unit_id, link_type
-        FROM {fq_table("memory_links")}
-        WHERE link_type = ANY($1)
-          AND from_unit_id = ANY($2)
-          AND to_unit_id = ANY($2)
-        """,
-        list(CAUSAL_LINK_TYPES),
-        list(loaded.unit_index.keys()),
-    )
-    for row in rows:
-        source = loaded.unit_index.get(row["from_unit_id"])
-        target = loaded.unit_index.get(row["to_unit_id"])
-        if source is None or target is None:
-            continue
-        if source.document_id != target.document_id:
-            continue
-        loaded.facts_by_doc[source.document_id][source.ordinal].causal_relations.append(
-            TransferCausalRelation(
-                relation_type=row["link_type"],
-                target_fact_index=target.ordinal,
-            )
+    # Batch on ``from_unit_id`` only. The old query also constrained
+    # ``to_unit_id = ANY(<full set>)``, but splitting one list across both bounds
+    # would drop edges whose endpoints fall in different batches. Instead we
+    # filter the target endpoint in Python (``target is None``) exactly as before,
+    # which keeps every in-set edge while bounding the parameter size.
+    for batch in _iter_id_batches(list(loaded.unit_index.keys())):
+        rows = await conn.fetch(
+            f"""
+            SELECT from_unit_id, to_unit_id, link_type
+            FROM {fq_table("memory_links")}
+            WHERE link_type = ANY($1)
+              AND from_unit_id = ANY($2)
+            """,
+            list(CAUSAL_LINK_TYPES),
+            batch,
         )
+        for row in rows:
+            source = loaded.unit_index.get(row["from_unit_id"])
+            target = loaded.unit_index.get(row["to_unit_id"])
+            if source is None or target is None:
+                continue
+            if source.document_id != target.document_id:
+                continue
+            loaded.facts_by_doc[source.document_id][source.ordinal].causal_relations.append(
+                TransferCausalRelation(
+                    relation_type=row["link_type"],
+                    target_fact_index=target.ordinal,
+                )
+            )

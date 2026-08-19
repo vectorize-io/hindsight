@@ -63,7 +63,7 @@ class FireworksLLM(OpenAICompatibleLLM):
         api_key: str,
         base_url: str = "",
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         account_id: str | None = None,
         batch_base_url: str | None = None,
         max_wait_seconds: int | None = None,

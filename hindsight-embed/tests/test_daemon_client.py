@@ -1,15 +1,17 @@
 """Tests for daemon_client module."""
 
-import os
-import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import httpx
 import pytest
 
 from hindsight_embed import daemon_client
-from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager, _parse_non_negative_int
+
+# What /proc/<pid>/cmdline reports for a daemon this manager would have started.
+# Ownership is decided on the listener's command line, so tests that expect a
+# kill have to present one that identifies the process as ours (#3520).
+_DAEMON_CMDLINE = "/home/u/.venv/bin/hindsight-api --port 9555"
 
 
 @pytest.fixture
@@ -204,7 +206,7 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port") as mock_find_pid,
+            patch.object(DaemonEmbedManager, "_listening_pids") as mock_find_pid,
             patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
         ):
             mock_client = MagicMock()
@@ -258,7 +260,7 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=None),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[]),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
             mock_client = MagicMock()
@@ -275,7 +277,8 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[12345]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=_DAEMON_CMDLINE),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
@@ -293,7 +296,8 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[12345]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=_DAEMON_CMDLINE),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
@@ -311,7 +315,7 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port") as mock_find_pid,
+            patch.object(DaemonEmbedManager, "_listening_pids") as mock_find_pid,
             patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 1.0),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_CHECK_INTERVAL", 0.01),
@@ -340,7 +344,7 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=None) as mock_find_pid,
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[]) as mock_find_pid,
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
             mock_client = MagicMock()
@@ -361,7 +365,7 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", side_effect=[True, False, False]),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port") as mock_find_pid,
+            patch.object(DaemonEmbedManager, "_listening_pids") as mock_find_pid,
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 1.0),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_CHECK_INTERVAL", 0.01),
         ):
@@ -439,7 +443,410 @@ class TestStartDaemonSerialization:
             patch.object(DaemonEmbedManager, "_clear_port", return_value=True),
             patch.object(DaemonEmbedManager, "is_running", return_value=True),
             patch.object(DaemonEmbedManager, "_register_profile"),
+            patch.object(DaemonEmbedManager, "_rotate_daemon_log") as mock_rotate,
             patch("subprocess.Popen") as mock_popen,
         ):
             assert manager._start_daemon_locked({}, "codex", paths) is True
             mock_popen.assert_not_called()
+            mock_rotate.assert_not_called()
+
+    def test_rotation_runs_after_port_clear_and_before_spawn(self, tmp_path, monkeypatch):
+        from hindsight_embed.profile_manager import ProfilePaths
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        manager = DaemonEmbedManager()
+        paths = ProfilePaths(
+            config=tmp_path / "embed", lock=tmp_path / "daemon.lock", log=tmp_path / "daemon.log", port=9600
+        )
+        calls = []
+
+        with (
+            patch.object(DaemonEmbedManager, "_clear_port", side_effect=lambda _: calls.append("clear") or True),
+            patch.object(DaemonEmbedManager, "is_running", side_effect=[False, True, True]),
+            patch.object(
+                DaemonEmbedManager, "_rotate_daemon_log", side_effect=lambda *_args, **_kwargs: calls.append("rotate")
+            ),
+            patch.object(DaemonEmbedManager, "_find_api_command", return_value=["hindsight-api"]),
+            patch.object(DaemonEmbedManager, "_component_version", return_value=None),
+            patch.object(DaemonEmbedManager, "_register_profile"),
+            patch("subprocess.Popen", side_effect=lambda *_args, **_kwargs: calls.append("spawn")),
+            patch("hindsight_embed.daemon_embed_manager.Live"),
+        ):
+            assert manager._start_daemon_locked({}, "codex", paths) is True
+
+        assert calls == ["clear", "rotate", "spawn"]
+
+
+class TestDaemonLogRotation:
+    """Tests for restart-boundary daemon log rotation."""
+
+    def test_small_log_is_left_in_place(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"1234")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=5, backup_count=2)
+
+        assert log_path.read_bytes() == b"1234"
+        assert not (tmp_path / "daemon.log.1").exists()
+
+    def test_full_log_rotates_and_retention_is_bounded(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"current")
+        (tmp_path / "daemon.log.1").write_bytes(b"previous")
+        (tmp_path / "daemon.log.2").write_bytes(b"oldest")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=7, backup_count=2)
+
+        assert not log_path.exists()
+        assert (tmp_path / "daemon.log.1").read_bytes() == b"current"
+        assert (tmp_path / "daemon.log.2").read_bytes() == b"previous"
+
+    def test_zero_backups_truncates_full_log(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"current")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=1, backup_count=0)
+
+        assert log_path.exists()
+        assert log_path.read_bytes() == b""
+
+    def test_zero_max_bytes_disables_rotation(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"current")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=0, backup_count=2)
+
+        assert log_path.read_bytes() == b"current"
+
+    def test_non_negative_int_falls_back_for_invalid_values(self, caplog):
+        assert _parse_non_negative_int("10MB", 42, "LIMIT") == 42
+        assert _parse_non_negative_int("-1", 42, "LIMIT") == 42
+        assert "Invalid LIMIT" in caplog.text
+
+
+class TestStop:
+    """Tests for DaemonEmbedManager.stop() - regression coverage for #3169.
+
+    Every decision in stop() is based on port occupancy. The /health probe
+    reports responsiveness, not identity or liveness, so a busy daemon fails
+    it; using it as the already-stopped guard or as the success condition is
+    what made `daemon stop` report success without sending any signal.
+    """
+
+    def _paths(self, tmp_path, port=9700):
+        from hindsight_embed.profile_manager import ProfilePaths
+
+        return ProfilePaths(
+            config=tmp_path / "embed",
+            lock=tmp_path / "daemon.lock",
+            log=tmp_path / "daemon.log",
+            port=port,
+        )
+
+    def test_busy_daemon_is_terminated(self, tmp_path):
+        """A daemon that holds the port but fails /health is still stopped.
+
+        This is the #3169 scenario. Both health probes are patched to raise so
+        the test fails if any path in stop() consults responsiveness.
+        """
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(
+                manager._profile_manager,
+                "resolve_profile_paths",
+                return_value=self._paths(tmp_path),
+            ),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", side_effect=[True, False]),
+            patch.object(
+                DaemonEmbedManager,
+                "is_running",
+                side_effect=AssertionError("stop() must not consult /health"),
+            ),
+            patch.object(
+                DaemonEmbedManager,
+                "_port_health_ok",
+                side_effect=AssertionError("stop() must not consult /health"),
+            ),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[4242]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=_DAEMON_CMDLINE),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
+        ):
+            assert manager.stop("default") is True
+            mock_kill.assert_called_once_with(4242)
+
+    def test_unresponsive_listener_is_reclaimed_like_clear_port(self, tmp_path):
+        """stop() reclaims an occupied, unhealthy port the way _clear_port() does.
+
+        Responsiveness cannot distinguish "busy" from "foreign", so both paths
+        reclaim the profile's port from an unhealthy listener — but only once
+        the listener's command line identifies it as a hindsight daemon
+        (#3520). Refusing outright would leave a wedged daemon unstoppable,
+        which is the #3169 symptom.
+        """
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(
+                manager._profile_manager,
+                "resolve_profile_paths",
+                return_value=self._paths(tmp_path),
+            ),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", side_effect=[True, False]),
+            patch.object(DaemonEmbedManager, "_port_health_ok", return_value=False),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[9999]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=_DAEMON_CMDLINE),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
+        ):
+            assert manager.stop("default") is True
+            mock_kill.assert_called_once_with(9999)
+
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_wait_for_port_health", return_value=False),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[9999]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=_DAEMON_CMDLINE),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
+        ):
+            assert manager._clear_port(9700) is True
+            mock_kill.assert_called_once_with(9999)
+
+    def test_failed_termination_returns_false(self, tmp_path):
+        """_kill_process() returning False must not be converted into success."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(
+                manager._profile_manager,
+                "resolve_profile_paths",
+                return_value=self._paths(tmp_path),
+            ),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[4242]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=_DAEMON_CMDLINE),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
+        ):
+            assert manager.stop("default") is False
+
+    def test_bound_port_without_pid_returns_false(self, tmp_path):
+        """A bound port whose PID can't be found is a failure, not a success."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(
+                manager._profile_manager,
+                "resolve_profile_paths",
+                return_value=self._paths(tmp_path),
+            ),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[]),
+            patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
+        ):
+            assert manager.stop("default") is False
+            mock_kill.assert_not_called()
+
+    def test_unbound_port_reports_already_stopped(self, tmp_path):
+        """Nothing bound to the port means there is nothing to stop."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(
+                manager._profile_manager,
+                "resolve_profile_paths",
+                return_value=self._paths(tmp_path),
+            ),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=False),
+            patch.object(DaemonEmbedManager, "_listening_pids") as mock_find,
+        ):
+            assert manager.stop("default") is True
+            mock_find.assert_not_called()
+
+    def test_lingering_listener_after_kill_returns_false(self, tmp_path):
+        """If the listener never disappears after the kill, stop() must not claim success."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(
+                manager._profile_manager,
+                "resolve_profile_paths",
+                return_value=self._paths(tmp_path),
+            ),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[4242]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=_DAEMON_CMDLINE),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
+            patch("hindsight_embed.daemon_embed_manager.time.sleep"),
+        ):
+            assert manager.stop("default") is False
+
+
+class TestListeningPidDiscovery:
+    """Regression coverage for #3517: PID lookup must not depend on lsof alone."""
+
+    def test_posix_falls_back_to_ss_when_lsof_is_missing(self, monkeypatch):
+        """Hosts without lsof (minimal containers, Arch-based distros) still resolve a PID."""
+        commands = []
+
+        def fake_run(cmd, **kwargs):
+            commands.append(cmd)
+            if cmd[0] == "lsof":
+                raise FileNotFoundError("lsof")
+            return Mock(
+                returncode=0,
+                stdout=('LISTEN 0 4096 127.0.0.1:9177 0.0.0.0:* users:(("hindsight-api",pid=15774,fd=19))\n'),
+            )
+
+        monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+        monkeypatch.setattr("hindsight_embed.daemon_embed_manager.subprocess.run", fake_run)
+
+        assert DaemonEmbedManager._listening_pids(9177) == [15774]
+        assert [cmd[0] for cmd in commands] == ["lsof", "ss"]
+
+    def test_posix_prefers_lsof_and_returns_every_listener(self, monkeypatch):
+        """lsof output can name several PIDs; all are candidates, not just the first."""
+        monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+        monkeypatch.setattr(
+            "hindsight_embed.daemon_embed_manager.subprocess.run",
+            lambda cmd, **kwargs: Mock(returncode=0, stdout="111\n222\n"),
+        )
+
+        assert DaemonEmbedManager._listening_pids(9177) == [111, 222]
+
+    def test_windows_matches_non_ipv4_local_addresses(self, monkeypatch):
+        """The UI can bind 0.0.0.0 or [::1]; a 127.0.0.1-literal match missed it."""
+        netstat = (
+            "  TCP    0.0.0.0:19177          0.0.0.0:0              LISTENING       4321\n"
+            "  TCP    [::1]:19177            [::]:0                 LISTENING       4322\n"
+            "  TCP    127.0.0.1:29177        0.0.0.0:0              LISTENING       9999\n"
+        )
+        monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+        monkeypatch.setattr(
+            "hindsight_embed.daemon_embed_manager.subprocess.run",
+            lambda cmd, **kwargs: Mock(returncode=0, stdout=netstat),
+        )
+
+        assert DaemonEmbedManager._listening_pids(19177) == [4321, 4322]
+
+
+class TestProcessOwnership:
+    """Regression coverage for #3520: never signal a process we cannot identify."""
+
+    def test_foreign_listener_is_not_selected(self):
+        """A PID whose command line isn't ours is refused, not returned for killing."""
+        with (
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[4242]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value="/usr/bin/postgres -D /data"),
+        ):
+            assert DaemonEmbedManager._owned_pid_on_port(9555, ("hindsight-api",), "hindsight daemon") is None
+
+    def test_unknown_command_line_is_refused(self):
+        """When the command line cannot be read at all, we refuse rather than guess."""
+        with (
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[4242]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value=None),
+        ):
+            assert DaemonEmbedManager._owned_pid_on_port(9555, ("hindsight-api",), "hindsight daemon") is None
+
+    def test_our_daemon_is_selected_among_several_listeners(self):
+        """With more than one socket on the port, pick ours instead of the first PID."""
+        with (
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[111, 222]),
+            patch.object(
+                DaemonEmbedManager,
+                "_process_command_line",
+                side_effect=lambda pid: "/usr/bin/nginx" if pid == 111 else _DAEMON_CMDLINE,
+            ),
+        ):
+            assert DaemonEmbedManager._owned_pid_on_port(9555, ("hindsight-api",), "hindsight daemon") == 222
+
+    def test_clear_port_leaves_foreign_process_alive(self):
+        """The #3520 scenario: an unrelated service on the port must survive."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_wait_for_port_health", return_value=False),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[4242]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value="/usr/sbin/sshd -D"),
+            patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
+        ):
+            assert manager._clear_port(9555) is False
+            mock_kill.assert_not_called()
+
+    def test_stop_leaves_foreign_process_alive(self, tmp_path):
+        """stop() reclaims the port the same way, so it needs the same guard."""
+        from hindsight_embed.profile_manager import ProfilePaths
+
+        manager = DaemonEmbedManager()
+        paths = ProfilePaths(
+            config=tmp_path / "embed",
+            lock=tmp_path / "daemon.lock",
+            log=tmp_path / "daemon.log",
+            port=9700,
+        )
+        with (
+            patch.object(manager._profile_manager, "resolve_profile_paths", return_value=paths),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_listening_pids", return_value=[4242]),
+            patch.object(DaemonEmbedManager, "_process_command_line", return_value="/usr/sbin/sshd -D"),
+            patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
+        ):
+            assert manager.stop("default") is False
+            mock_kill.assert_not_called()
+
+    def test_dev_mode_and_windows_daemon_command_lines_are_recognized(self):
+        """The daemon is spawned several ways; each must still be identifiable."""
+        for cmdline in (
+            "/home/u/.venv/bin/hindsight-api",
+            "C:\\venv\\Scripts\\pythonw.exe -m hindsight_api.main",
+            "/home/u/.cache/uv/archive/bin/hindsight-api",
+        ):
+            with patch.object(DaemonEmbedManager, "_process_command_line", return_value=cmdline):
+                from hindsight_embed.daemon_embed_manager import DAEMON_PROCESS_MARKERS
+
+                assert DaemonEmbedManager._process_matches(1, DAEMON_PROCESS_MARKERS) is True
+
+
+class TestStartDaemonLockTimeout:
+    """A start that cannot get the profile lock reports failure, not an OSError."""
+
+    def test_lock_timeout_returns_false(self, tmp_path, monkeypatch):
+        from hindsight_embed.profile_manager import ProfileLockTimeout
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        manager = DaemonEmbedManager()
+
+        def boom(file_obj, timeout=None):
+            raise ProfileLockTimeout("held by PID 999")
+
+        with (
+            patch("hindsight_embed.daemon_embed_manager.lock_file", boom),
+            patch.object(DaemonEmbedManager, "_start_daemon_locked") as mock_locked,
+            patch.object(DaemonEmbedManager, "is_running", return_value=False),
+        ):
+            assert manager._start_daemon({}, "codex") is False
+            mock_locked.assert_not_called()
+
+
+class TestProcessCommandLine:
+    """`_process_command_line` decides every kill, so it needs direct coverage.
+
+    The ownership tests above patch it out; this exercises the real lookup
+    against a process whose command line we already know.
+    """
+
+    def test_reads_the_command_line_of_a_live_process(self):
+        import os
+        import sys
+
+        cmdline = DaemonEmbedManager._process_command_line(os.getpid())
+        assert cmdline is not None
+        # argv[0] is the interpreter running pytest.
+        assert os.path.basename(sys.executable).split(".")[0] in cmdline.lower()
+
+    def test_returns_none_for_a_pid_that_does_not_exist(self):
+        # Above the default pid_max on Linux and unused elsewhere, so no live
+        # process can answer and both the procfs and `ps` lookups must fail.
+        assert DaemonEmbedManager._process_command_line(4_294_967_000) is None
+
+    def test_unknown_pid_is_never_treated_as_ours(self):
+        """The refusal path depends on an unreadable command line meaning "not ours"."""
+        from hindsight_embed.daemon_embed_manager import DAEMON_PROCESS_MARKERS
+
+        assert DaemonEmbedManager._process_matches(4_294_967_000, DAEMON_PROCESS_MARKERS) is False

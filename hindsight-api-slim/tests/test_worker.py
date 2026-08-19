@@ -58,18 +58,29 @@ async def pool(backend):
 
 @pytest_asyncio.fixture
 async def clean_operations(pool):
-    """Clean up async_operations table before and after tests.
+    """Clean up this file's async_operations rows before and after each test.
 
-    We must clean ALL pending operations (not just test-worker-* prefixed ones)
-    because WorkerPoller.claim_batch scans the entire schema for pending tasks.
-    Stale operations left by other tests (e.g. consolidation) cause spurious
-    failures when the poller picks them up unexpectedly.
+    Scoped to the worker-test bank prefixes. This used to be a global
+    ``DELETE FROM async_operations WHERE status = 'pending'`` to keep the
+    whole-schema ``WorkerPoller.claim_batch`` from picking up rows other tests
+    left behind — but under pytest-xdist this file shares the ``public`` schema
+    with every test running in parallel, so that global delete removed *other
+    workers'* in-flight operations mid-run. A refresh op, for instance, sits
+    ``pending`` for the brief window between ``_submit_async_operation``
+    committing it and ``SyncTaskBackend`` marking it ``completed``; deleting it
+    in that window makes ``get_operation_status`` read back ``not_found`` and
+    flakes an unrelated test.
+
+    The claim tests here don't need a globally empty table: they filter claims to
+    their own bank or assert only against ``max_slots``, so foreign pending rows
+    are harmless. (The claim-*serialisation* tests, which do need an exact view,
+    isolate themselves in a private schema instead — see
+    test_graph_maintenance_claim_serialization.py.)
     """
-    await pool.execute("DELETE FROM async_operations WHERE status = 'pending'")
+    scoped_delete = "DELETE FROM async_operations WHERE bank_id LIKE 'test-worker-%' OR bank_id LIKE 'test_worker_%'"
+    await pool.execute(scoped_delete)
     yield
-    await pool.execute(
-        "DELETE FROM async_operations WHERE bank_id LIKE 'test-worker-%' OR bank_id LIKE 'test_worker_%'"
-    )
+    await pool.execute(scoped_delete)
 
 
 def test_metric_operation_label_normalises_retain_variants():
@@ -317,7 +328,7 @@ class TestBrokerTaskBackend:
         bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(pool, bank_id)
         task_dict = {
-            "type": "access_count_update",
+            "type": "graph_maintenance",
             "bank_id": bank_id,
             "node_ids": ["node1", "node2"],
         }
@@ -329,7 +340,7 @@ class TestBrokerTaskBackend:
             bank_id,
         )
         assert row is not None
-        assert row["operation_type"] == "access_count_update"
+        assert row["operation_type"] == "graph_maintenance"
         assert row["status"] == "pending"
         payload = json.loads(row["task_payload"])
         assert payload["node_ids"] == ["node1", "node2"]
@@ -1657,6 +1668,199 @@ class TestWorkerRecovery:
             parent_id,
         )
         assert parent_row["status"] == "pending"
+
+
+class TestTaskReleaseOnStop:
+    """A task that stops running must not leave its operation 'processing'.
+
+    Both paths strand the row under a worker id that is never coming back:
+    shutdown cancelling in-flight work past the drain timeout, and _mark_failed
+    (itself a DB write) failing. See issue #3228.
+    """
+
+    async def _insert_pending(self, pool, bank_id: str) -> uuid.UUID:
+        """Insert one claimable pending operation, returning its id."""
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id, "operation_id": str(op_id)})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'test', 'pending', $3::jsonb)
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+        return op_id
+
+    async def _claim_ours(self, poller, op_id) -> object:
+        """Claim until our operation comes back (other rows may be queued too)."""
+        claimed = await poller.claim_batch()
+        ours = [t for t in claimed if t.operation_id == str(op_id)]
+        assert len(ours) == 1, "test operation should have been claimed"
+        return ours[0]
+
+    async def _wait_for_status(self, pool, op_id, status: str, timeout: float = 5.0):
+        """Poll until the row leaves 'processing'; return the final row."""
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            row = await pool.fetchrow(
+                "SELECT status, worker_id, claimed_at, retry_count FROM async_operations WHERE operation_id = $1",
+                op_id,
+            )
+            if row["status"] == status or asyncio.get_event_loop().time() > deadline:
+                return row
+            await asyncio.sleep(0.05)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_releases_cancelled_operations(self, pool, backend, clean_operations):
+        """shutdown_graceful must hand back the rows whose tasks it cancelled."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        started = asyncio.Event()
+        block = asyncio.Event()
+
+        async def blocking_executor(task_dict):
+            started.set()
+            await block.wait()
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=blocking_executor)
+        task = await self._claim_ours(poller, op_id)
+
+        row = await pool.fetchrow("SELECT status, worker_id FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "release-worker"
+
+        await poller.execute_task(task)
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        await poller.shutdown_graceful(timeout=0.1)
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at, retry_count FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending", "shutdown must not strand a row it cancelled"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+        assert row["retry_count"] == 1, "an interrupted run counts against the retry budget"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_fails_operation_over_retry_budget(self, pool, backend, clean_operations):
+        """A row already at the retry limit is failed, not handed back forever."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        started = asyncio.Event()
+        block = asyncio.Event()
+
+        async def blocking_executor(task_dict):
+            started.set()
+            await block.wait()
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=blocking_executor, max_retries=2)
+        task = await self._claim_ours(poller, op_id)
+        await pool.execute("UPDATE async_operations SET retry_count = 2 WHERE operation_id = $1", op_id)
+
+        await poller.execute_task(task)
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        await poller.shutdown_graceful(timeout=0.1)
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, error_message FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "failed", "a row over the retry budget must not be re-claimed forever"
+        assert row["worker_id"] is None
+        assert "retry_count" in row["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_shutdown_leaves_completed_operation_alone(self, pool, backend, clean_operations):
+        """A task that finished during the drain keeps its terminal state."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        async def quick_executor(task_dict):
+            return None
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=quick_executor)
+        task = await self._claim_ours(poller, op_id)
+
+        await poller.execute_task(task)
+        await poller.shutdown_graceful(timeout=5.0)
+
+        row = await pool.fetchrow(
+            "SELECT status, retry_count FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "completed"
+        assert row["retry_count"] == 0, "a completed task must not be charged a retry"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_does_not_touch_other_workers(self, pool, backend, clean_operations):
+        """The release is scoped to this worker's own rows."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        other_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'test', 'processing', '{}'::jsonb, 'other-worker', now())
+            """,
+            other_op_id,
+            bank_id,
+        )
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=lambda x: None)
+        await poller.shutdown_graceful(timeout=0.1)
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            other_op_id,
+        )
+        assert row["status"] == "processing", "another live worker's row must be left alone"
+        assert row["worker_id"] == "other-worker"
+
+    @pytest.mark.asyncio
+    async def test_failed_terminal_write_releases_operation(self, pool, backend, clean_operations):
+        """If _mark_failed itself raises, the row is reconciled, not stranded."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        async def failing_executor(task_dict):
+            raise RuntimeError("executor blew up")
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=failing_executor)
+
+        async def broken_mark_failed(operation_id, error_message, schema):
+            raise RuntimeError("pool exhausted")
+
+        poller._mark_failed = broken_mark_failed
+
+        task = await self._claim_ours(poller, op_id)
+        await poller.execute_task(task)
+
+        row = await self._wait_for_status(pool, op_id, "pending")
+        assert row["status"] == "pending", "a failed terminal write must not strand the row"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+        assert row["retry_count"] == 1
 
 
 class TestConcurrentWorkers:
@@ -3329,7 +3533,7 @@ class TestClaimBatchRotation:
 
         serviced: list[str] = []
 
-        async def fake_claim(schema, reserved_limits, shared_limit):
+        async def fake_claim(conn, schema, reserved_limits, shared_limit):
             # Tests only exercise non-reserved ("test") tasks, so we only
             # consult the shared_limit.
             remaining = pending_per_schema.get(schema, 0)
@@ -3351,7 +3555,7 @@ class TestClaimBatchRotation:
 
         poller._claim_batch_for_schema = fake_claim  # type: ignore[method-assign]
 
-        async def fake_scan(scan_schemas):
+        async def fake_scan(conn, scan_schemas):
             return {s for s in scan_schemas if pending_per_schema.get(s, 0) > 0}
 
         poller._scan_active_schemas = fake_scan  # type: ignore[method-assign]
@@ -3463,7 +3667,8 @@ class TestClaimBatchRotation:
         )
 
         try:
-            result = await poller._scan_active_schemas([None])
+            async with backend.acquire() as conn:
+                result = await poller._scan_active_schemas(conn, [None])
             assert None in result, "Scan missed schema with pending work"
         finally:
             await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", op_id)
@@ -3512,7 +3717,8 @@ class TestClaimBatchRotation:
             PostgresConnection.fetch = spy_fetch  # type: ignore[method-assign]
             PostgresConnection.fetchval = spy_fetchval  # type: ignore[method-assign]
             try:
-                await poller._scan_active_schemas([None])
+                async with backend.acquire() as conn:
+                    await poller._scan_active_schemas(conn, [None])
             finally:
                 PostgresConnection.fetch = original_fetch  # type: ignore[method-assign]
                 PostgresConnection.fetchval = original_fetchval  # type: ignore[method-assign]
@@ -3554,7 +3760,8 @@ class TestClaimBatchRotation:
                 executor=lambda x: None,
             )
 
-            result = await poller._scan_active_schemas([None])
+            async with backend.acquire() as conn:
+                result = await poller._scan_active_schemas(conn, [None])
 
             assert result == {None}
         finally:
@@ -3588,9 +3795,9 @@ class TestClaimBatchRotation:
         )
         original_claim = poller._claim_batch_for_schema
 
-        async def tracking_claim(schema, nc_limit, cons_limit):
+        async def tracking_claim(conn, schema, nc_limit, cons_limit):
             schemas_claimed.append(schema)
-            return await original_claim(schema, nc_limit, cons_limit)
+            return await original_claim(conn, schema, nc_limit, cons_limit)
 
         poller._claim_batch_for_schema = tracking_claim  # type: ignore[method-assign]
 

@@ -372,24 +372,28 @@ npm run generate
 # Deno's Request constructor rejects a 'client' field in RequestInit because
 # 'client' is a reserved Deno.HttpClient option name, causing a TypeError.
 # We destructure it out before spreading opts into RequestInit.
+# OLD below must match @hey-api/openapi-ts's emitted text verbatim, indentation
+# included — 0.97.x nests this block two levels deeper than 0.88.x did, so the
+# anchor has to be re-checked on every generator bump. A stale anchor only warns
+# here, but verify-generated-files then fails on the unpatched client.gen.ts.
 echo "Patching client.gen.ts for Deno compatibility..."
 cd "$PROJECT_ROOT"
 python3 << PATCH_SCRIPT
 CLIENT_GEN = "$TYPESCRIPT_CLIENT_DIR/generated/client/client.gen.ts"
 with open(CLIENT_GEN) as f:
     content = f.read()
-OLD = '''    const requestInit: ReqInit = {
-      redirect: "follow",
-      ...opts,
-      body: getValidRequestBody(opts),
-    };'''
-NEW = '''    // Exclude hey-api internal fields that conflict with Deno's RequestInit.client
-    const { client: _client, ...optsForRequest } = opts as typeof opts & { client?: unknown };
-    const requestInit: ReqInit = {
-      redirect: "follow",
-      ...optsForRequest,
-      body: getValidRequestBody(opts),
-    };'''
+OLD = '''      const requestInit: ReqInit = {
+        redirect: "follow",
+        ...opts,
+        body: getValidRequestBody(opts),
+      };'''
+NEW = '''      // Exclude hey-api internal fields that conflict with Deno's RequestInit.client
+      const { client: _client, ...optsForRequest } = opts as typeof opts & { client?: unknown };
+      const requestInit: ReqInit = {
+        redirect: "follow",
+        ...optsForRequest,
+        body: getValidRequestBody(opts),
+      };'''
 if OLD in content:
     content = content.replace(OLD, NEW)
     with open(CLIENT_GEN, "w") as f:

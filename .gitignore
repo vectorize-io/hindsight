@@ -20,6 +20,9 @@ wheels/
 
 # Node
 node_modules/
+# Without this, the pattern above matches directories only — a node_modules SYMLINK (what you get
+# pointing a scratch worktree at an installed one) is a file, slips past it, and can be committed.
+node_modules
 
 # Environment variables and local config
 .env

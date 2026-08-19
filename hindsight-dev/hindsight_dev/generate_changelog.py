@@ -44,12 +44,16 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "agent-framework": IntegrationMeta("hindsight-agent-framework", "Microsoft Agent Framework"),
     "ag2": IntegrationMeta("hindsight-ag2"),
     "ai-sdk": IntegrationMeta("@vectorize-io/hindsight-ai-sdk", "AI SDK"),
+    "eliza": IntegrationMeta("@vectorize-io/hindsight-eliza", "elizaOS"),
     "chat": IntegrationMeta("@vectorize-io/hindsight-chat", "Chat SDK"),
     "openclaw": IntegrationMeta("@vectorize-io/hindsight-openclaw", "OpenClaw"),
     "langgraph": IntegrationMeta("hindsight-langgraph", "LangGraph"),
     "nemoclaw": IntegrationMeta("@vectorize-io/hindsight-nemoclaw", "NemoClaw"),
     "strands": IntegrationMeta("hindsight-strands", "Strands"),
     "claude-code": IntegrationMeta("hindsight-memory", "Claude Code"),
+    # Git-distributed plugin bundle (Agent Plugins standard), not a registry
+    # package — its changelog links to the source tree (see _package_url).
+    "agent-plugin": IntegrationMeta("hindsight-agent-plugin", "Agent Plugins"),
     "zcode": IntegrationMeta("hindsight-zcode", "ZCode"),
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
@@ -302,12 +306,18 @@ def get_commit_authors(commits: list[Commit]) -> dict[str, str]:
 
 
 def _escape_mdx_text(text: str) -> str:
-    """Escape curly braces in prose so MDX v3 doesn't parse them as JSX expressions.
+    """Escape MDX-significant characters in prose so MDX v3 treats it as text.
 
-    LLM summaries sometimes mention template variables like `{user_id}` verbatim;
-    unescaped, they make docusaurus SSG fail with `ReferenceError: user_id is not defined`.
+    Two hazards in LLM summaries:
+    - Curly braces (`{user_id}`) parse as JSX expressions -> `ReferenceError: user_id
+      is not defined` at SSG time.
+    - Angle brackets (`<think>`) parse as JSX elements -> an unclosed-tag MDX
+      compilation failure (mdast-util-mdx-jsx).
+
+    Applied only to the summary text, never to the entry meta HTML, so escaping
+    `<`/`>` here can't touch the rendered author/commit markup.
     """
-    return text.replace("{", "\\{").replace("}", "\\}")
+    return text.replace("{", "\\{").replace("}", "\\}").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _render_entry_meta(commit_id: str, commit_url: str, login: str | None) -> str:
@@ -346,6 +356,16 @@ def analyze_commits_with_llm(
 
     subject = f"the {integration} integration for Hindsight" if integration else f"release {version} of Hindsight"
 
+    # For the core changelog, integration/plugin commits are already filtered out
+    # by path upstream; this rule is a belt-and-suspenders guard. It must NOT apply
+    # when summarizing an integration's own changelog.
+    skip_integrations_rule = (
+        ""
+        if integration
+        else "\n- Skip integration and plugin changes (coding agents, framework plugins, anything shipped as "
+        "its own package) — integrations are versioned and changelogged separately"
+    )
+
     prompt = f"""Analyze the following git commits for {subject} (an AI memory system).
 
 For each meaningful change, create a changelog entry with:
@@ -356,7 +376,7 @@ For each meaningful change, create a changelog entry with:
 Rules:
 - Group related commits into a single entry if they're part of the same change
 - Skip trivial changes (typo fixes, formatting, internal refactoring)
-- Skip repository-only changes: README updates, CI/GitHub Actions, release scripts, changelog updates, version bumps
+- Skip repository-only changes: README updates, CI/GitHub Actions, release scripts, changelog updates, version bumps{skip_integrations_rule}
 - Focus on user-facing changes that affect the product functionality
 - Use the exact commit_id from the input (pick the most relevant one if grouping)
 - If no meaningful changes remain after filtering, return an empty list
@@ -501,6 +521,16 @@ def generate_changelog_entry(
     console.print("[blue]Getting commits (excluding integrations)...[/blue]")
     exclude_paths = ["hindsight-integrations"]
     commits = get_commits(previous_tag, actual_tag, exclude_paths=exclude_paths)
+    # Drop any commit that *also* touched an integration/plugin. Integrations are
+    # versioned and changelogged separately, but their PRs routinely touch shared
+    # docs/CI/scripts as well, so a path-exclude alone still lets them leak into
+    # the core changelog. Excluding every commit that touches
+    # hindsight-integrations/ keeps the core changelog to core changes.
+    integration_hashes = {c.hash for c in get_commits(previous_tag, actual_tag, path_filter="hindsight-integrations")}
+    dropped = [c for c in commits if c.hash in integration_hashes]
+    commits = [c for c in commits if c.hash not in integration_hashes]
+    if dropped:
+        console.print(f"[blue]Excluded {len(dropped)} integration/plugin commits from the core changelog[/blue]")
     file_diff = get_detailed_diff(previous_tag, actual_tag, exclude_paths=exclude_paths)
 
     if not commits:
@@ -657,8 +687,10 @@ def _get_package_name(integration: str) -> str:
 
 
 def _package_url(integration: str, package_name: str) -> str:
-    if integration == "claude-code":
-        return "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/claude-code"
+    # Git-distributed plugin bundles have no npm/pypi package — link to the
+    # source tree instead of a registry page.
+    if integration in ("claude-code", "agent-plugin"):
+        return f"https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/{integration}"
     if package_name.startswith("@"):
         return f"https://www.npmjs.com/package/{package_name}"
     return f"https://pypi.org/project/{package_name}/"

@@ -89,7 +89,7 @@ cd hindsight-control-plane && npm run dev
 
 ### Core Engine (hindsight-api-slim/hindsight_api/engine/)
 - `memory_engine.py`: Main orchestrator for retain/recall/reflect operations
-- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, VertexAI, Groq, MiniMax, Ollama, LM Studio, LiteLLM, Claude Code
+- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, VertexAI, Groq, MiniMax, Ollama, LM Studio, LiteLLM, Claude Code, GitHub Copilot
 - `embeddings.py`: Embedding generation (local sentence-transformers or TEI)
 - `cross_encoder.py`: Reranking (local or TEI)
 - `entity_resolver.py`: Entity extraction and normalization

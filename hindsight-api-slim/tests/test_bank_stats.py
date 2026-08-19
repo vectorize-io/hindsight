@@ -47,6 +47,36 @@ async def _insert_memory(memory, bank_id: str, text: str, *, failed: bool = Fals
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_bank_stats_exposes_memory_write_watermark(api_client, memory, test_bank_id):
+    """/stats must carry the bank's newest memory write time.
+
+    It rides along on the consolidation aggregate for free, and is what the
+    mental-models card and the knowledge tree compare each `last_refreshed_at`
+    against — the alternative being a scan of the bank's memories per model.
+    """
+    try:
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+        assert response.status_code == 200
+        # Nulls are dropped from responses, so an empty bank carries no watermark.
+        assert response.json().get("last_memory_write_at") is None
+
+        mem_id = await _insert_memory(memory, test_bank_id, "A memory lands in the bank.")
+        # The 60s TTL would otherwise serve the pre-insert (empty) payload.
+        await memory._bank_stats_cache.clear()
+
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+        assert response.status_code == 200
+        async with memory._pool.acquire() as conn:
+            written_at = await conn.fetchval("SELECT updated_at FROM memory_units WHERE id = $1::uuid", mem_id)
+        assert datetime.fromisoformat(response.json()["last_memory_write_at"]) == written_at
+    finally:
+        await memory._bank_stats_cache.clear()
+        async with memory._pool.acquire() as conn:
+            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", test_bank_id)
+
+
+@pytest.mark.asyncio
 async def test_bank_stats_exposes_operations_by_status(api_client, test_bank_id):
     """/stats should return operations_by_status with all finished operations."""
     try:
@@ -188,6 +218,7 @@ async def test_memories_timeseries_reflects_retained_memories(api_client, test_b
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_stats_reports_failed_consolidation(api_client, memory, test_bank_id):
     """/stats must surface the count of memories with consolidation_failed_at set."""
     try:
@@ -200,13 +231,45 @@ async def test_bank_stats_reports_failed_consolidation(api_client, memory, test_
         stats = response.json()
 
         assert stats["failed_consolidation"] == 2
-        # The two failed memories also count as "not-yet-consolidated".
-        assert stats["pending_consolidation"] >= 3
+        # Pending is the work the consolidator will still do, so the two failed
+        # memories are counted only as failed — the buckets are disjoint.
+        assert stats["pending_consolidation"] == 1
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_pending_consolidation_matches_pending_memory_list(api_client, memory, test_bank_id):
+    """pending_consolidation must agree with ?consolidation_state=pending.
+
+    Both are meant to answer "what is left to consolidate"; when the stats gauge
+    counted permanently failed memories too, it sat above the list total by
+    exactly failed_consolidation and never reached zero.
+    """
+    try:
+        await _insert_memory(memory, test_bank_id, "Still queued 1.", failed=False)
+        await _insert_memory(memory, test_bank_id, "Still queued 2.", failed=False)
+        await _insert_memory(memory, test_bank_id, "Given up on.", failed=True)
+
+        stats_response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+        assert stats_response.status_code == 200
+        stats = stats_response.json()
+
+        list_response = await api_client.get(
+            f"/v1/default/banks/{test_bank_id}/memories/list",
+            params={"consolidation_state": "pending", "limit": 1},
+        )
+        assert list_response.status_code == 200
+
+        assert stats["pending_consolidation"] == list_response.json()["total"] == 2
+        assert stats["failed_consolidation"] == 1
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_list_memories_filter_by_consolidation_state_failed(api_client, memory, test_bank_id):
     """?consolidation_state=failed returns only memories with consolidation_failed_at set."""
     try:
@@ -273,6 +336,7 @@ async def test_bank_stats_link_counts_have_no_join(api_client, test_bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_get_bank_freshness_returns_only_consolidation_fields(memory, test_bank_id):
     """get_bank_freshness must return just the freshness keys, no link aggregation."""
     from hindsight_api.extensions import RequestContext
@@ -288,11 +352,13 @@ async def test_get_bank_freshness_returns_only_consolidation_fields(memory, test
 
         assert set(freshness.keys()) == {
             "last_consolidated_at",
+            "last_memory_write_at",
             "pending_consolidation",
             "failed_consolidation",
         }
-        assert freshness["pending_consolidation"] >= 2
-        assert freshness["failed_consolidation"] >= 1
+        # Same disjoint buckets as /stats: the failed memory is not also pending.
+        assert freshness["pending_consolidation"] == 1
+        assert freshness["failed_consolidation"] == 1
     finally:
         await memory._bank_stats_cache.clear()
         async with memory._pool.acquire() as conn:

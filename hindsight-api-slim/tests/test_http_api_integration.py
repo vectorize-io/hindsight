@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.config_resolver import BankConfigPersistenceConflictError
 from hindsight_api.engine.interface import BankTemplateImportWrite
 from hindsight_api.extensions import BankReadOperation, BankWriteOperation, OperationValidationError, ValidationResult
 from hindsight_api.models import RequestContext
@@ -100,7 +101,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # ================================================================
 
     # List banks (should be empty initially or have other test banks)
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     initial_banks_data = response.json()["banks"]
     initial_banks = [a["bank_id"] for a in initial_banks_data]
@@ -210,7 +211,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     assert fresh_stats["total_nodes"] == stats["total_nodes"]
 
     # Verify bank list returns stats (fact_count, last_document_at)
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     banks_after = response.json()["banks"]
     our_bank = next(b for b in banks_after if b["bank_id"] == test_bank_id)
@@ -353,7 +354,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # 9. List All Banks (should include our test bank)
     # ================================================================
 
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     final_banks_data = response.json()["banks"]
     final_banks = [a["bank_id"] for a in final_banks_data]
@@ -397,6 +398,14 @@ async def test_error_handling(api_client):
         },
     )
     assert response.status_code == 422
+
+    # Recall with an invalid fact type
+    response = await api_client.post(
+        "/v1/default/banks/error_test/memories/recall",
+        json={"query": "test", "types": ["bogus"]},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == ("Invalid fact type(s): bogus. Must be one of: experience, observation, world")
 
     # Get non-existent document
     response = await api_client.get("/v1/default/banks/nonexistent_bank/documents/fake-doc-id")
@@ -543,6 +552,7 @@ async def test_document_deletion_with_slashes_in_id(api_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_delete_bank(api_client):
     """Test delete bank endpoint.
 
@@ -592,7 +602,7 @@ async def test_delete_bank(api_client):
     assert len(response.json()["items"]) > 0
 
     # Check bank is in list
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id in bank_ids
@@ -607,7 +617,7 @@ async def test_delete_bank(api_client):
 
     # 4. Verify bank and all data is deleted
     # Bank should not be in list
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id not in bank_ids
@@ -665,7 +675,7 @@ async def test_clear_memories_preserves_bank(api_client):
         assert response.status_code == 200
         assert response.json()["total_nodes"] > 0
 
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = [b["bank_id"] for b in response.json()["banks"]]
         assert test_bank_id in bank_ids
@@ -676,7 +686,7 @@ async def test_clear_memories_preserves_bank(api_client):
         assert response.json()["success"] is True
 
         # 3. Bank should still exist in the list
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = [b["bank_id"] for b in response.json()["banks"]]
         assert test_bank_id in bank_ids, "Bank should still exist after clearing memories"
@@ -1413,6 +1423,28 @@ async def test_patch_config_rejection_does_not_create_bank(api_client):
 
 
 @pytest.mark.asyncio
+async def test_patch_config_rejects_wrong_value_type(api_client):
+    """A JSON object in a string-typed field must 400, not be stored (#3218).
+
+    Storing it succeeded before, and the bank then failed every consolidation
+    with ``expected string or bytes-like object, got 'dict'`` from inside prompt
+    assembly — deterministically, so the bank never recovered.
+    """
+    test_bank_id = f"patch_bad_type_{datetime.now().timestamp()}"
+
+    response = await api_client.patch(
+        f"/v1/default/banks/{test_bank_id}/config",
+        json={"updates": {"observations_mission": {"rules": ["only preferences"], "budget": 3}}},
+    )
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert "observations_mission" in detail
+    assert "must be a string" in detail
+
+    await _assert_bank_missing(api_client, test_bank_id)
+
+
+@pytest.mark.asyncio
 async def test_patch_config_does_not_apply_client_field_permissions_to_projected_defaults(
     api_client,
     memory,
@@ -1697,7 +1729,7 @@ async def test_patch_returns_404_when_bank_disappears_before_config_write(api_cl
     monkeypatch.setattr(
         memory._config_resolver,
         "_persist_bank_config",
-        AsyncMock(side_effect=ValueError(f"Cannot update config for bank '{bank_id}': the bank does not exist")),
+        AsyncMock(side_effect=BankConfigPersistenceConflictError(bank_id)),
     )
 
     response = await api_client.patch(
@@ -1796,6 +1828,46 @@ async def test_config_only_import_ensures_bank_once(api_client, memory, monkeypa
     assert response.status_code == 200, response.text
     ensure_bank_exists.assert_awaited_once()
     await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_config_only_import_returns_409_when_bank_is_deleted_before_config_write(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """A bank deleted after import authorization is a retryable state conflict."""
+    bank_id = f"import_concurrent_delete_config_{datetime.now().timestamp()}"
+    persist_started = asyncio.Event()
+    allow_persist = asyncio.Event()
+    persist_bank_config = memory._config_resolver._persist_bank_config
+
+    async def persist_after_delete(persisted_bank_id: str, updates: dict[str, object]) -> None:
+        if persisted_bank_id == bank_id:
+            persist_started.set()
+            await allow_persist.wait()
+        await persist_bank_config(persisted_bank_id, updates)
+
+    monkeypatch.setattr(memory._config_resolver, "_persist_bank_config", persist_after_delete)
+    import_task = asyncio.create_task(
+        api_client.post(
+            f"/v1/default/banks/{bank_id}/import",
+            json={"version": "1", "bank": {"reflect_mission": "Conflict"}},
+        )
+    )
+
+    await persist_started.wait()
+    try:
+        await memory.delete_bank(bank_id, request_context=RequestContext())
+    finally:
+        allow_persist.set()
+    response = await import_task
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == (
+        f"Bank '{bank_id}' changed or was deleted during template import; retry the import."
+    )
+    await _assert_bank_missing(api_client, bank_id)
 
 
 @pytest.mark.asyncio
@@ -2035,7 +2107,7 @@ async def test_patch_bank_does_not_create_missing_bank(api_client, memory, monke
     profile = await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
     assert profile.status_code == 404, profile.text
 
-    banks = await api_client.get("/v1/default/banks")
+    banks = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert banks.status_code == 200, banks.text
     assert test_bank_id not in {bank["bank_id"] for bank in banks.json()["banks"]}
 

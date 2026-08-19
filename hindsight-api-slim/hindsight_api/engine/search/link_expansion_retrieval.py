@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from ...config import DEFAULT_GRAPH_SEED_MIN_SIMILARITY, get_config
+from ..db.ops import LinkExpansionRows, UpdatedWindow
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
@@ -63,23 +64,25 @@ async def _find_semantic_seeds(
     tag_groups_param_start = 6 + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
 
+    # created_after/created_before filter `updated_at`, matching the other recall arms
+    # (see retrieval.py) so a window narrows every arm the same way.
     _next_idx = tag_groups_param_start + len(groups_params)
-    created_range_clause = ""
-    created_range_params: list[Any] = []
+    updated_range_clause = ""
+    updated_range_params: list[Any] = []
     if created_after is not None:
-        created_range_params.append(created_after)
-        created_range_clause += f" AND updated_at > ${_next_idx}"
+        updated_range_params.append(created_after)
+        updated_range_clause += f" AND updated_at > ${_next_idx}"
         _next_idx += 1
     if created_before is not None:
-        created_range_params.append(created_before)
-        created_range_clause += f" AND updated_at < ${_next_idx}"
+        updated_range_params.append(created_before)
+        updated_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
     params = [query_embedding_str, bank_id, fact_type, threshold, limit]
     if tags:
         params.append(tags)
     params.extend(groups_params)
-    params.extend(created_range_params)
+    params.extend(updated_range_params)
 
     rows = await conn.fetch(
         f"""
@@ -93,7 +96,7 @@ async def _find_semantic_seeds(
           AND (1 - (embedding <=> $1::vector)) >= $4
           {tags_clause}
           {groups_clause}
-          {created_range_clause}
+          {updated_range_clause}
         ORDER BY embedding <=> $1::vector
         LIMIT $5
         """,
@@ -198,17 +201,28 @@ class LinkExpansionRetriever(GraphRetriever):
 
             ops = pool.ops
             if fact_type == "observation":
-                entity_rows, semantic_rows, causal_rows = await self._expand_observations(
-                    conn, seed_ids, budget, ops=ops
+                expanded = await self._expand_observations(
+                    conn,
+                    seed_ids,
+                    budget,
+                    ops=ops,
+                    created_after=created_after,
+                    created_before=created_before,
                 )
             else:
-                entity_rows, semantic_rows, causal_rows = await self._expand_combined(
-                    conn, seed_ids, fact_type, budget, ops=ops
+                expanded = await self._expand_combined(
+                    conn,
+                    seed_ids,
+                    fact_type,
+                    budget,
+                    ops=ops,
+                    created_after=created_after,
+                    created_before=created_before,
                 )
 
             timings.edge_load_time = time.time() - query_start
             timings.db_queries = 1
-            timings.edge_count = len(entity_rows) + len(semantic_rows) + len(causal_rows)
+            timings.edge_count = len(expanded.entity) + len(expanded.semantic) + len(expanded.causal)
 
         # Merge results with additive intra-score: entity + semantic + causal ∈ [0, 3].
         #
@@ -224,17 +238,17 @@ class LinkExpansionRetriever(GraphRetriever):
         causal_scores: dict[str, float] = {}
         row_map: dict[str, dict] = {}
 
-        for row in entity_rows:
+        for row in expanded.entity:
             fact_id = str(row["id"])
             entity_scores[fact_id] = math.tanh(row["score"] * 0.5)
             row_map[fact_id] = dict(row)
 
-        for row in semantic_rows:
+        for row in expanded.semantic:
             fact_id = str(row["id"])
             semantic_scores[fact_id] = max(semantic_scores.get(fact_id, 0.0), row["score"])
             row_map.setdefault(fact_id, dict(row))
 
-        for row in causal_rows:
+        for row in expanded.causal:
             fact_id = str(row["id"])
             causal_scores[fact_id] = max(causal_scores.get(fact_id, 0.0), row["score"])
             row_map.setdefault(fact_id, dict(row))
@@ -284,7 +298,9 @@ class LinkExpansionRetriever(GraphRetriever):
         budget: int,
         *,
         ops,
-    ) -> tuple[list, list, list]:
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> LinkExpansionRows:
         """
         Single-roundtrip CTE query combining entity, semantic, and causal expansions.
 
@@ -306,8 +322,10 @@ class LinkExpansionRetriever(GraphRetriever):
 
         per_entity_limit = config.link_expansion_per_entity_limit
 
-        entity_cte = ops.build_entity_expansion_cte(mu, ue, per_entity_limit)
-        semantic_causal_cte = ops.build_semantic_causal_cte(ml, mu)
+        # $1 seeds, $2 fact_type, $3 budget — the window binds after them.
+        window = UpdatedWindow(after=created_after, before=created_before, first_param_index=4)
+        entity_cte = ops.build_entity_expansion_cte(mu, ue, per_entity_limit, window)
+        semantic_causal_cte = ops.build_semantic_causal_cte(ml, mu, window)
 
         full_query = f"""
             WITH {entity_cte},
@@ -319,7 +337,7 @@ class LinkExpansionRetriever(GraphRetriever):
             SELECT * FROM causal_expanded
             """
 
-        params = [seed_ids, fact_type, budget]
+        params = [seed_ids, fact_type, budget, *window.params]
 
         try:
             all_rows = await asyncio.wait_for(
@@ -340,10 +358,11 @@ class LinkExpansionRetriever(GraphRetriever):
                 """
             all_rows = await conn.fetch(fallback_query, *params)
 
-        entity_rows = [r for r in all_rows if r["source"] == "entity"]
-        semantic_rows = [r for r in all_rows if r["source"] == "semantic"]
-        causal_rows = [r for r in all_rows if r["source"] == "causal"]
-        return entity_rows, semantic_rows, causal_rows
+        return LinkExpansionRows(
+            entity=[r for r in all_rows if r["source"] == "entity"],
+            semantic=[r for r in all_rows if r["source"] == "semantic"],
+            causal=[r for r in all_rows if r["source"] == "causal"],
+        )
 
     async def _expand_observations(
         self,
@@ -352,7 +371,9 @@ class LinkExpansionRetriever(GraphRetriever):
         budget: int,
         *,
         ops,
-    ) -> tuple[list, list, list]:
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> LinkExpansionRows:
         """
         Observation-specific expansion.
 
@@ -389,6 +410,7 @@ class LinkExpansionRetriever(GraphRetriever):
         # Delegate to DataAccessOps. Both backends now use the observation_sources
         # junction table with standard SQL joins (previously PG used native array
         # ops and Oracle used JSON_TABLE).
+        # $1 seeds, $2 budget — the window binds after them.
         return await ops.expand_observations(
             conn,
             mu,
@@ -397,4 +419,5 @@ class LinkExpansionRetriever(GraphRetriever):
             seed_ids,
             budget,
             per_entity_limit,
+            UpdatedWindow(after=created_after, before=created_before, first_param_index=3),
         )

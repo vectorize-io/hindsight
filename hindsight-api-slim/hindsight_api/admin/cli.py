@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import logging
+import struct
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,7 +23,12 @@ from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
-from ..engine.vector_index_health import SchemaVectorIndexResult, repair_vector_indexes
+from ..engine.vector_index_health import (
+    BankIndexResult,
+    drop_orphaned_bank_indexes,
+    list_bank_ids,
+    reconcile_bank_vector_indexes,
+)
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -67,6 +73,7 @@ BACKUP_TABLES = [
     "audit_log",
     "llm_requests",
     "graph_maintenance_queue",
+    "entity_maintenance_queue",
 ]
 
 MANIFEST_VERSION = "2"
@@ -78,6 +85,76 @@ class BackupColumn:
 
     name: str
     type_name: str
+
+
+@dataclass(frozen=True)
+class TableRestorePlan:
+    """How one table's backed-up binary COPY stream is replayed onto the target.
+
+    ``columns`` is the target column list handed to ``copy_to_table``, in stream
+    order. When the target no longer has a backed-up column, its field is stripped
+    from every tuple (``dropped_field_indices``) before the stream is replayed —
+    binary COPY is positional, so the column list and the tuple fields must agree.
+    """
+
+    columns: list[str]
+    dropped_field_indices: tuple[int, ...]
+    source_field_count: int
+
+
+# Header of a PostgreSQL binary COPY stream: an 11-byte signature, an int32 flags
+# field, and an int32 header-extension length followed by that many bytes.
+_COPY_BINARY_SIGNATURE = b"PGCOPY\n\xff\r\n\x00"
+_COPY_BINARY_HEADER_LEN = len(_COPY_BINARY_SIGNATURE) + 8
+
+
+def _strip_binary_copy_fields(data: bytes, plan: TableRestorePlan) -> bytes:
+    """Drop `plan.dropped_field_indices` from every tuple of a binary COPY stream.
+
+    Restore used to reject a backup whose columns the target no longer had — the
+    preflight raised "target is missing backup columns …", which made any backup
+    taken before a column-dropping migration unrestorable afterwards. Those columns
+    are now ignored instead, but they cannot simply be left out of the
+    ``copy_to_table`` column list: binary COPY carries no column identities, so each
+    tuple's fields are matched to the column list purely by position and an unedited
+    stream would desynchronise (or, worse, land values in the wrong columns). So the
+    stream itself is rewritten here.
+
+    Tuple format: int16 field count, then per field an int32 length (-1 for NULL)
+    followed by that many bytes. An int16 of -1 is the end-of-data trailer.
+    """
+    if not plan.dropped_field_indices:
+        return data
+    if not data.startswith(_COPY_BINARY_SIGNATURE):
+        raise ValueError("Backup stream is not in PostgreSQL binary COPY format")
+
+    (extension_len,) = struct.unpack_from("!i", data, len(_COPY_BINARY_SIGNATURE) + 4)
+    pos = _COPY_BINARY_HEADER_LEN + extension_len
+    out = bytearray(data[:pos])
+
+    dropped = set(plan.dropped_field_indices)
+    kept_count = plan.source_field_count - len(dropped)
+    while True:
+        (field_count,) = struct.unpack_from("!h", data, pos)
+        pos += 2
+        if field_count == -1:  # end-of-data trailer
+            out += struct.pack("!h", -1)
+            break
+        if field_count != plan.source_field_count:
+            raise ValueError(
+                f"Backup stream tuple has {field_count} fields, manifest declares {plan.source_field_count}"
+            )
+        out += struct.pack("!h", kept_count)
+        for index in range(field_count):
+            (length,) = struct.unpack_from("!i", data, pos)
+            pos += 4
+            payload = b"" if length == -1 else data[pos : pos + length]
+            pos += max(length, 0)
+            if index in dropped:
+                continue
+            out += struct.pack("!i", length)
+            out += payload
+    return bytes(out)
 
 
 async def _table_columns(conn: asyncpg.Connection, schema: str, table: str) -> list[BackupColumn]:
@@ -99,37 +176,52 @@ async def _table_columns(conn: asyncpg.Connection, schema: str, table: str) -> l
 
 async def _validate_restore_schema(
     conn: asyncpg.Connection, manifest: dict[str, Any], schema: str
-) -> dict[str, list[str]]:
+) -> dict[str, TableRestorePlan]:
     """Validate every COPY stream against the target before destructive work starts.
 
-    Type equality is an exact ``format_type`` string match. This is deliberately
-    stricter than binary-COPY wire compatibility (e.g. ``varchar`` and ``text``
-    share a binary format yet compare unequal here): we would rather fail a
-    genuinely-restorable backup with a clear, actionable error than silently risk
-    a subtle binary mismatch. Restores blocked this way can be recovered by
-    aligning the target schema.
+    A column the target no longer has is **not** an error: a migration that drops a
+    column would otherwise make every backup taken before it permanently
+    unrestorable. Such columns are skipped (their fields are stripped from the
+    stream by ``_strip_binary_copy_fields``) and reported, so the operator sees what
+    was discarded instead of the restore failing outright.
+
+    Type mismatches remain fatal. Type equality is an exact ``format_type`` string
+    match. This is deliberately stricter than binary-COPY wire compatibility (e.g.
+    ``varchar`` and ``text`` share a binary format yet compare unequal here): we
+    would rather fail a genuinely-restorable backup with a clear, actionable error
+    than silently risk a subtle binary mismatch. Restores blocked this way can be
+    recovered by aligning the target schema.
     """
-    restore_columns: dict[str, list[str]] = {}
+    plans: dict[str, TableRestorePlan] = {}
     errors: list[str] = []
     for table, table_manifest in manifest["tables"].items():
         source_columns = [BackupColumn(**column) for column in table_manifest["columns"]]
         target_by_name = {column.name: column for column in await _table_columns(conn, schema, table)}
-        missing = [column.name for column in source_columns if column.name not in target_by_name]
+        unknown = [
+            (index, column.name) for index, column in enumerate(source_columns) if column.name not in target_by_name
+        ]
         mismatched = [
             f"{column.name} ({column.type_name} in backup, {target_by_name[column.name].type_name} in target)"
             for column in source_columns
             if column.name in target_by_name and target_by_name[column.name].type_name != column.type_name
         ]
-        if missing:
-            errors.append(f"{table}: target is missing backup columns {', '.join(missing)}")
         if mismatched:
             errors.append(f"{table}: incompatible column types: {', '.join(mismatched)}")
-        restore_columns[table] = [column.name for column in source_columns]
+        if unknown:
+            typer.echo(
+                f"  {table}: ignoring {len(unknown)} backup column(s) absent from the target schema: "
+                f"{', '.join(name for _, name in unknown)}"
+            )
+        plans[table] = TableRestorePlan(
+            columns=[column.name for column in source_columns if column.name in target_by_name],
+            dropped_field_indices=tuple(index for index, _ in unknown),
+            source_field_count=len(source_columns),
+        )
 
     if errors:
         details = "; ".join(errors)
         raise ValueError(f"Backup schema is incompatible with target schema '{schema}': {details}")
-    return restore_columns
+    return plans
 
 
 def _effective_backup_tables() -> list[str]:
@@ -264,7 +356,7 @@ async def _restore(
             # Complete the compatibility check before entering the transaction
             # that truncates tables. This turns historical schema drift into an
             # actionable error without risking the target's existing data.
-            restore_columns = await _validate_restore_schema(conn, manifest, schema)
+            restore_plans = await _validate_restore_schema(conn, manifest, schema)
 
             # Use a transaction for atomic restore - either all tables are
             # restored or none are, preventing partial/inconsistent state.
@@ -285,13 +377,15 @@ async def _restore(
                     expected_rows = manifest["tables"].get(table, {}).get("rows", "?")
                     typer.echo(f"  [{i}/{len(backup_tables)}] Restoring {table}... {expected_rows} rows")
 
-                    data = zf.read(filename)
-                    buffer = io.BytesIO(data)
+                    plan = restore_plans[table]
+                    # Strips the fields of any column the target no longer has;
+                    # a no-op when the schemas still line up.
+                    buffer = io.BytesIO(_strip_binary_copy_fields(zf.read(filename), plan))
                     # asyncpg requires schema_name as separate parameter
                     await conn.copy_to_table(
                         table,
                         schema_name=schema,
-                        columns=restore_columns[table],
+                        columns=plan.columns,
                         source=buffer,
                         format="binary",
                     )
@@ -529,11 +623,14 @@ async def _run_repair_bank(
     schema: str | None,
     bank_id: str | None,
     dry_run: bool,
-) -> list[SchemaVectorIndexResult]:
+) -> list[BankIndexResult]:
     """Reconcile per-(bank, fact_type) vector index coverage over a raw connection.
 
     A single autocommit connection is used because ``CREATE INDEX CONCURRENTLY``
-    (used by ``repair_vector_indexes``) cannot run inside a transaction block.
+    cannot run inside a transaction block.
+
+    Deliberately unbudgeted, unlike the background operation: this is an operator
+    asking for convergence now, across as many banks as they named.
     """
     schemas = [schema] if schema else await _resolve_schemas(base_schema)
     index_clause = _vector_index_clause()
@@ -542,13 +639,38 @@ async def _run_repair_bank(
     assert index_clause is not None
 
     conn = await _admin_connect(db_url)
+    results: list[BankIndexResult] = []
     try:
-        results = await repair_vector_indexes(conn, schemas, index_clause, dry_run=dry_run, bank_id=bank_id)
-        for result in results:
+        for target_schema in schemas:
+            try:
+                bank_ids = [bank_id] if bank_id else await list_bank_ids(conn, target_schema)
+            except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
+                typer.echo(f"  schema '{target_schema}': skipped ({exc})", err=True)
+                continue
+            schema_results = [
+                await reconcile_bank_vector_indexes(conn, target_schema, bid, index_clause, dry_run=dry_run)
+                for bid in bank_ids
+            ]
+            results.extend(schema_results)
+            # Only in --all mode: an index whose bank row is gone is unreachable
+            # from every bank-scoped path, so this is the one place that can
+            # collect it. Normally finds nothing — delete_bank drops a bank's
+            # indexes while it still knows their names — but a deployment that
+            # hit the #3485 wall could not run delete_bank at all.
+            orphans = [] if bank_id else await drop_orphaned_bank_indexes(conn, target_schema, dry_run=dry_run)
+            if orphans:
+                typer.echo(
+                    f"  schema '{target_schema}': {len(orphans)} orphaned index(es) "
+                    f"{'to drop (dry-run)' if dry_run else 'dropped'} (no matching bank)"
+                )
             typer.echo(
-                f"  schema '{result.schema}': {result.banks_scanned} bank(s) scanned, "
-                f"{result.already_present} present, {result.created} created, "
-                f"{result.skipped} to-create (dry-run), {result.failed} failed"
+                f"  schema '{target_schema}': {len(bank_ids)} bank(s) scanned, "
+                f"{sum(r.already_present for r in schema_results)} present, "
+                f"{sum(r.created for r in schema_results)} created, "
+                f"{sum(r.dropped for r in schema_results)} dropped, "
+                f"{sum(r.skipped for r in schema_results)} to-create (dry-run), "
+                f"{sum(r.would_drop for r in schema_results)} to-drop (dry-run), "
+                f"{sum(r.failed for r in schema_results)} failed"
             )
         return results
     finally:
@@ -580,17 +702,23 @@ def repair_bank(
         help="Report what would be repaired without creating or dropping any index.",
     ),
 ):
-    """Verify and repair a bank's per-(bank, fact_type) vector index coverage.
+    """Reconcile per-(bank, fact_type) vector index coverage against the size threshold.
 
-    Per-bank partial vector indexes are created when a bank is first created
-    (instant on an empty bank). Banks that arrive populated — via logical
-    restore, a cross-version upgrade, or a vector-extension switch — never hit
-    that path, so their recall silently falls back to a global index +
-    post-filter (slower, under-returning). This command detects missing OR
-    invalid coverage (an INVALID leftover or an index whose access method
-    drifted counts as missing) and rebuilds it with CREATE INDEX CONCURRENTLY,
-    so it never blocks the live fleet. Idempotent and safe to re-run — the
-    escape hatch after a restore, upgrade, or backend switch.
+    A (bank, fact_type) earns a partial vector index once it holds
+    HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS rows; below that the planner answers the
+    same query exactly, and faster, from the (bank_id, fact_type) B-tree plus a
+    top-N sort. This command builds what qualifies and drops what no longer does
+    — including indexes orphaned by a deleted bank — detecting invalid coverage
+    too (an INVALID leftover, or an index whose access method drifted after a
+    backend switch, counts as missing). All DDL is CONCURRENTLY, so it never
+    blocks the live fleet.
+
+    Writes keep this converged on their own — every insert that could move a bank
+    across the threshold queues a vector_index_maintenance operation. Reach for
+    the command when you want convergence without waiting for a write: after a
+    restore or upgrade, after a backend switch, or to shed indexes in bulk on a
+    deployment recovering from lock-table exhaustion (#3485). Idempotent and safe
+    to re-run.
     """
     if bool(bank_id) == all_banks:
         typer.echo("Error: pass exactly one of --bank <id> or --all.", err=True)
@@ -624,15 +752,18 @@ def repair_bank(
         )
     )
 
-    total_banks = sum(r.banks_scanned for r in results)
+    total_banks = len(results)
     total_present = sum(r.already_present for r in results)
     total_created = sum(r.created for r in results)
+    total_dropped = sum(r.dropped for r in results)
     total_skipped = sum(r.skipped for r in results)
+    total_would_drop = sum(r.would_drop for r in results)
     total_failed = sum(r.failed for r in results)
     typer.echo(
         f"Done: {len(results)} schema(s), {total_banks} bank(s) scanned, "
-        f"{total_present} already present, {total_created} created, "
-        f"{total_skipped} to-create (dry-run), {total_failed} failed"
+        f"{total_present} already present, {total_created} created, {total_dropped} dropped, "
+        f"{total_skipped} to-create (dry-run), {total_would_drop} to-drop (dry-run), "
+        f"{total_failed} failed"
     )
     if total_failed:
         failed_names = [name for r in results for name in r.failed_indexes]
@@ -759,7 +890,8 @@ def import_bank_command(
         f"Imported bank '{result.bank_id}': {result.documents_imported} doc(s), "
         f"{result.facts_imported} fact(s), {result.observations_imported} observation(s), "
         f"{result.mental_models_imported} mental model(s), "
-        f"{result.mental_model_history_imported} mm-history row(s), {result.directives_imported} directive(s), "
+        f"{result.mental_model_history_imported} mm-history row(s), "
+        f"{result.knowledge_pages_imported} knowledge page(s), {result.directives_imported} directive(s), "
         f"{result.webhooks_imported} webhook(s), {result.history_rows_imported} history row(s)"
     )
 

@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -8,6 +10,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     OpenAICompatibleLLM,
     ProviderResponseError,
 )
+from hindsight_api.worker.stage import StageHolder, bind_holder, set_stage
 
 
 class SimpleJsonResponse(BaseModel):
@@ -35,6 +38,41 @@ def _response(*, content: str | None = '{"ok": true}', choices=None, error=None)
     )
     response.choices = [choice]
     return response
+
+
+@pytest.mark.asyncio
+async def test_attempt_stage_is_published_only_after_permits_are_acquired():
+    llm = _llm()
+    holder = StageHolder()
+    waiting_for_permit = asyncio.Event()
+    release_permit = asyncio.Event()
+
+    @asynccontextmanager
+    async def blocked_attempt_context():
+        waiting_for_permit.set()
+        await release_permit.wait()
+        yield
+
+    async def create(**_kwargs):
+        assert holder.stage == "llm.openai.memory.attempt=1/1"
+        return _response(content="ok")
+
+    llm._client.chat.completions.create = AsyncMock(side_effect=create)
+
+    async def invoke():
+        bind_holder(holder)
+        set_stage("llm.openai.memory.queued")
+        return await llm.call(
+            messages=[{"role": "user", "content": "hello"}],
+            max_retries=0,
+            attempt_context=blocked_attempt_context,
+        )
+
+    task = asyncio.create_task(invoke())
+    await asyncio.wait_for(waiting_for_permit.wait(), timeout=1)
+    assert holder.stage == "llm.openai.memory.queued"
+    release_permit.set()
+    assert await task == "ok"
 
 
 @pytest.mark.asyncio

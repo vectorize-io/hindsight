@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveClaudeBin, startCodebaseSurvey, SURVEY_PROMPT } from "./survey";
+import {
+  resolveClaudeBin,
+  startCodebaseSurvey,
+  SURVEY_AGENT,
+  SURVEY_AGENT_CONFIG,
+  SURVEY_PROMPT,
+} from "./survey";
 
 describe("resolveClaudeBin", () => {
   const ORIGINAL_ENV = process.env.HINDSIGHT_CLAUDE_BIN;
@@ -70,6 +76,9 @@ describe("startCodebaseSurvey", () => {
     const parsed = JSON.parse(mcpConfigJson);
     expect(parsed.mcpServers.hindsight.args).toEqual(["/x/mcp-server.js"]);
     expect(parsed.mcpServers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD).toBe("/repo");
+    // #3603: mcp-server.js requires the harness — an inline recipe that omits it used to be served
+    // as claude-code by default, and now refuses to start at all.
+    expect(parsed.mcpServers.hindsight.env.HINDSIGHT_MCP_HARNESS).toBe("claude-code");
 
     expect(options.cwd).toBe("/repo");
     expect(options.detached).toBe(true);
@@ -104,6 +113,9 @@ describe("startCodebaseSurvey", () => {
     expect(argv).toContain(SURVEY_PROMPT);
     expect(argv).toContain(`mcp_servers.hindsight.command="node"`);
     expect(argv).toContain(`mcp_servers.hindsight.args=["/x/mcp-server.js"]`);
+    // Without this the survey's findings were stamped harness:claude-code and landed in Claude
+    // Code's bank even though Codex ran the survey (#3603).
+    expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`);
     expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="/repo"`);
     // No Claude-only flags leak into the codex recipe.
     expect(argv).not.toContain("--model");
@@ -125,8 +137,8 @@ describe("startCodebaseSurvey", () => {
     expect(options.env.HINDSIGHT_DISABLE_HOOKS).toBe("1");
   });
 
-  // ── opencode recipe (read-only plan agent; tools from the loaded plugin) ───────────────────────
-  it("opencode: spawns `opencode run --agent plan` with the prompt", () => {
+  // ── opencode recipe (our own read-only agent; tools from the loaded plugin) ────────────────────
+  it("opencode: spawns `opencode run` under OUR survey agent, never the built-in plan agent", () => {
     const spawn = fakeSpawn();
     startCodebaseSurvey("/repo", {
       harness: "opencode",
@@ -135,8 +147,26 @@ describe("startCodebaseSurvey", () => {
     });
     const [bin, argv, options] = spawn.mock.calls[0];
     expect(bin).toBe("opencode");
-    expect(argv).toEqual(["run", "--agent", "plan", SURVEY_PROMPT]);
+    expect(argv).toEqual(["run", "--agent", SURVEY_AGENT, SURVEY_PROMPT]);
+    // `plan` appends a read-only system-reminder that talks models out of the ingest call the
+    // survey exists to make (#3450) — the whole point is not to run under it.
+    expect(argv).not.toContain("plan");
     expect(options.env.HINDSIGHT_DISABLE_HOOKS).toBe("1");
+  });
+
+  // The recipe above is only safe because the agent it names is read-only. opencode drops denied
+  // tools from the model's tool list entirely, so this ruleset IS the sandbox.
+  it("the survey agent denies everything except reading and the one ingest tool", () => {
+    expect(SURVEY_AGENT_CONFIG.permission["*"]).toBe("deny");
+    expect(SURVEY_AGENT_CONFIG.permission.hindsight_ingest_document).toBe("allow");
+    const allowed = Object.entries(SURVEY_AGENT_CONFIG.permission)
+      .filter(([, v]) => v === "allow")
+      .map(([k]) => k)
+      .sort();
+    expect(allowed).toEqual(["glob", "grep", "hindsight_ingest_document", "read"]);
+    // No write, no bash, and no `task` — which would reach a subagent that CAN write.
+    for (const escape of ["write", "edit", "bash", "task", "patch"])
+      expect(SURVEY_AGENT_CONFIG.permission).not.toHaveProperty(escape, "allow");
   });
 
   // ── agent selection + fallback ─────────────────────────────────────────────────────────────────

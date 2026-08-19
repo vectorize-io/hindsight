@@ -83,7 +83,7 @@ def test_backoff_delay_is_jittered_and_bounded():
     """Equal-jitter backoff stays in [ceil/2, ceil] and never exceeds max_delay.
 
     The jitter exists so concurrent deadlock retriers don't wake in lock-step
-    and re-collide (see run_graph_maintenance_job's Pass 2/3 sweep). It must
+    and re-collide (see the entity-prune batch in run_graph_maintenance_job). It must
     still keep a floor (no hot-spin) and honour the max_delay cap once the
     exponential term saturates.
     """

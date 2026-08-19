@@ -3,6 +3,7 @@ Link creation utilities for temporal, semantic, and entity links.
 """
 
 import logging
+import re
 import time
 from datetime import UTC
 
@@ -16,6 +17,7 @@ from ..causal_links import (
 )
 from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
+from ..db.postgresql import setting_rejected_by_server
 from ..memory_engine import fq_table
 from .types import CausalRelation, EntityResolutionResult
 
@@ -23,6 +25,34 @@ logger = logging.getLogger(__name__)
 
 # Sentinel UUID used in the unique index to represent NULL entity_id
 _NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
+
+# Any run of whitespace, including the \n / \r / \t that extraction sometimes
+# leaves inside a candidate entity name.
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def _normalize_entity_name(name: str) -> str:
+    """Collapse internal whitespace runs to a single space and strip the ends.
+
+    Extraction can hand back names carrying embedded newlines/tabs, which then
+    become ``entities.canonical_name`` values that shear every line-oriented
+    consumer (``psql -A`` output, log lines, exports) — issue #3275. Case is
+    deliberately untouched: the entity registry already matches on
+    ``LOWER(canonical_name)``, so lowercasing here would only lose the display
+    form.
+    """
+    return _WHITESPACE_RUN_RE.sub(" ", name).strip()
+
+
+def _entity_resolve_flag(ent) -> bool:
+    """Whether this candidate name should be resolved against existing entities.
+
+    Defaults to True (extraction's behaviour). Only dict candidates can opt out, which is how
+    retain marks the entities its *caller* supplied: those are authoritative names, not guesses
+    at which entity is meant (#3479).
+    """
+    return bool(ent.get("resolve", True)) if isinstance(ent, dict) else True
+
 
 # Maximum number of temporal links to keep per unit (from_unit_id).
 # Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
@@ -60,6 +90,26 @@ def _cap_links_per_unit(links: list[tuple], max_per_unit: int = MAX_TEMPORAL_LIN
     return result
 
 
+def _lock_order_key(lnk: tuple) -> tuple[str, str, str, str]:
+    """Canonical lock-order key for a link row, shared by every writer.
+
+    Mirrors the total order that ``chunk_storage.delete_chunks_by_ids`` uses when
+    it locks ``memory_links`` before a cascade delete:
+
+        (LEAST(from, to), GREATEST(from, to), link_type, COALESCE(entity_id, nil))
+
+    Direction is normalised so ``(A, B)`` and ``(B, A)`` sort adjacent, and the
+    key covers the full unique index — including ``link_type`` and ``entity_id``
+    — so two edges sharing a ``(from, to)`` pair can't be locked in opposite
+    orders by concurrent inserts. UUID string ordering matches the DB's ``uuid``
+    ordering because the ids are canonical lowercase-hex form.
+    """
+    a, b = str(lnk[0]), str(lnk[1])
+    low, high = (a, b) if a <= b else (b, a)
+    entity = str(lnk[4]) if lnk[4] is not None else _NIL_ENTITY_UUID
+    return (low, high, str(lnk[2]), entity)
+
+
 async def _bulk_insert_links(
     conn,
     links: list[tuple],
@@ -70,8 +120,9 @@ async def _bulk_insert_links(
 ) -> None:
     """Bulk-insert links using sorted INSERT FROM unnest().
 
-    Sorting by (from_unit_id, to_unit_id) ensures all concurrent transactions
-    acquire index locks in the same order, eliminating circular-wait deadlocks.
+    Sorting on the full, direction-normalised unique key ensures all concurrent
+    writers — inserts and deletes alike — acquire index locks in the same order,
+    eliminating circular-wait deadlocks. See :func:`_lock_order_key`.
 
     Args:
         conn: Database connection (must be inside a transaction).
@@ -87,9 +138,9 @@ async def _bulk_insert_links(
     if not links:
         return
 
-    # Sort by (from_unit_id, to_unit_id) to guarantee consistent lock ordering
-    # across concurrent transactions — prevents deadlocks.
-    sorted_links = sorted(links, key=lambda lnk: (str(lnk[0]), str(lnk[1])))
+    # Sort on the canonical lock-order key so every concurrent writer takes the
+    # index locks in the same order — prevents circular-wait deadlocks.
+    sorted_links = sorted(links, key=_lock_order_key)
 
     exists_clause = ""
     if not skip_exists_check:
@@ -151,6 +202,12 @@ def _prepare_entities_for_resolution(
     """
     Convert LLM entities into the flat format expected by entity resolver.
 
+    Candidate names are whitespace-normalized here (see ``_normalize_entity_name``)
+    and names that are empty afterwards are dropped, so no downstream stage has to
+    cope with an entity whose canonical name is blank or spans several lines.
+    Both happen before the flat list and ``entity_to_unit`` are derived, keeping
+    the resolver's positional invariant (output index-aligned with input) intact.
+
     Returns:
         Tuple of (all_entities_flat, all_entities, entity_to_unit) where:
         - all_entities_flat: flat list of entity dicts ready for resolve_entities_batch
@@ -159,14 +216,52 @@ def _prepare_entities_for_resolution(
     """
     substep_start = time.time()
     all_entities = []
+    dropped_empty = 0
     for entity_list in llm_entities:
         formatted_entities = []
+        # Normalization can make two candidates that reached here as distinct
+        # strings ("Acme\nCorp" from extraction, "Acme Corp" from the caller's
+        # own entity list) identical, and the upstream dedup in
+        # entity_processing runs on the raw text. Without this, the same entity
+        # would be resolved twice for one fact and its mention_count bumped twice.
+        seen_in_fact: dict[str, dict] = {}
         for ent in entity_list:
             if hasattr(ent, "text"):
-                formatted_entities.append({"text": ent.text, "type": "CONCEPT"})
+                raw_text, entity_type = ent.text, "CONCEPT"
             elif isinstance(ent, dict):
-                formatted_entities.append({"text": ent.get("text", ""), "type": ent.get("type", "CONCEPT")})
+                raw_text, entity_type = ent.get("text", ""), ent.get("type", "CONCEPT")
+            else:
+                continue
+
+            normalized_text = _normalize_entity_name(raw_text)
+            if not normalized_text:
+                # A blank or whitespace-only candidate would otherwise be created
+                # as an entity with an empty canonical_name — the resolver has no
+                # guard of its own.
+                dropped_empty += 1
+                continue
+
+            resolve = _entity_resolve_flag(ent)
+            kept = seen_in_fact.get(normalized_text.lower())
+            if kept is not None:
+                # Same name after normalization. Keep the first spelling but carry the stricter
+                # flag: entity_processing dedups on the RAW text, so a caller's literal
+                # "Acme Corp" and the extractor's "Acme\nCorp" both reach here, and dropping the
+                # caller's outright would let the name be resolved away after all (#3479).
+                kept["resolve"] = kept["resolve"] and resolve
+                continue
+
+            entity = {"text": normalized_text, "type": entity_type, "resolve": resolve}
+            seen_in_fact[normalized_text.lower()] = entity
+            formatted_entities.append(entity)
         all_entities.append(formatted_entities)
+
+    if dropped_empty:
+        _log(
+            log_buffer,
+            f"  [6.1] Dropped {dropped_empty} empty candidate entity name(s)",
+            level="debug",
+        )
 
     total_entities = sum(len(ents) for ents in all_entities)
     _log(
@@ -187,6 +282,7 @@ def _prepare_entities_for_resolution(
                 {
                     "text": entity["text"],
                     "type": entity["type"],
+                    "resolve": entity["resolve"],
                     "nearby_entities": entities,
                 }
             )
@@ -498,7 +594,14 @@ async def compute_semantic_links_ann(
         # are safe to apply at session/transaction scope for the configured
         # backend. VectorChord probe values are index-shaped, so vchordrq uses
         # index storage fallback parameters instead of a blanket SET LOCAL.
+        #
+        # A GUC the server has already rejected is skipped rather than attempted:
+        # hnsw.iterative_scan needs pgvector 0.8+, and pgvector reserves the "hnsw."
+        # prefix, so an older server errors on it — which inside this transaction would
+        # abort the whole link computation rather than merely fail to apply.
         for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="low_latency"):
+            if setting_rejected_by_server(guc):
+                continue
             await conn.execute(f"SET LOCAL {guc} = {value}")
 
         t_setup = time_mod.time()

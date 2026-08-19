@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import { buildHookOutput, runHook } from "./hook";
+import { diagFilePath } from "./diag";
 import { buildReflectQuery } from "./inject";
 
 let root: string;
@@ -37,7 +38,7 @@ const UNRELATED_PROMPT = "completely unrelated banana smoothie question";
 
 function makeClient(
   overrides: Partial<{
-    reflect: (query: string, opts: { budget?: string; timeoutMs?: number }) => Promise<string>;
+    reflect: (query: string, opts: { budget?: string; timeoutMs: number }) => Promise<string>;
     listPages: () => Promise<unknown>;
     getPage: (pageId: string) => Promise<unknown>;
   }> = {}
@@ -138,7 +139,9 @@ describe("buildHookOutput", () => {
     });
     // Reflect failed -> no reflect block; pages are never auto-injected -> nothing to inject.
     expect(t1.context).toBeUndefined();
-    expect(t1.notice).toBeUndefined();
+    // ...but the turn is NOT silent: one line pointing at the diag trail (#3443).
+    expect(t1.notice).toContain("no memory this turn");
+    expect(t1.notice).toContain(diagFilePath());
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
 
     await buildHookOutput({
@@ -152,7 +155,35 @@ describe("buildHookOutput", () => {
     expect(client.reflect).toHaveBeenCalledTimes(1);
   });
 
-  it("caps the reflect timeout at 25000ms even when config asks for more", async () => {
+  it("the notice fires ONCE — the turn reflect failed, not on later turns", async () => {
+    const cfg = resolveConfig({});
+    const client = makeClient({
+      reflect: vi.fn(async () => {
+        throw new Error("reflect boom");
+      }),
+    });
+    const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile };
+    expect((await buildHookOutput(args)).notice).toContain("no memory this turn");
+    // Turn 2 does not re-run reflect, so re-announcing a failure it did not observe would nag.
+    expect((await buildHookOutput(args)).notice).toBeUndefined();
+  });
+
+  it("an EMPTY answer is not a failure: no notice (reflect simply had nothing to say)", async () => {
+    const cfg = resolveConfig({});
+    // The real client returns (data.text || "").trim() — a 200 with no text yields "".
+    const client = makeClient({ reflect: vi.fn(async () => "") });
+    const result = await buildHookOutput({
+      harness: "claude-code",
+      prompt: UNRELATED_PROMPT,
+      cfg,
+      client,
+      cacheFile,
+    });
+    expect(result.notice).toBeUndefined();
+    expect(result.context).toBeUndefined();
+  });
+
+  it("uses a bounded low-budget reflect and caps its timeout at 25000ms", async () => {
     const cfg = resolveConfig({}); // reflectTimeoutMs default 120000
     const client = makeClient();
     await buildHookOutput({
@@ -163,7 +194,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.reflect).toHaveBeenCalledWith(buildReflectQuery("the prompt"), {
-      budget: "high",
+      budget: "low",
       timeoutMs: 25000,
     });
   });
@@ -179,7 +210,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.reflect).toHaveBeenCalledWith(buildReflectQuery("the prompt"), {
-      budget: "high",
+      budget: "low",
       timeoutMs: 5000,
     });
   });

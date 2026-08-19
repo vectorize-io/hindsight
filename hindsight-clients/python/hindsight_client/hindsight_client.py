@@ -24,9 +24,11 @@ DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
 from hindsight_client_api.api import (
     banks_api,
     directives_api,
+    document_transfer_api,
     documents_api,
     entities_api,
     files_api,
+    knowledge_base_api,
     memory_api,
     mental_models_api,
     monitoring_api,
@@ -39,15 +41,19 @@ from hindsight_client_api.models import (
     reflect_request,
     retain_request,
 )
-from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
-from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
+from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.version_response import VersionResponse
+
+# Sentinel for "argument not provided", where None is itself a meaningful value
+# the server distinguishes from absence (e.g. parent_id=None means "the root").
+_UNSET: Any = object()
 
 
 def _run_async(coro):
@@ -173,6 +179,7 @@ class Hindsight:
         self._memory_api = memory_api.MemoryApi(self._api_client)
         self._banks_api = banks_api.BanksApi(self._api_client)
         self._mental_models_api = mental_models_api.MentalModelsApi(self._api_client)
+        self._knowledge_base_api = knowledge_base_api.KnowledgeBaseApi(self._api_client)
         self._directives_api = directives_api.DirectivesApi(self._api_client)
         self._files_api = files_api.FilesApi(self._api_client)
         self._documents_api = documents_api.DocumentsApi(self._api_client)
@@ -180,6 +187,7 @@ class Hindsight:
         self._operations_api = operations_api.OperationsApi(self._api_client)
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
+        self._document_transfer_api = document_transfer_api.DocumentTransferApi(self._api_client)
 
     # -- Low-level API accessors ------------------------------------------------
     # These expose the full, auto-generated API surface for operations not
@@ -210,6 +218,11 @@ class Hindsight:
     def mental_models(self) -> mental_models_api.MentalModelsApi:
         """Low-level Mental Models API — create, list, get, update, refresh, delete, history."""
         return self._mental_models_api
+
+    @property
+    def knowledge_base(self) -> knowledge_base_api.KnowledgeBaseApi:
+        """Low-level Knowledge Base API — folder/page tree, page CRUD, search, export."""
+        return self._knowledge_base_api
 
     @property
     def directives(self) -> directives_api.DirectivesApi:
@@ -295,6 +308,7 @@ class Hindsight:
         document_id: str | None = None,
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
+        resolve_entities: bool | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
         retain_async: bool = False,
@@ -311,6 +325,8 @@ class Hindsight:
             document_id: Optional document ID for grouping
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
+            resolve_entities: Whether the supplied entities are resolved against the bank's
+                existing entities (default True). False stores them exactly as written.
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
@@ -327,6 +343,8 @@ class Hindsight:
             "entities": entities,
             "tags": tags,
         }
+        if resolve_entities is not None:
+            item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
         batch_kwargs: dict[str, Any] = {
@@ -355,7 +373,8 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             items: List of memory items, each a dict with 'content' (required) and optional keys:
-                'timestamp', 'context', 'metadata', 'document_id', 'entities', 'tags',
+                'timestamp', 'context', 'metadata', 'document_id', 'entities',
+                'resolve_entities' (bool, default True), 'tags',
                 'observation_scopes' (str or list[list[str]]), 'strategy'.
             document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             document_tags: Optional list of tags applied to all items in this batch (merged with per-item tags)
@@ -609,6 +628,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -630,6 +652,11 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -650,6 +677,9 @@ class Hindsight:
                 retain_structured_chunk_size=retain_structured_chunk_size,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,
+                enable_temporal_retrieval=enable_temporal_retrieval,
+                enable_graph_retrieval=enable_graph_retrieval,
+                enable_reranking=enable_reranking,
                 background=background,
             )
         )
@@ -671,6 +701,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
         import aiohttp
@@ -711,6 +744,12 @@ class Hindsight:
             body["enable_observations"] = enable_observations
         if observations_mission is not None:
             body["observations_mission"] = observations_mission
+        if enable_temporal_retrieval is not None:
+            body["enable_temporal_retrieval"] = enable_temporal_retrieval
+        if enable_graph_retrieval is not None:
+            body["enable_graph_retrieval"] = enable_graph_retrieval
+        if enable_reranking is not None:
+            body["enable_reranking"] = enable_reranking
 
         url = f"{self._base_url}/v1/default/banks/{bank_id}"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -748,6 +787,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -769,6 +811,11 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -788,6 +835,9 @@ class Hindsight:
             retain_structured_chunk_size=retain_structured_chunk_size,
             enable_observations=enable_observations,
             observations_mission=observations_mission,
+            enable_temporal_retrieval=enable_temporal_retrieval,
+            enable_graph_retrieval=enable_graph_retrieval,
+            enable_reranking=enable_reranking,
             background=background,
         )
 
@@ -814,7 +864,8 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             items: List of memory items, each a dict with 'content' (required) and optional keys:
-                'timestamp', 'context', 'metadata', 'document_id', 'entities', 'tags',
+                'timestamp', 'context', 'metadata', 'document_id', 'entities',
+                'resolve_entities' (bool, default True), 'tags',
                 'observation_scopes' (str or list[list[str]]), 'strategy'.
             document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             document_tags: Optional list of tags applied to all items in this batch (merged with per-item tags)
@@ -847,6 +898,7 @@ class Hindsight:
                     # Use item's document_id if provided, otherwise fall back to batch-level document_id
                     document_id=item.get("document_id") or document_id,
                     entities=entities,
+                    resolve_entities=item.get("resolve_entities", True),
                     tags=item.get("tags"),
                     observation_scopes=obs_scopes,
                     strategy=item.get("strategy"),
@@ -875,6 +927,7 @@ class Hindsight:
         document_id: str | None = None,
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
+        resolve_entities: bool | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
         retain_async: bool = False,
@@ -891,6 +944,8 @@ class Hindsight:
             document_id: Optional document ID for grouping
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
+            resolve_entities: Whether the supplied entities are resolved against the bank's
+                existing entities (default True). False stores them exactly as written.
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
@@ -907,6 +962,8 @@ class Hindsight:
             "entities": entities,
             "tags": tags,
         }
+        if resolve_entities is not None:
+            item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
         batch_kwargs: dict[str, Any] = {
@@ -1243,6 +1300,30 @@ class Hindsight:
             self._mental_models_api.refresh_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout)
         )
 
+    def dry_run_refresh_mental_model(self, bank_id: str, mental_model_id: str):
+        """
+        Preview a mental model refresh without changing anything (sync wrapper — use
+        ``await client.mental_models.dry_run_refresh_mental_model(...)`` in async code).
+
+        The production refresh pipeline with two writes skipped — the content and the
+        watermark — so what it reports is what the next refresh will do. Reports the
+        mode it ran in and why, the scope and time window it read, the evidence it
+        would ground on, and a diff from the stored content to the content it would
+        write. Not configurable, and costs the same LLM tokens as a real refresh.
+
+        Args:
+            bank_id: The memory bank ID
+            mental_model_id: The mental model ID
+
+        Returns:
+            MentalModelDryRunRefreshResult
+        """
+        return _run_async(
+            self._mental_models_api.dry_run_refresh_mental_model(
+                bank_id, mental_model_id, _request_timeout=self._timeout
+            )
+        )
+
     def clear_mental_model(self, bank_id: str, mental_model_id: str):
         """
         Clear a mental model's content so the next refresh performs a full re-synthesis.
@@ -1330,6 +1411,313 @@ class Hindsight:
             self._mental_models_api.get_mental_model_history(bank_id, mental_model_id, _request_timeout=self._timeout)
         )
 
+    # Knowledge base methods
+
+    def get_knowledge_base_tree(self, bank_id: str):
+        """
+        Get the knowledge base as a nested folder/page tree (sync wrapper — use
+        ``await client.knowledge_base.get_knowledge_base_tree(...)`` in async code).
+
+        Page bodies are not included; fetch a page with :meth:`get_knowledge_page`.
+
+        Args:
+            bank_id: The memory bank ID
+
+        Returns:
+            KnowledgeTreeResponse with roots
+        """
+        return _run_async(self._knowledge_base_api.get_knowledge_base_tree(bank_id, _request_timeout=self._timeout))
+
+    def create_knowledge_folder(self, bank_id: str, name: str, parent_id: str | None = None):
+        """
+        Create a knowledge-base folder (sync wrapper — use
+        ``await client.knowledge_base.create_knowledge_folder(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            name: Folder name
+            parent_id: Optional parent folder ID (None creates it at the root)
+
+        Returns:
+            KnowledgeNode
+        """
+        from hindsight_client_api.models import create_folder_request
+
+        request_obj = create_folder_request.CreateFolderRequest(name=name, parent_id=parent_id)
+
+        return _run_async(
+            self._knowledge_base_api.create_knowledge_folder(bank_id, request_obj, _request_timeout=self._timeout)
+        )
+
+    def create_knowledge_page(
+        self,
+        bank_id: str,
+        name: str,
+        source_query: str,
+        parent_id: str | None = None,
+        tags: list[str] | None = None,
+        max_tokens: int | None = None,
+        trigger: dict[str, Any] | None = None,
+    ):
+        """
+        Create a knowledge-base page (sync wrapper — use
+        ``await client.knowledge_base.create_knowledge_page(...)`` in async code).
+
+        Content is generated asynchronously; poll the returned ``operation_id``
+        to know when the first build has finished.
+
+        Args:
+            bank_id: The memory bank ID
+            name: Page name (must be unique within its folder)
+            source_query: The question the page answers, re-asked on every refresh
+            parent_id: Optional parent folder ID (None creates it at the root)
+            tags: Optional tags scoping which memories the page is built from. A
+                ``type:<x>`` tag also sets the page's rendered type.
+            max_tokens: Optional content budget (defaults to 4096 server-side)
+            trigger: Optional trigger settings. Omit to use the page defaults
+                (observation-only, delta mode, refresh after consolidation); a
+                supplied trigger replaces those defaults rather than merging.
+
+        Returns:
+            CreateKnowledgePageResponse with page_id, mental_model_id and operation_id
+        """
+        from hindsight_client_api.models import create_page_request, mental_model_trigger_input
+
+        trigger_obj = None
+        if trigger:
+            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+
+        request_obj = create_page_request.CreatePageRequest(
+            name=name,
+            source_query=source_query,
+            parent_id=parent_id,
+            tags=tags,
+            max_tokens=max_tokens,
+            trigger=trigger_obj,
+        )
+
+        return _run_async(
+            self._knowledge_base_api.create_knowledge_page(bank_id, request_obj, _request_timeout=self._timeout)
+        )
+
+    def get_knowledge_page(self, bank_id: str, page_id: str):
+        """
+        Get a knowledge page rendered as a markdown document (sync wrapper — use
+        ``await client.knowledge_base.get_knowledge_page(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            page_id: The page ID
+
+        Returns:
+            KnowledgePageResponse with body and full markdown (frontmatter + body)
+        """
+        return _run_async(
+            self._knowledge_base_api.get_knowledge_page(bank_id, page_id, _request_timeout=self._timeout)
+        )
+
+    def search_knowledge_base(self, bank_id: str, q: str, limit: int | None = None):
+        """
+        Hybrid search over knowledge pages (sync wrapper — use
+        ``await client.knowledge_base.search_knowledge_base(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            q: Search query
+            limit: Maximum results to return (1-50, defaults to 10 server-side)
+
+        Returns:
+            KnowledgePageSearchResponse with ranked results
+        """
+        return _run_async(
+            self._knowledge_base_api.search_knowledge_base(bank_id, q, limit=limit, _request_timeout=self._timeout)
+        )
+
+    def update_knowledge_node(
+        self,
+        bank_id: str,
+        node_id: str,
+        name: str | None = None,
+        parent_id: str | None = _UNSET,
+        source_query: str | None = None,
+        tags: list[str] | None = None,
+        max_tokens: int | None = None,
+        trigger: dict[str, Any] | None = None,
+    ):
+        """
+        Rename/move a knowledge node and/or update a page's options (sync wrapper —
+        use ``await client.knowledge_base.update_knowledge_node(...)`` in async code).
+
+        Only the fields you pass are applied. ``parent_id`` is only sent when
+        provided, so passing ``None`` explicitly moves the node to the root.
+
+        Args:
+            bank_id: The memory bank ID
+            node_id: The folder or page ID
+            name: Optional new name
+            parent_id: Optional new parent folder (pass None to move to the root)
+            source_query: Pages only — new question. Changing it rebuilds the page.
+            tags: Pages only — replaces the page's tags (pass [] to clear)
+            max_tokens: Pages only — new content budget
+            trigger: Pages only — refresh settings to change, applied as a patch: the
+                keys you pass are updated and the rest keep the page's current values
+
+        Returns:
+            KnowledgeNode
+        """
+        from hindsight_client_api.models import update_node_request
+
+        # Build the request from only the arguments the caller supplied: the server
+        # treats an absent field as "leave alone" but an explicit null parent_id as
+        # "move to the root", so passing every field through (as the other update
+        # wrappers do) would make those two cases indistinguishable.
+        fields: dict[str, Any] = {}
+        if name is not None:
+            fields["name"] = name
+        if parent_id is not _UNSET:
+            fields["parent_id"] = parent_id
+        if source_query is not None:
+            fields["source_query"] = source_query
+        if tags is not None:
+            fields["tags"] = tags
+        if max_tokens is not None:
+            fields["max_tokens"] = max_tokens
+        if trigger is not None:
+            fields["trigger"] = trigger
+
+        request_obj = update_node_request.UpdateNodeRequest(**fields)
+
+        return _run_async(
+            self._knowledge_base_api.update_knowledge_node(
+                bank_id, node_id, request_obj, _request_timeout=self._timeout
+            )
+        )
+
+    def delete_knowledge_node(self, bank_id: str, node_id: str):
+        """
+        Delete a knowledge folder or page and its whole subtree (sync wrapper — use
+        ``await client.knowledge_base.delete_knowledge_node(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            node_id: The folder or page ID
+        """
+        return _run_async(
+            self._knowledge_base_api.delete_knowledge_node(bank_id, node_id, _request_timeout=self._timeout)
+        )
+
+    def export_knowledge_base(self, bank_id: str):
+        """
+        Export the knowledge base as a portable markdown bundle (sync wrapper — use
+        ``await client.knowledge_base.export_knowledge_base(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+
+        Returns:
+            KnowledgePageBundleResponse with files (index.md, one file per page, history logs)
+        """
+        return _run_async(self._knowledge_base_api.export_knowledge_base(bank_id, _request_timeout=self._timeout))
+
+    # Document transfer (export / import between banks — no LLM re-extraction)
+
+    @property
+    def document_transfer(self) -> document_transfer_api.DocumentTransferApi:
+        """Low-level Document Transfer API — submit an async export, download an archive, import."""
+        return self._document_transfer_api
+
+    def export_documents(
+        self,
+        bank_id: str,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+        *,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """
+        Export a bank's documents as a transfer ZIP archive (blocking convenience).
+
+        Export runs as a background operation server-side (a whole-bank export can be
+        large). This helper submits it, polls the operation to completion, downloads
+        the archive, and returns its bytes — so callers get a single synchronous call.
+        For the raw async flow use ``client.document_transfer`` and ``client.operations``.
+
+        Args:
+            bank_id: Source bank.
+            document_ids: Specific document ids to export; omit for the whole bank.
+            include_observations: Also export consolidated observations (whole-bank only).
+            poll_interval: Seconds between operation-status polls.
+            timeout: Maximum seconds to wait for the export to finish.
+
+        Returns:
+            The transfer ZIP archive as bytes (import it via ``client.document_transfer.import_documents``).
+
+        Raises:
+            TimeoutError: if the export does not finish within ``timeout``.
+            RuntimeError: if the export operation fails or completes without an archive.
+        """
+        return _run_async(
+            self.aexport_documents(
+                bank_id,
+                document_ids,
+                include_observations,
+                poll_interval=poll_interval,
+                timeout=timeout,
+            )
+        )
+
+    async def aexport_documents(
+        self,
+        bank_id: str,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+        *,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """Async variant of :meth:`export_documents` — submit, poll, download, return bytes."""
+        submission = await self._document_transfer_api.export_documents(
+            bank_id,
+            document_id=document_ids,
+            include_observations=include_observations,
+            _request_timeout=self._timeout,
+        )
+        operation_id = submission.operation_id
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            status = await self._operations_api.get_operation_status(
+                bank_id, operation_id, _request_timeout=self._timeout
+            )
+            if status.status == "completed":
+                break
+            if status.status in ("failed", "cancelled"):
+                raise RuntimeError(f"Export operation {operation_id} {status.status}: {status.error_message}")
+            if loop.time() >= deadline:
+                raise TimeoutError(f"Export operation {operation_id} did not complete within {timeout}s")
+            await asyncio.sleep(poll_interval)
+
+        meta = status.result_metadata or {}
+        download_url = meta.get("download_url")
+        if not download_url:
+            raise RuntimeError(f"Export operation {operation_id} completed without a download_url")
+        # Fetch the server-provided download_url directly (it carries the raw,
+        # slash-bearing storage key). Going through the generated download_file
+        # would percent-encode the slashes to %2F, which fronting proxies often
+        # reject. param_serialize applies the client's auth headers; call_api
+        # returns the raw response whose bytes we read (the typed return is
+        # `object`, which can't model an application/zip body).
+        request = self._api_client.param_serialize(
+            method="GET",
+            resource_path=download_url,
+            header_params={"Accept": "application/zip"},
+            auth_settings=[],
+        )
+        response = await self._api_client.call_api(*request, _request_timeout=self._timeout)
+        return bytes(await response.read())
+
     # Directives methods
 
     def create_directive(
@@ -1367,18 +1755,34 @@ class Hindsight:
 
         return _run_async(self._directives_api.create_directive(bank_id, request_obj, _request_timeout=self._timeout))
 
-    def list_directives(self, bank_id: str, tags: list[str] | None = None):
+    def list_directives(
+        self,
+        bank_id: str,
+        tags: list[str] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ):
         """
         List all directives in a bank (sync wrapper — use ``await client.directives.list_directives(...)`` in async code).
 
         Args:
             bank_id: The memory bank ID
             tags: Optional tags to filter by
+            limit: Maximum number of directives to return
+            offset: Number of directives to skip (for pagination)
 
         Returns:
-            ListDirectivesResponse with items
+            ListDirectivesResponse with items and the total matching the filter
         """
-        return _run_async(self._directives_api.list_directives(bank_id, tags=tags, _request_timeout=self._timeout))
+        return _run_async(
+            self._directives_api.list_directives(
+                bank_id,
+                tags=tags,
+                limit=limit,
+                offset=offset,
+                _request_timeout=self._timeout,
+            )
+        )
 
     def get_directive(self, bank_id: str, directive_id: str):
         """
@@ -1487,6 +1891,9 @@ class Hindsight:
         # Observation / consolidation settings
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         consolidation_llm_batch_size: int | None = None,
         consolidation_source_facts_max_tokens: int | None = None,
         consolidation_source_facts_max_tokens_per_observation: int | None = None,
@@ -1522,6 +1929,9 @@ class Hindsight:
             entities_allow_free_form: Whether to allow entity types outside entity_labels (default: True).
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder.
             consolidation_llm_batch_size: Number of LLM calls to batch during consolidation.
             consolidation_source_facts_max_tokens: Max tokens for source facts across all observations
                 in a consolidation pass.
@@ -1552,6 +1962,9 @@ class Hindsight:
                 "entities_allow_free_form": entities_allow_free_form,
                 "enable_observations": enable_observations,
                 "observations_mission": observations_mission,
+                "enable_temporal_retrieval": enable_temporal_retrieval,
+                "enable_graph_retrieval": enable_graph_retrieval,
+                "enable_reranking": enable_reranking,
                 "consolidation_llm_batch_size": consolidation_llm_batch_size,
                 "consolidation_source_facts_max_tokens": consolidation_source_facts_max_tokens,
                 "consolidation_source_facts_max_tokens_per_observation": consolidation_source_facts_max_tokens_per_observation,

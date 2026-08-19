@@ -7,6 +7,7 @@ pub mod entity;
 pub mod explore;
 pub mod fs;
 pub mod health;
+pub mod knowledge_base;
 pub mod memory;
 pub mod mental_model;
 pub mod operation;

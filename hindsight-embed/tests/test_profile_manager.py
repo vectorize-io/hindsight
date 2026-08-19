@@ -1,16 +1,13 @@
 """Tests for profile_manager module."""
 
 import json
-import os
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from hindsight_embed.profile_manager import (
-    ProfileInfo,
     ProfileManager,
-    ProfilePaths,
     resolve_active_profile,
     validate_profile_exists,
 )
@@ -119,22 +116,50 @@ class TestProfileManager:
         # Create profile
         profile_manager.create_profile("test-profile", {"KEY": "value"})
         assert profile_manager.profile_exists("test-profile")
+        profiles_dir = temp_hindsight_dir / "profiles"
+        (profiles_dir / "test-profile.log").write_text("current")
+        (profiles_dir / "test-profile.log.1").write_text("retained")
 
         # Delete profile
         profile_manager.delete_profile("test-profile")
         assert not profile_manager.profile_exists("test-profile")
 
         # Verify all files are removed
-        profiles_dir = temp_hindsight_dir / "profiles"
         assert not (profiles_dir / "test-profile.env").exists()
         assert not (profiles_dir / "test-profile.lock").exists()
         assert not (profiles_dir / "test-profile.log").exists()
+        assert not (profiles_dir / "test-profile.log.1").exists()
 
         # Verify metadata no longer contains profile
         metadata_path = profiles_dir / "metadata.json"
         if metadata_path.exists():
             metadata = json.loads(metadata_path.read_text())
             assert "test-profile" not in metadata.get("profiles", {})
+
+    def test_delete_profile_survives_undeletable_log(self, profile_manager, temp_hindsight_dir):
+        """An unremovable log (e.g. still open on Windows) must not strand the profile."""
+        profile_manager.create_profile("test-profile", {"KEY": "value"})
+        profiles_dir = temp_hindsight_dir / "profiles"
+        (profiles_dir / "test-profile.log").write_text("current")
+        (profiles_dir / "test-profile.log.1").write_text("retained")
+
+        real_unlink = Path.unlink
+
+        def refuse_active_log(self, **kwargs):
+            if self.name == "test-profile.log":
+                raise PermissionError(32, "The process cannot access the file")
+            return real_unlink(self, **kwargs)
+
+        with patch.object(Path, "unlink", refuse_active_log):
+            profile_manager.delete_profile("test-profile")
+
+        # The locked log stays behind, but everything else is cleaned up and the
+        # profile is fully deregistered rather than left half-deleted.
+        assert (profiles_dir / "test-profile.log").exists()
+        assert not (profiles_dir / "test-profile.log.1").exists()
+        assert not profile_manager.profile_exists("test-profile")
+        metadata = json.loads((profiles_dir / "metadata.json").read_text())
+        assert "test-profile" not in metadata.get("profiles", {})
 
     def test_delete_nonexistent_profile(self, profile_manager):
         """Test deleting a non-existent profile fails."""

@@ -1,6 +1,7 @@
 """Test automatic batch chunking based on character count."""
 
 import asyncio
+import json
 import os
 
 import pytest
@@ -11,6 +12,7 @@ from hindsight_api.engine.memory_engine import (
     _split_contents_into_sub_batches,
     count_tokens,
 )
+from hindsight_api.engine.retain.fact_extraction import chunk_text
 
 # ---------------------------------------------------------------------------
 # Regression tests for issue #1571: the splitter must actually chunk an
@@ -31,6 +33,7 @@ def test_split_single_oversized_item_produces_multiple_sub_batches():
     split = _split_contents_into_sub_batches(
         [{"content": big_content, "document_id": "doc-oversize"}],
         tokens_per_batch,
+        chunk_size=3000,
     )
 
     assert len(split.sub_batches) > 1, (
@@ -59,7 +62,7 @@ def test_split_oversized_item_preserves_document_id_and_metadata():
         "tags": ["t1", "t2"],
     }
 
-    split = _split_contents_into_sub_batches([item], tokens_per_batch)
+    split = _split_contents_into_sub_batches([item], tokens_per_batch, chunk_size=3000)
 
     assert len(split.sub_batches) > 1
     for batch in split.sub_batches:
@@ -85,7 +88,7 @@ def test_split_mixed_batch_chunks_only_oversized_items():
         {"content": small_b, "document_id": "doc-c"},
     ]
 
-    split = _split_contents_into_sub_batches(contents, tokens_per_batch)
+    split = _split_contents_into_sub_batches(contents, tokens_per_batch, chunk_size=3000)
 
     # We expect: [small_a packed] then N chunks of big, then [small_b packed].
     # At minimum: > 2 sub-batches (a + multiple big chunks + c).
@@ -104,6 +107,110 @@ def test_split_mixed_batch_chunks_only_oversized_items():
     assert big_origin_count > small_a_origin_count
 
 
+def _conversation_payload(turns: int = 120) -> str:
+    return json.dumps(
+        [{"role": "user" if i % 2 == 0 else "assistant", "content": f"turn {i} " + "blah " * 60} for i in range(turns)]
+    )
+
+
+def _jsonl_payload(lines: int = 200) -> str:
+    return "\n".join(json.dumps({"i": i, "text": "line " + "x " * 80}) for i in range(lines))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            "\n\n".join(f"Section {i}. " + f"marker{i} filler word here. " * 117 for i in range(10)), id="prose"
+        ),
+        pytest.param(_conversation_payload(), id="json-conversation"),
+        pytest.param(_jsonl_payload(), id="jsonl"),
+    ],
+)
+def test_split_slices_are_whole_native_chunks(body):
+    """Every slice holds a whole number of native chunks and re-chunks back to
+    exactly those chunks (issue #3282).
+
+    This is the invariant the rest of the retain path is built on: the chunks
+    stored for a document must depend only on its body, never on how transport
+    split it. Delta retain and the streaming recovery pass both match stored
+    chunks by content hash, so a slice cutting mid-chunk silently re-extracts
+    unchanged history; ``chunk_index`` bookkeeping assumes whole chunks too.
+    """
+    chunk_size = 3000
+    native_chunks = chunk_text(body, chunk_size)
+    assert len(native_chunks) > 3, "test payload must span several native chunks"
+
+    split = _split_contents_into_sub_batches(
+        [{"content": body, "document_id": "doc-align"}],
+        tokens_per_batch=1_500,
+        chunk_size=chunk_size,
+    )
+
+    assert len(split.sub_batches) > 1, "payload should have been sliced"
+    rechunked: list[str] = []
+    for sub_batch, count in zip(split.sub_batches, split.chunk_counts):
+        slice_chunks = chunk_text(sub_batch[0]["content"], chunk_size)
+        assert len(slice_chunks) == count, "chunk_counts must match what the slice re-chunks to"
+        rechunked.extend(slice_chunks)
+
+    assert rechunked == native_chunks, "slices did not reproduce the document's native chunks"
+
+
+def test_split_falls_back_to_one_chunk_per_slice_when_no_faithful_join_exists(monkeypatch):
+    """When a run of chunks cannot be rejoined faithfully, each chunk ships alone.
+
+    Packing several chunks into one slice is only safe while the joined text
+    re-chunks back to exactly those chunks. If no candidate join does (a
+    content shape whose chunker is not reconstructible from its own output),
+    the splitter must degrade to one chunk per sub-batch — trivially aligned by
+    ``chunk_text``'s idempotency — rather than ship a slice whose boundaries
+    disagree with what gets stored (issue #3282).
+    """
+    from hindsight_api.engine.retain import fact_extraction
+
+    # Over the budget so it takes the oversized-item path; the stubbed chunks
+    # are small enough that the packer wants all three in a single slice.
+    body = "unjoinable body. " * 500
+    chunks = ["chunk one", "chunk two", "chunk three"]
+
+    def _fake_chunk_text(text, max_chars, structured_chunk_size=None):
+        # Only the original body chunks into `chunks`; every rejoin attempt
+        # comes back as something else, so verification always fails.
+        return list(chunks) if text == body else ["something else entirely"]
+
+    monkeypatch.setattr(fact_extraction, "chunk_text", _fake_chunk_text)
+
+    split = _split_contents_into_sub_batches(
+        [{"content": body, "document_id": "doc-unjoinable"}],
+        tokens_per_batch=100,
+        chunk_size=3000,
+    )
+
+    assert [b[0]["content"] for b in split.sub_batches] == chunks
+    assert split.chunk_counts == [1, 1, 1]
+
+
+def test_split_slice_never_cuts_a_native_chunk_under_a_tiny_budget():
+    """A budget below one native chunk cannot shrink the slice past that chunk.
+
+    ``retain_chunk_size`` is the real bound on a slice; honouring a smaller
+    token budget would mean cutting mid-chunk, which is exactly what breaks
+    hash-based chunk reuse (issue #3282).
+    """
+    body = "The quick brown fox jumps over the lazy dog. " * 1_000
+    native_chunks = chunk_text(body, 3000)
+
+    split = _split_contents_into_sub_batches(
+        [{"content": body, "document_id": "doc-tiny-budget"}],
+        tokens_per_batch=10,
+        chunk_size=3000,
+    )
+
+    assert [b[0]["content"] for b in split.sub_batches] == native_chunks
+    assert split.chunk_counts == [1] * len(native_chunks)
+
+
 def test_split_small_batch_returns_single_sub_batch():
     """A batch under the budget stays as a single sub-batch."""
     tokens_per_batch = 10_000
@@ -112,7 +219,7 @@ def test_split_small_batch_returns_single_sub_batch():
         {"content": "Bob loves Python", "document_id": "doc-2"},
     ]
 
-    split = _split_contents_into_sub_batches(contents, tokens_per_batch)
+    split = _split_contents_into_sub_batches(contents, tokens_per_batch, chunk_size=3000)
 
     assert len(split.sub_batches) == 1
     assert split.sub_batches[0] == contents

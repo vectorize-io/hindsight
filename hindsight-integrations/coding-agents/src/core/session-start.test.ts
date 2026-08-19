@@ -20,7 +20,7 @@ describe("buildSessionStartContext", () => {
       startSeed,
       startSurvey,
     });
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     expect(startSurvey).toHaveBeenCalledWith("/repo/dir", {
       harness: "claude-code",
       model: "haiku",
@@ -40,6 +40,25 @@ describe("buildSessionStartContext", () => {
     expect(out.deferInitialReflect).toBe(true);
   });
 
+  it("threads the ASKING harness to the background seed (not the config loader's default) — #3247", async () => {
+    // Regression: the seed used to fire without a harness, so deepen.js fell back to the config
+    // loader's "opencode" default and misfiled a non-opencode session's survey + git history into
+    // an `opencode::<project>` bank. The seed must receive the harness that asked.
+    const client = { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk };
+    const startSeed = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      harness: "codex",
+      hasGit: () => true,
+      startSeed,
+      startSurvey: vi.fn(),
+    });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "codex" });
+  });
+
   it("cold git repo + codebaseSurvey:false -> starts the seed but NOT the survey", async () => {
     const client = { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk };
     const startSeed = vi.fn();
@@ -53,7 +72,7 @@ describe("buildSessionStartContext", () => {
       startSeed,
       startSurvey,
     });
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     expect(startSurvey).not.toHaveBeenCalled();
     expect(out.systemMessage).toContain("is learning");
   });
@@ -123,7 +142,7 @@ describe("buildSessionStartContext", () => {
     });
     // The live bank is consulted, and an empty bank seeds — no client-side flag can contradict it.
     expect(called).toBe(true);
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     expect(out.systemMessage).toContain("is learning");
   });
 
@@ -141,7 +160,7 @@ describe("buildSessionStartContext", () => {
       startSurvey,
     });
     // The engine is idempotent, so every warm session start re-fires it to pick up missing work.
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     // The cold-only extras stay off: no survey, no user-facing learning note.
     expect(startSurvey).not.toHaveBeenCalled();
     expect(out.additionalContext).toContain("- Component map (p1)");
@@ -188,7 +207,7 @@ describe("buildSessionStartContext", () => {
       startSeed,
     });
     // Seeding is unaffected by a listPages failure.
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     // Empty-state roster preamble still renders (no page names, no throw).
     expect(out.additionalContext).toContain("<hindsight_knowledge>");
     expect(out.additionalContext).toContain("No knowledge pages yet");
@@ -267,7 +286,9 @@ describe("buildSessionStartContext — periodic re-survey (bank-stored commit co
     `survey-baseline:${sha}`,
     ["source:survey-baseline"],
     "survey", // survey-lifecycle strategy (marker rule: zero extraction)
-    expect.anything(),
+    // Opts are always passed now; with no retainMetadata configured the stamp is empty, and
+    // `retain` only sets metadata when truthy, so nothing reaches the API.
+    { metadata: undefined },
   ];
 
   it(">= threshold since the latest reachable baseline -> re-surveys + records a new baseline", async () => {
@@ -289,6 +310,34 @@ describe("buildSessionStartContext — periodic re-survey (bank-stored commit co
       expect.objectContaining({ harness: "claude-code" })
     );
     expect(retain).toHaveBeenCalledWith(...marker("newsha"));
+  });
+
+  it("applies retain attribution to survey baseline markers", async () => {
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({
+        surveyRefreshCommits: 20,
+        retainTags: ["project:{project}"],
+        retainMetadata: { bank: "{bankId}" },
+      }),
+      client: warmClient(["survey-baseline:oldsha"], retain),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey: vi.fn(),
+      headSha: () => "newsha",
+      commitsSince: () => 25,
+    });
+
+    expect(retain).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      "survey-baseline:newsha",
+      ["project:repo", "source:survey-baseline"],
+      "survey",
+      { metadata: { bank: "bank-1" } }
+    );
   });
 
   it("< threshold -> no re-survey, no new baseline", async () => {

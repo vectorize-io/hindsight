@@ -308,6 +308,53 @@ hindsight webhook delete <bank_id> <webhook_id>
 hindsight webhook deliveries <bank_id> <webhook_id>
 ```
 
+## Knowledge Base
+
+Manage a bank's knowledge pages — living documents organized in a folder tree. See [Knowledge Pages](../developer/api/knowledge-pages) for what they are and how they refresh.
+
+```bash
+# Show the folder/page tree (pages that have fallen behind are marked stale)
+hindsight knowledge-base tree <bank_id>
+
+# Create a folder, optionally nested under another
+hindsight knowledge-base create-folder <bank_id> "Operations"
+hindsight knowledge-base create-folder <bank_id> "Runbooks" --parent-id <folder_id>
+
+# Create a page — content is generated in the background
+hindsight knowledge-base create-page <bank_id> \
+  "Deploying the API" \
+  "How is the API deployed?" \
+  --parent-id <folder_id> \
+  --tags ops,type:runbook
+
+# Build a page from raw facts instead of the observation-only default
+hindsight knowledge-base create-page <bank_id> "Recent Incidents" \
+  "What incidents happened recently?" \
+  --fact-types experience,world --mode full
+
+# Read a page as a markdown document
+hindsight knowledge-base get-page <bank_id> <page_id>
+
+# Hybrid search (full-text + vector) over whole pages
+hindsight knowledge-base search <bank_id> "how do we deploy" --limit 5
+
+# Rename, move, or reconfigure a node
+hindsight knowledge-base update <bank_id> <node_id> --name "New name"
+hindsight knowledge-base update <bank_id> <page_id> --source-query "New question?"
+
+# Export the whole knowledge base as a markdown bundle
+hindsight knowledge-base export <bank_id>
+
+# Delete a folder or page and everything under it
+hindsight knowledge-base delete <bank_id> <node_id> -y
+```
+
+:::tip
+`hindsight fs mount --bank <bank_id>` mirrors the same knowledge base onto disk as
+real markdown files, kept current by a background refresh loop — handy when you'd
+rather use `grep`, `rg`, or your editor than the commands above.
+:::
+
 ## Audit Logs
 
 Inspect the audit trail for a bank:

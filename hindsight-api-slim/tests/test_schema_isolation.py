@@ -226,6 +226,7 @@ class TestSchemaIsolation:
         assert not errors, f"Schema context isolation errors: {errors}"
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_list_memories_respects_schema(self, memory, pg0_db_url):
         """
         list_memory_units should only return memories from the current schema.

@@ -1,6 +1,11 @@
 {
   "name": "@vectorize-io/hindsight-coding-agents",
-  "version": "0.1.0",
+  "version": "0.4.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/coding-agents"
+  },
   "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, …), with automatic background ingestion (no setup CLI).",
   "type": "module",
   "main": "dist/index.js",
@@ -22,10 +27,26 @@
     "hindsight-antigravity-statusline": "dist/antigravity-statusline.js",
     "hindsight-devin-hook": "dist/devin-hook.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./dsh": "./dist/dsh.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./dist/*": "./dist/*"
+  },
   "files": [
     "skill",
-    "dist"
+    "dist",
+    "cordis.patch.yml"
   ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "cline": {
     "plugins": [
       {
@@ -38,6 +59,11 @@
       }
     ]
   },
+  "pi": {
+    "extensions": [
+      "./dist/prime-agent.js"
+    ]
+  },
   "scripts": {
     "build": "tsup",
     "clean": "rm -rf dist",
@@ -47,6 +73,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vectorize-io/hindsight-all": "^0.8.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -55,6 +82,14 @@
     "@types/node": "^26.1.0",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "esbuild": ">=0.25.0 <1.0.0",
+    "fast-uri": ">=3.1.5 <4.0.0",
+    "hono": ">=4.12.34 <5.0.0",
+    "ip-address": ">=10.3.1 <11.0.0",
+    "postcss": ">=8.5.23 <9.0.0",
+    "vite": ">=6.4.3 <7.0.0"
   }
 }

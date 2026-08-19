@@ -68,7 +68,7 @@ async def _insert_fact(conn, bank_id: str, tags: list[str] | None = None) -> Non
 def _patch_submit(memory: MemoryEngine, monkeypatch) -> list[str]:
     submitted: list[str] = []
 
-    async def _record(*, bank_id, mental_model_id, request_context):
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False, automatic=False):
         submitted.append(mental_model_id)
         return {"operation_id": str(uuid.uuid4())}
 
@@ -97,6 +97,7 @@ async def test_tagged_strict_model_skipped_when_only_untagged_consolidated(
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_tagged_non_strict_model_refreshed_when_only_untagged_consolidated(
     memory: MemoryEngine, request_context, monkeypatch
 ):
@@ -116,6 +117,7 @@ async def test_tagged_non_strict_model_refreshed_when_only_untagged_consolidated
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_tag_groups_model_refreshed_when_only_untagged_consolidated(
     memory: MemoryEngine, request_context, monkeypatch
 ):
@@ -157,6 +159,7 @@ async def test_non_strict_model_skipped_when_nothing_changed(memory: MemoryEngin
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_tagged_model_refreshed_when_its_tag_was_consolidated(memory: MemoryEngine, request_context, monkeypatch):
     """The overlap path is unchanged: a strict tagged model is refreshed when a memory
     carrying its tag was consolidated."""
@@ -174,6 +177,7 @@ async def test_tagged_model_refreshed_when_its_tag_was_consolidated(memory: Memo
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_non_strict_model_refreshed_on_mixed_run_with_foreign_tags(
     memory: MemoryEngine, request_context, monkeypatch
 ):

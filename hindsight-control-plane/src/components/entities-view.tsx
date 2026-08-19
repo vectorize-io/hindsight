@@ -272,7 +272,7 @@ export function EntitiesView() {
       </div>
 
       {viewMode === "relations" && (
-        <div className="border border-border rounded-lg overflow-hidden">
+        <div className="bg-card border border-border border-solid rounded-[16px] overflow-hidden">
           {graphLoading ? (
             <div className="flex items-center justify-center py-20">
               <div className="text-center">

@@ -239,6 +239,16 @@ Common patterns:
 
 Leave `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset to preserve the source/query language across the pipeline (the default).
 
+#### Default behaviour when no output language is set
+
+With `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset, retain and consolidation are both instructed to keep their output in the language of the source material. For observations specifically:
+
+- **Language is decided per observation**, from the facts that observation is built on — not from the batch. A batch mixing Chinese and English facts produces Chinese observations for the Chinese facts and English observations for the English ones. When a single observation merges facts written in several languages, the majority language of those facts wins.
+- **Updates follow the new facts.** When an existing observation is written in a different language from the facts updating it, the whole observation is rewritten in the new facts' language. A bank whose observations previously drifted into the wrong language converges back as new facts arrive.
+- **Names and technical terms are never translated** — proper nouns, product and place names, identifiers, code, and units stay as written in the source facts, whatever the surrounding language.
+
+This is prompt-level guidance, not a hard guarantee: a model that ignores instructions can still emit the wrong language. Set `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` explicitly when a bank must be single-language no matter what its sources look like.
+
 ---
 
 ## Best Practices

@@ -53,13 +53,21 @@ import type {
   TagGroupNotInput,
   MinScores,
   AsyncOperationSubmitResponse,
+  CreateKnowledgePageResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,
   DirectiveResponse,
   DocumentResponse,
+  KnowledgeNode,
+  KnowledgePageBundleResponse,
+  KnowledgePageResponse,
+  KnowledgePageSearchResponse,
+  KnowledgeTreeResponse,
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelTriggerInput,
+  MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,
 } from "../generated/types.gen";
@@ -117,6 +125,8 @@ export interface MemoryItemInput {
   metadata?: Record<string, string>;
   document_id?: string;
   entities?: EntityInput[];
+  /** Resolve the supplied `entities` against existing ones (default true); false stores them as written */
+  resolve_entities?: boolean;
   tags?: string[];
   observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
   strategy?: string;
@@ -213,6 +223,8 @@ export class HindsightClient {
       /** Optional caller-supplied UUID for idempotent async retries */
       operationId?: string;
       entities?: EntityInput[];
+      /** Resolve the supplied `entities` against existing ones (default true); false stores them as written */
+      resolveEntities?: boolean;
       /** Optional list of tags for this memory */
       tags?: string[];
       /** How to handle existing documents: 'replace' (default) or 'append' */
@@ -235,6 +247,7 @@ export class HindsightClient {
           metadata: options?.metadata,
           document_id: options?.documentId,
           entities: options?.entities,
+          resolve_entities: options?.resolveEntities,
           tags: options?.tags,
           update_mode: options?.updateMode,
           observation_scopes: options?.observationScopes,
@@ -273,6 +286,7 @@ export class HindsightClient {
       metadata: item.metadata,
       document_id: item.document_id,
       entities: item.entities,
+      resolve_entities: item.resolve_entities,
       tags: item.tags,
       observation_scopes: item.observation_scopes,
       strategy: item.strategy,
@@ -550,6 +564,12 @@ export class HindsightClient {
       enableObservations?: boolean;
       /** Controls what gets synthesised into observations. Replaces built-in rules. */
       observationsMission?: string;
+      /** Run the temporal retrieval arm during recall, and the date-aware query analysis feeding it. */
+      enableTemporalRetrieval?: boolean;
+      /** Run the entity/link graph traversal arm during recall. */
+      enableGraphRetrieval?: boolean;
+      /** Rerank fused candidates with the cross-encoder. False returns the RRF order. */
+      enableReranking?: boolean;
       signal?: AbortSignal;
     } = {}
   ): Promise<BankProfileResponse> {
@@ -572,6 +592,9 @@ export class HindsightClient {
         retain_structured_chunk_size: options.retainStructuredChunkSize,
         enable_observations: options.enableObservations,
         observations_mission: options.observationsMission,
+        enable_temporal_retrieval: options.enableTemporalRetrieval,
+        enable_graph_retrieval: options.enableGraphRetrieval,
+        enable_reranking: options.enableReranking,
       },
       signal: options.signal,
     });
@@ -644,6 +667,12 @@ export class HindsightClient {
       retainStructuredChunkSize?: number;
       enableObservations?: boolean;
       observationsMission?: string;
+      /** Run the temporal retrieval arm during recall, and the date-aware query analysis feeding it. */
+      enableTemporalRetrieval?: boolean;
+      /** Run the entity/link graph traversal arm during recall. */
+      enableGraphRetrieval?: boolean;
+      /** Rerank fused candidates with the cross-encoder. False returns the RRF order. */
+      enableReranking?: boolean;
       /** How skeptical vs trusting (1=trusting, 5=skeptical). */
       dispositionSkepticism?: number;
       /** How literally to interpret information (1=flexible, 5=literal). */
@@ -667,6 +696,11 @@ export class HindsightClient {
       updates.enable_observations = options.enableObservations;
     if (options.observationsMission !== undefined)
       updates.observations_mission = options.observationsMission;
+    if (options.enableTemporalRetrieval !== undefined)
+      updates.enable_temporal_retrieval = options.enableTemporalRetrieval;
+    if (options.enableGraphRetrieval !== undefined)
+      updates.enable_graph_retrieval = options.enableGraphRetrieval;
+    if (options.enableReranking !== undefined) updates.enable_reranking = options.enableReranking;
     if (options.dispositionSkepticism !== undefined)
       updates.disposition_skepticism = options.dispositionSkepticism;
     if (options.dispositionLiteralism !== undefined)
@@ -753,12 +787,16 @@ export class HindsightClient {
    */
   async listDirectives(
     bankId: string,
-    options?: { tags?: string[]; signal?: AbortSignal }
+    options?: { tags?: string[]; limit?: number; offset?: number; signal?: AbortSignal }
   ): Promise<DirectiveListResponse> {
     const response = await sdk.listDirectives({
       client: this.client,
       path: { bank_id: bankId },
-      query: { tags: options?.tags },
+      query: {
+        tags: options?.tags,
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+        ...(options?.offset !== undefined ? { offset: options.offset } : {}),
+      },
       signal: options?.signal,
     });
 
@@ -846,6 +884,8 @@ export class HindsightClient {
       maxTokens?: number;
       trigger?: {
         refreshAfterConsolidation?: boolean;
+        /** Floor, in seconds, on how often an automatic refresh of this model may run. A trigger firing sooner is queued and parked until the window closes, and further triggers fold into it, so a burst of retains costs one refresh. Explicit refreshes ignore it. 0 disables the floor for this model; omit to inherit the bank/global default. */
+        minRefreshIntervalSeconds?: number;
         /** How this model's tags filter source memories on refresh. If omitted, a tagged model defaults to 'all_strict' (a memory must carry every one of the model's tags), which silently drops memories that only carry a subset. Set 'any' to match memories carrying any of the tags — the same default recall/reflect use. */
         tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
         /** Compound tag filter using boolean groups; overrides the model's flat tags/tagsMatch during refresh. */
@@ -866,6 +906,7 @@ export class HindsightClient {
         trigger: options?.trigger
           ? {
               refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
+              min_refresh_interval_seconds: options.trigger.minRefreshIntervalSeconds,
               tags_match: options.trigger.tagsMatch,
               tag_groups: options.trigger.tagGroups,
             }
@@ -948,6 +989,30 @@ export class HindsightClient {
   }
 
   /**
+   * Preview what a refresh would do to a mental model without changing it.
+   *
+   * The production refresh pipeline with two writes skipped — the content and the
+   * watermark — so what it reports is what the next refresh will do. Reports the
+   * mode it ran in and why, the scope and window it read, the evidence it would
+   * ground on, and a diff from the stored content to the content it would write.
+   *
+   * Not configurable, and costs the same LLM tokens as a real refresh.
+   */
+  async dryRunRefreshMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<MentalModelDryRunRefreshResult> {
+    const response = await sdk.dryRunRefreshMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "dryRunRefreshMentalModel");
+  }
+
+  /**
    * Clear a mental model's content so the next refresh performs a full re-synthesis.
    */
   async clearMentalModel(
@@ -975,7 +1040,7 @@ export class HindsightClient {
       sourceQuery?: string;
       tags?: string[];
       maxTokens?: number;
-      trigger?: { refreshAfterConsolidation?: boolean };
+      trigger?: { refreshAfterConsolidation?: boolean; minRefreshIntervalSeconds?: number };
       signal?: AbortSignal;
     }
   ): Promise<MentalModelResponse> {
@@ -988,7 +1053,10 @@ export class HindsightClient {
         tags: options.tags,
         max_tokens: options.maxTokens,
         trigger: options.trigger
-          ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation }
+          ? {
+              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
+              min_refresh_interval_seconds: options.trigger.minRefreshIntervalSeconds,
+            }
           : undefined,
       },
       signal: options.signal,
@@ -1030,6 +1098,217 @@ export class HindsightClient {
     });
 
     return this.validateResponse(response, "getMentalModelHistory");
+  }
+
+  /**
+   * Get the knowledge base as a nested folder/page tree.
+   *
+   * Page bodies are not included — fetch one with `getKnowledgePage`.
+   */
+  async getKnowledgeBaseTree(
+    bankId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<KnowledgeTreeResponse> {
+    const response = await sdk.getKnowledgeBaseTree({
+      client: this.client,
+      path: { bank_id: bankId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "getKnowledgeBaseTree");
+  }
+
+  /**
+   * Create a knowledge-base folder.
+   */
+  async createKnowledgeFolder(
+    bankId: string,
+    name: string,
+    options?: { parentId?: string | null; signal?: AbortSignal }
+  ): Promise<KnowledgeNode> {
+    const response = await sdk.createKnowledgeFolder({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: { name, parent_id: options?.parentId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "createKnowledgeFolder");
+  }
+
+  /**
+   * Create a knowledge-base page. Content is generated asynchronously — poll the
+   * returned `operation_id` to know when the first build has finished.
+   *
+   * Omit `trigger` to use the page defaults (observation-only, delta mode,
+   * refresh after consolidation); a supplied trigger replaces those defaults
+   * rather than merging with them.
+   */
+  async createKnowledgePage(
+    bankId: string,
+    name: string,
+    sourceQuery: string,
+    options?: {
+      parentId?: string | null;
+      /** Scopes which memories the page is built from. A `type:<x>` tag also sets the page's rendered type. */
+      tags?: string[];
+      maxTokens?: number;
+      trigger?: {
+        mode?: "full" | "delta";
+        refreshAfterConsolidation?: boolean;
+        refreshCron?: string | null;
+        factTypes?: Array<"world" | "experience" | "observation">;
+        excludeMentalModels?: boolean;
+        excludeMentalModelIds?: string[];
+        tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+        tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+        includeChunks?: boolean;
+        recallMaxTokens?: number;
+        recallChunksMaxTokens?: number;
+      };
+      signal?: AbortSignal;
+    }
+  ): Promise<CreateKnowledgePageResponse> {
+    const response = await sdk.createKnowledgePage({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        name,
+        source_query: sourceQuery,
+        parent_id: options?.parentId,
+        tags: options?.tags,
+        max_tokens: options?.maxTokens,
+        trigger: options?.trigger
+          ? {
+              mode: options.trigger.mode,
+              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
+              refresh_cron: options.trigger.refreshCron,
+              fact_types: options.trigger.factTypes,
+              exclude_mental_models: options.trigger.excludeMentalModels,
+              exclude_mental_model_ids: options.trigger.excludeMentalModelIds,
+              tags_match: options.trigger.tagsMatch,
+              tag_groups: options.trigger.tagGroups,
+              include_chunks: options.trigger.includeChunks,
+              recall_max_tokens: options.trigger.recallMaxTokens,
+              recall_chunks_max_tokens: options.trigger.recallChunksMaxTokens,
+            }
+          : undefined,
+      },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "createKnowledgePage");
+  }
+
+  /**
+   * Get a knowledge page rendered as a markdown document (frontmatter + body).
+   */
+  async getKnowledgePage(
+    bankId: string,
+    pageId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<KnowledgePageResponse> {
+    const response = await sdk.getKnowledgePage({
+      client: this.client,
+      path: { bank_id: bankId, page_id: pageId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "getKnowledgePage");
+  }
+
+  /**
+   * Hybrid search (full-text + vector) over the bank's knowledge pages.
+   */
+  async searchKnowledgeBase(
+    bankId: string,
+    query: string,
+    options?: { limit?: number; signal?: AbortSignal }
+  ): Promise<KnowledgePageSearchResponse> {
+    const response = await sdk.searchKnowledgeBase({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: {
+        q: query,
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+      },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "searchKnowledgeBase");
+  }
+
+  /**
+   * Rename/move a knowledge node and/or update a page's options.
+   *
+   * Only the fields present in `options` are sent, so passing `parentId: null`
+   * explicitly moves the node to the root.
+   */
+  async updateKnowledgeNode(
+    bankId: string,
+    nodeId: string,
+    options: {
+      name?: string;
+      parentId?: string | null;
+      /** Pages only — changing it rebuilds the page against the new question. */
+      sourceQuery?: string;
+      /** Pages only — replaces the page's tags (pass [] to clear). */
+      tags?: string[];
+      maxTokens?: number;
+      /** Pages only — refresh settings to change. Applied as a patch: the fields you send are
+       *  updated and the rest keep the page's current values. */
+      trigger?: MentalModelTriggerInput;
+      signal?: AbortSignal;
+    }
+  ): Promise<KnowledgeNode> {
+    const response = await sdk.updateKnowledgeNode({
+      client: this.client,
+      path: { bank_id: bankId, node_id: nodeId },
+      body: {
+        ...(options.name !== undefined ? { name: options.name } : {}),
+        ...("parentId" in options ? { parent_id: options.parentId } : {}),
+        ...(options.sourceQuery !== undefined ? { source_query: options.sourceQuery } : {}),
+        ...(options.tags !== undefined ? { tags: options.tags } : {}),
+        ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+        ...(options.trigger !== undefined ? { trigger: options.trigger } : {}),
+      },
+      signal: options.signal,
+    });
+
+    return this.validateResponse(response, "updateKnowledgeNode");
+  }
+
+  /**
+   * Delete a knowledge folder or page and its whole subtree.
+   */
+  async deleteKnowledgeNode(
+    bankId: string,
+    nodeId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<unknown> {
+    const response = await sdk.deleteKnowledgeNode({
+      client: this.client,
+      path: { bank_id: bankId, node_id: nodeId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "deleteKnowledgeNode");
+  }
+
+  /**
+   * Export the knowledge base as a portable markdown bundle.
+   */
+  async exportKnowledgeBase(
+    bankId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<KnowledgePageBundleResponse> {
+    const response = await sdk.exportKnowledgeBase({
+      client: this.client,
+      path: { bank_id: bankId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "exportKnowledgeBase");
   }
 
   /**
@@ -1105,6 +1384,87 @@ export class HindsightClient {
 
     return this.validateResponse(response, "updateDocument");
   }
+
+  /**
+   * Export a bank's documents as a transfer ZIP archive (blocking convenience).
+   *
+   * The export runs as a background operation server-side (a whole-bank export can
+   * be large). This helper submits it, polls the operation to completion, downloads
+   * the archive, and resolves with its bytes. For the raw flow use the low-level
+   * `sdk.exportDocuments` / `sdk.getOperationStatus` / `sdk.downloadFile`.
+   *
+   * @throws {HindsightError} if the export fails, times out, or completes without an archive.
+   */
+  async exportDocuments(
+    bankId: string,
+    options?: {
+      documentIds?: string[];
+      includeObservations?: boolean;
+      /** Milliseconds between operation-status polls (default 2000). */
+      pollIntervalMs?: number;
+      /** Maximum milliseconds to wait for the export to finish (default 300000). */
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    }
+  ): Promise<Uint8Array> {
+    const submitResponse = await sdk.exportDocuments({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: {
+        ...(options?.documentIds !== undefined ? { document_id: options.documentIds } : {}),
+        ...(options?.includeObservations !== undefined
+          ? { include_observations: options.includeObservations }
+          : {}),
+      },
+      signal: options?.signal,
+    });
+    const submission = this.validateResponse(submitResponse, "exportDocuments");
+    const operationId = submission.operation_id;
+
+    const pollInterval = options?.pollIntervalMs ?? 2000;
+    const timeout = options?.timeoutMs ?? 300000;
+    const deadline = Date.now() + timeout;
+    let resultMetadata: Record<string, unknown> | null | undefined;
+    for (;;) {
+      const statusResponse = await sdk.getOperationStatus({
+        client: this.client,
+        path: { bank_id: bankId, operation_id: operationId },
+        signal: options?.signal,
+      });
+      const status = this.validateResponse(statusResponse, "getOperationStatus");
+      if (status.status === "completed") {
+        resultMetadata = status.result_metadata;
+        break;
+      }
+      if (status.status === "failed" || status.status === "cancelled") {
+        throw new HindsightError(
+          `Export operation ${operationId} ${status.status}: ${status.error_message ?? ""}`
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new HindsightError(
+          `Export operation ${operationId} did not complete within ${timeout}ms`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    const downloadUrl = (resultMetadata as { download_url?: string } | null | undefined)
+      ?.download_url;
+    if (!downloadUrl) {
+      throw new HindsightError(`Export operation ${operationId} completed without a download_url`);
+    }
+    // Fetch the server-provided download_url directly (it carries the raw,
+    // slash-bearing storage key). Going through the templated `downloadFile`
+    // would percent-encode the slashes, which fronting proxies often reject.
+    const downloadResponse = await this.client.get({
+      url: downloadUrl,
+      parseAs: "arrayBuffer",
+      signal: options?.signal,
+    });
+    const data = this.validateResponse(downloadResponse as { data?: ArrayBuffer }, "downloadFile");
+    return new Uint8Array(data);
+  }
 }
 
 /**
@@ -1178,13 +1538,21 @@ export type {
   TagGroupNotInput,
   MinScores,
   AsyncOperationSubmitResponse,
+  CreateKnowledgePageResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,
   DirectiveResponse,
   DocumentResponse,
+  KnowledgeNode,
+  KnowledgePageBundleResponse,
+  KnowledgePageResponse,
+  KnowledgePageSearchResponse,
+  KnowledgeTreeResponse,
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelTriggerInput,
+  MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,
 };

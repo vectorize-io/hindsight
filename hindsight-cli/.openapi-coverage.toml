@@ -64,20 +64,15 @@ llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats c
 # Document transfer (export/import) is an admin/ops operation used from the API
 # and the control plane, not the end-user Rust CLI.
 export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+export_documents_sync_removed = "Removed sync export endpoint kept as a 410 stub; nothing should call it"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+download_file = "Serves async export archives; fetched via the API/control plane, not the end-user CLI"
 
-# Knowledge base (folders + pages over mental models) is authored and managed in
-# the control plane UI. `hindsight fs` mirrors it read-only to disk over its own
-# raw HTTP client, so these CRUD/read/search endpoints have no dedicated CLI
-# subcommand.
-get_knowledge_base_tree = "Knowledge base is managed in the control plane UI; mirrored read-only by `hindsight fs`"
-create_knowledge_folder = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-create_knowledge_page = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-update_knowledge_node = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-delete_knowledge_node = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-get_knowledge_page = "Knowledge base is managed in the control plane UI; mirrored read-only by `hindsight fs`"
-export_knowledge_base = "Knowledge base export is consumed by `hindsight fs` over raw HTTP, not a CLI subcommand"
-search_knowledge_base = "Knowledge page search is a control plane UI feature, not the end-user CLI"
+# Kubernetes probe endpoints. `hindsight health` already calls /health, which is
+# the readiness check; /health/ready is its alias and /health/live is a DB-free
+# liveness signal meant for kubelet, not for a human at a terminal.
+get_liveness = "Liveness probe for orchestrators; `hindsight health` covers the human-facing check"
+get_readiness = "Alias of /health, which `hindsight health` already calls"
 
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
@@ -99,6 +94,9 @@ retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
 retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
 enable_observations = "Set via `bank set-config` (hierarchical config)."
 observations_mission = "Set via `bank set-config --observations-mission`."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
 
 [fields.update_bank]
 disposition = "Flattened into --skepticism / --literalism / --empathy on `bank update`."
@@ -113,6 +111,9 @@ retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
 retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
 enable_observations = "Set via `bank set-config` (hierarchical config)."
 observations_mission = "Set via `bank set-config --observations-mission`."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
 
 [fields.update_bank_disposition]
 disposition = "Flattened into --skepticism / --literalism / --empathy on `bank set-disposition`."
@@ -140,6 +141,12 @@ apply_all_directives = "Directive tag-scope override; exposed via the API, SDKs,
 
 [fields.retain_memories]
 items = "Constructed from the single positional content argument on `memory retain`."
+
+[fields.create_knowledge_page]
+trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the remaining nested trigger fields (tag_groups, refresh_cron, recall_* budgets) are page-level tuning best done via the API."
+
+[fields.update_knowledge_node]
+trigger = "Changing an existing page's refresh policy (cron vs after-consolidation) is page-level tuning done via the API, SDKs, or control plane; `knowledge-base update-node` leaves the page's current trigger alone."
 
 [fields.create_mental_model]
 trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."

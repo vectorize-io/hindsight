@@ -40,8 +40,10 @@ const TOOL_GUIDE =
   "repo's full memory for the past decision and exact values that explain a behavior or bug (slower — " +
   'use deliberately, and credit results with a blockquote header "> 🧠 **From Hindsight memory** — <summary>").\n' +
   "- hindsight_capture_initiative(title, summary) — right after the user approves a plan or finishes brainstorming a " +
-  "new feature/capability and you are about to start implementing (BEFORE you write any code), call this ONCE to " +
-  "record it as a tracked page. Skip bug fixes, small tweaks, and chores.\n" +
+  "new feature/capability and you are about to start implementing (BEFORE you write any code), call this to " +
+  "record it as a tracked page; then call it AGAIN with relates_to_page_id set to that page whenever the goal, " +
+  "scope, or rationale materially changes mid-work, so the page tracks the current plan and not the opening one. " +
+  "Skip bug fixes, small tweaks, chores, and trivial course-corrections.\n" +
   "- hindsight_ingest_document(title, content) — save an external document or durable notes/findings you want " +
   "remembered (not the current conversation — that is captured automatically at session end).";
 

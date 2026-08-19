@@ -12,9 +12,10 @@ import io
 import json
 import logging
 import time
+from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -173,11 +174,12 @@ class GeminiLLM(LLMInterface):
         api_key: str,
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         **kwargs: Any,
     ):
         """Initialize Gemini/VertexAI LLM provider."""
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
+        self._warn_reasoning_effort_unsupported()
 
         self._client = None
         self._is_vertexai = self.provider == "vertexai"
@@ -311,6 +313,7 @@ class GeminiLLM(LLMInterface):
         strict_schema: bool = False,
         return_usage: bool = False,
         cached_prefix: str | None = None,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
         Make a Gemini/VertexAI API call with retry logic.
@@ -424,16 +427,17 @@ class GeminiLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await asyncio.wait_for(
-                    self._client.aio.models.generate_content(
-                        model=self.model,
-                        contents=gemini_contents,
-                        config=generation_config,
-                    ),
-                    timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
-                )
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await asyncio.wait_for(
+                        self._client.aio.models.generate_content(
+                            model=self.model,
+                            contents=gemini_contents,
+                            config=generation_config,
+                        ),
+                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                    )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
                 stash_response_usage(_usage_from_gemini_response(response))
@@ -507,6 +511,21 @@ class GeminiLLM(LLMInterface):
                 if hasattr(response, "candidates") and response.candidates:
                     if hasattr(response.candidates[0], "finish_reason"):
                         finish_reason = str(response.candidates[0].finish_reason)
+
+                # Surface silent truncation. A non-empty response that stopped on
+                # MAX_TOKENS was cut off (often mid-word) yet still returns as a
+                # success — on thinking models the reasoning tokens can consume the
+                # whole max_output_tokens budget, leaving the visible answer
+                # truncated (#3365). Make it visible in the logs rather than let a
+                # half-written page look healthy.
+                if finish_reason and "MAX_TOKENS" in finish_reason and content:
+                    logger.warning(
+                        "Gemini response truncated at max_output_tokens "
+                        f"(scope={scope}, model={self.model}, max_output_tokens={max_completion_tokens}, "
+                        f"output_tokens={output_tokens}, thoughts_tokens={thoughts_tokens}). The visible "
+                        "output was cut off; raise the cap or leave it unset for reasoning models."
+                    )
+
                 span_recorder = get_span_recorder()
                 from hindsight_api.tracing import _serialize_for_span
 
@@ -573,23 +592,14 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
 
-                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
-                # before the cache-drop retry below rebuilds the config so we see what failed.
-                dump_request_on_4xx(
-                    scope=scope,
-                    provider=self.provider,
-                    model=self.model,
-                    err=e,
-                    request=generation_config,
-                    messages=gemini_contents,
-                )
-
                 # Cached-request safety net: a stale/invalid/expired CachedContent
                 # (or an incompatibility like cache + tool_config) surfaces as a 400.
                 # Retrying the same cached request can't recover, so on the first
                 # such failure drop the cache, invalidate it so later operations
                 # recreate it, and retry THIS call inline with the prefix inlined.
-                # Caching must never break a request.
+                # Caching must never break a request. Handled before the 400
+                # fail-fast below so a recoverable cache-400 isn't mistaken for a
+                # deterministic rejection.
                 if cache_active and e.code == 400:
                     logger.warning(f"Gemini cached call failed (400); retrying uncached. Reason: {str(e)}")
                     if self._cache_manager is not None and cached_prefix is not None:
@@ -598,8 +608,31 @@ class GeminiLLM(LLMInterface):
                     generation_config = _build_generation_config(cache_active)
                     continue
 
-                # Retry on retryable errors (rate limits, server errors, client errors)
-                if e.code in (400, 429, 500, 502, 503, 504) or (e.code and e.code >= 500):
+                # Diagnostic dump of the exact request behind any 4xx. Forced on for a
+                # non-recoverable 400 (see below) so its content-free structural profile
+                # is always in the log on first occurrence; other 4xx dump only under
+                # the opt-in HINDSIGHT_API_LLM_DEBUG_DUMP_4XX flag.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=generation_config,
+                    messages=gemini_contents,
+                    force=e.code == 400,
+                )
+
+                # HTTP 400 INVALID_ARGUMENT is a deterministic client-side rejection
+                # (malformed schema, oversized prompt section, bad generation param).
+                # Now that the recoverable cache-400 is ruled out, retrying it — and
+                # the batch retry ladder above — just repeats an identical rejected
+                # call, so fail fast instead of burning the retry budget (#3256).
+                if e.code == 400:
+                    logger.error(f"Gemini rejected request (HTTP 400 INVALID_ARGUMENT), not retrying: {str(e)}")
+                    raise
+
+                # Retry on retryable errors (rate limits, server errors)
+                if e.code in (429, 500, 502, 503, 504) or (e.code and e.code >= 500):
                     last_exception = e
                     if attempt < max_retries:
                         backoff = min(initial_backoff * (2**attempt), max_backoff)
@@ -633,6 +666,7 @@ class GeminiLLM(LLMInterface):
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
         cached_prefix_message_count: int = 0,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make a Gemini/VertexAI API call with tool/function calling support.
@@ -768,20 +802,21 @@ class GeminiLLM(LLMInterface):
 
         last_exception = None
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 # With the cache active, send only the un-cached tail (delta);
                 # on the uncached fallback path send the full conversation so the
                 # re-inlined system+tools prefix has its whole context.
                 active_contents = delta_contents if cache_active else full_contents
-                response = await asyncio.wait_for(
-                    self._client.aio.models.generate_content(
-                        model=self.model,
-                        contents=active_contents,
-                        config=config,
-                    ),
-                    timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
-                )
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await asyncio.wait_for(
+                        self._client.aio.models.generate_content(
+                            model=self.model,
+                            contents=active_contents,
+                            config=config,
+                        ),
+                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                    )
                 stash_response_usage(_usage_from_gemini_response(response))
 
                 # Extract content and tool calls
@@ -880,21 +915,12 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
 
-                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
-                # before the cache-drop retry below rebuilds the config so we see what failed.
-                dump_request_on_4xx(
-                    scope=scope,
-                    provider=self.provider,
-                    model=self.model,
-                    err=e,
-                    request=config,
-                    messages=active_contents,
-                )
-
                 # Cached-request safety net (see ``call``): a stale/invalid cache or
                 # a cache+tool_config conflict surfaces as a 400. Drop the cache,
                 # invalidate it for later operations, and retry THIS call inline
                 # with the prefix + tools re-sent. Caching must never break a call.
+                # Handled before the 400 fail-fast below so a recoverable cache-400
+                # isn't mistaken for a deterministic rejection.
                 if cache_active and e.code == 400:
                     logger.warning(f"Gemini cached tool call failed (400); retrying uncached. Reason: {str(e)}")
                     if self._cache_manager is not None and cached_prefix is not None:
@@ -902,6 +928,28 @@ class GeminiLLM(LLMInterface):
                     cache_active = False
                     config = _build_tools_config(cache_active)
                     continue
+
+                # Diagnostic dump of the exact request behind any 4xx. Forced on for a
+                # non-recoverable 400 so its content-free structural profile is always
+                # in the log on first occurrence; other 4xx dump only under the opt-in
+                # HINDSIGHT_API_LLM_DEBUG_DUMP_4XX flag.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=config,
+                    messages=active_contents,
+                    force=e.code == 400,
+                )
+
+                # HTTP 400 INVALID_ARGUMENT is a deterministic client-side rejection;
+                # now that the recoverable cache-400 is ruled out, retrying it — and
+                # the batch retry ladder above — just repeats an identical rejected
+                # call, so fail fast instead of burning the retry budget (#3256).
+                if e.code == 400:
+                    logger.error(f"Gemini rejected tool request (HTTP 400 INVALID_ARGUMENT), not retrying: {str(e)}")
+                    raise
 
                 # Retry on retryable errors
                 last_exception = e
@@ -1302,3 +1350,6 @@ class GeminiLLM(LLMInterface):
         """Clean up resources (close connections, etc.)."""
         # Gemini client doesn't require explicit cleanup
         pass
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

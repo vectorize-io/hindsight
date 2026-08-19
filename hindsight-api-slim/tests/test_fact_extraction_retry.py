@@ -9,6 +9,7 @@ BaseException'), which happened when last_error was only set in the
 BadRequestError handler and not for non-dict JSON responses.
 """
 
+import dataclasses
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,11 +21,13 @@ def test_output_retry_split_preserves_conversation_array_boundaries():
     """OutputTooLong retry splitting must keep conversation chunks valid JSON arrays."""
     from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
 
+    # Contents are padded so the array clears the minimum-split floor and the
+    # boundary-preserving branch (not the drop-when-too-small guard) is exercised.
     turns = [
-        {"role": "user", "content": "alpha"},
-        {"role": "assistant", "content": "bravo"},
-        {"role": "user", "content": "charlie"},
-        {"role": "assistant", "content": "delta"},
+        {"role": "user", "content": "alpha " * 40},
+        {"role": "assistant", "content": "bravo " * 40},
+        {"role": "user", "content": "charlie " * 40},
+        {"role": "assistant", "content": "delta " * 40},
     ]
 
     split = _split_chunk_for_output_retry(json.dumps(turns))
@@ -39,7 +42,9 @@ def test_output_retry_split_divides_single_oversized_turn_content():
     """A lone oversized conversation turn is split inside content and rewrapped."""
     from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
 
-    turn = {"role": "user", "content": "abcdefghijklmnopqrstuvwxyz", "name": "casey"}
+    # Content must exceed the minimum-split floor for the single-turn branch to
+    # divide it rather than drop the sub-chunk outright.
+    turn = {"role": "user", "content": "abcdefghijklmnopqrstuvwxyz" * 40, "name": "casey"}
 
     split = _split_chunk_for_output_retry(json.dumps([turn]))
 
@@ -60,6 +65,44 @@ def test_output_retry_split_returns_none_when_no_progress_possible():
 
     assert _split_chunk_for_output_retry("x") is None
     assert _split_chunk_for_output_retry(json.dumps([{"role": "user", "content": ""}])) is None
+
+
+def test_output_too_long_error_is_a_single_class_across_modules():
+    """Regression for #3172.
+
+    ``OutputTooLongError`` must be one class everywhere: the providers raise the
+    ``llm_interface`` definition, and ``fact_extraction`` / ``multi_llm`` catch
+    the name they import from ``llm_wrapper``. If ``llm_wrapper`` shadows it with
+    a second definition, ``except OutputTooLongError`` silently stops matching
+    what the providers raise and the #2579 auto-split becomes dead code.
+    """
+    from hindsight_api.engine import llm_interface, llm_wrapper, multi_llm
+    from hindsight_api.engine.providers import litellm_llm, openai_compatible_llm
+    from hindsight_api.engine.retain import fact_extraction
+
+    canonical = llm_interface.OutputTooLongError
+    assert llm_wrapper.OutputTooLongError is canonical
+    assert fact_extraction.OutputTooLongError is canonical
+    assert multi_llm.OutputTooLongError is canonical
+    assert litellm_llm.OutputTooLongError is canonical
+    assert openai_compatible_llm.OutputTooLongError is canonical
+
+
+def test_output_retry_split_drops_subchunk_below_minimum_floor():
+    """A chunk at/under the minimum-split floor is dropped, not recursively halved.
+
+    Without this floor a chunk that overflows the output cap at *every* size
+    (degenerate/looping model output) would recurse until it is a single
+    character, burning thousands of extraction calls (#3172).
+    """
+    from hindsight_api.engine.retain.fact_extraction import (
+        _MIN_SPLIT_CHUNK_CHARS,
+        _split_chunk_for_output_retry,
+    )
+
+    assert _split_chunk_for_output_retry("a" * _MIN_SPLIT_CHUNK_CHARS) is None
+    # Just over the floor still splits.
+    assert _split_chunk_for_output_retry("a. " * ((_MIN_SPLIT_CHUNK_CHARS // 3) + 5)) is not None
 
 
 @pytest.mark.asyncio
@@ -92,22 +135,23 @@ async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
 
 def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = None):
     """Build a minimal HindsightConfig for fact extraction tests."""
-    from hindsight_api.config import HindsightConfig
+    from hindsight_api.config import _get_raw_config
 
-    cfg = MagicMock(spec=HindsightConfig)
-    cfg.retain_llm_max_retries = retain_llm_max_retries
-    cfg.llm_max_retries = llm_max_retries
-    cfg.retain_llm_initial_backoff = None
-    cfg.llm_initial_backoff = 0.0
-    cfg.retain_llm_max_backoff = None
-    cfg.llm_max_backoff = 0.0
-    cfg.retain_max_completion_tokens = 8192
-    cfg.retain_extraction_mode = "concise"
-    cfg.retain_extract_causal_links = False
-    cfg.retain_mission = None
-    cfg.llm_temperature_retain = 0.1
-    cfg.llm_strict_schema_retain = False
-    return cfg
+    return dataclasses.replace(
+        _get_raw_config(),
+        retain_llm_max_retries=retain_llm_max_retries,
+        llm_max_retries=llm_max_retries,
+        retain_llm_initial_backoff=None,
+        llm_initial_backoff=0.0,
+        retain_llm_max_backoff=None,
+        llm_max_backoff=0.0,
+        retain_max_completion_tokens=8192,
+        retain_extraction_mode="concise",
+        retain_extract_causal_links=False,
+        retain_mission=None,
+        llm_temperature_retain=0.1,
+        llm_strict_schema_retain=False,
+    )
 
 
 def _make_llm_config(mock_response):

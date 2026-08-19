@@ -10,6 +10,7 @@ import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
+from dateparser.conf import Settings, apply_settings
 from pydantic import BaseModel, Field
 
 from hindsight_api.engine.temporal_periods import (
@@ -89,6 +90,39 @@ _PERIOD_WORDS = {
     "noon",
     "midnight",
 }
+
+
+# Every token _date_match_score can award points for, in one alternation.
+# Derived from the same four sets the scorer uses so the two cannot drift apart
+# (``test_prefilter_matches_scorer`` fails if a word is added to one and not the
+# other).
+_SCOREABLE_WORDS = _MONTH_WORDS | _RELATIVE_WORDS | _WEEKDAY_WORDS | _PERIOD_WORDS
+_SCOREABLE_RE = re.compile("[0-9]|" + "|".join(sorted(_SCOREABLE_WORDS)))
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _query_can_score(query: str) -> bool:
+    """Whether any span of ``query`` could score above zero.
+
+    ``search_dates`` returns substrings of the *original* text (``translate_search``
+    keeps parallel original/translated token streams and reports the original),
+    and ``_date_match_score`` awards points only for an ASCII digit or one of the
+    four English word sets. So if the query contains none of those anywhere, every
+    match it could possibly return scores zero and ``analyze`` returns None —
+    which means the entire dateparser search can be skipped without changing the
+    answer.
+
+    This is deliberately an over-approximation: substring matching (rather than
+    tokenised matching) means "maybe" counts as containing "may" and we take the
+    slow path unnecessarily. That costs time, never correctness. The compacted
+    second check covers the case where dateparser joins adjacent tokens and drops
+    the separator between them, which could surface a word that is not contiguous
+    in the raw text.
+    """
+    low = query.lower()
+    if _SCOREABLE_RE.search(low):
+        return True
+    return bool(_SCOREABLE_RE.search(_NON_ALNUM_RE.sub("", low)))
 
 
 def _date_match_score(text: str) -> int:
@@ -190,22 +224,84 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
     - No model loading required (lazy import on first use)
     """
 
-    def __init__(self):
-        """Initialize dateparser query analyzer."""
-        self._search_dates = None
+    def __init__(self, languages: list[str] | None = None):
+        """Initialize dateparser query analyzer.
+
+        Args:
+            languages: Restrict dateparser's language detection to these codes
+                (e.g. ["en"]). None (default) keeps full auto-detection across
+                all 200+ locales — unchanged behavior.
+        """
+        self._languages = languages
+        self._loaded = False
+        self._locales = None
+        self._exact_search = None
 
     def load(self) -> None:
         """Load dateparser and warm up internal data structures.
 
-        Triggers the real initialization cost (regex tables, timezone data) at
-        load time so the first actual recall doesn't pay the cold-start penalty.
+        Triggers the real initialization cost (locale dictionaries, timezone
+        tables, the cached character tables used by detection) at load time so
+        the first actual recall doesn't pay the cold-start penalty.
         """
-        if self._search_dates is None:
-            from dateparser.search import search_dates
+        if self._loaded:
+            return
 
-            self._search_dates = search_dates
-            # Warm up: fire a dummy call to trigger lazy-loaded internal tables.
-            self._search_dates("today")
+        from dateparser.conf import settings as dateparser_settings
+        from dateparser.search import _search_with_detection
+        from dateparser.search.search import _ExactLanguageSearch
+
+        available = _search_with_detection.available_language_map
+        if self._languages is None:
+            self._locales = list(available.values())
+        else:
+            unknown = set(self._languages) - set(available)
+            if unknown:
+                raise ValueError("Unknown language(s): %s" % ", ".join(map(repr, sorted(unknown))))
+            self._locales = [available[code] for code in self._languages]
+
+        # Our own instance rather than dateparser's module-level singleton:
+        # _ExactLanguageSearch caches the "current" locale on itself, so sharing
+        # it across callers is a data race the moment this runs off the event
+        # loop thread.
+        self._exact_search = _ExactLanguageSearch(_search_with_detection.loader)
+        self._loaded = True
+
+        # Warm the lazily-built locale dictionaries and the character tables.
+        self._find_dates("today", settings=dateparser_settings)
+
+    @apply_settings
+    def _find_dates(self, query: str, settings: "Settings | None" = None) -> list[tuple[str, datetime]] | None:
+        """``dateparser.search.search_dates`` without its redundant work.
+
+        Same three steps as upstream — preprocess, detect the language, parse the
+        detected language's date expressions — but detection goes through
+        :mod:`hindsight_api.engine.temporal_language_detection`, which is the same
+        algorithm with the per-locale recomputation hoisted and memoised. See that
+        module for why each step is equivalence-preserving, and
+        ``tests/test_temporal_extraction.py`` for the differential proof.
+        """
+        from dateparser.conf import check_settings
+        from dateparser.conf import settings as dateparser_defaults
+        from dateparser.search import _search_with_detection
+
+        from .temporal_language_detection import best_language
+
+        # @apply_settings always injects a Settings (converting a dict if the
+        # caller passed one); the None default only exists to satisfy its
+        # keyword-argument contract. Fall back rather than assert so a direct
+        # call without the decorator still behaves like dateparser's own entry
+        # points.
+        settings = settings or dateparser_defaults
+        check_settings(settings)
+        text = _search_with_detection.preprocess_text(query, self._languages)
+        # Settings populates its attributes dynamically, so this is a getattr
+        # rather than a plain access: the name is not statically visible.
+        default_languages = getattr(settings, "DEFAULT_LANGUAGES", None)
+        language = best_language(text, self._locales) or (default_languages[0] if default_languages else None)
+        if not language:
+            return None
+        return self._exact_search.search_parse(language, text, settings=settings) or None
 
     def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:
         """
@@ -233,6 +329,14 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
             start_date, end_date = period_result
             return QueryAnalysis(temporal_constraint=TemporalConstraint(start_date=start_date, end_date=end_date))
 
+        # Cheap sound rejection before the expensive search. dateparser's
+        # search_dates spends ~98% of its time detecting which of 205 locales the
+        # text is in, and it is *slowest* when there is no date to find (every
+        # locale runs to completion before concluding nothing matched). When no
+        # span could score above zero, that entire cost buys a guaranteed None.
+        if not _query_can_score(query):
+            return QueryAnalysis(temporal_constraint=None)
+
         # Lazy load dateparser (only imports on first call, then cached)
         self.load()
 
@@ -250,7 +354,7 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         # treat any failure as "no temporal constraint found" so the caller
         # can fall back to non-temporal retrieval.
         try:
-            results = self._search_dates(query, settings=settings)
+            results = self._find_dates(query, settings=settings)
         except Exception as e:
             logger.warning(
                 "dateparser raised %s on query (treating as no temporal constraint): %s",

@@ -105,6 +105,7 @@ async def seeded_obs_memory(memory_no_llm_verify: MemoryEngine):
 
 
 class TestPreferObservations:
+    @pytest.mark.memory_backend_incompatible
     async def test_disabled_returns_sources_and_observation(self, seeded_obs_memory):
         """Without the flag, the source facts AND the observation are all returned."""
         engine, bank_id, ids = seeded_obs_memory
@@ -121,6 +122,7 @@ class TestPreferObservations:
         assert ids["src2"] in found
         assert ids["obs"] in found
 
+    @pytest.mark.memory_backend_incompatible
     async def test_enabled_drops_source_facts_keeps_observation(self, seeded_obs_memory):
         """With the flag, the observation supersedes the facts it was consolidated from."""
         engine, bank_id, ids = seeded_obs_memory
@@ -137,6 +139,7 @@ class TestPreferObservations:
         assert ids["src1"] not in found, "source fact 1 is superseded by the observation"
         assert ids["src2"] not in found, "source fact 2 is superseded by the observation"
 
+    @pytest.mark.memory_backend_incompatible
     async def test_enabled_keeps_non_source_fact(self, seeded_obs_memory):
         """Dedup is provenance-based: a similar fact NOT in source_memory_ids survives."""
         engine, bank_id, ids = seeded_obs_memory
@@ -151,6 +154,7 @@ class TestPreferObservations:
         found = _result_ids(result)
         assert ids["non_src"] in found, "a non-source fact must not be dropped, even if semantically similar"
 
+    @pytest.mark.memory_backend_incompatible
     async def test_noop_without_observation_type(self, seeded_obs_memory):
         """The flag is a no-op when 'observation' is not among the requested types."""
         engine, bank_id, ids = seeded_obs_memory

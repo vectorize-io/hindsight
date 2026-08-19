@@ -33,6 +33,8 @@ const client = new HindsightClient({
   apiUrl: arg("api-url") ?? cfg.apiUrl,
   apiToken: arg("api-token") ?? cfg.apiToken,
   bank: FINAL_BANK!,
+  maxParallelRetains: cfg.maxParallelRetains,
+  observationScopes: cfg.observationScopes,
 });
 
 syncStatus(client, FINAL_BANK!, REPO)

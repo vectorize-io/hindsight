@@ -1916,7 +1916,6 @@ async def test_retain_multivalue_tag_entities_all_stored(memory_real_llm, reques
     The original bug: tags are added correctly, but unit_entities only stores
     a subset (typically the first entity).
     """
-    from hindsight_api.engine.memory_engine import fq_table
 
     bank_id = f"test-1558-multivalue-tag-{uuid.uuid4().hex[:8]}"
     try:
@@ -1964,32 +1963,14 @@ async def test_retain_multivalue_tag_entities_all_stored(memory_real_llm, reques
 
         assert len(unit_ids) > 0, "Should have extracted at least one fact"
 
-        async with memory_real_llm._pool.acquire() as conn:
-            # Check entities in unit_entities table
-            entity_rows = await conn.fetch(
-                f"""
-                SELECT e.canonical_name
-                FROM {fq_table("unit_entities")} ue
-                JOIN {fq_table("entities")} e ON e.id = ue.entity_id
-                WHERE ue.unit_id = ANY($1::uuid[])
-                """,
-                [u for u in unit_ids],
-            )
-            entity_names = {r["canonical_name"].lower() for r in entity_rows}
-
-            # Check tags on memory_units
-            tag_rows = await conn.fetch(
-                f"""
-                SELECT id, tags
-                FROM {fq_table("memory_units")}
-                WHERE id = ANY($1::uuid[])
-                """,
-                [u for u in unit_ids],
-            )
-            all_tags = set()
-            for row in tag_rows:
-                if row["tags"]:
-                    all_tags.update(t.lower() for t in row["tags"])
+        # Entities and tags both come back on the unit itself, so one read per
+        # unit covers what the two joins used to.
+        entity_names: set[str] = set()
+        all_tags: set[str] = set()
+        for unit_id in unit_ids:
+            unit = await memory_real_llm.get_memory_unit(bank_id, str(unit_id), request_context)
+            entity_names.update(name.lower() for name in unit["entities"])
+            all_tags.update(tag.lower() for tag in unit["tags"])
 
         # Filter to use:* entities/tags
         use_entities = {n for n in entity_names if n.startswith("use:")}
@@ -2025,7 +2006,6 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
     temporal proximity could exceed the 0.6 merge threshold, causing both to
     resolve to the same entity ID.
     """
-    from hindsight_api.engine.memory_engine import fq_table
 
     bank_id = f"test-1558-second-{uuid.uuid4().hex[:8]}"
     try:
@@ -2075,30 +2055,14 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
 
         assert len(unit_ids_2) > 0
 
-        async with memory_real_llm._pool.acquire() as conn:
-            entity_rows = await conn.fetch(
-                f"""
-                SELECT e.canonical_name
-                FROM {fq_table("unit_entities")} ue
-                JOIN {fq_table("entities")} e ON e.id = ue.entity_id
-                WHERE ue.unit_id = ANY($1::uuid[])
-                """,
-                [u for u in unit_ids_2],
-            )
-            entity_names = {r["canonical_name"].lower() for r in entity_rows}
-
-            tag_rows = await conn.fetch(
-                f"""
-                SELECT id, tags
-                FROM {fq_table("memory_units")}
-                WHERE id = ANY($1::uuid[])
-                """,
-                [u for u in unit_ids_2],
-            )
-            all_tags = set()
-            for row in tag_rows:
-                if row["tags"]:
-                    all_tags.update(t.lower() for t in row["tags"])
+        # Entities and tags both come back on the unit itself, so one read per
+        # unit covers what the two joins used to.
+        entity_names: set[str] = set()
+        all_tags: set[str] = set()
+        for unit_id in unit_ids_2:
+            unit = await memory_real_llm.get_memory_unit(bank_id, str(unit_id), request_context)
+            entity_names.update(name.lower() for name in unit["entities"])
+            all_tags.update(tag.lower() for tag in unit["tags"])
 
         use_entities = {n for n in entity_names if n.startswith("use:")}
         use_tags = {t for t in all_tags if t.startswith("use:")}

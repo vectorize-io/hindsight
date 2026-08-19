@@ -9,12 +9,14 @@ from .claude_code_llm import ClaudeCodeLLM
 from .codex_llm import CodexLLM
 from .fireworks_llm import FireworksLLM
 from .gemini_llm import GeminiLLM
+from .github_copilot_llm import GitHubCopilotLLM
 from .litellm_llm import LiteLLMLLM
 from .litellm_router_llm import LiteLLMRouterLLM
 from .llamacpp_llm import LlamaCppLLM
 from .mock_llm import MockLLM
 from .none_llm import NoneLLM
 from .openai_compatible_llm import OpenAICompatibleLLM
+from .openai_responses_llm import OpenAIResponsesLLM
 
 __all__ = [
     "AnthropicLLM",
@@ -22,10 +24,12 @@ __all__ = [
     "CodexLLM",
     "FireworksLLM",
     "GeminiLLM",
+    "GitHubCopilotLLM",
     "LlamaCppLLM",
     "LiteLLMLLM",
     "LiteLLMRouterLLM",
     "MockLLM",
     "NoneLLM",
     "OpenAICompatibleLLM",
+    "OpenAIResponsesLLM",
 ]

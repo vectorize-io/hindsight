@@ -11,7 +11,7 @@ fewer source facts when the budget is tight vs. unlimited.
 import pytest
 
 from hindsight_api.config import _get_raw_config
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.memory_engine import Budget, _get_tiktoken_encoding
 
 
 @pytest.fixture(autouse=True)
@@ -166,5 +166,54 @@ class TestRecallSourceFactsTotalBudget:
             )
 
             assert result.source_facts is None or len(result.source_facts) == 0
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestRecallSourceFactsRankOrder:
+    """The token budget is spent in result-rank order, not DB row order (issue #3221)."""
+
+    @pytest.mark.asyncio
+    async def test_top_ranked_result_keeps_its_provenance(self, memory, request_context):
+        """A budget too small for every source still resolves the top result's sources."""
+        bank_id = "test-sf-rank-order"
+        try:
+            await _setup_bank_with_observations(memory, bank_id, request_context)
+
+            recall_kwargs = dict(
+                bank_id=bank_id,
+                query="Alice engineer",
+                fact_type=["observation"],
+                max_tokens=4096,
+                include_source_facts=True,
+                budget=Budget.MID,
+                request_context=request_context,
+            )
+            unlimited = await memory.recall_async(**recall_kwargs, max_source_facts_tokens=-1)
+
+            with_sources = [r for r in unlimited.results if r.source_fact_ids]
+            assert len(with_sources) >= 2, "fixture must produce several observations with sources"
+            assert unlimited.source_facts, "unlimited recall must resolve source facts"
+            assert unlimited.source_facts_truncated is False
+
+            # Budget the top result's sources exactly: everything behind it must be
+            # what gets dropped.
+            encoding = _get_tiktoken_encoding()
+            top_ids = with_sources[0].source_fact_ids
+            budget = sum(len(encoding.encode(unlimited.source_facts[sid].text)) for sid in top_ids)
+
+            tight = await memory.recall_async(**recall_kwargs, max_source_facts_tokens=budget)
+
+            tight_top = next(r for r in tight.results if r.id == with_sources[0].id)
+            assert tight.source_facts is not None
+            assert set(tight_top.source_fact_ids) <= set(tight.source_facts), (
+                "the top-ranked result lost provenance to a lower-ranked one"
+            )
+
+            # Every remaining result still advertises all of its sources, so a partial
+            # map has to say it is partial.
+            advertised = {sid for r in tight.results for sid in (r.source_fact_ids or [])}
+            if advertised - set(tight.source_facts):
+                assert tight.source_facts_truncated is True
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)

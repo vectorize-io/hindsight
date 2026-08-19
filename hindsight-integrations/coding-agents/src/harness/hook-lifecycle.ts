@@ -150,6 +150,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     sessionStart: standardSessionStart("claude-code"),
     prompt: claudePrompt,
     retain: {
+      hostTimeoutSec: 60,
       harness: "claude-code",
       parse: (ev) => ({
         sessionId: ev.session_id as string | undefined,
@@ -168,6 +169,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     sessionStart: standardSessionStart("codex"),
     prompt: codexPrompt,
     retain: {
+      hostTimeoutSec: 60,
       harness: "codex",
       parse: (ev) => ({
         sessionId: ev.session_id as string | undefined,
@@ -196,6 +198,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     },
     prompt: antigravityPrompt,
     retain: {
+      hostTimeoutSec: 30,
       harness: "antigravity-cli",
       parse: (ev) => ({
         sessionId: ev.conversationId as string | undefined,
@@ -225,6 +228,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     },
     prompt: cursorPrompt,
     retain: {
+      hostTimeoutSec: 30,
       harness: "cursor-cli",
       parse: (ev) => ({
         sessionId:
@@ -259,6 +263,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     },
     prompt: copilotPrompt,
     retain: {
+      hostTimeoutSec: 60,
       harness: "copilot-cli",
       parse: (ev) => ({
         sessionId: ev.sessionId as string | undefined,
@@ -287,6 +292,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     },
     prompt: devinPrompt,
     retain: {
+      hostTimeoutSec: 60,
       harness: "devin-cli",
       parse: (ev) => {
         const sessionId = ev.session_id as string | undefined;
@@ -326,6 +332,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       }),
     },
     retain: {
+      hostTimeoutSec: 60,
       harness: "grok-build",
       parse: (ev) => ({
         sessionId: ev.sessionId as string | undefined,

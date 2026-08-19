@@ -9,6 +9,7 @@
  * This is the only opencode-specific file; everything it uses is in ../core.
  */
 import { tool } from "@opencode-ai/plugin";
+import type { Config, Hooks } from "@opencode-ai/plugin";
 import type { RuntimeCore } from "../core/runtime";
 import type { HarnessAdapter } from "../core/types";
 import { diag } from "../core/diag";
@@ -19,9 +20,37 @@ import {
   type OcMessage,
 } from "../core/transcript-opencode";
 import { jsonChatReader } from "./registry";
+import { SURVEY_AGENT, SURVEY_AGENT_CONFIG } from "../core/survey";
 
 // opencode message part shape for the per-turn prompt (structurally typed).
 type Part = { type?: string; text?: string };
+
+/**
+ * Teach the host about the survey agent (core/survey.ts spawns `opencode run --agent
+ * hindsight-survey`), so the recipe needs nothing in the user's opencode.json.
+ *
+ * Declared as `Pick<Hooks, "config">` rather than inlined into the returned object, and that IS the
+ * point: plugin-entry.ts casts the whole runtime object to the host's Hooks type (the other hooks
+ * take deliberately narrower params than the SDK declares, so they cannot be checked), which means
+ * nothing would catch this hook being misnamed or its signature changing under us — it would just
+ * silently never fire, and the survey would die on an agent the host never heard of. Pinning this
+ * one hook to the SDK's own type restores that check where it matters.
+ */
+const surveyAgentHook: Pick<Hooks, "config"> = {
+  config: async (cfg: Config) => {
+    cfg.agent ??= {};
+    // Never overwrite an existing entry: a user who defined `hindsight-survey` themselves outranks
+    // us.
+    //
+    // The cast covers one field the published type under-describes: `permission` is declared with a
+    // fixed key set (edit/bash/webfetch/…), while the runtime takes arbitrary action names —
+    // opencode's own built-in `explore` agent is defined with `"*": "deny"` plus per-tool allows,
+    // and a live 1.18.9 session under this agent was offered exactly glob/grep/read/
+    // hindsight_ingest_document. Casting the entry beats widening it to `unknown`, which would drop
+    // the checking on `description`/`mode` too.
+    cfg.agent[SURVEY_AGENT] ??= SURVEY_AGENT_CONFIG as NonNullable<Config["agent"]>[string];
+  },
+};
 
 const textOf = (parts: Part[]) =>
   (parts || [])
@@ -64,6 +93,7 @@ function createRuntime(core: RuntimeCore) {
   for (const spec of core.toolSpecs()) tools[spec.name] = toOpencodeTool(spec);
 
   return {
+    ...surveyAgentHook,
     tool: tools,
     // Each user turn: recall on the prompt; the injection it builds is pushed by system.transform.
     "chat.message": async (input: { sessionID?: string }, output: { parts: Part[] }) => {

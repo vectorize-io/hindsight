@@ -100,7 +100,22 @@ async def _import(memory, bank_id, archive, request_context, on_conflict="skip")
     return status["result_metadata"]
 
 
+async def _export_async(memory, bank_id, request_context, **kwargs):
+    """Submit an async export and return (result_metadata, archive_bytes).
+
+    Export is async; the SyncTaskBackend fixture runs it inline, so the operation
+    is completed (with the archive stashed in file storage) when submit returns.
+    """
+    submission = await memory.submit_export_documents_async(bank_id, request_context, **kwargs)
+    status = await memory.get_operation_status(bank_id, submission["operation_id"], request_context=request_context)
+    assert status["status"] == "completed", status
+    meta = status["result_metadata"]
+    archive = await memory._file_storage.retrieve(meta["storage_key"])
+    return meta, archive
+
+
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(memory, request_context):
     """A rejected archive fact must not shift chunks, causal links, or observation sources."""
     dst = _unique_bank("transfer_degenerate_alignment")
@@ -191,12 +206,13 @@ def test_export_bank_covers_schema():
     history, or explicitly skipped — so a future migration can't silently drop one."""
     from hindsight_api.admin.cli import BACKUP_TABLES
     from hindsight_api.engine.transfer.export import _BANK_ROW_TABLES, _REPLAYED_TABLES, _SKIP_TABLES
-    from hindsight_api.engine.transfer.schema import CARRIED_HISTORY_TABLES, HISTORY_TABLES
+    from hindsight_api.engine.transfer.schema import CARRIED_HISTORY_TABLES, HISTORY_TABLES, KNOWLEDGE_TABLES
 
     buckets = [
         set(_REPLAYED_TABLES),
         set(_BANK_ROW_TABLES),
         set(CARRIED_HISTORY_TABLES),
+        set(KNOWLEDGE_TABLES),
         set(HISTORY_TABLES),
         set(_SKIP_TABLES),
     ]
@@ -207,6 +223,38 @@ def test_export_bank_covers_schema():
     )
     # No table may appear in two buckets.
     assert sum(len(b) for b in buckets) == len(classified), "a table is classified in more than one bucket"
+
+
+def test_topological_page_order_is_parent_first():
+    """Nodes always sort so a parent precedes its children (self-FK safe)."""
+    from hindsight_api.engine.transfer.importer import _topological_page_order
+    from hindsight_api.engine.transfer.schema import TransferKnowledgePage
+
+    def _page(pid, parent):
+        kind = "page" if pid.startswith("p") else "folder"
+        return TransferKnowledgePage(id=pid, parent_id=parent, kind=kind, name=pid)
+
+    # Deliberately shuffled: child before parent, grandchild before both.
+    pages = [_page("pC", "fB"), _page("fB", "fA"), _page("fA", None), _page("pRoot", None)]
+    ordered = [p.id for p in _topological_page_order(pages)]
+    assert ordered.index("fA") < ordered.index("fB") < ordered.index("pC")
+    assert ordered.index("fA") < ordered.index("pC")
+    assert set(ordered) == {"pC", "fB", "fA", "pRoot"}
+
+
+def test_topological_page_order_tolerates_cycles_and_dangling_parents():
+    """A cycle or missing parent (only possible in a corrupt export) is emitted
+    rather than dropped, so the DB FK — not a silent loss — surfaces it."""
+    from hindsight_api.engine.transfer.importer import _topological_page_order
+    from hindsight_api.engine.transfer.schema import TransferKnowledgePage
+
+    cycle = [
+        TransferKnowledgePage(id="a", parent_id="b", kind="folder", name="a"),
+        TransferKnowledgePage(id="b", parent_id="a", kind="folder", name="b"),
+    ]
+    assert {p.id for p in _topological_page_order(cycle)} == {"a", "b"}
+    dangling = [TransferKnowledgePage(id="x", parent_id="missing", kind="page", name="x")]
+    assert [p.id for p in _topological_page_order(dangling)] == ["x"]
 
 
 def test_export_jsonb_coercion_preserves_decoded_scalar_string():
@@ -345,6 +393,37 @@ async def test_export_bank_contents(memory, request_context):
         await memory.delete_bank(bank, request_context=request_context)
 
 
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_export_tolerates_legacy_null_and_numeric_fact_metadata(memory, request_context):
+    """A bank holding legacy metadata must still be exportable (issue #3209).
+
+    Rows written before retain normalized its input can hold a JSON null or a
+    raw integer in memory_units.metadata. TransferFact.metadata is dict[str, str],
+    so exporting such a bank used to fail validation — locking an operator out of
+    the one operation (backup / move) that gets them off the bad data. Export
+    applies the same read contract as recall: nulls dropped, the rest stringified.
+    """
+    bank = _unique_bank("export_legacy_metadata")
+    try:
+        await _retain(memory, bank, "Carol lives in Paris.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            updated = await conn.execute(
+                f"UPDATE {fq_table('memory_units')} SET metadata = $2::jsonb WHERE bank_id = $1",
+                bank,
+                json.dumps({"ocr_engine": None, "original_id": 348}),
+            )
+        assert updated != "UPDATE 0"
+
+        parsed = parse_archive(await memory.export_documents_async(bank, request_context))
+        exported = [fact.metadata for doc in parsed.documents for fact in doc.facts]
+        assert exported
+        assert all(metadata == {"original_id": "348"} for metadata in exported)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
 def _as_json(value):
     """Normalize a jsonb column value (str or already-decoded) to a Python object."""
     return json.loads(value) if isinstance(value, str) else value
@@ -445,6 +524,7 @@ async def _observation_count(memory, bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_import_preserves_consolidation_lifecycle(memory, request_context):
     """Whole-bank import restores each fact's consolidation lifecycle verbatim, so
     previously-consolidated and previously-failed facts are never re-consolidated
@@ -545,6 +625,7 @@ async def test_bank_import_preserves_consolidation_lifecycle(memory, request_con
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_export_import_exact_roundtrip(memory, request_context):
     """A whole-bank archive restores EXACT bank content (config, docs, facts,
     observations, entities, links, webhooks, directives, mental models) with facts
@@ -631,6 +712,54 @@ async def test_bank_export_import_exact_roundtrip(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_bank_import_into_new_id_on_same_instance(memory, request_context):
+    """Export a bank and import it RIGHT BACK into a new id on the same instance
+    (source bank left in place). The banks row carries a globally-unique
+    ``internal_id``; if that were kept, the copy's banks INSERT would collide with
+    the still-present source and ``ON CONFLICT DO NOTHING`` would skip the parent
+    row, so the mental_models insert would trip fk_mental_models_bank_id. Import
+    must mint a fresh internal_id so the copy lands cleanly. Regression for #3270."""
+    source = _unique_bank("bank_src")
+    target = _unique_bank("bank_copy")
+    try:
+        await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+        await memory.create_mental_model(
+            source,
+            name="Work model",
+            source_query="where do people work",
+            content="User tracks where people work.",
+            mental_model_id="mm-1",
+            request_context=request_context,
+        )
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            source_internal_id = await conn.fetchval(
+                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", source
+            )
+
+        from hindsight_api.engine.transfer import export_bank
+
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source)
+        # Source bank is left in place — this is the same-instance "make a copy" flow.
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.bank_id == target
+        assert result.mental_models_imported == 1
+
+        async with acquire_with_retry(backend) as conn:
+            target_internal_id = await conn.fetchval(
+                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", target
+            )
+        # The copy exists (parent row landed) and got a fresh, non-colliding id.
+        assert target_internal_id is not None
+        assert target_internal_id != source_internal_id
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_bank_roundtrip_carries_mental_model_history(memory, request_context):
     """Mental-model refresh history survives export/import. Mental models keep a
     stable (id, bank_id), so the dedicated mental_model_history rows are carried
@@ -668,6 +797,78 @@ async def test_bank_roundtrip_carries_mental_model_history(memory, request_conte
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_bank_roundtrip_carries_knowledge_pages(memory, request_context):
+    """A whole-bank archive restores the Knowledge Pages tree — nested folders +
+    pages, parent_id / mental_model_id / managed / sort_order preserved — and
+    regenerates each backing mental model's embedding + lexical state on the
+    target, so pages stay searchable after import (#3308, #3323)."""
+    bank = _unique_bank("bank_kb")
+    try:
+        await memory.get_bank_profile(bank, request_context=request_context)
+        root = await memory.create_knowledge_folder(bank, "Runbooks", managed=True, request_context=request_context)
+        sub = await memory.create_knowledge_folder(
+            bank, "Billing", parent_id=root["id"], request_context=request_context
+        )
+        page = await memory.create_knowledge_page(
+            bank,
+            name="Net-30 policy",
+            source_query="what is our billing policy",
+            content="Invoices are due Net-30. Late payments accrue interest.",
+            parent_id=sub["id"],
+            request_context=request_context,
+        )
+        # A root-level page (NULL parent) exercises the non-nested path too.
+        await memory.create_knowledge_page(
+            bank,
+            name="Overview",
+            source_query="overview",
+            content="Company overview and mission statement.",
+            request_context=request_context,
+        )
+
+        def _tree(nodes):
+            return sorted(
+                (n["id"], n["kind"], n["parent_id"], n["mental_model_id"], n["managed"], n["name"]) for n in nodes
+            )
+
+        before = _tree(await memory.list_knowledge_nodes(bank, request_context=request_context))
+        before_search = await memory.search_knowledge_pages(
+            bank, "net-30 billing", limit=5, request_context=request_context
+        )
+        assert any(r["id"] == page["id"] for r in before_search), "page should be searchable before export"
+
+        from hindsight_api.engine.transfer import export_bank
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
+        # Delete then restore into the same id — exact round-trip, no PK collisions.
+        await memory.delete_bank(bank, request_context=request_context)
+        result = await memory.import_bank_async(archive, request_context)
+        assert result.knowledge_pages_imported == 4  # 2 folders + 2 pages
+
+        # Tree restored exactly: ids, parents, backing mental models, managed flag.
+        after = _tree(await memory.list_knowledge_nodes(bank, request_context=request_context))
+        assert after == before
+
+        # Backing mental models re-embedded on the target (no NULL vectors), so both
+        # the vector and lexical arms of knowledge search work again.
+        async with acquire_with_retry(backend) as conn:
+            null_embeddings = await conn.fetchval(
+                f"SELECT count(*) FROM {fq_table('mental_models')} WHERE bank_id = $1 AND embedding IS NULL",
+                bank,
+            )
+        assert null_embeddings == 0, "restored mental models must be re-embedded"
+        after_search = await memory.search_knowledge_pages(
+            bank, "net-30 billing", limit=5, request_context=request_context
+        )
+        assert any(r["id"] == page["id"] for r in after_search), "page must be searchable after import"
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_import_bank_rejects_documents_archive(memory, request_context):
     """A documents-only archive must be rejected by the bank importer."""
     bank = _unique_bank("bank_reject")
@@ -700,6 +901,7 @@ async def test_import_bank_refuses_existing_bank(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_export_import_roundtrip_without_llm(memory, request_context, monkeypatch):
     """Export from one bank and import into another without re-running the LLM."""
     src = _unique_bank("transfer_src")
@@ -823,6 +1025,7 @@ async def _bank_snapshot(memory, bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_full_roundtrip_integrity(memory, request_context):
     """Full export → import must reproduce every persisted artifact (counts + sizes)."""
     src = _unique_bank("transfer_integ_src")
@@ -876,6 +1079,7 @@ async def test_full_roundtrip_integrity(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_transfer_preserves_legacy_causal_links(memory, request_context):
     """Legacy causal edges survive export/import without becoming retain inputs."""
     src = _unique_bank("transfer_legacy_causal_src")
@@ -927,6 +1131,7 @@ async def test_transfer_preserves_legacy_causal_links(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_export_import_observations(memory, request_context):
     """With include_observations, observations transfer and their sources re-link."""
     src = _unique_bank("transfer_obs_src")
@@ -1007,6 +1212,7 @@ async def test_export_import_observations(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_import_triggers_consolidation(memory, request_context):
     """Importing (without observations) triggers consolidation in the target bank,
     so observations get generated there — same as a normal retain."""
@@ -1170,28 +1376,51 @@ async def test_import_on_conflict_modes(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_http_export_import_endpoints(api_client, memory, request_context):
-    """Round trip through the HTTP export (GET) and import (POST multipart) endpoints."""
+    """Round trip through the async HTTP export (POST + poll + download) and import endpoints."""
     src = _unique_bank("transfer_http_src")
     dst = _unique_bank("transfer_http_dst")
     try:
         await _retain(memory, src, "Dana lives in Berlin.", request_context, document_id="doc-http")
 
-        export = await api_client.get(f"/v1/default/banks/{src}/document-transfer")
-        assert export.status_code == 200
-        assert export.headers["content-type"] == "application/zip"
-        archive = export.content
-        assert len(archive) > 0
+        # The old synchronous GET export is removed — it returns 410 pointing at
+        # the async endpoint (it could take down the shared API on large banks).
+        removed = await api_client.get(f"/v1/default/banks/{src}/document-transfer")
+        assert removed.status_code == 410
+        assert "document-transfer/export" in removed.json()["detail"]
 
-        # include_observations + a document_id subset is a 400.
-        bad = await api_client.get(
-            f"/v1/default/banks/{src}/document-transfer",
+        # Async export: POST returns 202 + operation_id, runs inline under the
+        # SyncTaskBackend test fixture, so it's completed by the time we poll.
+        submit = await api_client.post(f"/v1/default/banks/{src}/document-transfer/export")
+        assert submit.status_code == 202
+        export_op = submit.json()["operation_id"]
+
+        export_status = await api_client.get(f"/v1/default/banks/{src}/operations/{export_op}")
+        assert export_status.status_code == 200
+        export_meta = export_status.json()["result_metadata"]
+        assert export_meta["byte_size"] > 0
+        download_url = export_meta["download_url"]
+        assert download_url.startswith("/v1/default/files/download/banks/")
+
+        # Download the finished archive through the download route.
+        download = await api_client.get(download_url)
+        assert download.status_code == 200
+        assert download.headers["content-type"] == "application/zip"
+        archive = download.content
+        assert len(archive) > 0
+        # It is a real transfer archive for this bank.
+        parsed = parse_archive(archive)
+        assert parsed.manifest.source_bank_id == src
+
+        # include_observations + a document_id subset is a 400 (validated up front).
+        bad = await api_client.post(
+            f"/v1/default/banks/{src}/document-transfer/export",
             params={"document_id": "meeting-notes", "include_observations": "true"},
         )
         assert bad.status_code == 400
 
-        # Import is async: returns 202 + operation_id (runs inline under the
-        # SyncTaskBackend test fixture, so it's completed by the time we poll).
+        # Import is async: returns 202 + operation_id.
         imported = await api_client.post(
             f"/v1/default/banks/{dst}/document-transfer",
             files={"file": ("transfer.zip", archive, "application/zip")},
@@ -1208,7 +1437,7 @@ async def test_http_export_import_endpoints(api_client, memory, request_context)
         assert op["result_metadata"]["facts_imported"] >= 1
 
         # Exporting a bank that does not exist is a 404.
-        missing = await api_client.get("/v1/default/banks/does-not-exist-bank/document-transfer")
+        missing = await api_client.post("/v1/default/banks/does-not-exist-bank/document-transfer/export")
         assert missing.status_code == 404
     finally:
         await memory.delete_bank(src, request_context=request_context)
@@ -1225,9 +1454,14 @@ async def test_endpoints_disabled_by_config(api_client, monkeypatch):
     monkeypatch.setenv("HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API", "false")
     clear_config_cache()
     try:
-        export = await api_client.get("/v1/default/banks/any-bank/document-transfer")
+        export = await api_client.post("/v1/default/banks/any-bank/document-transfer/export")
         assert export.status_code == 404
         assert "disabled" in export.json()["detail"].lower()
+
+        # The download route serves export archives, so it is gated on the same flag.
+        download = await api_client.get("/v1/default/files/download/banks/any-bank/exports/x/transfer.zip")
+        assert download.status_code == 404
+        assert "disabled" in download.json()["detail"].lower()
 
         imported = await api_client.post(
             "/v1/default/banks/any-bank/document-transfer",
@@ -1257,6 +1491,51 @@ async def test_import_rejects_unsupported_schema_version(memory, request_context
         await memory.import_documents_async("any-bank", buffer.getvalue(), request_context)
 
 
+def test_parse_archive_rejects_a_file_that_is_not_a_zip():
+    """Garbage bytes are a caller error (400), not a zipfile.BadZipFile crash (500)."""
+    with pytest.raises(ValueError, match="not a readable .zip"):
+        parse_archive(b"%PDF-1.7 this is not a zip at all")
+
+
+def test_parse_archive_rejects_a_plain_zip_of_files():
+    """A zip of ordinary documents is refused with a message that names the fix.
+
+    Regression for #3327: users read "Import from zip" as a bulk upload of their
+    own PDFs/text files, so the rejection has to say where that actually lives
+    instead of only naming the missing manifest.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("notes.txt", "Dana lives in Berlin.")
+        zf.writestr("report.pdf", "%PDF-1.7")
+
+    with pytest.raises(ValueError, match="manifest.json is missing") as excinfo:
+        parse_archive(buffer.getvalue())
+    assert "retain" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_http_import_rejects_non_transfer_zip_with_400(api_client):
+    """The wrong zip fails fast with a 400 whose detail explains what to upload."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("notes.txt", "Dana lives in Berlin.")
+
+    response = await api_client.post(
+        "/v1/default/banks/any-bank/document-transfer",
+        files={"file": ("my-documents.zip", buffer.getvalue(), "application/zip")},
+    )
+    assert response.status_code == 400
+    assert "manifest.json is missing" in response.json()["detail"]
+
+    not_a_zip = await api_client.post(
+        "/v1/default/banks/any-bank/document-transfer",
+        files={"file": ("notes.pdf", b"%PDF-1.7", "application/pdf")},
+    )
+    assert not_a_zip.status_code == 400
+    assert "not a readable .zip" in not_a_zip.json()["detail"]
+
+
 @pytest.mark.asyncio
 async def test_import_rejects_invalid_on_conflict(memory, request_context):
     """An unknown on_conflict mode is rejected with a ValueError."""
@@ -1276,3 +1555,305 @@ async def test_import_rejects_invalid_on_conflict(memory, request_context):
             archive_bytes=buffer.getvalue(),
             on_conflict="bogus",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_bank_import_classifies_label_entities(memory, request_context):
+    """An imported bank's label entities are stored with entity_kind='label'.
+
+    Regression for #3236. `import_bank_async` resolved the target bank's config
+    before restoring the archive's bank row — and import refuses to write into an
+    existing bank, so `entity_labels` was necessarily empty for the whole import.
+    Every label entity was then classified as regular, which exposes label values
+    to fuzzy merging (#3187) and leaves them inside the trigram index the partial
+    index (#3208) exists to keep them out of, so an imported bank silently lost
+    that fix. Measured on a real 12k-entity export: 5,355 of its entities were
+    label values and every one of them came back as 'regular'.
+    """
+    bank = _unique_bank("bank_label_kind")
+    label_entity = "brief_bio:enjoys long walks on the beach"
+    regular_entity = "Alice"
+    try:
+        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory._config_resolver.update_bank_config(
+            bank,
+            {"entity_labels": [{"key": "brief_bio", "type": "text", "description": "one-line bio"}]},
+        )
+        await _retain(memory, bank, "Alice enjoys long walks.", request_context, "doc-1")
+
+        backend = await memory._get_backend()
+        # Link the entities to a fact directly: the mock LLM's extraction does not
+        # emit a label-shaped entity, and what matters here is what the *import*
+        # makes of the entities the archive carries (export derives a fact's
+        # entities from unit_entities, so linking is what puts them in the archive).
+        async with acquire_with_retry(backend) as conn:
+            # Must be an exported fact type attached to a document, or export
+            # never sees the link and the archive carries no entities at all.
+            unit_id = await conn.fetchval(
+                f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 "
+                "AND document_id IS NOT NULL AND fact_type IN ('world', 'experience') LIMIT 1",
+                bank,
+            )
+            assert unit_id is not None, "no facts to attach entities to"
+            for name in (label_entity, regular_entity):
+                # Retain may already have created the regular one.
+                entity_id = await conn.fetchval(
+                    f"SELECT id FROM {fq_table('entities')} WHERE bank_id = $1 AND LOWER(canonical_name) = LOWER($2)",
+                    bank,
+                    name,
+                ) or await conn.fetchval(
+                    f"INSERT INTO {fq_table('entities')} (bank_id, canonical_name) VALUES ($1, $2) RETURNING id",
+                    bank,
+                    name,
+                )
+                await conn.execute(
+                    f"INSERT INTO {fq_table('unit_entities')} (unit_id, entity_id) VALUES ($1, $2) "
+                    "ON CONFLICT DO NOTHING",
+                    unit_id,
+                    entity_id,
+                )
+
+        from hindsight_api.engine.transfer import export_bank
+
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
+        await memory.delete_bank(bank, request_context=request_context)
+        await memory.import_bank_async(archive, request_context)
+
+        async with acquire_with_retry(backend) as conn:
+            kinds = {
+                row["canonical_name"]: row["entity_kind"]
+                for row in await conn.fetch(
+                    f"SELECT canonical_name, entity_kind FROM {fq_table('entities')} WHERE bank_id = $1",
+                    bank,
+                )
+            }
+        assert kinds.get(label_entity) == "label", kinds
+        assert kinds.get(regular_entity) == "regular", kinds
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_async_export_roundtrip(memory, request_context):
+    """The async export operation stashes a real archive that re-imports cleanly.
+
+    Mirrors the synchronous round trip, but through submit_export_documents_async:
+    the worker (inline under SyncTaskBackend) builds the ZIP, stores it, and
+    records the storage key / download URL / size in the operation's
+    result_metadata.
+    """
+    src = _unique_bank("async_export_src")
+    dst = _unique_bank("async_export_dst")
+    try:
+        await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+
+        meta, archive = await _export_async(memory, src, request_context)
+        assert meta["storage_key"].startswith(f"banks/{src}/exports/")
+        assert meta["download_url"] == f"/v1/default/files/download/{meta['storage_key']}"
+        assert meta["byte_size"] == len(archive)
+        assert meta["filename"] == f"{src}-documents.zip"
+
+        parsed = parse_archive(archive)
+        assert parsed.manifest.source_bank_id == src
+        exported_texts = {fact.text for doc in parsed.documents for fact in doc.facts}
+        assert exported_texts
+
+        result = await _import(memory, dst, archive, request_context)
+        assert result["facts_imported"] == parsed.manifest.fact_count
+
+        units = await memory.list_memory_units(dst, request_context=request_context)
+        imported = {u["text"] for u in units["items"] if u["fact_type"] != "observation"}
+        assert imported == exported_texts
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_async_export_include_observations_subset_rejected(memory, request_context):
+    """include_observations with a document subset fails fast (before enqueue)."""
+    with pytest.raises(ValueError, match="whole bank"):
+        await memory.submit_export_documents_async(
+            "any-bank", request_context, document_ids=["doc-1"], include_observations=True
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_export_attach_batching_preserves_entities_and_causal_links(memory, request_context, monkeypatch):
+    """Batched attach queries carry every fact's entities and cross-batch causal edges.
+
+    With _ATTACH_BATCH_SIZE forced to 1 each unit lands in its own batch, so a
+    causal edge whose endpoints fall in different batches is exactly the case the
+    old ``to_unit_id = ANY(<full set>)`` filter covered — the Python-side target
+    check must still attach it.
+    """
+    from hindsight_api.engine.transfer import export as export_mod
+
+    bank = _unique_bank("attach_batch")
+    try:
+        await _retain(memory, bank, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+
+        # Insert a synthetic caused_by edge between two facts of the same document,
+        # ordered the same way export assigns fact ordinals (created_at, id).
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND document_id = 'doc-1' "
+                "AND fact_type IN ('world', 'experience') ORDER BY created_at, id",
+                bank,
+            )
+            assert len(rows) >= 2, "need at least two facts to link"
+            source_id, target_id = rows[0]["id"], rows[1]["id"]
+            await conn.execute(
+                f"INSERT INTO {fq_table('memory_links')} (bank_id, from_unit_id, to_unit_id, link_type) "
+                "VALUES ($1, $2, $3, 'caused_by') ON CONFLICT DO NOTHING",
+                bank,
+                source_id,
+                target_id,
+            )
+
+        monkeypatch.setattr(export_mod, "_ATTACH_BATCH_SIZE", 1)
+        _, archive = await _export_async(memory, bank, request_context)
+        parsed = parse_archive(archive)
+
+        doc = next(d for d in parsed.documents if d.id == "doc-1")
+        # Every fact kept its entities despite one-unit-per-batch fetching.
+        all_entities = {name for fact in doc.facts for name in fact.entities}
+        assert any("alice" in n.lower() for n in all_entities), all_entities
+        assert any("bob" in n.lower() for n in all_entities), all_entities
+        # The cross-batch causal edge survived: fact 0 points at fact 1.
+        relations = doc.facts[0].causal_relations
+        assert any(r.relation_type == "caused_by" and r.target_fact_index == 1 for r in relations), relations
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_delete_operation_removes_export_archive(memory, request_context):
+    """Deleting an export operation also deletes its stored archive (no orphan blob)."""
+    bank = _unique_bank("export_delete")
+    try:
+        await _retain(memory, bank, "Alice works at Google.", request_context, "doc-1")
+        submission = await memory.submit_export_documents_async(bank, request_context)
+        op_id = submission["operation_id"]
+        status = await memory.get_operation_status(bank, op_id, request_context=request_context)
+        storage_key = status["result_metadata"]["storage_key"]
+
+        # The archive exists while the operation does.
+        assert await memory._file_storage.retrieve(storage_key)
+
+        # Deleting the operation deletes the archive with it.
+        await memory.delete_operation(bank, op_id, request_context=request_context)
+        with pytest.raises(FileNotFoundError):
+            await memory._file_storage.retrieve(storage_key)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_export_archives(memory, request_context):
+    """Retention's archive purge deletes the blobs of export ops past the cutoff."""
+    from datetime import timedelta
+
+    bank = _unique_bank("export_purge")
+    try:
+        await _retain(memory, bank, "Bob works at Microsoft.", request_context, "doc-1")
+        submission = await memory.submit_export_documents_async(bank, request_context)
+        op_id = submission["operation_id"]
+        status = await memory.get_operation_status(bank, op_id, request_context=request_context)
+        storage_key = status["result_metadata"]["storage_key"]
+        assert await memory._file_storage.retrieve(storage_key)
+
+        # The purge is schema-wide (it doesn't take a bank), and this DB is shared
+        # across xdist workers — so backdate THIS op and use a past cutoff to target
+        # it specifically. A future cutoff would purge other concurrent tests' fresh
+        # export archives too (they'd be < cutoff), making both this count and those
+        # tests flaky.
+        backend = await memory._get_backend()
+        old = datetime.now(timezone.utc) - timedelta(days=100)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('async_operations')} SET updated_at = $1 WHERE operation_id = $2",
+                old,
+                uuid.UUID(op_id),
+            )
+            purged = await memory.purge_expired_export_archives(
+                conn, fq_table("async_operations"), cutoff, batch_size=100
+            )
+        assert purged >= 1
+        with pytest.raises(FileNotFoundError):
+            await memory._file_storage.retrieve(storage_key)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_export_archives_honours_the_batch_bound(memory, request_context):
+    """The purge deletes at most ``batch_size`` archives per call.
+
+    Unbounded, it re-selected every expired export on every cleanup cycle and
+    re-issued a blob delete for each — ``storage_key`` stays in the row until the
+    row itself is pruned, so nothing marks an archive as already handled. The
+    prune next to it is batched, so the purge shares that bound and the two walk
+    the same ``ORDER BY updated_at, operation_id`` window together.
+    """
+    from datetime import timedelta
+
+    bank = _unique_bank("export_purge_bound")
+    try:
+        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        backend = await memory._get_backend()
+        # Fabricated rows rather than real exports: the purge counts rows carrying a
+        # storage_key and swallows the blob delete, so no archive needs to exist for
+        # the bound to be observable. Backdated far past any other test's rows so the
+        # ORDER BY puts these first on the shared pg0 database.
+        old = datetime.now(timezone.utc) - timedelta(days=500)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+        async with acquire_with_retry(backend) as conn:
+            for i in range(2):
+                await conn.execute(
+                    f"""INSERT INTO {fq_table("async_operations")}
+                        (operation_id, bank_id, operation_type, status, task_payload,
+                         result_metadata, updated_at)
+                        VALUES ($1, $2, 'export_documents', 'completed', '{{}}'::jsonb, $3::jsonb, $4)""",
+                    uuid.uuid4(),
+                    bank,
+                    json.dumps({"storage_key": f"banks/{bank}/exports/absent-{i}.zip"}),
+                    old,
+                )
+            # LIMIT 1 caps the result at one row regardless of which expired export
+            # sorts first, so this holds even with other tests' rows in the schema.
+            purged = await memory.purge_expired_export_archives(
+                conn, fq_table("async_operations"), cutoff, batch_size=1
+            )
+        assert purged == 1
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_download_route_rejects_unauthorized_keys(api_client, memory, request_context):
+    """The download route only serves bank-scoped keys for banks the caller can see."""
+    bank = _unique_bank("download_guard")
+    try:
+        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+
+        # Non-"banks/"-prefixed key: not a downloadable resource.
+        r = await api_client.get("/v1/default/files/download/etc/passwd")
+        assert r.status_code == 404
+        # Path-traversal attempt is rejected structurally.
+        r = await api_client.get("/v1/default/files/download/banks/../secrets/x.zip")
+        assert r.status_code == 404
+        # Well-formed key for a bank that does not exist (IDOR guard via bank read).
+        r = await api_client.get("/v1/default/files/download/banks/no-such-bank/exports/x/transfer.zip")
+        assert r.status_code == 404
+        # Well-formed key for a visible bank but no such stored file: 404, not 500.
+        r = await api_client.get(f"/v1/default/files/download/banks/{bank}/exports/missing/transfer.zip")
+        assert r.status_code == 404
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)

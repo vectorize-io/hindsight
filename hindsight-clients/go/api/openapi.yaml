@@ -7,13 +7,16 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.8.6
+  version: 0.9.1
 servers:
 - url: /
 paths:
   /health:
     get:
-      description: Checks the health of the API and database connection
+      description: "Readiness check: verifies the API can reach the database. Alias\
+        \ of /health/ready. Use /health/live for liveness probes — this one fails\
+        \ whenever the database is unreachable, which must gate traffic, not restart\
+        \ the process."
       operationId: health_endpoint_health_get
       responses:
         "200":
@@ -22,6 +25,36 @@ paths:
               schema: {}
           description: Successful Response
       summary: Health check endpoint
+      tags:
+      - Monitoring
+  /health/ready:
+    get:
+      description: "Returns 200 when the API can serve traffic (database reachable),\
+        \ 503 otherwise. Identical to /health, which stays supported as its alias."
+      operationId: get_readiness
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Readiness probe
+      tags:
+      - Monitoring
+  /health/live:
+    get:
+      description: "Returns 200 whenever the process can serve a request. Performs\
+        \ no database access, so a slow or unreachable database never restarts the\
+        \ pod. Point livenessProbe here and readinessProbe at /health."
+      operationId: get_liveness
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivenessResponse'
+          description: Successful Response
+      summary: Liveness probe
       tags:
       - Monitoring
   /version:
@@ -576,9 +609,44 @@ paths:
       - Memory
   /v1/default/banks:
     get:
-      description: Get a list of all agents with their profiles
+      description: "List banks with their profiles and summary stats, most recently\
+        \ written first (`last_write_at` descending), with pagination and optional\
+        \ search."
       operationId: list_banks
       parameters:
+      - description: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+        explode: true
+        in: query
+        name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Maximum number of banks to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of banks to return
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -600,7 +668,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: List all memory banks
+      summary: List memory banks
       tags:
       - Banks
   /v1/default/banks/{bank_id}/stats:
@@ -1367,6 +1435,56 @@ paths:
       summary: Refresh mental model
       tags:
       - Mental Models
+  /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh:
+    post:
+      description: |-
+        Preview what a refresh would do to this mental model WITHOUT changing it — no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.
+
+        This is the production refresh pipeline with two writes skipped — the content and the watermark — and nothing about it is configurable, so what it reports is what the next refresh will do. Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.
+
+        It costs the same LLM tokens as a refresh and is validated the same way.
+      operationId: dry_run_refresh_mental_model
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: mental_model_id
+        required: true
+        schema:
+          title: Mental Model Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MentalModelDryRunRefreshResult'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "Dry-run mental model refresh (preview, no persistence)"
+      tags:
+      - Mental Models
   /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear:
     post:
       description: "Clear a mental model's content so the next refresh performs a\
@@ -1734,8 +1852,10 @@ paths:
     patch:
       description: "Rename a node (set `name`), move it under another folder (set\
         \ `parent_id`, null for the root), and/or update a page's options (`source_query`,\
-        \ `tags`, `max_tokens`). Changing `source_query` schedules an async refresh\
-        \ so the page rebuilds against the new question."
+        \ `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async\
+        \ refresh so the page rebuilds against the new question. `trigger` is applied\
+        \ as a patch: the fields you send are updated and the rest keep the page's\
+        \ current values."
       operationId: update_knowledge_node
       parameters:
       - explode: false
@@ -1786,7 +1906,8 @@ paths:
       - Knowledge Base
   /v1/default/banks/{bank_id}/directives:
     get:
-      description: List hard rules that are injected into prompts.
+      description: "List directive definitions. Unlike reflect, an omitted tag filter\
+        \ returns all directives."
       operationId: list_directives
       parameters:
       - explode: false
@@ -1797,7 +1918,8 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Filter by tags
+      - description: "Filter directives by execution scope. Omit or pass [] to list\
+          \ all directives."
         explode: true
         in: query
         name: tags
@@ -1808,14 +1930,16 @@ paths:
           nullable: true
           type: array
         style: form
-      - description: How to match tags
+      - description: How tagged directives match the requested scope. Untagged/global
+          directives are included.
         explode: true
         in: query
         name: tags_match
         required: false
         schema:
           default: any
-          description: How to match tags
+          description: How tagged directives match the requested scope. Untagged/global
+            directives are included.
           enum:
           - any
           - all
@@ -1880,7 +2004,7 @@ paths:
       tags:
       - Directives
     post:
-      description: Create a hard rule that will be injected into prompts.
+      description: Create a global or tag-scoped hard rule for reflect prompts.
       operationId: create_directive
       parameters:
       - explode: false
@@ -3183,13 +3307,14 @@ paths:
       - Bank Templates
   /v1/default/banks/{bank_id}/document-transfer:
     get:
-      description: "Export documents (extracted facts, entity names, causal links,\
-        \ chunks) from a bank as a transfer ZIP archive. Embeddings and database ids\
-        \ are not included — importing re-embeds with the target bank's model and\
-        \ re-resolves entities. Consolidated observations are excluded unless include_observations=true.\
-        \ Pass document_id query params to export specific documents, or omit to export\
-        \ the whole bank."
-      operationId: export_documents
+      deprecated: true
+      description: "**Removed.** The synchronous whole-bank export loaded the entire\
+        \ bank into memory and held a database connection for the full request, which\
+        \ could exhaust memory and take down the shared API on large banks. Use the\
+        \ asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead:\
+        \ it returns an operation_id, runs the export in the background, and exposes\
+        \ a download URL on completion."
+      operationId: export_documents_sync_removed
       parameters:
       - explode: false
         in: path
@@ -3199,28 +3324,6 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Document id(s) to export; omit for all
-        explode: true
-        in: query
-        name: document_id
-        required: false
-        schema:
-          items:
-            type: string
-          nullable: true
-          type: array
-        style: form
-      - description: Also export consolidated observations (restored on import)
-        explode: true
-        in: query
-        name: include_observations
-        required: false
-        schema:
-          default: false
-          description: Also export consolidated observations (restored on import)
-          title: Include Observations
-          type: boolean
-        style: form
       - explode: false
         in: header
         name: authorization
@@ -3234,15 +3337,14 @@ paths:
           content:
             application/json:
               schema: {}
-            application/zip: {}
-          description: Transfer archive
+          description: Successful Response
         "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Export documents
+      summary: Export documents (removed — use POST .../document-transfer/export)
       tags:
       - Document Transfer
     post:
@@ -3301,6 +3403,117 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Import documents (async)
+      tags:
+      - Document Transfer
+  /v1/default/banks/{bank_id}/document-transfer/export:
+    post:
+      description: "Submit an async export of a bank's documents (extracted facts,\
+        \ entity names, causal links, chunks) as a transfer ZIP archive. Embeddings\
+        \ and database ids are not included — importing re-embeds with the target\
+        \ bank's model and re-resolves entities. Runs as a background operation to\
+        \ avoid pinning the API on large banks. Returns an operation_id; poll GET\
+        \ /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the\
+        \ operation's result_metadata carries download_url (fetch the ZIP from GET\
+        \ /v1/default/files/download/{key}), storage_key, byte_size, and filename.\
+        \ Pass document_id query params to export specific documents, or omit to export\
+        \ the whole bank; include_observations=true also carries consolidated observations\
+        \ (whole-bank export only)."
+      operationId: export_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Document id(s) to export; omit for all
+        explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: Also export consolidated observations (restored on import; whole-bank
+          only)
+        explode: true
+        in: query
+        name: include_observations
+        required: false
+        schema:
+          default: false
+          description: Also export consolidated observations (restored on import;
+            whole-bank only)
+          title: Include Observations
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentExportSubmitResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export documents (async)
+      tags:
+      - Document Transfer
+  /v1/default/files/download/{key}:
+    get:
+      description: Stream a file previously written to file storage — currently the
+        transfer ZIP produced by an async document export. The key comes from the
+        export operation's result_metadata (storage_key / download_url). Access is
+        authorized against the bank the key belongs to.
+      operationId: download_file
+      parameters:
+      - explode: false
+        in: path
+        name: key
+        required: true
+        schema:
+          title: Key
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            application/zip: {}
+          description: Stored file
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Download a stored file (async export archive)
       tags:
       - Document Transfer
   /v1/bank-template-schema:
@@ -3562,10 +3775,10 @@ paths:
       tags:
       - Banks
     patch:
-      description: "Update configuration overrides for a bank. Only hierarchical fields\
-        \ can be overridden (LLM settings, retention parameters, etc.). Keys can be\
-        \ provided in Python field format (llm_provider) or environment variable format\
-        \ (HINDSIGHT_API_LLM_PROVIDER)."
+      description: "Update configuration overrides for a bank. Only hierarchical behavioral\
+        \ settings can be overridden (retention parameters, recall settings, etc.).\
+        \ Keys can be provided in Python field format (retain_extraction_mode) or\
+        \ environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE)."
       operationId: update_bank_config
       parameters:
       - explode: false
@@ -4686,11 +4899,9 @@ components:
       example:
         bank_id: my-bank
         config:
-          llm_model: gpt-4
-          llm_provider: openai
+          retain_chunk_size: 3000
           retain_extraction_mode: verbose
         overrides:
-          llm_model: gpt-4
           retain_extraction_mode: verbose
       properties:
         bank_id:
@@ -4715,14 +4926,13 @@ components:
       description: Request model for updating bank configuration.
       example:
         updates:
-          llm_model: claude-sonnet-4-5
           retain_custom_instructions: Extract technical details carefully
-          retain_extraction_mode: verbose
+          retain_extraction_mode: custom
       properties:
         updates:
           additionalProperties: {}
           description: Configuration overrides. Keys can be in Python field format
-            (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER).
+            (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE).
             Only hierarchical fields can be overridden per-bank.
           title: Updates
       required:
@@ -4763,7 +4973,7 @@ components:
       - disposition
       title: BankListItem
     BankListResponse:
-      description: Response model for listing all banks.
+      description: "Response model for listing banks, one page at a time."
       example:
         banks:
         - bank_id: user123
@@ -4778,13 +4988,29 @@ components:
           mission: I am a software engineer helping my team ship quality code
           name: Alice
           updated_at: 2024-01-16T14:20:00Z
+        limit: 100
+        offset: 0
+        total: 50
       properties:
         banks:
           items:
             $ref: '#/components/schemas/BankListItem'
           type: array
+        total:
+          description: "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
       required:
       - banks
+      - limit
+      - offset
+      - total
       title: BankListResponse
     BankLlmHealthResponse:
       description: |-
@@ -4861,6 +5087,7 @@ components:
         failed_consolidation: 0
         failed_operations: 0
         last_consolidated_at: 2024-01-15T10:30:00Z
+        last_memory_write_at: 2024-01-15T11:05:00Z
         links_breakdown:
           fact:
             entity: 40
@@ -4929,9 +5156,15 @@ components:
         last_consolidated_at:
           nullable: true
           type: string
+        last_memory_write_at:
+          nullable: true
+          type: string
         pending_consolidation:
           default: 0
-          description: Number of memories not yet processed into observations
+          description: Number of source memories (world/experience) still queued for
+            consolidation into observations. Excludes memories whose consolidation
+            permanently failed — those are counted only in failed_consolidation —
+            so this drains to 0 when the consolidator catches up.
           title: Pending Consolidation
           type: integer
         failed_consolidation:
@@ -4988,6 +5221,15 @@ components:
         observations_mission:
           nullable: true
           type: string
+        enable_temporal_retrieval:
+          nullable: true
+          type: boolean
+        enable_graph_retrieval:
+          nullable: true
+          type: boolean
+        enable_reranking:
+          nullable: true
+          type: boolean
         disposition_skepticism:
           maximum: 5.0
           minimum: 1.0
@@ -5005,7 +5247,7 @@ components:
           type: integer
         entity_labels:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/LabelGroup-Output'
           nullable: true
           type: array
         entities_allow_free_form:
@@ -5045,6 +5287,10 @@ components:
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
+        mental_model_min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         llm_gemini_safety_settings:
           items: {}
           nullable: true
@@ -5082,6 +5328,27 @@ components:
         store_document_text:
           nullable: true
           type: boolean
+        enable_auto_consolidation:
+          nullable: true
+          type: boolean
+        consolidation_max_memories_per_round:
+          nullable: true
+          type: integer
+        consolidation_llm_parallelism:
+          nullable: true
+          type: integer
+        recall_include_chunks:
+          nullable: true
+          type: boolean
+        recall_max_tokens:
+          nullable: true
+          type: integer
+        recall_chunks_max_tokens:
+          nullable: true
+          type: integer
+        memory_defense:
+          additionalProperties: {}
+          nullable: true
       title: BankTemplateConfig
     BankTemplateDirective:
       description: |-
@@ -5515,6 +5782,15 @@ components:
         observations_mission:
           nullable: true
           type: string
+        enable_temporal_retrieval:
+          nullable: true
+          type: boolean
+        enable_graph_retrieval:
+          nullable: true
+          type: boolean
+        enable_reranking:
+          nullable: true
+          type: boolean
       title: CreateBankRequest
     CreateDirectiveRequest:
       description: Request model for creating a directive.
@@ -5547,7 +5823,8 @@ components:
           type: boolean
         tags:
           default: []
-          description: Tags for filtering
+          description: Directive execution scope. Empty means global; non-empty requires
+            a matching reflect scope.
           items:
             type: string
           type: array
@@ -5658,9 +5935,7 @@ components:
         parent_id: parent_id
         name: name
         trigger:
-          mode: full
-          refresh_after_consolidation: false
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -5671,16 +5946,22 @@ components:
             tags:
             - tags
             - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
           fact_types:
           - world
           - world
+          response_schema:
+            key: ""
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
-          exclude_mental_models: false
-          recall_max_tokens: 6
+          min_refresh_interval_seconds: 0
+          keep_trace: false
+          recall_max_tokens: 1
         tags:
         - tags
         - tags
@@ -5819,6 +6100,9 @@ components:
     DirectiveListResponse:
       description: Response model for listing directives.
       example:
+        total: 6
+        offset: 5
+        limit: 1
         items:
         - is_active: true
           updated_at: updated_at
@@ -5847,8 +6131,24 @@ components:
           items:
             $ref: '#/components/schemas/DirectiveResponse'
           type: array
+        total:
+          description: Total number of directives matching the filter (not just this
+            page)
+          title: Total
+          type: integer
+        limit:
+          description: Page size that was applied
+          title: Limit
+          type: integer
+        offset:
+          description: Offset that was applied
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: DirectiveListResponse
     DirectiveResponse:
       description: Response model for a directive.
@@ -5932,6 +6232,28 @@ components:
       - literalism
       - skepticism
       title: DispositionTraits
+    DocumentExportSubmitResponse:
+      description: |-
+        Response for the async document-export endpoint (202).
+
+        The export runs in the background; poll the operations endpoint for status.
+        On completion the operation's ``result_metadata`` carries ``download_url``
+        (fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,
+        ``byte_size``, and ``filename``.
+      example:
+        operation_id: operation_id
+        status: pending
+      properties:
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          default: pending
+          title: Status
+          type: string
+      required:
+      - operation_id
+      title: DocumentExportSubmitResponse
     DocumentImportSubmitResponse:
       description: |-
         Response for the async document-import endpoint (202).
@@ -6037,8 +6359,48 @@ components:
         llm_output_language: llm_output_language
         retain_extract_causal_links: true
         entity_labels:
-        - ""
-        - ""
+        - values:
+          - description: ""
+            value: value
+          - description: ""
+            value: value
+          description: ""
+          optional: true
+          tag: false
+          type: value
+          fields:
+            key:
+              values:
+              - description: ""
+                value: value
+              - description: ""
+                value: value
+              description: ""
+              type: text
+              fields:
+                key: null
+          key: key
+        - values:
+          - description: ""
+            value: value
+          - description: ""
+            value: value
+          description: ""
+          optional: true
+          tag: false
+          type: value
+          fields:
+            key:
+              values:
+              - description: ""
+                value: value
+              - description: ""
+                value: value
+              description: ""
+              type: text
+              fields:
+                key: null
+          key: key
         retain_custom_instructions: retain_custom_instructions
         content: content
         entities_allow_free_form: true
@@ -6076,7 +6438,8 @@ components:
           nullable: true
           type: integer
         entity_labels:
-          items: {}
+          items:
+            $ref: '#/components/schemas/LabelGroup-Input'
           nullable: true
           type: array
         entities_allow_free_form:
@@ -6551,6 +6914,34 @@ components:
         description: description
         id: id
         is_stale: true
+        trigger:
+          recall_chunks_max_tokens: 5
+          refresh_cron: refresh_cron
+          tag_groups:
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
+          fact_types:
+          - world
+          - world
+          response_schema:
+            key: ""
+          exclude_mental_model_ids:
+          - exclude_mental_model_ids
+          - exclude_mental_model_ids
+          include_chunks: true
+          tags_match: any
+          min_refresh_interval_seconds: 0
+          keep_trace: false
+          recall_max_tokens: 1
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -6594,6 +6985,8 @@ components:
         is_stale:
           nullable: true
           type: boolean
+        trigger:
+          $ref: '#/components/schemas/MentalModelTrigger-Output'
         children:
           default: []
           items:
@@ -6763,6 +7156,34 @@ components:
           description: description
           id: id
           is_stale: true
+          trigger:
+            recall_chunks_max_tokens: 5
+            refresh_cron: refresh_cron
+            tag_groups:
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            tags_match: any
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            recall_max_tokens: 1
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -6778,6 +7199,34 @@ components:
           description: description
           id: id
           is_stale: true
+          trigger:
+            recall_chunks_max_tokens: 5
+            refresh_cron: refresh_cron
+            tag_groups:
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            tags_match: any
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            recall_max_tokens: 1
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -6791,6 +7240,21 @@ components:
       required:
       - roots
       title: KnowledgeTreeResponse
+    LLMCallTrace:
+      description: A single LLM call made during reflect.
+      properties:
+        scope:
+          description: "Call scope: agent_1, agent_2, final, etc."
+          title: Scope
+          type: string
+        duration_ms:
+          description: Execution time in milliseconds
+          title: Duration Ms
+          type: integer
+      required:
+      - duration_ms
+      - scope
+      title: LLMCallTrace
     LLMRequestEntry:
       description: "A single LLM request trace row, as returned by the read API."
       example:
@@ -7090,6 +7554,124 @@ components:
       - output
       - total
       title: LLMRequestTokenSums
+    LabelGroup-Input:
+      description: A label group (dimension) with its type and allowed values.
+      example:
+        values:
+        - description: ""
+          value: value
+        - description: ""
+          value: value
+        description: ""
+        optional: true
+        tag: false
+        type: value
+        fields:
+          key:
+            values:
+            - description: ""
+              value: value
+            - description: ""
+              value: value
+            description: ""
+            type: text
+            fields:
+              key: null
+        key: key
+      properties:
+        key:
+          title: Key
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        type:
+          default: value
+          enum:
+          - value
+          - multi-values
+          - text
+          - map
+          title: Type
+          type: string
+        optional:
+          default: true
+          title: Optional
+          type: boolean
+        tag:
+          default: false
+          title: Tag
+          type: boolean
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Input'
+          default: {}
+          title: Fields
+      required:
+      - key
+      title: LabelGroup
+    LabelGroup-Output:
+      description: A label group (dimension) with its type and allowed values.
+      properties:
+        key:
+          title: Key
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        type:
+          default: value
+          enum:
+          - value
+          - multi-values
+          - text
+          - map
+          title: Type
+          type: string
+        optional:
+          default: true
+          title: Optional
+          type: boolean
+        tag:
+          default: false
+          title: Tag
+          type: boolean
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Output'
+          default: {}
+          title: Fields
+      required:
+      - key
+      title: LabelGroup
+    LabelValue:
+      description: A single allowed value for a label group.
+      example:
+        description: ""
+        value: value
+      properties:
+        value:
+          title: Value
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+      required:
+      - value
+      title: LabelValue
     ListChunksResponse:
       description: Response model for listing chunks of a document.
       example:
@@ -7235,6 +7817,32 @@ components:
       - offset
       - total
       title: ListTagsResponse
+    LivenessResponse:
+      description: Payload for the API's DB-free liveness probe.
+      example:
+        status: alive
+        uptime_seconds: 812.4
+        version: 0.4.0
+      properties:
+        status:
+          description: Always "alive" — reaching this handler is the check
+          enum:
+          - alive
+          title: Status
+          type: string
+        version:
+          description: Hindsight version this process is running
+          title: Version
+          type: string
+        uptime_seconds:
+          description: Seconds since the process started
+          title: Uptime Seconds
+          type: number
+      required:
+      - status
+      - uptime_seconds
+      - version
+      title: LivenessResponse
     LlmOperationHealth:
       description: |-
         LLM connectivity status for a single operation. Status only — no provider/model/
@@ -7272,6 +7880,72 @@ components:
       - operation
       - status
       title: LlmOperationHealth
+    MapField-Input:
+      description: A field within a map-type entity label group. Supports recursion
+        via type='map'.
+      example:
+        values:
+        - description: ""
+          value: value
+        - description: ""
+          value: value
+        description: ""
+        type: text
+        fields:
+          key: null
+      properties:
+        type:
+          default: text
+          enum:
+          - text
+          - value
+          - multi-values
+          - map
+          title: Type
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Input'
+          default: {}
+          title: Fields
+      title: MapField
+    MapField-Output:
+      description: A field within a map-type entity label group. Supports recursion
+        via type='map'.
+      properties:
+        type:
+          default: text
+          enum:
+          - text
+          - value
+          - multi-values
+          - map
+          title: Type
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Output'
+          default: {}
+          title: Fields
+      title: MapField
     MemoriesTimeseriesResponse:
       description: Time-series of memory ingestion bucketed by time and fact type.
       example:
@@ -7356,6 +8030,20 @@ components:
             $ref: '#/components/schemas/EntityInput'
           nullable: true
           type: array
+        resolve_entities:
+          default: true
+          description: "Whether the names in 'entities' are resolved against the entities\
+            \ already in the bank. True (default) matches each name to a similar existing\
+            \ entity when it scores above the match threshold, so a name close to\
+            \ one already in the bank may resolve to that one instead of the one you\
+            \ wrote. False takes your names literally — an existing entity is reused\
+            \ only on a case-insensitive name match, any other name creates a new\
+            \ entity, and your names are never merged with each other. This applies\
+            \ only to the entities you supply here; auto-extracted entities are always\
+            \ resolved, since they are the extractor's guess at a name rather than\
+            \ yours. Ignored when 'entities' is omitted."
+          title: Resolve Entities
+          type: boolean
         tags:
           items:
             type: string
@@ -7405,22 +8093,188 @@ components:
       required:
       - time
       title: MemoryTimeseriesBucket
+    MentalModelDeltaOperations:
+      description: Structured operations a delta refresh emitted against the existing
+        document.
+      properties:
+        applied:
+          description: "Operations applied to the document, in order."
+          items:
+            additionalProperties: {}
+          type: array
+        skipped:
+          description: "Operations dropped as invalid, each with a reason."
+          items:
+            additionalProperties: {}
+          type: array
+      title: MentalModelDeltaOperations
+    MentalModelDryRunRefreshResult:
+      description: |-
+        Preview of what a mental model refresh would do, having changed nothing.
+
+        Runs the real pipeline — same scope resolution, same reflect call, same
+        delta operations — then reports the result instead of persisting it. The
+        model's content, structured content, watermark, and last_refreshed_at are
+        all left untouched, so a delta dry run is repeatable: it reads the same
+        window the next real refresh would.
+      example:
+        effective_mode: full
+        facts:
+          retrieved:
+            observation: 12
+          used:
+            observation: 4
+        mental_model_id: coding-style
+        mode_fallback_reason: source_query_changed
+        name: Coding Style
+        outcome: content_written
+        requested_mode: delta
+        warnings: []
+        would_persist: true
+      properties:
+        mental_model_id:
+          description: The mental model previewed.
+          title: Mental Model Id
+          type: string
+        name:
+          description: Display name of the mental model.
+          title: Name
+          type: string
+        requested_mode:
+          description: "The mode asked for (from the model's trigger, or overridden)."
+          enum:
+          - full
+          - delta
+          title: Requested Mode
+          type: string
+        effective_mode:
+          description: The mode the refresh actually ran in.
+          enum:
+          - full
+          - delta
+          title: Effective Mode
+          type: string
+        mode_fallback_reason:
+          enum:
+          - no_baseline_content
+          - source_query_changed
+          - structured_doc_unreadable
+          - delta_ops_failed
+          - delta_ops_all_skipped
+          nullable: true
+          type: string
+        outcome:
+          description: What a real refresh would do with the document.
+          enum:
+          - content_written
+          - content_unchanged
+          - content_preserved_no_new_facts
+          - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
+          title: Outcome
+          type: string
+        would_persist:
+          description: Whether a real refresh would write new content.
+          title: Would Persist
+          type: boolean
+        scope:
+          $ref: '#/components/schemas/MentalModelRefreshScope'
+        window:
+          $ref: '#/components/schemas/MentalModelRefreshWindow'
+        facts:
+          $ref: '#/components/schemas/MentalModelFactCounts'
+        based_on:
+          additionalProperties:
+            items:
+              additionalProperties: {}
+          description: "The evidence this run would ground the document on, keyed\
+            \ by fact type — the same shape a refresh persists under reflect_response.based_on.\
+            \ Returned so a preview can show its sources without having to write them\
+            \ anywhere."
+          title: Based On
+        current_content:
+          description: The model's content as it stands now.
+          title: Current Content
+          type: string
+        candidate_content:
+          description: "Raw reflect synthesis, before any delta operations."
+          title: Candidate Content
+          type: string
+        preview_content:
+          description: "The content a real refresh would store: the delta-edited document,\
+            \ or the candidate in full mode."
+          title: Preview Content
+          type: string
+        diff:
+          description: Unified diff from current_content to preview_content. Empty
+            when identical.
+          title: Diff
+          type: string
+        delta_operations:
+          $ref: '#/components/schemas/MentalModelDeltaOperations'
+        retraction:
+          $ref: '#/components/schemas/MentalModelRetraction'
+        trace:
+          $ref: '#/components/schemas/MentalModelRefreshTrace'
+        usage:
+          $ref: '#/components/schemas/TokenUsage'
+        duration_ms:
+          default: 0
+          description: Wall-clock duration of the run.
+          title: Duration Ms
+          type: integer
+        warnings:
+          description: "Conditions worth a human's attention, in plain language."
+          items:
+            type: string
+          type: array
+      required:
+      - candidate_content
+      - current_content
+      - diff
+      - effective_mode
+      - facts
+      - mental_model_id
+      - name
+      - outcome
+      - preview_content
+      - requested_mode
+      - scope
+      - trace
+      - window
+      - would_persist
+      title: MentalModelDryRunRefreshResult
+    MentalModelFactCounts:
+      description: |-
+        Facts the refresh saw, keyed by fact type.
+
+        ``retrieved`` and ``used`` diverging is the single most common cause of a
+        disappointing refresh: recall found plenty, but the reflect agent declared
+        none of it relevant to the topic, so none of it reached the document.
+      properties:
+        retrieved:
+          additionalProperties:
+            type: integer
+          description: "Facts the reflect agent's tool calls returned, by fact type."
+          title: Retrieved
+        used:
+          additionalProperties:
+            type: integer
+          description: "Facts the agent declared it actually based the answer on,\
+            \ by fact type."
+          title: Used
+      title: MentalModelFactCounts
     MentalModelListResponse:
       description: Response model for listing mental models.
       example:
+        total: 5
+        offset: 7
+        limit: 2
         items:
-        - source_query: source_query
-          max_tokens: 0
-          bank_id: bank_id
-          reflect_response:
-            key: ""
-          name: name
+        - max_tokens: 0
           created_at: created_at
-          id: id
           trigger:
-            mode: full
-            refresh_after_consolidation: false
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -7431,34 +8285,39 @@ components:
               tags:
               - tags
               - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
             fact_types:
             - world
             - world
+            response_schema:
+              key: ""
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
-            exclude_mental_models: false
-            recall_max_tokens: 6
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            recall_max_tokens: 1
           last_refreshed_at: last_refreshed_at
           is_stale: true
+          last_memory_seen_at: last_memory_seen_at
           content: content
           tags:
           - tags
           - tags
-        - source_query: source_query
-          max_tokens: 0
+          source_query: source_query
           bank_id: bank_id
           reflect_response:
             key: ""
           name: name
-          created_at: created_at
           id: id
+        - max_tokens: 0
+          created_at: created_at
           trigger:
-            mode: full
-            refresh_after_consolidation: false
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -7469,45 +8328,205 @@ components:
               tags:
               - tags
               - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
             fact_types:
             - world
             - world
+            response_schema:
+              key: ""
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
-            exclude_mental_models: false
-            recall_max_tokens: 6
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            recall_max_tokens: 1
           last_refreshed_at: last_refreshed_at
           is_stale: true
+          last_memory_seen_at: last_memory_seen_at
           content: content
           tags:
           - tags
           - tags
+          source_query: source_query
+          bank_id: bank_id
+          reflect_response:
+            key: ""
+          name: name
+          id: id
       properties:
         items:
           items:
             $ref: '#/components/schemas/MentalModelResponse'
           type: array
+        total:
+          description: Total number of mental models matching the filter (not just
+            this page)
+          title: Total
+          type: integer
+        limit:
+          description: Page size that was applied
+          title: Limit
+          type: integer
+        offset:
+          description: Offset that was applied
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: MentalModelListResponse
+    MentalModelRefreshScope:
+      description: |-
+        The memory scope a refresh actually resolved to.
+
+        A model's stored ``tags`` are not what filters memories — ``tags_match``
+        defaults to ``all_strict`` when tags are present, and ``tag_groups``
+        override flat tags entirely. This reports the resolved result.
+      properties:
+        tags:
+          items:
+            type: string
+          nullable: true
+          type: array
+        tags_match:
+          description: Resolved tag match mode.
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        tag_groups:
+          items:
+            $ref: '#/components/schemas/MentalModelRefreshScope_tag_groups_inner'
+          nullable: true
+          type: array
+        fact_types:
+          items:
+            type: string
+          nullable: true
+          type: array
+        exclude_mental_models:
+          description: Whether other mental models were excluded from the reflect
+            loop.
+          title: Exclude Mental Models
+          type: boolean
+        exclude_mental_model_ids:
+          description: Mental models excluded by ID (always includes the model being
+            refreshed).
+          items:
+            type: string
+          type: array
+      required:
+      - exclude_mental_models
+      - tags_match
+      title: MentalModelRefreshScope
+    MentalModelRefreshTrace:
+      description: |-
+        Execution trace of a mental model refresh, recorded when trigger.keep_trace is on.
+
+        Deliberately shaped like reflect's trace — the calls the agent made, plus the
+        refresh-specific decision — and nothing more. This is persisted on the mental
+        model row and re-read on every fetch, so anything derivable from elsewhere is
+        left out: the evidence lives in ``reflect_response.based_on``, and the
+        resolved scope and snapshot window are reported by the dry run.
+      properties:
+        recorded_at:
+          format: date-time
+          nullable: true
+          type: string
+        effective_mode:
+          description: Whether the refresh ran as full or delta.
+          enum:
+          - full
+          - delta
+          title: Effective Mode
+          type: string
+        mode_fallback_reason:
+          enum:
+          - no_baseline_content
+          - source_query_changed
+          - structured_doc_unreadable
+          - delta_ops_failed
+          - delta_ops_all_skipped
+          nullable: true
+          type: string
+        outcome:
+          description: What the refresh did with the document.
+          enum:
+          - content_written
+          - content_unchanged
+          - content_preserved_no_new_facts
+          - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
+          title: Outcome
+          type: string
+        tool_calls:
+          description: Reflect tool calls made during the refresh.
+          items:
+            $ref: '#/components/schemas/MentalModelTraceToolCall'
+          type: array
+        llm_calls:
+          description: LLM calls made during the refresh.
+          items:
+            $ref: '#/components/schemas/LLMCallTrace'
+          type: array
+        delta_operations:
+          $ref: '#/components/schemas/MentalModelDeltaOperations'
+        retraction:
+          $ref: '#/components/schemas/MentalModelRetraction'
+        usage:
+          $ref: '#/components/schemas/TokenUsage'
+        duration_ms:
+          default: 0
+          description: Wall-clock duration of the refresh.
+          title: Duration Ms
+          type: integer
+        warnings:
+          description: "Conditions worth a human's attention, in plain language."
+          items:
+            type: string
+          type: array
+      required:
+      - effective_mode
+      - outcome
+      title: MentalModelRefreshTrace
+    MentalModelRefreshWindow:
+      description: The time window a refresh read memories from.
+      properties:
+        created_after:
+          format: date-time
+          nullable: true
+          type: string
+        created_before:
+          description: "Database-time snapshot bounding the refresh. Memories written\
+            \ or edited after this are not read, so they stay newer than the persisted\
+            \ watermark and are caught by the next refresh."
+          format: date-time
+          title: Created Before
+          type: string
+        watermark:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - created_before
+      title: MentalModelRefreshWindow
     MentalModelResponse:
       description: Response model for a mental model (stored reflect response).
       example:
-        source_query: source_query
         max_tokens: 0
-        bank_id: bank_id
-        reflect_response:
-          key: ""
-        name: name
         created_at: created_at
-        id: id
         trigger:
-          mode: full
-          refresh_after_consolidation: false
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -7518,22 +8537,35 @@ components:
             tags:
             - tags
             - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
           fact_types:
           - world
           - world
+          response_schema:
+            key: ""
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
-          exclude_mental_models: false
-          recall_max_tokens: 6
+          min_refresh_interval_seconds: 0
+          keep_trace: false
+          recall_max_tokens: 1
         last_refreshed_at: last_refreshed_at
         is_stale: true
+        last_memory_seen_at: last_memory_seen_at
         content: content
         tags:
         - tags
         - tags
+        source_query: source_query
+        bank_id: bank_id
+        reflect_response:
+          key: ""
+        name: name
+        id: id
       properties:
         id:
           title: Id
@@ -7563,6 +8595,9 @@ components:
         last_refreshed_at:
           nullable: true
           type: string
+        last_memory_seen_at:
+          nullable: true
+          type: string
         created_at:
           nullable: true
           type: string
@@ -7577,12 +8612,88 @@ components:
       - id
       - name
       title: MentalModelResponse
+    MentalModelRetraction:
+      description: |-
+        Facts the document cited that no longer exist, and what was done about them.
+
+        A retraction is the one refresh input that is *invisible* in every other
+        report: the fact is gone from the bank, so it appears in no recall, no tool
+        call, and no supporting-fact list. Without this, a refresh that quietly
+        deleted a paragraph — or quietly declined to — leaves no evidence of why.
+      properties:
+        fact_ids:
+          description: Ids the document's based_on cites that no longer exist in the
+            bank.
+          items:
+            type: string
+          type: array
+        fact_texts:
+          description: "What those facts said, as the document recorded them. The\
+            \ rows themselves are gone — an observation swept away with its source\
+            \ keeps no history — so this copy is the only surviving record."
+          items:
+            type: string
+          type: array
+        applied:
+          description: Whether the pass that removes them ran to completion (zero
+            edits still counts).
+          title: Applied
+          type: boolean
+        deferred_reason:
+          nullable: true
+          type: string
+      required:
+      - applied
+      title: MentalModelRetraction
+    MentalModelTraceToolCall:
+      description: |-
+        One reflect tool call made during a refresh.
+
+        ``output`` is carried only by the dry run, which persists nothing. The trace
+        stored on the model row keeps ``result_count`` instead: it is re-read on every
+        fetch, so embedding full recall payloads there would bloat the row without
+        bound. Raw prompts and responses are available separately via LLM request
+        tracing.
+      properties:
+        tool:
+          description: "Tool name: recall, search_observations, get_mental_model,\
+            \ expand, …"
+          title: Tool
+          type: string
+        reason:
+          nullable: true
+          type: string
+        input:
+          additionalProperties: {}
+          description: Tool input parameters.
+          title: Input
+        output:
+          additionalProperties: {}
+          nullable: true
+        updated_at:
+          format: date-time
+          nullable: true
+          type: string
+        result_count:
+          nullable: true
+          type: integer
+        duration_ms:
+          description: Execution time in milliseconds.
+          title: Duration Ms
+          type: integer
+        iteration:
+          default: 0
+          description: Agent loop iteration (1-based) this call belongs to.
+          title: Iteration
+          type: integer
+      required:
+      - duration_ms
+      - tool
+      title: MentalModelTraceToolCall
     MentalModelTrigger-Input:
       description: Trigger settings for a mental model.
       example:
-        mode: full
-        refresh_after_consolidation: false
-        recall_chunks_max_tokens: 1
+        recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
@@ -7593,16 +8704,22 @@ components:
           tags:
           - tags
           - tags
+        exclude_mental_models: false
+        mode: full
+        refresh_after_consolidation: false
         fact_types:
         - world
         - world
+        response_schema:
+          key: ""
         exclude_mental_model_ids:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
         include_chunks: true
         tags_match: any
-        exclude_mental_models: false
-        recall_max_tokens: 6
+        min_refresh_interval_seconds: 0
+        keep_trace: false
+        recall_max_tokens: 1
       properties:
         mode:
           default: full
@@ -7626,6 +8743,10 @@ components:
         refresh_cron:
           nullable: true
           type: string
+        min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         fact_types:
           items:
             enum:
@@ -7669,13 +8790,27 @@ components:
         recall_chunks_max_tokens:
           nullable: true
           type: integer
+        response_schema:
+          additionalProperties: {}
+          nullable: true
+        keep_trace:
+          default: false
+          description: "If true, every refresh of this mental model records how it\
+            \ reached its result under reflect_response.trace: the mode it ran in\
+            \ and why, the resolved scope and time window, how many facts retrieval\
+            \ returned versus how many the agent used, the tool and LLM calls, and\
+            \ any delta operations. Only the latest refresh's trace is kept. This\
+            \ is the only way to diagnose a cron- or consolidation-driven refresh\
+            \ after the fact, since no human sees those run. Tool outputs are reduced\
+            \ to result counts to keep the stored trace bounded; use LLM request tracing\
+            \ for raw prompts and responses."
+          title: Keep Trace
+          type: boolean
       title: MentalModelTrigger
     MentalModelTrigger-Output:
       description: Trigger settings for a mental model.
       example:
-        mode: full
-        refresh_after_consolidation: false
-        recall_chunks_max_tokens: 1
+        recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
@@ -7686,16 +8821,22 @@ components:
           tags:
           - tags
           - tags
+        exclude_mental_models: false
+        mode: full
+        refresh_after_consolidation: false
         fact_types:
         - world
         - world
+        response_schema:
+          key: ""
         exclude_mental_model_ids:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
         include_chunks: true
         tags_match: any
-        exclude_mental_models: false
-        recall_max_tokens: 6
+        min_refresh_interval_seconds: 0
+        keep_trace: false
+        recall_max_tokens: 1
       properties:
         mode:
           default: full
@@ -7719,6 +8860,10 @@ components:
         refresh_cron:
           nullable: true
           type: string
+        min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         fact_types:
           items:
             enum:
@@ -7750,7 +8895,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Output_tag_groups_inner'
+            $ref: '#/components/schemas/MentalModelRefreshScope_tag_groups_inner'
           nullable: true
           type: array
         include_chunks:
@@ -7762,6 +8907,22 @@ components:
         recall_chunks_max_tokens:
           nullable: true
           type: integer
+        response_schema:
+          additionalProperties: {}
+          nullable: true
+        keep_trace:
+          default: false
+          description: "If true, every refresh of this mental model records how it\
+            \ reached its result under reflect_response.trace: the mode it ran in\
+            \ and why, the resolved scope and time window, how many facts retrieval\
+            \ returned versus how many the agent used, the tool and LLM calls, and\
+            \ any delta operations. Only the latest refresh's trace is kept. This\
+            \ is the only way to diagnose a cron- or consolidation-driven refresh\
+            \ after the fact, since no human sees those run. Tool outputs are reduced\
+            \ to result counts to keep the stored trace bounded; use LLM request tracing\
+            \ for raw prompts and responses."
+          title: Keep Trace
+          type: boolean
       title: MentalModelTrigger
     MinScores:
       description: |-
@@ -7884,6 +9045,11 @@ components:
         filename:
           nullable: true
           type: string
+        mental_model_id:
+          nullable: true
+          type: string
+        details:
+          $ref: '#/components/schemas/RefreshMentalModelOperationDetails'
         created_at:
           title: Created At
           type: string
@@ -7918,7 +9084,7 @@ components:
         completed_at: 2024-01-15T10:31:30Z
         created_at: 2024-01-15T10:30:00Z
         operation_id: 550e8400-e29b-41d4-a716-446655440000
-        operation_type: refresh_mental_models
+        operation_type: refresh_mental_model
         status: completed
         updated_at: 2024-01-15T10:31:30Z
       properties:
@@ -7961,6 +9127,8 @@ components:
         result_metadata:
           additionalProperties: {}
           nullable: true
+        details:
+          $ref: '#/components/schemas/RefreshMentalModelOperationDetails'
         child_operations:
           items:
             $ref: '#/components/schemas/ChildOperationStatus'
@@ -7982,6 +9150,7 @@ components:
         operations:
         - created_at: 2024-01-15T10:30:00Z
           id: 550e8400-e29b-41d4-a716-446655440000
+          items_count: 5
           status: pending
           task_type: retain
         total: 150
@@ -8141,6 +9310,9 @@ components:
           additionalProperties:
             $ref: '#/components/schemas/RecallResult'
           nullable: true
+        source_facts_truncated:
+          nullable: true
+          type: boolean
       required:
       - results
       title: RecallResponse
@@ -8426,7 +9598,8 @@ components:
           default: any
           description: "How to match tags: 'any' (OR, includes untagged), 'all' (AND,\
             \ includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict'\
-            \ (AND, excludes untagged)."
+            \ (AND, excludes untagged), or 'exact' (set equality). Untagged directives\
+            \ remain global in every mode."
           enum:
           - any
           - all
@@ -8575,6 +9748,53 @@ components:
             $ref: '#/components/schemas/ReflectLLMCall'
           type: array
       title: ReflectTrace
+    RefreshMentalModelOperationDetails:
+      description: |-
+        What a refresh_mental_model operation did, on the operation record itself.
+
+        Reported under an async operation's ``details``, which is keyed by
+        ``operation_type``: each type that has a typed outcome to report contributes
+        its own shape there, rather than every type's fields being flattened onto the
+        operation. Today refresh is the only one.
+
+        This exists because ``result_metadata`` — the only per-refresh record kept
+        indefinitely — could not say what a refresh did (#3274), and is documented as
+        debug-only and unstable, so it is not something a caller can build on.
+      properties:
+        operation_type:
+          default: refresh_mental_model
+          description: "Discriminator: which operation type this detail describes."
+          enum:
+          - refresh_mental_model
+          title: Operation Type
+          type: string
+        outcome:
+          description: "What the refresh did with the document: rewrote it (`content_written`),\
+            \ produced a document identical to the stored one (`content_unchanged`),\
+            \ had no new facts to read at all (`content_preserved_no_new_facts`),\
+            \ or refused to write (the `refresh_failed_*` values)."
+          enum:
+          - content_written
+          - content_unchanged
+          - content_preserved_no_new_facts
+          - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
+          - refresh_failed_structured_output
+          title: Outcome
+          type: string
+        failure_reason:
+          enum:
+          - empty_candidate
+          - structured_doc_unreadable
+          - delta_ops_failed
+          - delta_ops_all_skipped
+          - delta_not_applied
+          - structured_output_failed
+          nullable: true
+          type: string
+      required:
+      - outcome
+      title: RefreshMentalModelOperationDetails
     ReprocessDocumentResponse:
       description: Response model for reprocess document endpoint.
       example:
@@ -8721,7 +9941,7 @@ components:
       properties:
         and:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Output_tag_groups_inner'
+            $ref: '#/components/schemas/MentalModelRefreshScope_tag_groups_inner'
           type: array
       required:
       - and
@@ -8782,7 +10002,7 @@ components:
       properties:
         or:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Output_tag_groups_inner'
+            $ref: '#/components/schemas/MentalModelRefreshScope_tag_groups_inner'
           type: array
       required:
       - or
@@ -8949,6 +10169,19 @@ components:
             type: string
           nullable: true
           type: array
+        resolve_entities:
+          default: true
+          description: "Whether the names in 'entities' are resolved against the entities\
+            \ already in the bank. True (default) is what retain does: a similar existing\
+            \ entity is reused when it scores above the match threshold, so a name\
+            \ close to one already in the bank may resolve to that one instead of\
+            \ the one you wrote. False takes the names literally — an existing entity\
+            \ is reused only on a case-insensitive name match, any other name creates\
+            \ a new entity, and names in the same request are never merged with each\
+            \ other. Use False for hand-authored corrections, where the name you sent\
+            \ is the answer rather than a guess. Ignored when 'entities' is omitted."
+          title: Resolve Entities
+          type: boolean
         state:
           nullable: true
           type: string
@@ -8996,6 +10229,34 @@ components:
         max_tokens: 0
         parent_id: parent_id
         name: name
+        trigger:
+          recall_chunks_max_tokens: 5
+          refresh_cron: refresh_cron
+          tag_groups:
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
+          fact_types:
+          - world
+          - world
+          response_schema:
+            key: ""
+          exclude_mental_model_ids:
+          - exclude_mental_model_ids
+          - exclude_mental_model_ids
+          include_chunks: true
+          tags_match: any
+          min_refresh_interval_seconds: 0
+          keep_trace: false
+          recall_max_tokens: 1
         tags:
         - tags
         - tags
@@ -9017,6 +10278,8 @@ components:
         max_tokens:
           nullable: true
           type: integer
+        trigger:
+          $ref: '#/components/schemas/MentalModelTrigger-Input'
       title: UpdateNodeRequest
     UpdateWebhookRequest:
       description: Request model for updating a webhook. Only provided fields are
@@ -9085,14 +10348,18 @@ components:
     VersionResponse:
       description: Response model for the version/info endpoint.
       example:
-        api_version: 0.4.0
+        api_version: 0.9.0
         features:
+          audit_log: false
           bank_config_api: false
+          bank_llm_health: true
           document_export_api: true
           document_import_api: true
           file_upload_api: true
+          llm_trace: false
           mcp: true
           observations: false
+          store_document_text: true
           worker: true
       properties:
         api_version:
@@ -9391,18 +10658,18 @@ components:
         \ list, giving full control over which combinations to use."
       nullable: true
       title: ObservationScopes
+    MentalModelRefreshScope_tag_groups_inner:
+      anyOf:
+      - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupAnd-Output'
+      - $ref: '#/components/schemas/TagGroupOr-Output'
+      - $ref: '#/components/schemas/TagGroupNot-Output'
     MentalModelTrigger_Input_tag_groups_inner:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
       - $ref: '#/components/schemas/TagGroupAnd-Input'
       - $ref: '#/components/schemas/TagGroupOr-Input'
       - $ref: '#/components/schemas/TagGroupNot-Input'
-    MentalModelTrigger_Output_tag_groups_inner:
-      anyOf:
-      - $ref: '#/components/schemas/TagGroupLeaf'
-      - $ref: '#/components/schemas/TagGroupAnd-Output'
-      - $ref: '#/components/schemas/TagGroupOr-Output'
-      - $ref: '#/components/schemas/TagGroupNot-Output'
     Not:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'

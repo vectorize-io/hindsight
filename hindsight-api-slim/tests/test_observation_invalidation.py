@@ -33,6 +33,7 @@ async def _insert_memory(
     text: str,
     fact_type: str = "experience",
     document_id: str | None = None,
+    chunk_id: str | None = None,
 ) -> uuid.UUID:
     """Seed one memory through the store, bypassing the LLM retain pipeline.
 
@@ -47,7 +48,7 @@ async def _insert_memory(
         tags=[],
         context=None,
         document_id=document_id,
-        chunk_id=None,
+        chunk_id=chunk_id,
         metadata=None,
         observation_scopes=None,
         entities=[],
@@ -431,6 +432,187 @@ class TestDocumentUpsertObservationCleanup:
             # The two doc-scoped memories are gone via FK cascade.
             doc_mem_count = await _count_surviving(conn, bank_id, [doc_mem_a, doc_mem_b])
             assert doc_mem_count == 0
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Tests: delta retain chunk delete (regression for orphan observations, #3294)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_chunked_document(memory: MemoryEngine, conn, bank_id: str, chunk_texts: list[str]) -> tuple[str, list]:
+    """One document with ``len(chunk_texts)`` chunks, each owning one fact.
+
+    Returns the document id and, per chunk, the (chunk_id, fact_id) it owns.
+    """
+    doc_id = str(uuid.uuid4())
+    await conn.execute(
+        """
+        INSERT INTO documents (id, bank_id, original_text, content_hash, created_at, updated_at)
+        VALUES ($1, $2, $3, 'hash-old', NOW(), NOW())
+        """,
+        doc_id,
+        bank_id,
+        "\n\n".join(chunk_texts),
+    )
+    seeded = []
+    for idx, text in enumerate(chunk_texts):
+        chunk_id = f"{bank_id}_{doc_id}_{idx}"
+        await conn.execute(
+            """
+            INSERT INTO chunks (chunk_id, document_id, bank_id, chunk_index, chunk_text, content_hash)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            chunk_id,
+            doc_id,
+            bank_id,
+            idx,
+            text,
+            f"chunk-hash-{idx}",
+        )
+        fact_id = await _insert_memory(memory, conn, bank_id, text, "experience", document_id=doc_id, chunk_id=chunk_id)
+        seeded.append((chunk_id, fact_id))
+    return doc_id, seeded
+
+
+class TestDeltaChunkDeleteObservationCleanup:
+    """Regression: delta retain drops facts by deleting their chunks, and that
+    cascade must invalidate the observations derived from them.
+
+    ``handle_document_tracking`` (full replace) sweeps observations before its
+    delete, but the delta path never calls it — it upserts the document row and
+    deletes the changed/removed chunks directly, cascading to memory_units. Every
+    delta re-ingest therefore used to leave the observations of the changed chunks
+    behind, valid and recallable, pointing at ids that no longer exist. Nothing
+    could reach them afterwards: consolidation batches are built from facts, so an
+    observation whose sources are all gone is never selected into a batch again.
+    """
+
+    @pytest.mark.asyncio
+    async def test_chunk_delete_removes_observations_from_outgoing_memories(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The observation of a deleted chunk's fact goes with it; its surviving
+        co-source is requeued for re-consolidation."""
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
+
+        bank_id = f"test-delta-obs-cleanup-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            _doc_id, seeded = await _seed_chunked_document(
+                memory, conn, bank_id, ["Alice works at Google.", "Bob works at Microsoft."]
+            )
+            (outgoing_chunk, outgoing_fact), (_kept_chunk, kept_fact) = seeded
+            standalone_fact = await _insert_memory(memory, conn, bank_id, "Carol works at Netflix.")
+            obs_id = await _insert_observation(
+                memory,
+                conn,
+                bank_id,
+                "The team is spread across Google, Microsoft and Netflix.",
+                [outgoing_fact, kept_fact, standalone_fact],
+            )
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                invalidated = await delete_chunks_by_ids(conn, [outgoing_chunk], bank_id, ops=memory._backend.ops)
+
+        assert invalidated == 1, "delete_chunks_by_ids should report the observation it invalidated"
+
+        async with pool.acquire() as conn:
+            assert str(obs_id) not in await _get_observation_ids(conn, bank_id), (
+                "Observation derived from the deleted chunk's fact should have been invalidated "
+                "(regression #3294: the delta path cascaded the fact away and left the orphan)"
+            )
+            assert await _count_surviving(conn, bank_id, [outgoing_fact]) == 0, "The chunk's fact is gone"
+            # Both surviving co-sources lost an observation, so both are due for re-consolidation.
+            for survivor in (kept_fact, standalone_fact):
+                assert await _get_consolidated_at(conn, survivor, bank_id) is None, (
+                    "Surviving co-source should be reset for re-consolidation"
+                )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_chunk_delete_keeps_observations_of_unchanged_chunks(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Precision: an observation sourced only from chunks that stay is untouched.
+
+        A sweep keyed on the document rather than on the deleted chunks would take
+        this one too — and needlessly requeue the whole document for consolidation
+        on every small edit, which is exactly the case delta retain exists for.
+        """
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
+
+        bank_id = f"test-delta-obs-keep-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            _doc_id, seeded = await _seed_chunked_document(
+                memory, conn, bank_id, ["Alice works at Google.", "Bob works at Microsoft."]
+            )
+            (outgoing_chunk, _outgoing_fact), (_kept_chunk, kept_fact) = seeded
+            kept_obs = await _insert_observation(memory, conn, bank_id, "Bob is at Microsoft.", [kept_fact])
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                invalidated = await delete_chunks_by_ids(conn, [outgoing_chunk], bank_id, ops=memory._backend.ops)
+
+        assert invalidated == 0, "No observation of the surviving chunk should have been touched"
+
+        async with pool.acquire() as conn:
+            assert str(kept_obs) in await _get_observation_ids(conn, bank_id), (
+                "Observation of an unchanged chunk must survive the delta delete"
+            )
+            assert await _get_consolidated_at(conn, kept_fact, bank_id) is not None, (
+                "An untouched fact must not be requeued for consolidation"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_chunk_delete_sweeps_every_deleted_chunk(self, memory: MemoryEngine, request_context: RequestContext):
+        """Multiple chunks in one call: each one's observations are swept.
+
+        The reporter's bank lost the observations of a whole document at once
+        (25 fully orphaned from a single replace), so the sweep must cover the
+        entire ``chunks_to_delete`` list, not just the first entry.
+        """
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
+
+        bank_id = f"test-delta-obs-multi-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            _doc_id, seeded = await _seed_chunked_document(
+                memory,
+                conn,
+                bank_id,
+                ["Alice works at Google.", "Bob works at Microsoft.", "Dan works at Apple."],
+            )
+            observations = [
+                await _insert_observation(memory, conn, bank_id, f"Observation of chunk {i}.", [fact])
+                for i, (_chunk, fact) in enumerate(seeded)
+            ]
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                invalidated = await delete_chunks_by_ids(
+                    conn, [chunk for chunk, _fact in seeded], bank_id, ops=memory._backend.ops
+                )
+
+        assert invalidated == 3
+
+        async with pool.acquire() as conn:
+            remaining = await _get_observation_ids(conn, bank_id)
+            assert [o for o in observations if str(o) in remaining] == [], (
+                "Every deleted chunk's observations should be swept, not just the first chunk's"
+            )
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

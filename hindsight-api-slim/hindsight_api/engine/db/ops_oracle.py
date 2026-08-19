@@ -10,7 +10,14 @@ import uuid as uuid_mod
 from datetime import UTC, datetime
 
 from .base import DatabaseConnection
-from .ops import DataAccessOps, TagListingParts
+from .ops import (
+    DataAccessOps,
+    LinkExpansionRows,
+    TagListingParts,
+    UpdatedWindow,
+    document_serialization_sql,
+    graph_maintenance_bank_serialization_sql,
+)
 from .result import DictResultRow as ResultRow
 
 ORACLE_IN_LIST_LIMIT = 1000
@@ -174,22 +181,24 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         # Row-by-row insert with duplicate suppression.
         # Can't use RETURNING with ON CONFLICT DO NOTHING reliably,
         # so INSERT (ignoring dups) then SELECT all IDs at the end.
         id_by_name: dict[str, str] = {}
-        for name, event_date in zip(entity_names, entity_dates):
+        for name, event_date, kind in zip(entity_names, entity_dates, entity_kinds):
             ts = event_date if event_date else datetime.now(UTC)
             await conn.execute(
                 f"""
-                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-                VALUES ($1, $2, $3, $3, 0)
+                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count, entity_kind)
+                VALUES ($1, $2, $3, $3, 0, $4)
                 ON CONFLICT (bank_id, LOWER(canonical_name)) DO NOTHING
                 """,
                 bank_id,
                 name,
                 ts,
+                kind,
             )
         # Now SELECT all the entities we just inserted (or that already existed)
         for name in entity_names:
@@ -236,6 +245,7 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         # Oracle has no FOR KEY SHARE; FOR UPDATE is the row-lock equivalent that
         # blocks a concurrent prune DELETE until this transaction commits. Lock
@@ -250,11 +260,14 @@ class OracleOps(DataAccessOps):
             )
         await conn.executemany(
             f"""
-            INSERT INTO {table} (id, bank_id, canonical_name)
-            VALUES ($1, $2, $3)
+            INSERT INTO {table} (id, bank_id, canonical_name, entity_kind)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT DO NOTHING
             """,
-            [(entity_id, bank_id, canonical_name) for entity_id, canonical_name in zip(entity_ids, canonical_names)],
+            [
+                (entity_id, bank_id, canonical_name, kind)
+                for entity_id, canonical_name, kind in zip(entity_ids, canonical_names, entity_kinds)
+            ],
         )
 
     async def bulk_insert_unit_entities(
@@ -345,13 +358,80 @@ class OracleOps(DataAccessOps):
             )
         return claimed
 
+    async def enqueue_entity_maintenance(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        if not unit_ids:
+            return 0
+        rows = await conn.fetch(
+            f"SELECT DISTINCT entity_id FROM {ue_table} WHERE unit_id = ANY($1::uuid[])",
+            unit_ids,
+        )
+        # Sorted for the same reason as enqueue_graph_maintenance: the MERGE
+        # takes the (bank_id, entity_id) row locks in executemany array order,
+        # and claim_entity_maintenance_batch deletes in that same order, so
+        # overlapping mutation/worker sets cannot cycle.
+        candidates = sorted(str(row["entity_id"]) for row in rows)
+        if not candidates:
+            return 0
+        # MERGE is the Oracle analogue of ON CONFLICT DO UPDATE: WHEN MATCHED
+        # locks the existing queue row (the SET is a no-op preserving
+        # enqueued_at) so a re-enqueue serialises against a concurrent claim
+        # instead of being silently dropped (#3034).
+        await conn.executemany(
+            f"""
+            MERGE INTO {table} q
+            USING (SELECT $1 AS bank_id, $2 AS entity_id FROM dual) s
+            ON (q.bank_id = s.bank_id AND q.entity_id = s.entity_id)
+            WHEN MATCHED THEN UPDATE SET q.enqueued_at = q.enqueued_at
+            WHEN NOT MATCHED THEN INSERT (bank_id, entity_id) VALUES (s.bank_id, s.entity_id)
+            """,
+            [(bank_id, eid) for eid in candidates],
+        )
+        return len(candidates)
+
+    async def claim_entity_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list:
+        # Two-step claim, same as claim_graph_maintenance_batch: Oracle's
+        # DELETE ... RETURNING doesn't accept a multi-row subquery.
+        rows = await conn.fetch(
+            f"""
+            SELECT entity_id FROM {table}
+            WHERE bank_id = $1
+            ORDER BY enqueued_at
+            FETCH FIRST $2 ROWS ONLY
+            """,
+            bank_id,
+            limit,
+        )
+        claimed = sorted(str(row["entity_id"]) for row in rows)
+        if claimed:
+            await conn.executemany(
+                f"DELETE FROM {table} WHERE bank_id = $1 AND entity_id = $2",
+                [(bank_id, eid) for eid in claimed],
+            )
+        return claimed
+
     async def prune_orphan_entities(
         self,
         conn: DatabaseConnection,
         entities_table: str,
         ue_table: str,
         bank_id: str,
+        entity_ids: list,
     ) -> int:
+        if not entity_ids:
+            return 0
         # The Oracle DatabaseConnection wrapper reshapes ``cursor.rowcount`` into
         # the same ``"DELETE N"`` status string asyncpg returns, so the same
         # ``int(deleted.split()[-1])`` parsing works on both dialects.
@@ -359,9 +439,11 @@ class OracleOps(DataAccessOps):
             f"""
             DELETE FROM {entities_table}
             WHERE bank_id = $1
+              AND id = ANY($2::uuid[])
               AND id NOT IN (SELECT DISTINCT entity_id FROM {ue_table})
             """,
             bank_id,
+            entity_ids,
         )
         return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
 
@@ -370,26 +452,33 @@ class OracleOps(DataAccessOps):
         conn: DatabaseConnection,
         ec_table: str,
         ue_table: str,
-        entities_table: str,
-        bank_id: str,
+        entity_ids: list,
     ) -> int:
+        if not entity_ids:
+            return 0
         # NB: the Postgres path additionally selects victims FOR UPDATE in sorted
         # (entity_id_1, entity_id_2) order to prevent the #2529 deadlock against
         # retain's sorted cooccurrence upsert. Oracle's DELETE can't carry that
         # ordered-lock CTE the same way, so here we rely on the Pass 2/3 retry
         # wrap in run_graph_maintenance_job (retry_with_backoff is ORA-00060
         # deadlock-aware) to recover instead. Deliberate dialect asymmetry.
+        #
+        # Scoped to the claimed candidates on either endpoint (#3222). The OR is
+        # safe to write directly here, unlike on Postgres: both endpoint columns
+        # are indexed and Oracle's optimizer expands an OR of two index-driven
+        # predicates into a concatenation, rather than the whole-table scan the
+        # PG planner picks (which is why the PG side spells it as a UNION).
         deleted = await conn.execute(
             f"""
             DELETE FROM {ec_table}
-            WHERE entity_id_1 IN (SELECT id FROM {entities_table} WHERE bank_id = $1)
+            WHERE (entity_id_1 = ANY($1::uuid[]) OR entity_id_2 = ANY($1::uuid[]))
               AND (entity_id_1, entity_id_2) NOT IN (
                   SELECT u1.entity_id, u2.entity_id
                   FROM {ue_table} u1
                   JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
               )
             """,
-            bank_id,
+            entity_ids,
         )
         return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
 
@@ -480,6 +569,7 @@ class OracleOps(DataAccessOps):
         mu_table: str,
         ue_table: str,
         per_entity_limit: int,
+        window: UpdatedWindow,
     ) -> str:
         # Oracle: can't GROUP BY CLOB columns (text, context).
         # Restructure: count entities per unit_id in a subquery, then join to get full columns.
@@ -498,12 +588,14 @@ class OracleOps(DataAccessOps):
                     WHERE ue_target.entity_id = se.entity_id
                       AND ue_target.unit_id != ALL($1::uuid[])
                       -- Filter before applying the cap: candidates from other fact
-                      -- types must not consume this entity's bounded fan-out.
+                      -- types, or outside the recall window, must not consume this
+                      -- entity's bounded fan-out.
                       AND EXISTS (
                           SELECT 1
                           FROM {mu_table} mu_target
                           WHERE mu_target.id = ue_target.unit_id
                             AND mu_target.fact_type = $2
+                            {window.clause("mu_target")}
                       )
                     ORDER BY ue_target.unit_id DESC
                     FETCH FIRST {per_entity_limit} ROWS ONLY
@@ -525,6 +617,7 @@ class OracleOps(DataAccessOps):
         self,
         ml_table: str,
         mu_table: str,
+        window: UpdatedWindow,
     ) -> str:
         # Non-PG: can't GROUP BY CLOB columns, no DISTINCT ON.
         # Restructure semantic: compute max weight per id, then join for full columns.
@@ -539,6 +632,7 @@ class OracleOps(DataAccessOps):
                       AND ml.link_type = 'semantic'
                       AND mu.fact_type = $2
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                     UNION ALL
                     SELECT mu.id, ml.weight
                     FROM {ml_table} ml
@@ -547,6 +641,7 @@ class OracleOps(DataAccessOps):
                       AND ml.link_type = 'semantic'
                       AND mu.fact_type = $2
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                 ) sem_raw
                 GROUP BY id
             ),
@@ -573,6 +668,7 @@ class OracleOps(DataAccessOps):
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
                   AND mu.fact_type = $2
+                  {window.clause("mu")}
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
@@ -591,7 +687,8 @@ class OracleOps(DataAccessOps):
         seed_ids: list,
         budget: int,
         per_entity_limit: int,
-    ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
+        window: UpdatedWindow,
+    ) -> LinkExpansionRows:
         import logging
 
         logger = logging.getLogger(__name__)
@@ -599,6 +696,21 @@ class OracleOps(DataAccessOps):
         # Entity expansion via observation_sources junction table.
         # Previously used JSON_TABLE to explode source_memory_ids CLOB. The junction
         # table approach uses standard SQL joins, identical to the PG backend.
+        #
+        # Two PostgreSQL fixes are deliberately NOT mirrored here, because neither
+        # was measured against Oracle and both are tuned to PostgreSQL's planner:
+        #   - #3085 made PG score set-wise; the scoring below is still the
+        #     correlated per-observation COUNT(*). On Oracle that counts rows of
+        #     the indexed observation_sources junction table rather than scanning
+        #     an unpruned array, so it is a much weaker version of that problem.
+        #   - #3510 replaced PG's `DISTINCT` over a `LATERAL ... LIMIT` with a
+        #     row_number() window, because PostgreSQL cannot estimate the row count
+        #     of that shape and mis-planned the scoring join into a nested loop.
+        #     `connected_sources` below has the same shape, so the same collapse is
+        #     structurally possible, but Oracle's cardinality estimation differs and
+        #     no Oracle instance was available to measure it.
+        # If observation recall is reported slow on Oracle, start by capturing the
+        # plan for connected_sources and checking its estimated vs actual rows.
         from ..schema import fq_table
 
         obs_sources_table = fq_table("observation_sources")
@@ -645,11 +757,13 @@ class OracleOps(DataAccessOps):
                   WHERE os3.observation_id = mu.id
                     AND os3.source_id IN (SELECT source_id FROM connected_sources)
               )
+              {window.clause("mu")}
             ORDER BY score DESC
             FETCH FIRST $2 ROWS ONLY
             """,
             seed_ids,
             budget,
+            *window.params,
         )
         logger.debug(f"[LinkExpansion] observation graph (Oracle): found {len(entity_rows)} connected observations")
 
@@ -665,12 +779,14 @@ class OracleOps(DataAccessOps):
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                     UNION ALL
                     SELECT mu.id, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                 ) sem_raw
                 GROUP BY id
             ),
@@ -696,6 +812,7 @@ class OracleOps(DataAccessOps):
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
                   AND mu.fact_type = 'observation'
+                  {window.clause("mu")}
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
@@ -710,11 +827,12 @@ class OracleOps(DataAccessOps):
             """,
             seed_ids,
             budget,
+            *window.params,
         )
 
         semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]
         causal_rows = [r for r in sem_causal_rows if r["source"] == "causal"]
-        return list(entity_rows), semantic_rows, causal_rows
+        return LinkExpansionRows(entity=list(entity_rows), semantic=semantic_rows, causal=causal_rows)
 
     def build_tag_listing_parts(self, mu_table: str) -> TagListingParts:
         return TagListingParts(
@@ -726,23 +844,6 @@ class OracleOps(DataAccessOps):
             bank_prefix="mu.",
         )
 
-    async def create_bank_vector_indexes(
-        self,
-        conn: DatabaseConnection,
-        table: str,
-        bank_id: str,
-        internal_id: str,
-        index_clause: str,
-        fact_types: dict[str, str],
-    ) -> None:
-        # Oracle 23ai supports HNSW vector indexes but does NOT support partial
-        # indexes (WHERE clause on CREATE INDEX for vector indexes). Uses a single
-        # global HNSW index with ORGANIZATION NEIGHBOR PARTITIONS created during
-        # migrations. memory_units is partitioned by LIST (bank_id) AUTOMATIC,
-        # so Oracle creates partitions per bank on INSERT and the optimizer can
-        # prune partitions on bank_id-scoped queries.
-        return
-
     async def drop_bank_vector_indexes(
         self,
         conn: DatabaseConnection,
@@ -750,7 +851,12 @@ class OracleOps(DataAccessOps):
         internal_id: str,
         fact_types: dict[str, str],
     ) -> None:
-        # Oracle uses a single global vector index (no per-bank indexes to drop).
+        # Oracle uses a single global vector index — it does not support partial
+        # (WHERE-clause) vector indexes, so there are no per-bank ones to drop.
+        # Bank scoping comes from the table itself instead: memory_units is
+        # partitioned LIST (bank_id) AUTOMATIC, so Oracle creates a partition per
+        # bank on INSERT and the optimizer prunes on bank_id. That is why the
+        # size threshold and its sweep are PostgreSQL-only concerns.
         return
 
     def get_entity_resolution_strategy(self) -> str:
@@ -1118,7 +1224,7 @@ class OracleOps(DataAccessOps):
             if exclude_ids:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1137,7 +1243,7 @@ class OracleOps(DataAccessOps):
             else:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1155,7 +1261,7 @@ class OracleOps(DataAccessOps):
             if exclude_ids:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1172,7 +1278,7 @@ class OracleOps(DataAccessOps):
             else:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1213,7 +1319,7 @@ class OracleOps(DataAccessOps):
         extra = " AND ".join(conditions)
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
+            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
             FROM {table}
             WHERE status = 'pending'
               AND task_payload IS NOT NULL
@@ -1260,7 +1366,7 @@ class OracleOps(DataAccessOps):
         extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
+            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
             FROM {table}
             WHERE status = 'pending'
               AND task_payload IS NOT NULL
@@ -1312,13 +1418,15 @@ class OracleOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = $1
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type = $1
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1333,18 +1441,22 @@ class OracleOps(DataAccessOps):
         # --- Phase 2: claim from shared pool ---
         remaining_shared = shared_limit
         if remaining_shared > 0:
-            # 2a. Non-consolidation tasks
+            # 2a. Non-consolidation tasks. graph_maintenance stays in this
+            # created_at-ordered query — see graph_maintenance_bank_serialization_sql
+            # for why it is a predicate rather than a phase of its own.
             if claimed_ids:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND operation_id != ALL($1::uuid[])
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND o.operation_id != ALL($1::uuid[])
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1354,13 +1466,15 @@ class OracleOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $1
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1400,6 +1514,19 @@ class OracleOps(DataAccessOps):
 
         # Mark all claimed rows as processing
         operation_ids = [row["operation_id"] for row in all_rows]
+        await self.mark_operations_processing(conn, table, worker_id, operation_ids)
+
+        return all_rows
+
+    async def mark_operations_processing(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        worker_id: str,
+        operation_ids: list,
+    ) -> None:
+        if not operation_ids:
+            return
         await conn.execute(
             f"""
             UPDATE {table}
@@ -1410,4 +1537,34 @@ class OracleOps(DataAccessOps):
             operation_ids,
         )
 
-        return all_rows
+    async def fetch_foldable_retain_peers(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        serialization_key: str,
+        limit: int,
+    ) -> list[ResultRow]:
+        if limit <= 0:
+            return []
+        # Same ``LIMIT $n ... FOR UPDATE SKIP LOCKED`` shape the claim queries
+        # above use, which the Oracle SQL translation layer rewrites into the
+        # row-limited form Oracle accepts (a bare one raises ORA-02014).
+        return await conn.fetch(
+            f"""
+            SELECT operation_id, task_payload, retry_count
+            FROM {table}
+            WHERE status = 'pending'
+              AND task_payload IS NOT NULL
+              AND operation_type = 'retain'
+              AND bank_id = $1
+              AND serialization_key = $2
+              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            ORDER BY created_at, operation_id
+            LIMIT $3
+            FOR UPDATE SKIP LOCKED
+            """,
+            bank_id,
+            serialization_key,
+            limit,
+        )

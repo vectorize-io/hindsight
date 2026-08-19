@@ -34,6 +34,18 @@ describe("buildKnowledgePreamble", () => {
     expect(out).toContain("hindsight_capture_initiative");
     expect(out).toContain("hindsight_ingest_document");
   });
+  it("tells the agent to recapture an initiative when the plan changes mid-work", () => {
+    // Same contract as the MCP tool description (knowledge-tools.ts) — the two must not drift.
+    for (const out of [
+      buildKnowledgePreamble([{ id: "p1", title: "Component map" }]),
+      buildRosterRefresh([]),
+    ]) {
+      expect(out).not.toMatch(/call this ONCE/i);
+      expect(out).toMatch(/call it AGAIN with relates_to_page_id/i);
+      expect(out).toMatch(/goal, scope, or rationale materially changes/i);
+    }
+  });
+
   it("has an empty-state line when there are no pages", () => {
     const out = buildKnowledgePreamble([]);
     expect(out).toMatch(/no knowledge pages yet|still learning/i);

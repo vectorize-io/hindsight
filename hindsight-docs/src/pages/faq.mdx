@@ -20,6 +20,7 @@ import PageHero from '@site/src/components/PageHero';
 - [Retain, recall, and reflect — what's the difference?](#whats-the-difference-between-retain-recall-and-reflect)
 - [When should I use recall vs reflect?](#when-should-i-use-recall-vs-reflect)
 - [When should I use mental models?](#when-should-i-use-mental-models)
+- [Mental model vs. knowledge page](#whats-the-difference-between-a-mental-model-and-a-knowledge-page)
 - [Latency expectations](#whats-the-typical-latency-for-recall-operations)
 - [Tags, metadata, and entity labels](#does-hindsight-support-metadata-filtering)
 - [Controlling which memory types are recalled](#how-do-i-control-which-types-of-memories-are-recalled)
@@ -201,13 +202,32 @@ See [Recall](/developer/api/recall) and [Reflect](/developer/reflect) for full A
 
 ### When should I use mental models?
 
-**Mental models** are consolidated knowledge patterns synthesized from individual facts over time. Use them when you need:
+**Mental models** are standing answers to questions you define — synthesized from the bank's knowledge and rewritten in the background as it changes. Use them when you need:
 
 - Higher-level understanding beyond raw facts (e.g., "User prefers functional programming patterns")
 - Long-term behavioral patterns (e.g., "Customer is price-sensitive but values quality")
+- An answer available instantly, with no reasoning on the request path
 - Context for AI agent reasoning during **reflect** operations
 
-Mental models are automatically built during retain and used by reflect to provide richer, more contextual responses. See [Mental Models](/developer/api/mental-models).
+You create a mental model with the question that defines it; Hindsight builds the content and keeps it current. Reflect checks mental models first, so a fresh one can answer without descending into observations and raw facts. See [Mental Models](/developer/api/mental-models).
+
+---
+
+### What's the difference between a mental model and a knowledge page?
+
+A **knowledge page is a mental model** — the same engine, the same refresh behaviour — with two additions: a place in a folder tree, and a set of defaults tuned for documents rather than answers (built from observations only, refreshed incrementally after each consolidation, never influenced by other pages, and a larger content budget).
+
+| | Mental model | Knowledge page |
+|---|---|---|
+| Shape | A standing answer to a question | A markdown document with frontmatter |
+| Organization | Flat list, scoped by tags | Nested folders and pages |
+| Sources | All fact types by default | Observations only by default |
+| Refresh | Off by default | Delta refresh after each consolidation |
+| Typical consumer | Your application or an agent, by lookup | A person or agent browsing and reading |
+
+Use a plain mental model when something in your system looks up the answer. Use a knowledge page when the result is meant to be browsed and read directly, like a wiki. Anything you can configure on a mental model can be configured on a page.
+
+See [Mental Models](/developer/api/mental-models) and the Knowledge Pages section of the developer docs.
 
 ---
 

@@ -2,12 +2,18 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
+// Standard panel chrome — a flat 16px card with a hairline border and no drop
+// shadow. The border token already carries the mode-appropriate tint
+// (rgba(0,0,0,0.08) light / rgba(100,160,255,0.10) dark), so the ring + shadow
+// stack this replaces is redundant: it made Card read one layer higher than
+// the raw `bg-card border border-border rounded-[16px]` divs used across the
+// rest of the app. Keep the two identical.
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
       className={cn(
-        "rounded-xl bg-card text-card-foreground ring-1 ring-border/60 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_2px_8px_-2px_rgba(0,0,0,0.06)] dark:ring-border/40 dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_4px_16px_-4px_rgba(0,0,0,0.5)]",
+        "bg-card text-card-foreground border border-border border-solid rounded-[16px]",
         className
       )}
       {...props}

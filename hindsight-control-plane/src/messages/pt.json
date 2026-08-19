@@ -51,6 +51,7 @@
       "select": "Selecione um banco de memória...",
       "search": "Pesquisar bancos de memória...",
       "empty": "Nenhum banco de memória ainda.",
+      "noSearchResults": "Nenhum banco corresponde à sua pesquisa.",
       "create": "Criar novo banco",
       "switchTitle": "Trocar banco de memória",
       "returnTo": "Voltar para {bank}",
@@ -277,7 +278,7 @@
     "mentalModels": "Modelos Mentais",
     "noMentalModels": "Nenhum modelo mental",
     "upToDate": "Atualizado",
-    "stale": "Desatualizado",
+    "needsRefresh": "Precisa de atualização",
     "total": "Total",
     "activity": "Atividade",
     "memoriesIngested": "Memórias ingeridas",
@@ -336,7 +337,7 @@
     "retainMissionDescription": "O que este banco deve observar durante a extração. Direciona o LLM sem substituir as regras de extração — funciona junto a qualquer modo de extração.",
     "retainMissionPlaceholder": "ex.: Sempre incluir decisões técnicas, escolhas de design de API e trade-offs arquiteturais. Ignorar logística de reuniões, cumprimentos e trocas sociais.",
     "extractionModeLabel": "Modo de Extração",
-    "extractionModeDescription": "Quão agressivamente extrair fatos: conciso (padrão, seletivo), verboso (capturar tudo), personalizado (escreva suas próprias regras de extração)",
+    "extractionModeDescription": "Como os fatos são extraídos durante o retain: conciso (padrão, seletivo), detalhado (capturar tudo), literal (manter a redação original), blocos (ignorar o LLM por completo e armazenar cada bloco como está), personalizado (escrever suas próprias regras de extração)",
     "customExtractionPromptLabel": "Prompt de Extração Personalizado",
     "customExtractionPromptDescription": "Substitui completamente as regras de extração integradas. Ativo somente quando o Modo de Extração está definido como personalizado.",
     "entitiesTitle": "Entidades",
@@ -409,6 +410,7 @@
     "mcpGroupDocuments": "Documentos",
     "mcpGroupOperations": "Operações",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Base de conhecimento",
     "retainSectionDescription": "Configurações de extração padrão e estratégias nomeadas. Passe um nome de estratégia nas solicitações de retenção para substituir os padrões por item.",
     "defaultStrategyLabel": "Estratégia padrão",
     "defaultStrategyDescription": "Aplicada automaticamente quando nenhuma estratégia é especificada em uma solicitação.",
@@ -420,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "Máximo de tokens de fatos de origem considerados ao gerar uma única observação. Deixe em branco para usar o padrão do servidor.",
     "maxObservationsPerScopeLabel": "Máx. observações por escopo",
     "maxObservationsPerScopeDescription": "Limite do número de observações armazenadas por escopo após consolidação. Deixe em branco para usar o padrão do servidor.",
+    "mentalModelMinRefreshIntervalLabel": "Intervalo mínimo de atualização de modelos mentais",
+    "mentalModelMinRefreshIntervalDescription": "Segundos mínimos entre duas atualizações automáticas do mesmo modelo mental neste banco. Uma atualização disparada antes é enfileirada e aguarda o fim da janela, e os disparos seguintes se juntam a ela — então uma rajada de retains custa uma única atualização em vez de uma por retain. Atualizações manuais são sempre executadas de imediato. Deixe em branco para usar o padrão do servidor; 0 significa sem limite. Um modelo específico pode substituir isso nas suas próprias configurações de atualização.",
+    "mentalModelsTitle": "Modelos mentais e páginas de conhecimento",
+    "mentalModelsDescription": "Como os modelos mentais deste banco — e as páginas de conhecimento baseadas neles — são mantidos atualizados.",
+    "mentalModelsFailedToSave": "Falha ao salvar as configurações de modelos mentais",
     "serverDefault": "Padrão do servidor",
     "addStrategy": "Adicionar estratégia",
     "nameLabel": "Nome",
@@ -457,7 +464,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "Detecção de injeção de prompt: bloqueia tentativas de sobrescrever o comportamento do agente",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Anomalia de tamanho: rejeita cargas suspeitamente grandes",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Namespaces de tags protegidos: aplica tags de identidade imutáveis",
-    "memoryDefenseEnterpriseCta": "Solicitar uma demonstração"
+    "memoryDefenseEnterpriseCta": "Solicitar uma demonstração",
+    "recallTitle": "Pipeline de recall",
+    "recallDescription": "Quais etapas de recuperação são executadas durante o recall neste banco",
+    "recallServerDefault": "Padrão do servidor",
+    "recallFailedToSave": "Falha ao salvar as configurações do pipeline de recall",
+    "recallTemporalRetrievalLabel": "Recuperação temporal",
+    "recallTemporalRetrievalDescription": "Executar a análise de consultas com reconhecimento de datas. Desativar também ignora o ramo de recuperação temporal. Útil quando o conteúdo deste banco não contém datas relevantes.",
+    "recallGraphRetrievalLabel": "Recuperação por grafo",
+    "recallGraphRetrievalDescription": "Percorrer relações de entidades e vínculos durante o recall. Desativar troca a recuperação relacional por menor latência.",
+    "recallRerankingLabel": "Reclassificação",
+    "recallRerankingDescription": "Reclassificar os candidatos combinados com o cross-encoder. Desativar retorna diretamente a ordem RRF — mais rápido, porém menos preciso.",
+    "extractionModeConcise": "Conciso",
+    "extractionModeVerbose": "Detalhado",
+    "extractionModeVerbatim": "Literal",
+    "extractionModeChunks": "Blocos (sem LLM)",
+    "extractionModeCustom": "Personalizado"
   },
   "bankOperations": {
     "title": "Operações em Segundo Plano",
@@ -473,13 +495,15 @@
     "unknown": "Desconhecido",
     "notAvailable": "N/D",
     "operationDetailsLoadError": "Falha ao carregar os detalhes da operação",
+    "deferredUntilTitle": "Adiada até {time}",
     "status": {
       "all": "Todos",
       "pending": "Pendente",
       "processing": "Em processamento",
       "completed": "Concluída",
       "failed": "Falha",
-      "cancelled": "Cancelada"
+      "cancelled": "Cancelada",
+      "deferred": "Adiada"
     },
     "operationType": {
       "all": "Todos os tipos",
@@ -488,7 +512,10 @@
       "refreshMentalModel": "Atualização do modelo mental",
       "fileConvertRetain": "Converter arquivo",
       "webhookDelivery": "Entrega de webhook",
-      "graphMaintenance": "Manutenção do grafo"
+      "graphMaintenance": "Manutenção do grafo",
+      "vectorIndexMaintenance": "Manutenção do índice vetorial",
+      "exportDocuments": "Exportar documentos",
+      "importDocuments": "Importar documentos"
     },
     "table": {
       "id": "ID da operação",
@@ -502,7 +529,8 @@
     "action": {
       "cancel": "Cancelar",
       "retry": "Tentar novamente",
-      "delete": "Excluir"
+      "delete": "Excluir",
+      "download": "Baixar"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -518,6 +546,7 @@
       "progress": "Progresso",
       "lastHeartbeat": "Último sinal"
     },
+    "outcomeDetails": "Detalhes do resultado",
     "metadata": "Metadados",
     "error": "Erro",
     "rawPayloadParentHelp": "Esta é uma operação pai: o payload bruto é armazenado em cada sublote. Abra uma operação filha para inspecionar seu payload.",
@@ -697,6 +726,7 @@
     "exportIncludeObservationsHint": "Exportar também as observações sintetizadas. Se desativado, o banco de destino as regenera durante a consolidação.",
     "importDialogTitle": "Importar documentos",
     "importDialogDescription": "Envie um arquivo .zip exportado anteriormente de um banco. Não é um upload de documento comum — os fatos são reincorporados e relinkados neste banco. A importação roda em segundo plano.",
+    "importFileHint": "O .zip precisa ter sido gerado pela ação Exportar — deste banco ou de outro. Para adicionar arquivos PDF, Word ou de texto, use \"Adicionar Documento → Enviar Arquivos\".",
     "actionsButton": "Ações",
     "importConflictLabel": "Se um documento já existir",
     "importConflictSkip": "Ignorar — manter o documento existente",
@@ -809,6 +839,9 @@
     "optionsRefreshCronLabel": "Atualização agendada (cron)",
     "optionsRefreshCronPlaceholder": "min hora dia mês diaSem  ·  ex. 0 3 * * * (diário 03:00 UTC)",
     "optionsRefreshCronDescription": "Atualiza com base em um agendamento cron fixo em UTC. Mutuamente exclusivo com a atualização em novas memórias. Uma atualização agendada só é executada quando novas memórias alteram o escopo deste modelo. Deixe vazio para desativar.",
+    "optionsMinRefreshIntervalLabel": "Intervalo mínimo de atualização (segundos)",
+    "optionsMinRefreshIntervalPlaceholder": "Padrão (herdar)",
+    "optionsMinRefreshIntervalDescription": "Piso para a frequência das atualizações automáticas. Um gatilho que dispara antes é enfileirado e fica em espera até a janela fechar, e os seguintes se juntam a ele — então uma rajada de retains custa uma única atualização. Atualizações manuais são sempre executadas de imediato. 0 ou vazio = sem piso.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",
     "optionsTagsPlaceholder": "ex.: projeto-x, equipe-alpha (separadas por vírgula)",
@@ -850,7 +883,10 @@
     "clearDialogConfirm": "Limpar",
     "actionClearContent": "Limpar conteúdo",
     "emptyContent": "Ainda não há conteúdo. Atualize este modelo mental para gerar conteúdo.",
-    "selectModelPrompt": "Selecione um modelo mental para ver seu conteúdo."
+    "selectModelPrompt": "Selecione um modelo mental para ver seu conteúdo.",
+    "optionsSectionTroubleshooting": "Diagnóstico",
+    "optionsKeepTraceLabel": "Manter rastros de atualização",
+    "optionsKeepTraceDescription": "Registra como cada atualização chegou ao seu resultado: modo, escopo, janela de tempo, fatos recuperados versus usados e operações delta. A única forma de diagnosticar atualizações agendadas depois que elas rodam."
   },
   "cronPreview": {
     "invalid": "Expressão cron inválida",
@@ -936,7 +972,8 @@
     "observationTextField": "Texto",
     "observationTagsField": "Tags",
     "observationSourceMemoriesField": "Memórias de Origem ({count})",
-    "observationIdField": "ID"
+    "observationIdField": "ID",
+    "structuredOutputTitle": "Saída estruturada"
   },
   "searchDebug": {
     "noBankSelected": "Nenhum Banco Selecionado",
@@ -1458,7 +1495,13 @@
     "factTypeWorld": "mundo",
     "factTypeExperience": "experiência",
     "factTypeObservation": "observação",
-    "actionClearContent": "Limpar conteúdo"
+    "actionClearContent": "Limpar conteúdo",
+    "structuredOutput": "Saída estruturada",
+    "responseSchemaTitle": "Esquema de saída estruturada",
+    "refreshTrace": "Rastro da atualização",
+    "traceNotCaptured": "Nenhum rastro registrado para esta atualização. Ative “Manter rastros de atualização” nas configurações do modelo.",
+    "actionDryRun": "Executar simulação",
+    "actionDryRunRunning": "Executando simulação…"
   },
   "constellation": {
     "instructions": "Scroll para zoom · Arraste para mover · Passe o mouse para explorar · Clique para selecionar",
@@ -1656,7 +1699,8 @@
         "refresh": "Falha ao atualizar modelo mental",
         "history": "Falha ao buscar histórico do modelo mental",
         "notFound": "Modelo mental não encontrado",
-        "clear": "Falha ao limpar modelo mental"
+        "clear": "Falha ao limpar modelo mental",
+        "dryRunRefresh": "Falha ao simular a atualização do modelo mental"
       },
       "observations": {
         "list": "Falha ao listar observações",
@@ -1755,7 +1799,7 @@
     "createPageTitle": "New page",
     "autoBadge": "auto",
     "inSync": "In sync",
-    "needsRefresh": "Needs refresh",
+    "needsRefresh": "Precisa de atualização",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1786,5 +1830,53 @@
     "pagesEmptyCta": "Create your first page",
     "recentDocsTitle": "Recent documents",
     "recentDocsEmpty": "No documents yet"
+  },
+  "schemaBuilder": {
+    "title": "Esquema de saída estruturada",
+    "subtitle": "Adicione campos visualmente ou edite o JSON diretamente. O modelo retorna um objeto com esse formato.",
+    "visualTab": "Visual",
+    "codeTab": "Código",
+    "addField": "Adicionar campo",
+    "namePlaceholder": "nome do campo",
+    "descriptionPlaceholder": "descrição (opcional)",
+    "required": "Obrigatório",
+    "removeField": "Remover campo",
+    "emptyState": "Adicione pelo menos um campo para definir a saída.",
+    "duplicateNames": "Os nomes dos campos devem ser únicos.",
+    "visualUnavailable": "Este esquema é avançado demais para o editor visual — edite-o como código.",
+    "invalidJson": "Sintaxe JSON inválida.",
+    "cancel": "Cancelar",
+    "apply": "Aplicar",
+    "openBuilder": "Criar esquema",
+    "edit": "Editar",
+    "clear": "Remover esquema",
+    "fieldsSummary": "{count, plural, one {# campo} other {# campos}}",
+    "invalidSchema": "Esquema inválido — abra o construtor para corrigi-lo.",
+    "fieldDescription": "Quando definido, a resposta também é retornada como structured_output conforme este esquema.",
+    "itemsLabel": "cada item"
+  },
+  "mentalModelDiagnostics": {
+    "fallbackNoBaseline": "Nenhum conteúdo existente para editar",
+    "fallbackQueryChanged": "A consulta de origem mudou",
+    "fallbackDocUnreadable": "Não foi possível ler o documento armazenado",
+    "fallbackOpsFailed": "A chamada de operações delta falhou",
+    "fallbackOpsAllSkipped": "Todas as operações delta foram rejeitadas",
+    "outcomeWritten": "Novo conteúdo gravado",
+    "outcomePreserved": "Sem fatos novos, conteúdo mantido",
+    "outcomeFailed": "Resultado vazio, a atualização falha",
+    "outcomeDeltaNotApplied": "Delta não aplicado, a atualização falha",
+    "warningsTitle": "Avisos",
+    "traceResults": "{count} resultados",
+    "executionTraceTitle": "Rastro de Execução",
+    "noOperations": "Sem operações",
+    "responseGenerated": "Resposta gerada",
+    "agentDecided": "Agente decidiu",
+    "toolInputLabel": "Entrada:",
+    "executionTraceDescription": "{iterations} chamadas de LLM • {totalMs}ms no total",
+    "executingTools": "Ferramentas chamadas: {count}",
+    "resultTitle": "Simulação — {name}",
+    "toolOutputLabel": "Saída:",
+    "toolWindowBound": "janela: apenas memórias atualizadas após {time}",
+    "toolWindowUnbounded": "janela: nenhuma — esta ferramenta não é limitada no tempo"
   }
 }

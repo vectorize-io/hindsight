@@ -41,11 +41,13 @@ async def test_oracle_reassert_locks_in_stable_order_then_reinserts():
     idempotently re-insert the same rows in that order."""
     resolver = EntityResolver(pool=SimpleNamespace(ops=OracleOps()))
     conn = AsyncMock()
-    # Deliberately out of order and duplicated on the way in.
+    # Deliberately out of order and duplicated on the way in. Bob is a label
+    # entity: the re-insert must carry each parent's entity_kind, or a pruned
+    # label row would resurrect as 'regular' and re-enter fuzzy matching.
     resolved_entities = [
-        ResolvedEntity(entity_id=_ID_B, canonical_name="Bob"),
+        ResolvedEntity(entity_id=_ID_B, canonical_name="Bob", entity_kind="label"),
         ResolvedEntity(entity_id=_ID_A, canonical_name="Alice"),
-        ResolvedEntity(entity_id=_ID_B, canonical_name="Bob"),
+        ResolvedEntity(entity_id=_ID_B, canonical_name="Bob", entity_kind="label"),
     ]
 
     await resolver.reassert_entities_batch("bank-1", resolved_entities, conn)
@@ -56,7 +58,7 @@ async def test_oracle_reassert_locks_in_stable_order_then_reinserts():
 
     insert_sql, rows = conn.executemany.await_args.args
     assert "ON CONFLICT DO NOTHING" in insert_sql
-    assert rows == [(_ID_A, "bank-1", "Alice"), (_ID_B, "bank-1", "Bob")]
+    assert rows == [(_ID_A, "bank-1", "Alice", "regular"), (_ID_B, "bank-1", "Bob", "label")]
 
 
 @pytest.mark.asyncio
@@ -98,7 +100,9 @@ async def test_reassert_locks_existing_parent_until_child_insert(pg0_db_url):
             bank_id,
         )
         wrapped_phase2 = PostgresConnection(phase2_conn)
-        await ops.bulk_reassert_entities(wrapped_phase2, "entities", bank_id, [str(entity_id)], ["Alice Smith"])
+        await ops.bulk_reassert_entities(
+            wrapped_phase2, "entities", bank_id, [str(entity_id)], ["Alice Smith"], ["regular"]
+        )
 
         # The pruner cannot delete the locked parent — it blocks and times out.
         await prune_conn.execute("SET statement_timeout = '500ms'")
@@ -126,6 +130,7 @@ async def test_reassert_locks_existing_parent_until_child_insert(pg0_db_url):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
     """End-to-end: a prune between the two retain phases must not become data loss.
 
@@ -178,7 +183,11 @@ async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
         async with backend.acquire() as prune_conn:
             async with prune_conn.transaction():
                 pruned = await backend.ops.prune_orphan_entities(
-                    prune_conn, fq_table("entities"), fq_table("unit_entities"), bank_id
+                    prune_conn,
+                    fq_table("entities"),
+                    fq_table("unit_entities"),
+                    bank_id,
+                    [original_entity_id],
                 )
         assert pruned == 1
 

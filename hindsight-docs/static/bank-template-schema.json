@@ -107,6 +107,45 @@
           "description": "Controls what gets synthesised",
           "title": "Observations Mission"
         },
+        "enable_temporal_retrieval": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Toggle the temporal arm (and its date-aware query analysis) during recall",
+          "title": "Enable Temporal Retrieval"
+        },
+        "enable_graph_retrieval": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Toggle the entity/link graph arm during recall",
+          "title": "Enable Graph Retrieval"
+        },
+        "enable_reranking": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Toggle cross-encoder reranking during recall",
+          "title": "Enable Reranking"
+        },
         "disposition_skepticism": {
           "anyOf": [
             {
@@ -156,8 +195,7 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/$defs/LabelGroup"
               },
               "type": "array"
             },
@@ -320,6 +358,20 @@
           "description": "Max tokens of source facts per reflect call",
           "title": "Reflect Source Facts Max Tokens"
         },
+        "mental_model_min_refresh_interval_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minimum seconds between two automatic refreshes of the same mental model in this bank. 0 (the default) means no floor. Overridable per model via the trigger's min_refresh_interval_seconds.",
+          "title": "Mental Model Min Refresh Interval Seconds"
+        },
         "llm_gemini_safety_settings": {
           "anyOf": [
             {
@@ -476,6 +528,98 @@
           "default": null,
           "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts.",
           "title": "Store Document Text"
+        },
+        "enable_auto_consolidation": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Automatically consolidate observations after retain",
+          "title": "Enable Auto Consolidation"
+        },
+        "consolidation_max_memories_per_round": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max memory units fed into a single consolidation round",
+          "title": "Consolidation Max Memories Per Round"
+        },
+        "consolidation_llm_parallelism": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of consolidation LLM batches processed concurrently",
+          "title": "Consolidation Llm Parallelism"
+        },
+        "recall_include_chunks": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Include raw chunks in recall results",
+          "title": "Recall Include Chunks"
+        },
+        "recall_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max tokens of results returned by recall",
+          "title": "Recall Max Tokens"
+        },
+        "recall_chunks_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max tokens of raw chunks returned by recall (when recall_include_chunks is set)",
+          "title": "Recall Chunks Max Tokens"
+        },
+        "memory_defense": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Memory Defense policy for this bank (validated against the DefensePolicy schema on write)",
+          "title": "Memory Defense"
         }
       },
       "title": "BankTemplateConfig",
@@ -572,6 +716,120 @@
       "title": "BankTemplateMentalModel",
       "type": "object"
     },
+    "LabelGroup": {
+      "description": "A label group (dimension) with its type and allowed values.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "type": {
+          "default": "value",
+          "enum": [
+            "value",
+            "multi-values",
+            "text",
+            "map"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "optional": {
+          "default": true,
+          "title": "Optional",
+          "type": "boolean"
+        },
+        "tag": {
+          "default": false,
+          "title": "Tag",
+          "type": "boolean"
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LabelValue"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MapField"
+          },
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "LabelGroup",
+      "type": "object"
+    },
+    "LabelValue": {
+      "description": "A single allowed value for a label group.",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "LabelValue",
+      "type": "object"
+    },
+    "MapField": {
+      "description": "A field within a map-type entity label group. Supports recursion via type='map'.",
+      "properties": {
+        "type": {
+          "default": "text",
+          "enum": [
+            "text",
+            "value",
+            "multi-values",
+            "map"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LabelValue"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MapField"
+          },
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        }
+      },
+      "title": "MapField",
+      "type": "object"
+    },
     "MentalModelTrigger": {
       "description": "Trigger settings for a mental model.",
       "properties": {
@@ -603,6 +861,20 @@
           "default": null,
           "description": "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation \u2014 a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.",
           "title": "Refresh Cron"
+        },
+        "min_refresh_interval_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor).",
+          "title": "Min Refresh Interval Seconds"
         },
         "fact_types": {
           "anyOf": [
@@ -734,6 +1006,26 @@
           "default": null,
           "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).",
           "title": "Recall Chunks Max Tokens"
+        },
+        "response_schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional JSON Schema for structured output. When set, each refresh runs the same structured-output extraction as reflect's response_schema and stores the parsed result under reflect_response.structured_output alongside the markdown content.",
+          "title": "Response Schema"
+        },
+        "keep_trace": {
+          "default": false,
+          "description": "If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.",
+          "title": "Keep Trace",
+          "type": "boolean"
         }
       },
       "title": "MentalModelTrigger",

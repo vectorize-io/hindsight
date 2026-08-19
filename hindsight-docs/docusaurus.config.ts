@@ -7,7 +7,7 @@ const umamiWebsiteId = process.env.UMAMI_WEBSITE_ID;
 
 // Announcement bar - supports HTML for links
 // Set to empty string '' to hide the bar
-const ANNOUNCEMENT_BAR = 'Hindsight is State-of-the-Art on Memory for AI Agents | <a href="https://arxiv.org/abs/2512.12818" target="_blank">Read the paper →</a>';
+const ANNOUNCEMENT_BAR = 'Hindsight is State-of-the-Art on Memory for AI Agents <a href="https://arxiv.org/abs/2512.12818" target="_blank">Read the paper →</a>';
 
 const config: Config = {
   title: 'Hindsight',
@@ -16,6 +16,21 @@ const config: Config = {
 
   future: {
     v4: true,
+    // Docusaurus Faster, opted in one flag at a time. The full `true` preset
+    // does not work here: both the SWC JS minifier and the SSG worker threads
+    // crash while rendering /api-reference (Redoc needs a `Prism` global that
+    // neither setup provides). Everything else is safe and roughly halves the
+    // cold build.
+    experimental_faster: {
+      swcJsLoader: true,
+      swcJsMinimizer: false, // breaks Redoc SSG: "ReferenceError: Prism is not defined"
+      swcHtmlMinimizer: false,
+      lightningCssMinimizer: true,
+      mdxCrossCompilerCache: true,
+      rspackBundler: true,
+      rspackPersistentCache: true,
+      ssgWorkerThreads: false, // same Redoc SSG failure on /api-reference
+    },
   },
 
   markdown: {
@@ -83,6 +98,11 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
+          // The sidebar already shows where a page sits, and every doc opens
+          // with its own H1 — the trail only repeated both.
+          // src/theme/DocBreadcrumbs still renders: the original component
+          // returns null on this flag, and the wrapper carries the skill banner.
+          breadcrumbs: false,
           // Whether to include the "current" (Next / unreleased) docs version.
           //
           // Controlled by the single explicit env var INCLUDE_CURRENT_VERSION.
@@ -179,6 +199,7 @@ const config: Config = {
         id: 'integrations',
         path: './docs-integrations',
         routeBasePath: 'sdks/integrations',
+        breadcrumbs: false, // as above — its own docs plugin, its own flag
         // Unversioned plugin: gives the integration pages a sidebar generated
         // from src/data/integrations.json without versioning them.
         sidebarPath: './sidebars-integrations.ts',
@@ -211,6 +232,11 @@ const config: Config = {
         indexBlog: true,
         blogRouteBasePath: '/blog',
         highlightSearchTermsOnTargetPage: false,
+        // The search field lives in the docs sidebar (see
+        // src/theme/DocSidebar/Desktop/Content), so its results panel opens to
+        // the right of the field. Autodetection would infer "right" from the
+        // navbar and push the panel off the left of the window.
+        searchBarPosition: 'left',
       },
     ],
   ],
@@ -241,8 +267,15 @@ const config: Config = {
           type: 'doc',
           docId: 'developer/index',
           position: 'left',
-          label: 'Developer',
+          label: 'Docs',
           className: 'navbar-item-developer',
+        },
+        // Sits directly after "Docs": the version only ever qualifies the docs,
+        // so it reads as part of that item rather than as a sixth destination.
+        {
+          type: 'docsVersionDropdown',
+          position: 'left',
+          className: 'navbar-item-version',
         },
         {
           to: '/integrations',
@@ -255,6 +288,12 @@ const config: Config = {
           position: 'left',
           label: 'Changelog',
           className: 'navbar-item-changelog',
+        },
+        {
+          href: 'https://learn.hindsight.vectorize.io',
+          position: 'left',
+          label: 'Academy',
+          className: 'navbar-item-academy',
         },
         {
           type: 'dropdown',
@@ -315,26 +354,27 @@ const config: Config = {
           ],
         },
         {
-          type: 'docsVersionDropdown',
-          position: 'right',
-          className: 'navbar-item-version',
-        },
-        {
-          href: 'https://ui.hindsight.vectorize.io/signup',
-          position: 'right',
-          label: 'Cloud',
-          className: 'navbar-item-cloud',
-        },
-        {
           href: 'https://github.com/vectorize-io/hindsight',
           position: 'right',
           label: 'GitHub',
           className: 'header-github-link',
         },
+        // Rendered last on the right (after the color-mode toggle) by
+        // src/theme/Navbar/Content — the only call to action up there.
+        {
+          href: 'https://ui.hindsight.vectorize.io/signup',
+          position: 'right',
+          label: 'Sign up',
+          className: 'navbar-item-signup',
+        },
       ],
     },
     footer: {
-      style: 'dark',
+      // Not 'dark': that paints a slab in the theme's dark palette regardless
+      // of the active theme, so on a light page the footer arrived as a black
+      // block. It now continues the page and is separated by a rule alone
+      // (custom.css).
+      style: 'light',
       links: [
         {
           title: 'Documentation',
@@ -373,6 +413,10 @@ const config: Config = {
               to: '/guides',
             },
             {
+              label: 'Academy',
+              href: 'https://learn.hindsight.vectorize.io',
+            },
+            {
               label: 'Hindsight Cloud',
               href: 'https://ui.hindsight.vectorize.io/signup',
             },
@@ -389,10 +433,14 @@ const config: Config = {
               label: 'Slack',
               href: 'https://join.slack.com/t/hindsight-space/shared_invite/zt-3nhbm4w29-LeSJ5Ixi6j8PdiYOCPlOgg',
             },
+            {
+              label: 'Vectorize',
+              href: 'https://vectorize.io',
+            },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Vectorize, Inc.`,
+      copyright: `Copyright © ${new Date().getFullYear()} <a href="https://vectorize.io">Vectorize, Inc.</a>`,
     },
     prism: {
       theme: prismThemes.github,

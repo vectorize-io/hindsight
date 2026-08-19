@@ -25,23 +25,26 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       docker: ${{ steps.filter.outputs.docker }}
       helm: ${{ steps.filter.outputs.helm }}
-      docs: ${{ steps.filter.outputs.docs }}
+      doc-examples: ${{ steps.filter.outputs.doc-examples }}
       embed: ${{ steps.filter.outputs.embed }}
       all-npm: ${{ steps.filter.outputs.all-npm }}
       hindsight-all: ${{ steps.filter.outputs.hindsight-all }}
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
+      integrations-eliza: ${{ steps.filter.outputs.integrations-eliza }}
       integrations-agent-framework: ${{ steps.filter.outputs.integrations-agent-framework }}
       integrations-composio: ${{ steps.filter.outputs.integrations-composio }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
+      integrations-coding-agents: ${{ steps.filter.outputs.integrations-coding-agents }}
       integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
       integrations-github-copilot: ${{ steps.filter.outputs.integrations-github-copilot }}
       integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
       integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-zcode: ${{ steps.filter.outputs.integrations-zcode }}
+      integrations-agent-plugin: ${{ steps.filter.outputs.integrations-agent-plugin }}
       integrations-copilot-cli: ${{ steps.filter.outputs.integrations-copilot-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
@@ -116,12 +119,17 @@ jobs:
             - 'docker/**'
           helm:
             - 'helm/**'
-          docs:
-            - 'hindsight-docs/**'
-            - '*.md'
-            # Integration changes can add/rename integrations, which the docs
-            # build's integrations check validates against integrations.json.
-            - 'hindsight-integrations/**'
+          # The RUNNABLE samples only. This replaces a broad `docs` filter that also
+          # matched 'hindsight-docs/**', '*.md' and 'hindsight-integrations/**' — the
+          # last of those so an integration rename would be caught by the docs build's
+          # integrations check, except that build (build-docs) has no `if:` and runs
+          # unconditionally anyway. test-doc-examples was the filter's only consumer,
+          # and it executes every sample against a live LLM-backed server, so every
+          # integration and prose-only PR paid for four provider-credentialed runs that
+          # none of those files can affect.
+          doc-examples:
+            - 'hindsight-docs/examples/**'
+            - 'scripts/test-doc-examples.sh'
           embed:
             - 'hindsight-embed/**'
           all-npm:
@@ -136,6 +144,8 @@ jobs:
             - 'hindsight-integrations/openclaw/**'
           integrations-ai-sdk:
             - 'hindsight-integrations/ai-sdk/**'
+          integrations-eliza:
+            - 'hindsight-integrations/eliza/**'
           integrations-agent-framework:
             - 'hindsight-integrations/agent-framework/**'
           integrations-composio:
@@ -188,6 +198,8 @@ jobs:
             - 'hindsight-integrations/zed/**'
           integrations-zcode:
             - 'hindsight-integrations/zcode/**'
+          integrations-agent-plugin:
+            - 'hindsight-integrations/agent-plugin/**'
           integrations-n8n:
             - 'hindsight-integrations/n8n/**'
           integrations-zapier:
@@ -790,6 +802,29 @@ jobs:
       working-directory: ./hindsight-integrations/zcode
       run: uv run pytest tests -v
 
+  test-agent-plugin-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-agent-plugin == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Validate Agent Plugin manifests
+      working-directory: ./hindsight-integrations/agent-plugin
+      run: python3 validate.py
+
   build-ai-sdk-integration:
     needs: [detect-changes]
     if: >-
@@ -852,6 +887,37 @@ jobs:
     - name: Run tests (Deno)
       working-directory: ./hindsight-integrations/ai-sdk
       run: npm run test:deno
+
+  build-eliza-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-eliza == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/eliza
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/eliza
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-integrations/eliza
+      run: npm run build
 
   test-opencode-integration:
     needs: [detect-changes]
@@ -1388,6 +1454,30 @@ jobs:
           ~/.cargo/git
           hindsight-cli/target
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install cargo-about
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-about@0.9.1
+
+    - name: Verify cargo-about
+      run: cargo about --version
+
+    # cargo-about resolves the dependency graph for every target platform, so it
+    # needs crates this host never builds (e.g. the Android-only
+    # android_system_properties). Populate the registry first: `cargo fetch`
+    # without --target downloads for all targets, and Cargo.lock is not checked
+    # in, so nothing is cached from a previous step.
+    - name: Fetch crate sources for the license scan
+      working-directory: hindsight-cli
+      run: cargo fetch
+
+    - name: Generate and verify license manifest
+      working-directory: hindsight-cli
+      run: |
+        cargo about generate --offline --manifest-path Cargo.toml --config about.toml about.hbs --output-file /tmp/THIRD_PARTY_LICENSES.txt
+        test -s /tmp/THIRD_PARTY_LICENSES.txt
+        grep -Fq "THIRD-PARTY SOFTWARE LICENSES" /tmp/THIRD_PARTY_LICENSES.txt
 
     - name: Run unit tests
       working-directory: hindsight-cli
@@ -4527,6 +4617,73 @@ jobs:
           fi
         done || true
 
+  # Compatibility gate against hermes-agent's *main* branch.
+  #
+  # `hermes memory setup` installs `hindsight-all` into Hermes' own venv to run
+  # memory in local_embedded mode, and Hermes exact-pins every direct dependency
+  # (`==X.Y.Z`) as a deliberate supply-chain policy — they will not loosen a pin
+  # for us. So any version range Hindsight declares that excludes one of their
+  # pins makes the two impossible to co-install for every Hermes user on
+  # embedded memory. That was #3251: our `cryptography>=48.0.1` / `pillow>=12.3.0`
+  # against their `==46.0.7` / `==12.2.0`, which left `pip check` permanently
+  # broken. Both sides bump on their own schedule, so this needs a standing gate
+  # rather than a one-off fix; tracking main surfaces the next collision while
+  # it is still cheap to fix on either side.
+  #
+  # Deliberately not gated on has_secrets — the resolution, wiring, runtime and
+  # daemon-boot checks need no credentials, so this runs on fork PRs too. Only
+  # retain/recall need an LLM and the script skips them when no key is present.
+  test-hermes-compat:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.embed == 'true' ||
+      needs.detect-changes.outputs.hindsight-all == 'true' ||
+      needs.detect-changes.outputs.clients-python == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    # hindsight-all pulls the local-ml extra, so the embedded daemon can load
+    # sentence-transformers models. Cache them like the test-embed job does.
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-hermes-compat-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-hermes-compat-
+          ${{ runner.os }}-huggingface-
+
+    - name: Run Hermes compatibility test
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: ./scripts/test-hermes-compat.sh
+
+    - name: Collect embedded daemon logs on failure
+      if: failure()
+      run: |
+        for f in ~/.hindsight/profiles/hermes-ci*.log ~/.hindsight/profiles/hermes-ci*.stderr.log; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            cat "$f"
+          fi
+        done || true
+
   test-hindsight-all:
     needs: [detect-changes]
     if: >-
@@ -4628,7 +4785,7 @@ jobs:
       needs.detect-changes.outputs.clients-python == 'true' ||
       needs.detect-changes.outputs.clients-go == 'true' ||
       needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.docs == 'true' ||
+      needs.detect-changes.outputs.doc-examples == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -5032,13 +5189,26 @@ jobs:
           exit 0
         fi
 
-        echo "Checking OpenAPI compatibility against base branch: $BASE_BRANCH"
+        # Compare against the point this branch was cut from, NOT the live tip of
+        # the base branch. Using the tip reports every endpoint main has gained
+        # since the branch was cut as "removed by this PR" — a false positive that
+        # fails PRs which touch no spec at all, and whose only cure is an unrelated
+        # rebase. The merge-base answers the question the check actually asks:
+        # did *this branch* remove something?
+        MERGE_BASE="$(git merge-base "origin/$BASE_BRANCH" HEAD)"
 
-        # Extract the old OpenAPI spec from base branch
-        git show "origin/$BASE_BRANCH:hindsight-docs/static/openapi.json" > /tmp/old-openapi.json
+        if [ -z "$MERGE_BASE" ]; then
+          echo "⚠️  Warning: Could not determine merge-base with $BASE_BRANCH. Skipping compatibility check."
+          exit 0
+        fi
+
+        echo "Checking OpenAPI compatibility against $BASE_BRANCH merge-base: $MERGE_BASE"
+
+        # Extract the old OpenAPI spec from the merge-base
+        git show "$MERGE_BASE:hindsight-docs/static/openapi.json" > /tmp/old-openapi.json
 
         if [ ! -s /tmp/old-openapi.json ]; then
-          echo "⚠️  Warning: Could not find OpenAPI spec in base branch. Skipping compatibility check."
+          echo "⚠️  Warning: Could not find OpenAPI spec at the merge-base. Skipping compatibility check."
           exit 0
         fi
 
@@ -5080,6 +5250,42 @@ jobs:
         cd hindsight-dev
         uv run cli-coverage-check
 
+  # hindsight-dev/tests had no job of its own, so nothing ran it: the benchmark
+  # harness was only exercised by the nightly Performance Tests workflow, where a
+  # plain construction bug in the answer/judge LLM config surfaced as a red
+  # benchmark hours later instead of on the PR that introduced it.
+  test-dev:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.dev == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install hindsight-dev dependencies
+      run: |
+        cd hindsight-dev && uv sync --frozen --extra test --index-strategy unsafe-best-match
+
+    - name: Run hindsight-dev tests
+      working-directory: hindsight-dev
+      run: uv run pytest tests/ -v
+
   # Report CI status back to the PR for pull_request_review events.
   # GitHub does not automatically link pull_request_review check runs to the PR,
   # so we create a commit status on the PR head SHA and post a comment.
@@ -5099,6 +5305,7 @@ jobs:
       - test-codex-integration
       - test-cursor-cli-integration
       - test-zcode-integration
+      - test-agent-plugin-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
@@ -5154,6 +5361,7 @@ jobs:
       - test-embed
       - test-embed-windows
       - verify-embed-control-center-bundle
+      - test-hermes-compat
       - test-hindsight-all
       - test-hindsight-agent-sdk
       - test-claude-agent-sdk-integration

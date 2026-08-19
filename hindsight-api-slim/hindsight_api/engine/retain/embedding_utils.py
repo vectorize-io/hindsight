@@ -7,6 +7,9 @@ import contextvars
 import logging
 from typing import Literal, Protocol
 
+from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
+from ..token_encoding import truncate_to_tokens
+
 logger = logging.getLogger(__name__)
 
 EmbeddingInputType = Literal["document", "query"]
@@ -22,6 +25,37 @@ class EmbeddingsBackend(Protocol):
     def encode_query(self, texts: list[str]) -> list[list[float]]: ...
 
     def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
+
+
+def _truncate_inputs(texts: list[str], max_input_tokens: int, backend: EmbeddingsBackend) -> list[str]:
+    """Cap each input at ``max_input_tokens`` tiktoken tokens before it reaches the provider.
+
+    Remote providers with a fixed input-token limit (e.g. Bedrock Titan V2's hard 8192
+    cap, or a llama.cpp ``/v1/embeddings`` server) reject an oversized text with a
+    permanent 4xx rather than truncating server-side the way SentenceTransformers does.
+    One oversized memory then fails the whole retain/recall batch. This is provider-
+    agnostic on purpose: the cap is applied here, once, before any backend's `encode()`.
+    """
+    truncated: list[str] = []
+    original_token_counts: list[int] = []
+    for text in texts:
+        result = truncate_to_tokens(text, max_input_tokens)
+        truncated.append(result.text)
+        if result.original_tokens > max_input_tokens:
+            original_token_counts.append(result.original_tokens)
+    if original_token_counts:
+        logger.warning(
+            "Embeddings: truncated %d of %d input(s) to %d tokens for provider %s "
+            "(largest was ~%d tokens); embedded content is incomplete. Raise or unset "
+            "%s if this is unexpected.",
+            len(original_token_counts),
+            len(texts),
+            max_input_tokens,
+            getattr(backend, "provider_name", "?"),
+            max(original_token_counts),
+            ENV_EMBEDDINGS_MAX_INPUT_TOKENS,
+        )
+    return truncated
 
 
 def _validate_embedding_vector(vector: list[float], *, index: int, expected_dimension: int) -> list[float]:
@@ -58,6 +92,13 @@ async def generate_embeddings_batch(
     Returns:
         List of embeddings in same order as input texts
     """
+    # Cap oversized inputs once, here, before they reach any provider's encode(). Kept
+    # out of the individual backends so every provider (and every call path — retain,
+    # recall queries, consolidation, import) gets identical, model-agnostic truncation.
+    max_input_tokens = get_config().embeddings_max_input_tokens
+    if max_input_tokens is not None and texts:
+        texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend)
+
     try:
         loop = asyncio.get_event_loop()
         # run_in_executor runs the encode in a worker thread, which does NOT inherit

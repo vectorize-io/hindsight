@@ -1,0 +1,16 @@
+THIRD-PARTY SOFTWARE LICENSES
+==============================
+
+This file contains the license and copyright notices for the Rust crates
+distributed in the Hindsight CLI binary. The list is generated from
+hindsight-cli/Cargo.lock with cargo-about.
+
+{{#each licenses}}
+-------------------------------------------------------------------------------
+{{{name}}}
+Used by:
+{{#each used_by}}- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

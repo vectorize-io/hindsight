@@ -105,6 +105,50 @@ class TestLiteLLMSDKEmbeddings:
             call_kwargs = mock_litellm.aembedding.call_args.kwargs
             assert "api_key" not in call_kwargs
 
+    async def test_voyage_initialization_uses_document_input_type(self, mock_litellm):
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="voyage/voyage-4-large",
+                output_dimensions=2048,
+                encoding_format=None,
+            )
+            await emb.initialize()
+
+        call_kwargs = mock_litellm.aembedding.call_args.kwargs
+        assert call_kwargs["input_type"] == "document"
+        assert call_kwargs["dimensions"] == 2048
+        assert "encoding_format" not in call_kwargs
+
+    async def test_voyage_query_and_document_input_types(self, mock_litellm):
+        emb = LiteLLMSDKEmbeddings(
+            api_key="test_key",
+            model="voyage/voyage-4-large",
+            output_dimensions=2048,
+            encoding_format=None,
+        )
+        emb._litellm = mock_litellm
+        emb._dimension = 2048
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.5] * 2048, "index": 0}]
+
+        emb.encode_documents(["document"])
+        assert mock_litellm.embedding.call_args.kwargs["input_type"] == "document"
+
+        emb.encode_query(["query"])
+        assert mock_litellm.embedding.call_args.kwargs["input_type"] == "query"
+
+    async def test_non_voyage_query_keeps_provider_default(self, mock_litellm):
+        emb = LiteLLMSDKEmbeddings(api_key="test_key", model="cohere/embed-english-v3.0")
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.5] * 768, "index": 0}]
+
+        emb.encode_query(["query"])
+        assert "input_type" not in mock_litellm.embedding.call_args.kwargs
+
     async def test_encode_without_api_key(self, mock_litellm):
         """Test encode omits api_key when not set (IAM/ambient credentials)."""
         emb = LiteLLMSDKEmbeddings(
@@ -243,65 +287,6 @@ class TestLiteLLMSDKEmbeddings:
 
         assert isinstance(result, list)
         assert len(result) == 0
-
-    async def test_encode_truncates_oversized_input_when_max_tokens_set(self, mock_litellm, caplog):
-        """Oversized inputs are truncated to max_input_tokens before embedding, with a warning (#2501)."""
-        import logging
-
-        from hindsight_api.engine.token_encoding import get_token_encoding
-
-        emb = LiteLLMSDKEmbeddings(
-            api_key="test_key",
-            model="bedrock/amazon.titan-embed-text-v2:0",
-            api_base=None,
-            batch_size=100,
-            timeout=60.0,
-            max_input_tokens=50,
-        )
-        emb._litellm = mock_litellm
-        emb._dimension = 768
-        mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-
-        long_text = "word " * 500  # far more than 50 tokens
-        with caplog.at_level(logging.WARNING):
-            emb.encode([long_text])
-
-        sent = mock_litellm.embedding.call_args.kwargs["input"][0]
-        enc = get_token_encoding()
-        assert len(enc.encode(sent)) <= 50
-        assert sent != long_text  # actually truncated
-        assert any("truncated" in r.message and r.levelno == logging.WARNING for r in caplog.records)
-
-    async def test_encode_no_warning_when_input_within_limit(self, mock_litellm, caplog):
-        """No truncation warning when every input already fits under max_input_tokens."""
-        import logging
-
-        emb = LiteLLMSDKEmbeddings(
-            api_key="test_key",
-            model="bedrock/amazon.titan-embed-text-v2:0",
-            api_base=None,
-            batch_size=100,
-            timeout=60.0,
-            max_input_tokens=50,
-        )
-        emb._litellm = mock_litellm
-        emb._dimension = 768
-        mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-
-        with caplog.at_level(logging.WARNING):
-            emb.encode(["short text well under the limit"])
-
-        assert not any("truncated" in r.message for r in caplog.records)
-
-    async def test_encode_does_not_truncate_when_max_tokens_unset(self, embeddings, mock_litellm):
-        """Without max_input_tokens the text is passed through verbatim (default behavior)."""
-        assert embeddings.max_input_tokens is None
-        mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-
-        long_text = "word " * 500
-        embeddings.encode([long_text])
-
-        assert mock_litellm.embedding.call_args.kwargs["input"] == [long_text]
 
     async def test_encode_before_initialization(self, mock_litellm):
         """Test that encode raises error if not initialized."""
