@@ -465,6 +465,11 @@ class VerbatimFactExtractionResponse(BaseModel):
     facts: list[VerbatimExtractedFact] = Field(description="List of metadata entries (one per chunk)")
 
 
+# A response at this cap is treated as saturated and sent through the existing
+# split/retry path, so the schema bound cannot silently truncate a dense chunk.
+RETAIN_FACTS_MAX_ITEMS = 16
+
+
 # Separators for sentence-aware recursive text splitting, ordered most- to
 # least-preferred. The final "" lets the splitter break mid-word as a last
 # resort so a chunk can never exceed the size budget.
@@ -1181,6 +1186,25 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             DynamicResponse = create_model("LabelsResponse", facts=(list[DynamicFact], ...))  # type: ignore[valid-type]
             response_schema = DynamicResponse
 
+    # Keep the facts array below the output-token ceiling when the configured
+    # structured-output backend accepts JSON Schema maxItems. The saturation
+    # check in _extract_facts_from_chunk remains authoritative for providers
+    # that do not enforce this schema keyword.
+    if getattr(config, "llm_supports_max_items", True):
+        facts_field = response_schema.model_fields["facts"]
+        response_schema = create_model(
+            "BoundedFactExtractionResponse",
+            __base__=response_schema,
+            facts=(
+                facts_field.annotation,
+                Field(
+                    ...,
+                    max_length=RETAIN_FACTS_MAX_ITEMS,
+                    description=facts_field.description,
+                ),
+            ),
+        )
+
     return prompt, response_schema
 
 
@@ -1443,6 +1467,10 @@ async def _extract_facts_from_chunk(
             extraction_response_json = coerced_response_json
 
             raw_facts = extraction_response_json.get("facts", [])
+            if isinstance(raw_facts, list) and len(raw_facts) >= RETAIN_FACTS_MAX_ITEMS:
+                raise OutputTooLongError(
+                    f"Fact extraction reached the {RETAIN_FACTS_MAX_ITEMS}-fact saturation limit; input must be split."
+                )
 
             if not raw_facts:
                 logger.debug(

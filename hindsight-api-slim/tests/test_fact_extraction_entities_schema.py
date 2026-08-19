@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hindsight_api.engine.retain.fact_extraction import (
+    RETAIN_FACTS_MAX_ITEMS,
     ExtractedFact,
     ExtractedFactNoCausal,
     ExtractedFactVerbose,
@@ -29,6 +30,7 @@ def _baseline_config() -> MagicMock:
     config.retain_mission = None
     config.retain_custom_instructions = None
     config.llm_output_language = None
+    config.llm_supports_max_items = True
     return config
 
 
@@ -74,3 +76,20 @@ def test_labels_only_mode_keeps_entities_as_strings():
 
     entities_schema = schema.model_fields["facts"].annotation.__args__[0].model_json_schema()["properties"]["entities"]
     assert entities_schema["items"] == {"type": "string"}
+
+
+def test_fact_response_schema_caps_facts_when_max_items_is_supported():
+    """Retain's response schema should expose the saturation cap to capable backends."""
+    _, schema = _build_extraction_prompt_and_schema(_baseline_config())
+
+    assert schema.model_json_schema()["properties"]["facts"]["maxItems"] == RETAIN_FACTS_MAX_ITEMS
+
+
+def test_fact_response_schema_omits_max_items_when_backend_does_not_support_it():
+    """Providers that reject maxItems must retain the uncapped wire schema."""
+    config = _baseline_config()
+    config.llm_supports_max_items = False
+
+    _, schema = _build_extraction_prompt_and_schema(config)
+
+    assert "maxItems" not in schema.model_json_schema()["properties"]["facts"]

@@ -502,6 +502,36 @@ def test_build_request_body_omits_temperature_when_none():
     assert "temperature" not in body
 
 
+@pytest.mark.asyncio
+async def test_fact_saturation_raises_output_too_long_for_existing_split_path():
+    """A saturated facts array must enter the existing recursive split path."""
+    from hindsight_api.engine.llm_wrapper import OutputTooLongError
+    from hindsight_api.engine.retain.fact_extraction import RETAIN_FACTS_MAX_ITEMS, _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=0)
+    llm_config = _make_llm_config(
+        mock_response={"facts": [{"what": f"fact {index}"} for index in range(RETAIN_FACTS_MAX_ITEMS)]}
+    )
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        with pytest.raises(OutputTooLongError, match="saturation limit"):
+            await _extract_facts_from_chunk(
+                chunk="A dense chunk.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
+
+    assert llm_config.call.call_count == 1
+
+
 # --- Retry budget semantics (issue #2731) -----------------------------------
 #
 # A retry BUDGET of N means N retries *after* the initial request — the meaning
