@@ -839,6 +839,13 @@ class OpenAICompatibleLLM(LLMInterface):
         """Apply provider-specific extra_body defaults while preserving user overrides."""
         if self.provider == "minimax":
             extra_body.setdefault("thinking", {"type": "disabled"})
+        if self.provider == "ollama" and self.ollama_num_ctx is not None:
+            # ``extra_body`` is shallow-copied per call, so copy nested options
+            # before adding the default to avoid mutating the configured payload.
+            options = extra_body.get("options")
+            options = dict(options) if isinstance(options, dict) else {}
+            options.setdefault("num_ctx", self.ollama_num_ctx)
+            extra_body["options"] = options
 
     async def call(
         self,

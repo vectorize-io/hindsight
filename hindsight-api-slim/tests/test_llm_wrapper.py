@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from hindsight_api.engine.llm_wrapper import create_llm_provider, sanitize_llm_output
@@ -194,6 +197,82 @@ async def test_native_ollama_omits_num_ctx_unless_configured(monkeypatch):
     assert "num_ctx" not in calls[0]["json"]["options"]
     assert calls[0]["json"]["options"]["num_batch"] == 512
     assert calls[1]["json"]["options"]["num_ctx"] == 65536
+
+
+def _openai_response(content: str = "ok") -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=content))],
+        usage=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ollama_num_ctx_applies_to_unstructured_calls_and_verification():
+    """OpenAI-compatible Ollama calls, including the startup probe, carry num_ctx."""
+    from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
+
+    provider = OpenAICompatibleLLM(
+        provider="ollama",
+        api_key="",
+        base_url="",
+        model="llama3.2",
+        ollama_num_ctx=24576,
+    )
+    create = AsyncMock(return_value=_openai_response())
+    provider._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        await provider.call(
+            messages=[{"role": "user", "content": "Say 'ok'"}],
+            max_completion_tokens=64,
+            max_retries=0,
+        )
+        await provider.verify_connection()
+
+    assert create.call_args_list[0].kwargs["extra_body"]["options"]["num_ctx"] == 24576
+    assert create.call_args_list[1].kwargs["extra_body"]["options"]["num_ctx"] == 24576
+
+
+@pytest.mark.asyncio
+async def test_ollama_unstructured_num_ctx_preserves_extra_body_precedence_and_unset_behavior():
+    """User options win, while an unset context override remains absent."""
+    from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
+
+    configured = OpenAICompatibleLLM(
+        provider="ollama",
+        api_key="",
+        base_url="",
+        model="llama3.2",
+        ollama_num_ctx=24576,
+        extra_body={"options": {"num_ctx": 8192, "temperature": 0.2}},
+    )
+    default = OpenAICompatibleLLM(provider="ollama", api_key="", base_url="", model="llama3.2")
+    copied = OpenAICompatibleLLM(
+        provider="ollama",
+        api_key="",
+        base_url="",
+        model="llama3.2",
+        ollama_num_ctx=24576,
+        extra_body={"options": {"temperature": 0.2}},
+    )
+    configured_create = AsyncMock(return_value=_openai_response())
+    default_create = AsyncMock(return_value=_openai_response())
+    copied_create = AsyncMock(return_value=_openai_response())
+    configured._client.chat.completions.create = configured_create
+    default._client.chat.completions.create = default_create
+    copied._client.chat.completions.create = copied_create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        await configured.call(messages=[{"role": "user", "content": "ping"}], max_retries=0)
+        await default.call(messages=[{"role": "user", "content": "ping"}], max_retries=0)
+        await copied.call(messages=[{"role": "user", "content": "ping"}], max_retries=0)
+
+    configured_options = configured_create.call_args.kwargs["extra_body"]["options"]
+    assert configured_options == {"num_ctx": 8192, "temperature": 0.2}
+    assert configured._config_extra_body == {"options": {"num_ctx": 8192, "temperature": 0.2}}
+    assert "extra_body" not in default_create.call_args.kwargs
+    assert copied_create.call_args.kwargs["extra_body"]["options"] == {"num_ctx": 24576, "temperature": 0.2}
+    assert copied._config_extra_body == {"options": {"temperature": 0.2}}
 
 
 @pytest.mark.parametrize(
