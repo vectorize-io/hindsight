@@ -6,6 +6,7 @@ Uses the LLMConfig wrapper for all LLM calls.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -18,7 +19,7 @@ from ..llm_interface import ProviderRateLimitResetError
 from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
-from ..structured_output import strict_json_schema
+from ..structured_output import bound_extraction_schema, strict_json_schema
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -1065,6 +1066,30 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
     return "\n".join(lines)
 
 
+@functools.lru_cache(maxsize=16)
+def _bounded_extraction_schema_model(model: type[BaseModel]) -> type[BaseModel]:
+    """Return a subclass of ``model`` that emits an output-bounded JSON schema.
+
+    Retain feeds one Pydantic response model to two code paths: the interactive
+    path hands the *model* to the provider, which serializes it via
+    ``model_json_schema``; the batch path serializes it directly. Overriding
+    ``model_json_schema`` here bounds *both* at their single shared chokepoint
+    without touching the provider (which serializes every structured output, not
+    just retain), so the size caps stay scoped to fact extraction. Validation and
+    every other behaviour is inherited unchanged. Results are cached because
+    building a Pydantic subclass rebuilds its core schema.
+    """
+
+    class _BoundedExtractionResponse(model):  # type: ignore[valid-type,misc]
+        @classmethod
+        def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return bound_extraction_schema(super().model_json_schema(*args, **kwargs))
+
+    _BoundedExtractionResponse.__name__ = model.__name__
+    _BoundedExtractionResponse.__qualname__ = model.__qualname__
+    return _BoundedExtractionResponse
+
+
 def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     """
     Build extraction prompt and response schema based on config.
@@ -1181,6 +1206,11 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             DynamicResponse = create_model("LabelsResponse", facts=(list[DynamicFact], ...))  # type: ignore[valid-type]
             response_schema = DynamicResponse
 
+    # Cap the emitted JSON schema's output size. Applied here — retain's single
+    # response-schema chokepoint — so both the interactive and batch paths inherit
+    # bounded facts/strings/arrays without affecting non-retain structured outputs.
+    response_schema = _bounded_extraction_schema_model(response_schema)
+
     return prompt, response_schema
 
 
@@ -1293,7 +1323,11 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
     # retain-scoped field, which already folds in the global HINDSIGHT_API_LLM_STRICT_SCHEMA
     # fallback, so the batch and streaming paths can't disagree.
     if hasattr(response_schema, "model_json_schema"):
-        schema = (
+        # Bound the emitted schema so a grammar-constrained backend can't run to
+        # the token cap and truncate into invalid JSON. Idempotent when the
+        # response schema is already the bounded model, but applied explicitly so
+        # the batch request body is bounded regardless of how the schema arrived.
+        schema = bound_extraction_schema(
             strict_json_schema(response_schema) if config.llm_strict_schema else response_schema.model_json_schema()
         )
         request_body["response_format"] = {
