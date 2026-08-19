@@ -5942,6 +5942,7 @@ components:
             tags:
             - tags
             - tags
+          delta_fast_path: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -6921,6 +6922,7 @@ components:
             tags:
             - tags
             - tags
+          delta_fast_path: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -7162,6 +7164,7 @@ components:
               tags:
               - tags
               - tags
+            delta_fast_path: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -7204,6 +7207,7 @@ components:
               tags:
               - tags
               - tags
+            delta_fast_path: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -8162,7 +8166,23 @@ components:
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
           - refresh_failed_delta_not_applied
+          - refresh_failed_identifier_retention
           title: Outcome
+          type: string
+        fast_path:
+          enum:
+          - tier0
+          - tier1
+          nullable: true
+          type: string
+        fast_path_fallback_reason:
+          enum:
+          - no_delta_baseline
+          - needs_full_context
+          - delta_ops_failed
+          - delta_ops_invalid
+          - delta_ops_all_skipped
+          nullable: true
           type: string
         would_persist:
           description: Whether a real refresh would write new content.
@@ -8188,7 +8208,12 @@ components:
           title: Current Content
           type: string
         candidate_content:
-          description: "Raw reflect synthesis, before any delta operations."
+          description: "The document the run's synthesis step produced, before any\
+            \ delta operations: the raw reflect answer when the agentic loop ran.\
+            \ The delta fast path has no synthesis step, so it reports what it would\
+            \ write instead — the current content on tier 0 (nothing new was found),\
+            \ and the post-operation document on tier 1 (identical to preview_content).\
+            \ Compare against preview_content to see what the delta changed."
           title: Candidate Content
           type: string
         preview_content:
@@ -8274,6 +8299,7 @@ components:
               tags:
               - tags
               - tags
+            delta_fast_path: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -8316,6 +8342,7 @@ components:
               tags:
               - tags
               - tags
+            delta_fast_path: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -8453,7 +8480,23 @@ components:
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
           - refresh_failed_delta_not_applied
+          - refresh_failed_identifier_retention
           title: Outcome
+          type: string
+        fast_path:
+          enum:
+          - tier0
+          - tier1
+          nullable: true
+          type: string
+        fast_path_fallback_reason:
+          enum:
+          - no_delta_baseline
+          - needs_full_context
+          - delta_ops_failed
+          - delta_ops_invalid
+          - delta_ops_all_skipped
+          nullable: true
           type: string
         tool_calls:
           description: Reflect tool calls made during the refresh.
@@ -8521,6 +8564,7 @@ components:
             tags:
             - tags
             - tags
+          delta_fast_path: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -8654,6 +8698,7 @@ components:
           tags:
           - tags
           - tags
+        delta_fast_path: true
         exclude_mental_models: false
         mode: full
         refresh_after_consolidation: false
@@ -8735,6 +8780,9 @@ components:
         recall_chunks_max_tokens:
           nullable: true
           type: integer
+        delta_fast_path:
+          nullable: true
+          type: boolean
         response_schema:
           additionalProperties: {}
           nullable: true
@@ -8766,6 +8814,7 @@ components:
           tags:
           - tags
           - tags
+        delta_fast_path: true
         exclude_mental_models: false
         mode: full
         refresh_after_consolidation: false
@@ -8847,6 +8896,9 @@ components:
         recall_chunks_max_tokens:
           nullable: true
           type: integer
+        delta_fast_path:
+          nullable: true
+          type: boolean
         response_schema:
           additionalProperties: {}
           nullable: true
@@ -9835,6 +9887,53 @@ components:
       required:
       - and
       title: TagGroupAnd
+    TagGroupEntityLeaf:
+      description: |-
+        A leaf ENTITY filter: matches memories by the entities they mention.
+
+        Tags describe which *compartment* a memory lives in; entities describe what it
+        is *about*. On a bank whose tag vocabulary is a handful of broad topics, a tag
+        scope cannot isolate a subject — measured on a production bank (2026-08-08),
+        the best tag scope for one subject reached 25% precision against a 15.5% base
+        rate, while the entity association reached 94.2% precision / 86.2% recall on
+        the same corpus. This leaf makes that association usable anywhere a
+        ``TagGroup`` already is: mental-model refresh scope, the staleness gate, and
+        retrieval filtering, through the same recursive grammar.
+
+        ``entities`` are canonical names, matched case-insensitively — the same
+        normalisation the entity registry itself enforces via its
+        ``(bank_id, LOWER(canonical_name))`` uniqueness.
+
+        Association is inheritance-aware: a memory matches if it links the entity
+        directly (``unit_entities``) or through any of its ``source_memory_ids`` — the
+        lane observations use, since consolidation-produced observations carry no
+        direct postings by design (their entity association is transitive through
+        their sources; see ``memories/pg/graph.py:_entity_rows_for_units_sql``).
+
+        ``match="any"``: mentions at least one listed entity. ``match="all"``: mentions
+        every listed entity (directly or via sources, per entity).
+
+        Constraints, enforced by ``validate_entity_leaf_placement`` at the API edge:
+        an entity leaf may not appear under ``not`` — the two permissive fallbacks
+        (the Python-side post-filter and the non-memory_units surfaces that strip
+        entity leaves) evaluate an unknown entity constraint as "matches", and a NOT
+        over a permissive "matches" silently inverts into "exclude everything".
+      properties:
+        entities:
+          items:
+            type: string
+          minItems: 1
+          type: array
+        match:
+          default: any
+          enum:
+          - any
+          - all
+          title: EntityMatch
+          type: string
+      required:
+      - entities
+      title: TagGroupEntityLeaf
     TagGroupLeaf:
       description: "A leaf tag filter: matches memories by tag list and match mode."
       example:
@@ -10130,6 +10229,7 @@ components:
             tags:
             - tags
             - tags
+          delta_fast_path: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -10549,18 +10649,21 @@ components:
     MentalModelRefreshScope_tag_groups_inner:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupEntityLeaf'
       - $ref: '#/components/schemas/TagGroupAnd-Output'
       - $ref: '#/components/schemas/TagGroupOr-Output'
       - $ref: '#/components/schemas/TagGroupNot-Output'
     MentalModelTrigger_Input_tag_groups_inner:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupEntityLeaf'
       - $ref: '#/components/schemas/TagGroupAnd-Input'
       - $ref: '#/components/schemas/TagGroupOr-Input'
       - $ref: '#/components/schemas/TagGroupNot-Input'
     Not:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupEntityLeaf'
       - $ref: '#/components/schemas/TagGroupAnd-Input'
       - $ref: '#/components/schemas/TagGroupOr-Input'
       - $ref: '#/components/schemas/TagGroupNot-Input'
@@ -10568,6 +10671,7 @@ components:
     Not_1:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupEntityLeaf'
       - $ref: '#/components/schemas/TagGroupAnd-Output'
       - $ref: '#/components/schemas/TagGroupOr-Output'
       - $ref: '#/components/schemas/TagGroupNot-Output'

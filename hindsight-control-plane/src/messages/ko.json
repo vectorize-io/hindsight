@@ -1853,6 +1853,7 @@
     "outcomePreserved": "새 사실 없음, 콘텐츠 유지",
     "outcomeFailed": "결과가 비어 새로 고침 실패",
     "outcomeDeltaNotApplied": "델타 미적용, 새로 고침 실패",
+    "outcomeIdentifierRetention": "식별자 손실, 새로 고침 실패",
     "warningsTitle": "경고",
     "traceResults": "결과 {count}건",
     "executionTraceTitle": "실행 추적",

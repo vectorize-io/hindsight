@@ -136,7 +136,9 @@ class TestMentalModelStructuredOutput:
             name="Doc",
             source_query="doc?",
             content="# Doc\n\n## Section A\n\nOriginal body.",
-            trigger={"mode": "delta", "response_schema": _SCHEMA},
+            # delta_fast_path off: this pins the agentic path, whose reflect answer
+            # ("PARTIAL DELTA ANSWER") is exactly what structured output must NOT read.
+            trigger={"mode": "delta", "response_schema": _SCHEMA, "delta_fast_path": False},
             request_context=request_context,
         )
 

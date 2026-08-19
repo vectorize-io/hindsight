@@ -851,7 +851,9 @@ You will be given:
 2. CURRENT DOCUMENT (JSON) — the existing structured mental model. Each section
    has a stable ``id``, a ``heading``, a ``level`` (1..6), and an ordered list
    of ``blocks``. Blocks are typed: ``paragraph``, ``bullet_list``,
-   ``ordered_list``, ``code``, or ``table``.
+   ``ordered_list``, ``code``, or ``table``. Each block also carries its own
+   0-based ``index`` within the section — READ it, do not count array elements
+   to infer it; a miscounted index is a silent, destructive bug.
 3. NEW INFORMATION SYNTHESIS (markdown) — a synthesis showing how the new facts
    relate to the document's topic. Use it to understand context and relevance,
    but do NOT copy its formatting or wording wholesale.
@@ -882,7 +884,16 @@ RULES
   room for an abstract restatement of the same point.
 - Operations target sections by ``section_id`` (use the ``id`` field of the
   section in CURRENT DOCUMENT, NOT the heading). Block operations target
-  blocks by ``index`` (0-based, against the section's current block list).
+  blocks by ``index`` (0-based, against the section's current block list) AND
+  ``anchor``: a verbatim excerpt (~50 characters) of that block's own
+  ``text``/``items`` content, copied exactly from what you were shown at that
+  index. ``replace_block`` and ``remove_block`` always need one; for
+  ``insert_block`` it is the block your new block will land before, needed
+  only when ``index`` names an existing block (empty string ``""`` when
+  ``index`` equals the section's block count — you are appending, and there
+  is nothing at that position to anchor against). A wrong or missing anchor
+  causes the op to be silently skipped rather than misapplied, so a correct
+  index alone is not enough — quote it exactly.
 - **Add** new content with ``append_block``, ``insert_block``, or ``add_section``
   when facts introduce information not yet covered. Prefer extending an
   existing section over creating a new one.
@@ -900,9 +911,9 @@ RULES
 
 ALLOWED OPERATIONS (each line shows the JSON shape)
 - ``{"op": "append_block", "section_id": "...", "block": {...}}``
-- ``{"op": "insert_block", "section_id": "...", "index": N, "block": {...}}``
-- ``{"op": "replace_block", "section_id": "...", "index": N, "block": {...}}``
-- ``{"op": "remove_block", "section_id": "...", "index": N}``
+- ``{"op": "insert_block", "section_id": "...", "index": N, "anchor": "...", "block": {...}}``
+- ``{"op": "replace_block", "section_id": "...", "index": N, "anchor": "...", "block": {...}}``
+- ``{"op": "remove_block", "section_id": "...", "index": N, "anchor": "..."}``
 - ``{"op": "add_section", "heading": "...", "level": 2, "blocks": [...], "after_section_id": "..."}``
 - ``{"op": "remove_section", "section_id": "..."}``
 - ``{"op": "replace_section_blocks", "section_id": "...", "blocks": [...]}``
@@ -928,17 +939,50 @@ Examples
   "block": {"type": "bullet_list", "items": ["Carol — junior engineer"]}}]}``
 - Replace a paragraph that has been corrected by new facts →
   ``{"operations": [{"op": "replace_block", "section_id": "overview",
-  "index": 0, "block": {"type": "paragraph", "text": "Updated summary."}}]}``
+  "index": 0, "anchor": "Old summary text as shown at index 0",
+  "block": {"type": "paragraph", "text": "Updated summary."}}]}``
 - Remove an obsolete block →
-  ``{"operations": [{"op": "remove_block", "section_id": "status", "index": 2}]}``
+  ``{"operations": [{"op": "remove_block", "section_id": "status", "index": 2,
+  "anchor": "Text of the block currently at index 2"}]}``
 
 JSON STRING RULES (critical)
 - Every ``text`` and ``items`` string must be valid JSON: escape ``"`` as ``\\"``,
   backslashes as ``\\\\``, and newlines as ``\\n``. Do not use raw backticks inside
   strings unless needed; prefer plain quotes for file paths.
-- ``replace_block``, ``insert_block``, and ``remove_block`` MUST include ``index`` (0-based block position in that section). Use ``replace_section_blocks`` only when replacing every block in a section.
+- ``replace_block``, ``insert_block``, and ``remove_block`` MUST include ``index`` (0-based block position in that section, as annotated on each block) AND ``anchor`` (verbatim excerpt of the block's own content at that index; empty string ``""`` only for an ``insert_block`` appending at the end). Use ``replace_section_blocks`` only when replacing every block in a section.
 
 - Do not append extra ``]`` or ``}`` after the closing ``}`` of the root object."""
+
+#: The same task, asked without a prior reflect synthesis: the delta fast path
+#: calls the model straight off the retrieved window, so SUPPORTING FACTS is the
+#: only new evidence and NEW INFORMATION SYNTHESIS comes through empty. That is
+#: the whole point of the fast path (one call instead of an agentic loop), but it
+#: means the model can genuinely lack what it needs — hence the escape hatch.
+#:
+#: Deliberately an addendum rather than an edit to the constant above: the agentic
+#: path shares that prompt and does NOT read the flag, so a model that answered
+#: "I can't do this properly" there would be ignored and its (possibly empty) op
+#: list written anyway. Keeping the base prompt byte-identical keeps that path's
+#: behaviour byte-identical too.
+STRUCTURED_DELTA_FAST_PATH_SYSTEM_PROMPT = (
+    STRUCTURED_DELTA_SYSTEM_PROMPT
+    + """
+
+ESCAPE HATCH (supersedes the single-top-level-key rule above)
+You are being called without a prior synthesis pass: NEW INFORMATION SYNTHESIS
+is empty, and SUPPORTING FACTS is the only new evidence you get. If those facts
+are not enough to edit the document correctly — they are ambiguous on their own,
+they refer to material you cannot see, or answering the TOPIC properly would
+need a broader search of the memory bank — do NOT guess and do NOT make a
+best-effort edit. Return exactly:
+
+``{"operations": [], "needs_full_context": true}``
+
+and a slower pass that can retrieve more will take over.
+
+Otherwise omit ``needs_full_context`` entirely (or set it to false) and return
+the ``{"operations": [...]}`` object exactly as described above."""
+)
 
 _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS = 24_000
 

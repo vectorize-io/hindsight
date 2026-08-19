@@ -19,6 +19,7 @@ import (
 // Not1 struct for Not1
 type Not1 struct {
 	TagGroupAndOutput *TagGroupAndOutput
+	TagGroupEntityLeaf *TagGroupEntityLeaf
 	TagGroupLeaf *TagGroupLeaf
 	TagGroupNotOutput *TagGroupNotOutput
 	TagGroupOrOutput *TagGroupOrOutput
@@ -38,6 +39,19 @@ func (dst *Not1) UnmarshalJSON(data []byte) error {
 		}
 	} else {
 		dst.TagGroupAndOutput = nil
+	}
+
+	// try to unmarshal JSON data into TagGroupEntityLeaf
+	err = json.Unmarshal(data, &dst.TagGroupEntityLeaf);
+	if err == nil {
+		jsonTagGroupEntityLeaf, _ := json.Marshal(dst.TagGroupEntityLeaf)
+		if string(jsonTagGroupEntityLeaf) == "{}" { // empty struct
+			dst.TagGroupEntityLeaf = nil
+		} else {
+			return nil // data stored in dst.TagGroupEntityLeaf, return on the first match
+		}
+	} else {
+		dst.TagGroupEntityLeaf = nil
 	}
 
 	// try to unmarshal JSON data into TagGroupLeaf
@@ -86,6 +100,10 @@ func (dst *Not1) UnmarshalJSON(data []byte) error {
 func (src *Not1) MarshalJSON() ([]byte, error) {
 	if src.TagGroupAndOutput != nil {
 		return json.Marshal(&src.TagGroupAndOutput)
+	}
+
+	if src.TagGroupEntityLeaf != nil {
+		return json.Marshal(&src.TagGroupEntityLeaf)
 	}
 
 	if src.TagGroupLeaf != nil {

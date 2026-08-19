@@ -1853,6 +1853,7 @@
     "outcomePreserved": "Sin hechos nuevos, contenido conservado",
     "outcomeFailed": "Resultado vacío, la actualización falla",
     "outcomeDeltaNotApplied": "Delta no aplicado, la actualización falla",
+    "outcomeIdentifierRetention": "Identificadores perdidos, la actualización falla",
     "warningsTitle": "Advertencias",
     "traceResults": "{count} resultados",
     "executionTraceTitle": "Traza de ejecución",

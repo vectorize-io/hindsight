@@ -120,7 +120,7 @@ async def tool_search_mental_models(
         Dict with matching mental models including content and freshness info
     """
     from ..memory_engine import _may_need_refresh, fq_table
-    from ..search.tags import build_tag_groups_where_clause, build_tags_where_clause
+    from ..search.tags import build_tag_groups_where_clause, build_tags_where_clause, strip_entity_leaves
 
     # Build filters dynamically
     filters = ""
@@ -135,6 +135,12 @@ async def tool_search_mental_models(
         filters += f" {tag_clause}"
         params.extend(tag_params)
 
+    if tag_groups:
+        # This query filters mental_models, which carry no entity postings —
+        # an entity leaf is unanswerable here and reads permissively (the
+        # surviving tag constraints still apply). memory_units queries keep
+        # their entity leaves; only this surface strips.
+        tag_groups = strip_entity_leaves(tag_groups)
     if tag_groups:
         groups_clause, groups_params, next_param = build_tag_groups_where_clause(tag_groups, next_param)
         filters += f" {groups_clause}"

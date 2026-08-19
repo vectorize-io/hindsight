@@ -108,3 +108,57 @@ def test_parse_delta_operation_list_pydantic_instance():
         ]
     )
     assert parse_delta_operation_list(original) is original
+
+
+# ---------------------------------------------------------------------------
+# needs_full_context — the delta fast path's escape hatch
+# ---------------------------------------------------------------------------
+#
+# The flag has to survive every parse branch. Each one rebuilds the list from the
+# operations it validated, so a flag left on the raw payload would be dropped in
+# silence and the fast path would apply edits the model had just said it could
+# not make safely — the exact failure the hatch exists to prevent.
+
+
+def test_needs_full_context_defaults_to_false():
+    assert parse_delta_operation_list('{"operations": []}').needs_full_context is False
+    assert DeltaOperationList().needs_full_context is False
+
+
+def test_needs_full_context_survives_the_text_branch():
+    op_list = parse_delta_operation_list('{"operations": [], "needs_full_context": true}')
+    assert op_list.needs_full_context is True
+    assert op_list.operations == []
+
+
+def test_needs_full_context_survives_the_dict_branch():
+    op_list = parse_delta_operation_list({"operations": [], "needs_full_context": True})
+    assert op_list.needs_full_context is True
+
+
+def test_needs_full_context_survives_the_pydantic_branch():
+    passed_through = DeltaOperationList(needs_full_context=True)
+    assert parse_delta_operation_list(passed_through).needs_full_context is True
+
+
+def test_needs_full_context_survives_alongside_valid_operations():
+    """A model may hedge: emit what it can AND ask for the loop. The flag wins."""
+    raw = (
+        '{"operations":[{"op":"append_block","section_id":"members",'
+        '"block":{"type":"bullet_list","items":["Bob"]}}],"needs_full_context":true}'
+    )
+    op_list = parse_delta_operation_list(raw)
+    assert len(op_list.operations) == 1
+    assert op_list.needs_full_context is True
+
+
+@pytest.mark.parametrize(
+    "raw_flag,expected",
+    [("true", True), ("TRUE", True), ("false", False), ("yes", False), (1, False), (None, False)],
+)
+def test_needs_full_context_only_an_explicit_yes_counts(raw_flag, expected):
+    """The call is text-mode, so a model can answer with a string where a boolean
+    was asked for. Everything that is not an explicit yes reads as no: the flag
+    only ever adds a hand-off to the slower path, so guessing from a truthy value
+    would spend a full agentic pass on an ambiguous answer."""
+    assert parse_delta_operation_list({"operations": [], "needs_full_context": raw_flag}).needs_full_context is expected

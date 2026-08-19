@@ -1853,6 +1853,7 @@
     "outcomePreserved": "No new facts, content kept",
     "outcomeFailed": "Empty result, refresh fails",
     "outcomeDeltaNotApplied": "Delta not applied, refresh fails",
+    "outcomeIdentifierRetention": "Identifiers lost, refresh fails",
     "warningsTitle": "Warnings",
     "traceResults": "{count} results",
     "executionTraceTitle": "Execution Trace",

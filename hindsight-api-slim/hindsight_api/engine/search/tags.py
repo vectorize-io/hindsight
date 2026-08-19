@@ -233,6 +233,50 @@ class TagGroupLeaf(BaseModel):
     match: TagsMatch = "any_strict"
 
 
+class TagGroupEntityLeaf(BaseModel):
+    """A leaf ENTITY filter: matches memories by the entities they mention.
+
+    Tags describe which *compartment* a memory lives in; entities describe what it
+    is *about*. On a bank whose tag vocabulary is a handful of broad topics, a tag
+    scope cannot isolate a subject — measured on a production bank (2026-08-08),
+    the best tag scope for one subject reached 25% precision against a 15.5% base
+    rate, while the entity association reached 94.2% precision / 86.2% recall on
+    the same corpus. This leaf makes that association usable anywhere a
+    ``TagGroup`` already is: mental-model refresh scope, the staleness gate, and
+    retrieval filtering, through the same recursive grammar.
+
+    ``entities`` are canonical names, matched case-insensitively — the same
+    normalisation the entity registry itself enforces via its
+    ``(bank_id, LOWER(canonical_name))`` uniqueness.
+
+    Association is inheritance-aware: a memory matches if it links the entity
+    directly (``unit_entities``) or through any of its ``source_memory_ids`` — the
+    lane observations use, since consolidation-produced observations carry no
+    direct postings by design (their entity association is transitive through
+    their sources; see ``memories/pg/graph.py:_entity_rows_for_units_sql``).
+
+    ``match="any"``: mentions at least one listed entity. ``match="all"``: mentions
+    every listed entity (directly or via sources, per entity).
+
+    Constraints, enforced by ``validate_entity_leaf_placement`` at the API edge:
+    an entity leaf may not appear under ``not`` — the two permissive fallbacks
+    (the Python-side post-filter and the non-memory_units surfaces that strip
+    entity leaves) evaluate an unknown entity constraint as "matches", and a NOT
+    over a permissive "matches" silently inverts into "exclude everything".
+    """
+
+    entities: list[str] = Field(min_length=1)
+    # Distinct OpenAPI title. Without it this enum serialises as
+    # title: "Match", the same title TagGroupLeaf's DIFFERENT match enum
+    # already uses (any/all/any_strict/all_strict/exact). progenitor/typify
+    # keys inline enums BY TITLE, so the second definition fails to conform
+    # and Rust client generation dies with TypeError(InvalidValue) at
+    # build.rs:199 -- reproduced 2026-08-11. The collision only appears in a
+    # REGENERATED spec, which is why CI saw it and a local build of the
+    # committed openapi.json did not.
+    match: Literal["any", "all"] = Field(default="any", title="EntityMatch")
+
+
 class TagGroupAnd(BaseModel):
     """Compound AND group: all child filters must match."""
 
@@ -255,10 +299,11 @@ class TagGroupNot(BaseModel):
 
 
 # TagGroup is a discriminated union; Pydantic will try left-to-right.
-# TagGroupLeaf is identified by the presence of 'tags'.
-# TagGroupAnd / TagGroupOr / TagGroupNot are compound (no 'tags' key).
+# TagGroupLeaf is identified by the presence of 'tags'; TagGroupEntityLeaf by
+# the presence of 'entities'. TagGroupAnd / TagGroupOr / TagGroupNot are
+# compound (neither key).
 TagGroup = Annotated[
-    TagGroupLeaf | TagGroupAnd | TagGroupOr | TagGroupNot,
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAnd | TagGroupOr | TagGroupNot,
     Field(union_mode="left_to_right"),
 ]
 
@@ -284,6 +329,51 @@ def _build_group_clause(
     Returns:
         (inner_clause, params, next_param_offset)
     """
+    if isinstance(group, TagGroupEntityLeaf):
+        # Correlated EXISTS against the entity postings. The outer row is referenced
+        # by fully-qualified table name — every builder call site that filters
+        # memory_units uses an UNALIASED ``FROM {fq_table("memory_units")}``
+        # (semantic/BM25 arms, the staleness read, the scoped listing and window
+        # reads), and an unaliased table's qualified name is a valid correlation
+        # ref in both PG and Oracle. A caller that aliases the table, or filters a
+        # table other than memory_units (the mental-models search, the directives
+        # listing), must NOT pass entity leaves here — strip them first with
+        # ``strip_entity_leaves``, which is the permissive reading those surfaces
+        # want (they carry no entity postings to match against).
+        #
+        # Bank scoping is deliberately absent from the subquery: entity links are
+        # per-unit, and the outer query already constrains bank_id, so a
+        # same-named entity in another bank has a different id and no link to
+        # this row — the join cannot cross banks.
+        #
+        # Dialect note: ``= ANY($n)`` over an array bind matches the PG-flavoured
+        # operators the tag leaves above already emit (``@>``/``&&``); Oracle
+        # translation happens at the same layer it does for those.
+        from ..schema import fq_table as _fq_table
+
+        mu = _fq_table("memory_units")
+        ue = _fq_table("unit_entities")
+        ents = _fq_table("entities")
+        row_id = f"{table_alias}id" if table_alias else f"{mu}.id"
+        row_sources = f"{table_alias}source_memory_ids" if table_alias else f"{mu}.source_memory_ids"
+        names = sorted({n.strip().lower() for n in group.entities if n and n.strip()})
+        if not names:
+            # Whitespace-only names slipping past min_length: no constraint rather
+            # than invalid SQL. Mirrors the empty-groups contract (no clause).
+            return "TRUE", [], param_offset
+        reach = f"(ue.unit_id = {row_id} OR ({row_sources} IS NOT NULL AND ue.unit_id = ANY({row_sources})))"
+        body = (
+            f"FROM {ue} ue JOIN {ents} e ON e.id = ue.entity_id "
+            f"WHERE LOWER(e.canonical_name) = ANY(${param_offset}) AND {reach}"
+        )
+        if group.match == "all":
+            # Every listed entity reachable. COUNT(DISTINCT lowered-name) over the
+            # same body; the target arity is a Python int, inlined as a literal.
+            clause = f"((SELECT COUNT(DISTINCT LOWER(e.canonical_name)) {body}) = {len(names)})"
+        else:
+            clause = f"EXISTS (SELECT 1 {body})"
+        return clause, [names], param_offset + 1
+
     if isinstance(group, TagGroupLeaf):
         column = f"{table_alias}tags" if table_alias else "tags"
         if group.match == "exact":
@@ -389,6 +479,39 @@ def _match_group(result: object, group: TagGroup) -> bool:
     Returns:
         True if the result matches the group, False otherwise.
     """
+    if isinstance(group, TagGroupEntityLeaf):
+        # A retrieval result may carry its entities (recall renders them as
+        # names or {entity_id, canonical_name} dicts); evaluate against those
+        # when present. A result that carries NO entity information passes
+        # permissively — this post-filter refines rows the SQL side already
+        # scoped, and graph-expansion neighbours legitimately lack entity
+        # annotations. Safe only because validate_entity_leaf_placement bars
+        # entity leaves under NOT (a NOT over a permissive pass would invert
+        # into "drop everything").
+        raw = getattr(result, "entities", None)
+        if not raw:
+            return True
+        names: set[str] = set()
+        for item in raw:
+            if isinstance(item, str):
+                names.add(item.lower())
+            elif isinstance(item, dict):
+                name = item.get("canonical_name") or item.get("name") or item.get("text")
+                if isinstance(name, str):
+                    names.add(name.lower())
+            else:
+                name = getattr(item, "canonical_name", None) or getattr(item, "name", None)
+                if isinstance(name, str):
+                    names.add(name.lower())
+        if not names:
+            return True
+        wanted = {n.strip().lower() for n in group.entities if n and n.strip()}
+        if not wanted:
+            return True
+        if group.match == "all":
+            return wanted <= names
+        return bool(wanted & names)
+
     if isinstance(group, TagGroupLeaf):
         result_tags = getattr(result, "tags", None)
         is_untagged = result_tags is None or len(result_tags) == 0
@@ -421,6 +544,81 @@ def _match_group(result: object, group: TagGroup) -> bool:
 
     else:
         return True
+
+
+def validate_entity_leaf_placement(tag_groups: list[TagGroup] | None) -> None:
+    """Reject entity leaves under ``not`` — raise ValueError naming the constraint.
+
+    SQL evaluates NOT-over-entity correctly, but two surfaces cannot: the
+    Python-side post-filter passes entity leaves permissively when a result
+    carries no entity annotations, and the non-memory_units surfaces (the
+    mental-models search, the directives listing) strip entity leaves outright.
+    Under a NOT, a permissive "matches" inverts into "exclude everything" on
+    exactly those surfaces, silently. Barring the placement at the API edge
+    keeps every fallback sound; lift the bar only by making every consumer
+    entity-aware first.
+    """
+
+    def _walk(node: TagGroup, under_not: bool) -> None:
+        if isinstance(node, TagGroupEntityLeaf):
+            if under_not:
+                raise ValueError(
+                    "an entity filter may not appear under 'not': the post-retrieval "
+                    "and non-memory surfaces evaluate entity leaves permissively, and "
+                    "negating a permissive match silently excludes everything there"
+                )
+        elif isinstance(node, (TagGroupAnd, TagGroupOr)):
+            for child in node.filters:
+                _walk(child, under_not)
+        elif isinstance(node, TagGroupNot):
+            _walk(node.filter, True)
+
+    for group in tag_groups or []:
+        _walk(group, False)
+
+
+def strip_entity_leaves(tag_groups: list[TagGroup] | None) -> list[TagGroup] | None:
+    """Drop entity leaves from a group tree, reading each as "matches".
+
+    For scope filters applied to tables that carry no entity postings (the
+    mental-models search in ``reflect/tools.py``, the directives listing): an
+    entity constraint is unanswerable there, and the correct reading is the
+    permissive one — the surviving tag constraints still apply. Dropping a
+    permissive leaf from an AND keeps the siblings; from an OR it makes the
+    whole OR permissive (True OR x), so the OR collapses away; a NOT over an
+    entity leaf cannot reach here (barred by ``validate_entity_leaf_placement``),
+    but is dropped defensively rather than inverted. Returns None when nothing
+    constraining survives.
+    """
+
+    def _strip(node: TagGroup) -> TagGroup | None:
+        if isinstance(node, TagGroupEntityLeaf):
+            return None
+        if isinstance(node, TagGroupAnd):
+            kept = [c for c in (_strip(child) for child in node.filters) if c is not None]
+            if not kept:
+                return None
+            return kept[0] if len(kept) == 1 else TagGroupAnd.model_validate({"and": [_dump(k) for k in kept]})
+        if isinstance(node, TagGroupOr):
+            stripped = [_strip(child) for child in node.filters]
+            if any(s is None for s in stripped):
+                return None  # a permissive disjunct makes the whole OR permissive
+            kept = [s for s in stripped if s is not None]
+            return kept[0] if len(kept) == 1 else TagGroupOr.model_validate({"or": [_dump(k) for k in kept]})
+        if isinstance(node, TagGroupNot):
+            inner = _strip(node.filter)
+            if inner is None:
+                return None  # defensive: drop, never invert, an unanswerable constraint
+            return TagGroupNot.model_validate({"not": _dump(inner)})
+        return node
+
+    def _dump(node: TagGroup) -> dict:
+        return node.model_dump(by_alias=True, exclude_none=True)
+
+    if not tag_groups:
+        return tag_groups
+    kept_groups = [g for g in (_strip(group) for group in tag_groups) if g is not None]
+    return kept_groups or None
 
 
 def filter_results_by_tag_groups(

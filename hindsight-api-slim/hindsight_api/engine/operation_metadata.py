@@ -175,6 +175,21 @@ class RefreshMentalModelOutcomeMetadata:
     # never reached it. Both are 0 for a full-mode refresh, which emits no ops.
     delta_ops_applied: int = 0
     delta_ops_skipped: int = 0
+    # Which tier actually served this refresh: "tier0" (delta window empty, document
+    # preserved, no LLM call), "tier1" (one structured-delta call), or "tier2" (the
+    # agentic reflect loop). Without this the tier is only readable from
+    # ``mental_models.reflect_response.fast_path``, which holds the LATEST refresh per
+    # model and is overwritten by the next one -- so a two-tier system's tier
+    # distribution is unrecoverable the moment a model refreshes again. Operating and
+    # measuring a tiered system requires knowing, per operation, which tier ran.
+    serving_tier: str | None = None
+    # Set only on tier2, naming why the fast path handed back ("no_delta_baseline",
+    # "needs_full_context", "delta_ops_failed", "delta_ops_invalid",
+    # "delta_ops_all_skipped"). A tier2 rate is a number; this is the reason behind it,
+    # and the two failure directions the plan flags -- never falling back (dead escape
+    # hatch) vs always falling back (fast path not earning its place) -- are only
+    # distinguishable with it.
+    fast_path_fallback_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for JSON serialization."""

@@ -19,12 +19,13 @@ import pprint
 import re  # noqa: F401
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
 from typing import Optional
+from hindsight_client_api.models.tag_group_entity_leaf import TagGroupEntityLeaf
 from hindsight_client_api.models.tag_group_leaf import TagGroupLeaf
 from typing import Union, Any, List, Set, TYPE_CHECKING, Optional, Dict
 from typing_extensions import Literal, Self
 from pydantic import Field
 
-MODELNOT_ANY_OF_SCHEMAS = ["TagGroupAndInput", "TagGroupLeaf", "TagGroupNotInput", "TagGroupOrInput"]
+MODELNOT_ANY_OF_SCHEMAS = ["TagGroupAndInput", "TagGroupEntityLeaf", "TagGroupLeaf", "TagGroupNotInput", "TagGroupOrInput"]
 
 class ModelNot(BaseModel):
     """
@@ -33,17 +34,19 @@ class ModelNot(BaseModel):
 
     # data type: TagGroupLeaf
     anyof_schema_1_validator: Optional[TagGroupLeaf] = None
+    # data type: TagGroupEntityLeaf
+    anyof_schema_2_validator: Optional[TagGroupEntityLeaf] = None
     # data type: TagGroupAndInput
-    anyof_schema_2_validator: Optional[TagGroupAndInput] = None
+    anyof_schema_3_validator: Optional[TagGroupAndInput] = None
     # data type: TagGroupOrInput
-    anyof_schema_3_validator: Optional[TagGroupOrInput] = None
+    anyof_schema_4_validator: Optional[TagGroupOrInput] = None
     # data type: TagGroupNotInput
-    anyof_schema_4_validator: Optional[TagGroupNotInput] = None
+    anyof_schema_5_validator: Optional[TagGroupNotInput] = None
     if TYPE_CHECKING:
-        actual_instance: Optional[Union[TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput]] = None
+        actual_instance: Optional[Union[TagGroupAndInput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput]] = None
     else:
         actual_instance: Any = None
-    any_of_schemas: Set[str] = { "TagGroupAndInput", "TagGroupLeaf", "TagGroupNotInput", "TagGroupOrInput" }
+    any_of_schemas: Set[str] = { "TagGroupAndInput", "TagGroupEntityLeaf", "TagGroupLeaf", "TagGroupNotInput", "TagGroupOrInput" }
 
     model_config = {
         "validate_assignment": True,
@@ -70,6 +73,12 @@ class ModelNot(BaseModel):
         else:
             return v
 
+        # validate data type: TagGroupEntityLeaf
+        if not isinstance(v, TagGroupEntityLeaf):
+            error_messages.append(f"Error! Input type `{type(v)}` is not `TagGroupEntityLeaf`")
+        else:
+            return v
+
         # validate data type: TagGroupAndInput
         if not isinstance(v, TagGroupAndInput):
             error_messages.append(f"Error! Input type `{type(v)}` is not `TagGroupAndInput`")
@@ -90,7 +99,7 @@ class ModelNot(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when setting the actual_instance in ModelNot with anyOf schemas: TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when setting the actual_instance in ModelNot with anyOf schemas: TagGroupAndInput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
         else:
             return v
 
@@ -109,19 +118,25 @@ class ModelNot(BaseModel):
             return instance
         except (ValidationError, ValueError) as e:
              error_messages.append(str(e))
-        # anyof_schema_2_validator: Optional[TagGroupAndInput] = None
+        # anyof_schema_2_validator: Optional[TagGroupEntityLeaf] = None
+        try:
+            instance.actual_instance = TagGroupEntityLeaf.from_json(json_str)
+            return instance
+        except (ValidationError, ValueError) as e:
+             error_messages.append(str(e))
+        # anyof_schema_3_validator: Optional[TagGroupAndInput] = None
         try:
             instance.actual_instance = TagGroupAndInput.from_json(json_str)
             return instance
         except (ValidationError, ValueError) as e:
              error_messages.append(str(e))
-        # anyof_schema_3_validator: Optional[TagGroupOrInput] = None
+        # anyof_schema_4_validator: Optional[TagGroupOrInput] = None
         try:
             instance.actual_instance = TagGroupOrInput.from_json(json_str)
             return instance
         except (ValidationError, ValueError) as e:
              error_messages.append(str(e))
-        # anyof_schema_4_validator: Optional[TagGroupNotInput] = None
+        # anyof_schema_5_validator: Optional[TagGroupNotInput] = None
         try:
             instance.actual_instance = TagGroupNotInput.from_json(json_str)
             return instance
@@ -130,7 +145,7 @@ class ModelNot(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when deserializing the JSON string into ModelNot with anyOf schemas: TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when deserializing the JSON string into ModelNot with anyOf schemas: TagGroupAndInput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
         else:
             return instance
 
@@ -144,7 +159,7 @@ class ModelNot(BaseModel):
         else:
             return json.dumps(self.actual_instance)
 
-    def to_dict(self) -> Optional[Union[Dict[str, Any], TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput]]:
+    def to_dict(self) -> Optional[Union[Dict[str, Any], TagGroupAndInput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput]]:
         """Returns the dict representation of the actual instance"""
         if self.actual_instance is None:
             return None

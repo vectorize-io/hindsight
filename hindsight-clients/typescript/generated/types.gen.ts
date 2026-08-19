@@ -3161,7 +3161,26 @@ export type MentalModelDryRunRefreshResult = {
     | "content_written"
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
-    | "refresh_failed_delta_not_applied";
+    | "refresh_failed_delta_not_applied"
+    | "refresh_failed_identifier_retention";
+  /**
+   * Fast Path
+   *
+   * Which tier of the deterministic delta fast path produced this run, if any. Null means the agentic reflect loop did — either because the fast path was off, did not apply, or handed back (see fast_path_fallback_reason).
+   */
+  fast_path?: "tier0" | "tier1" | null;
+  /**
+   * Fast Path Fallback Reason
+   *
+   * Why the fast path handed this run back to the agentic loop, if that happened.
+   */
+  fast_path_fallback_reason?:
+    | "no_delta_baseline"
+    | "needs_full_context"
+    | "delta_ops_failed"
+    | "delta_ops_invalid"
+    | "delta_ops_all_skipped"
+    | null;
   /**
    * Would Persist
    *
@@ -3199,7 +3218,7 @@ export type MentalModelDryRunRefreshResult = {
   /**
    * Candidate Content
    *
-   * Raw reflect synthesis, before any delta operations.
+   * The document the run's synthesis step produced, before any delta operations: the raw reflect answer when the agentic loop ran. The delta fast path has no synthesis step, so it reports what it would write instead — the current content on tier 0 (nothing new was found), and the post-operation document on tier 1 (identical to preview_content). Compare against preview_content to see what the delta changed.
    */
   candidate_content: string;
   /**
@@ -3326,7 +3345,7 @@ export type MentalModelRefreshScope = {
    * Compound tag expressions used instead of flat tags, when set.
    */
   tag_groups?: Array<
-    TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
   > | null;
   /**
    * Fact Types
@@ -3393,7 +3412,26 @@ export type MentalModelRefreshTrace = {
     | "content_written"
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
-    | "refresh_failed_delta_not_applied";
+    | "refresh_failed_delta_not_applied"
+    | "refresh_failed_identifier_retention";
+  /**
+   * Fast Path
+   *
+   * Which tier of the deterministic delta fast path produced this refresh, if any. Null means the agentic reflect loop did.
+   */
+  fast_path?: "tier0" | "tier1" | null;
+  /**
+   * Fast Path Fallback Reason
+   *
+   * Why the fast path handed this refresh back to the agentic loop, if that happened.
+   */
+  fast_path_fallback_reason?:
+    | "no_delta_baseline"
+    | "needs_full_context"
+    | "delta_ops_failed"
+    | "delta_ops_invalid"
+    | "delta_ops_all_skipped"
+    | null;
   /**
    * Tool Calls
    *
@@ -3640,9 +3678,11 @@ export type MentalModelTriggerInput = {
   /**
    * Tag Groups
    *
-   * Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.
+   * Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping, plus entity leaves ({entities: [names], match: any|all}) that scope by what a memory is ABOUT rather than which tag compartment it lives in -- matched case-insensitively against canonical entity names, including entities reached through an observation's source memories. The same expressions drive the staleness gate, so an entity-scoped model refreshes exactly when facts about its entities arrive. Entity leaves may not appear under 'not'.
    */
-  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  tag_groups?: Array<
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
+  > | null;
   /**
    * Include Chunks
    *
@@ -3661,6 +3701,12 @@ export type MentalModelTriggerInput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+  /**
+   * Delta Fast Path
+   *
+   * Override whether a delta refresh may take the deterministic fast path: fetch the memories created since the last refresh and, if there are any, turn them into edit operations with a single LLM call instead of running the agentic reflect loop. An empty window costs no LLM call at all. The fast path hands back to the loop whenever a surgical edit is not obviously safe, so every outcome is preserved either way. None means use the bank/global config default (mental_model_delta_fast_path). Ignored in full mode, which never takes the fast path.
+   */
+  delta_fast_path?: boolean | null;
   /**
    * Response Schema
    *
@@ -3728,10 +3774,10 @@ export type MentalModelTriggerOutput = {
   /**
    * Tag Groups
    *
-   * Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.
+   * Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping, plus entity leaves ({entities: [names], match: any|all}) that scope by what a memory is ABOUT rather than which tag compartment it lives in -- matched case-insensitively against canonical entity names, including entities reached through an observation's source memories. The same expressions drive the staleness gate, so an entity-scoped model refreshes exactly when facts about its entities arrive. Entity leaves may not appear under 'not'.
    */
   tag_groups?: Array<
-    TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
   > | null;
   /**
    * Include Chunks
@@ -3751,6 +3797,12 @@ export type MentalModelTriggerOutput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+  /**
+   * Delta Fast Path
+   *
+   * Override whether a delta refresh may take the deterministic fast path: fetch the memories created since the last refresh and, if there are any, turn them into edit operations with a single LLM call instead of running the agentic reflect loop. An empty window costs no LLM call at all. The fast path hands back to the loop whenever a surgical edit is not obviously safe, so every outcome is preserved either way. None means use the bank/global config default (mental_model_delta_fast_path). Ignored in full mode, which never takes the fast path.
+   */
+  delta_fast_path?: boolean | null;
   /**
    * Response Schema
    *
@@ -4116,7 +4168,9 @@ export type RecallRequest = {
    *
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
    */
-  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  tag_groups?: Array<
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
+  > | null;
   /**
    * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
    */
@@ -4486,7 +4540,9 @@ export type ReflectRequest = {
    *
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags.
    */
-  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  tag_groups?: Array<
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
+  > | null;
   /**
    * Apply All Directives
    *
@@ -4752,7 +4808,9 @@ export type TagGroupAndInput = {
   /**
    * And
    */
-  and: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+  and: Array<
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
+  >;
 };
 
 /**
@@ -4764,7 +4822,53 @@ export type TagGroupAndOutput = {
   /**
    * And
    */
-  and: Array<TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput>;
+  and: Array<
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
+  >;
+};
+
+/**
+ * TagGroupEntityLeaf
+ *
+ * A leaf ENTITY filter: matches memories by the entities they mention.
+ *
+ * Tags describe which *compartment* a memory lives in; entities describe what it
+ * is *about*. On a bank whose tag vocabulary is a handful of broad topics, a tag
+ * scope cannot isolate a subject — measured on a production bank (2026-08-08),
+ * the best tag scope for one subject reached 25% precision against a 15.5% base
+ * rate, while the entity association reached 94.2% precision / 86.2% recall on
+ * the same corpus. This leaf makes that association usable anywhere a
+ * ``TagGroup`` already is: mental-model refresh scope, the staleness gate, and
+ * retrieval filtering, through the same recursive grammar.
+ *
+ * ``entities`` are canonical names, matched case-insensitively — the same
+ * normalisation the entity registry itself enforces via its
+ * ``(bank_id, LOWER(canonical_name))`` uniqueness.
+ *
+ * Association is inheritance-aware: a memory matches if it links the entity
+ * directly (``unit_entities``) or through any of its ``source_memory_ids`` — the
+ * lane observations use, since consolidation-produced observations carry no
+ * direct postings by design (their entity association is transitive through
+ * their sources; see ``memories/pg/graph.py:_entity_rows_for_units_sql``).
+ *
+ * ``match="any"``: mentions at least one listed entity. ``match="all"``: mentions
+ * every listed entity (directly or via sources, per entity).
+ *
+ * Constraints, enforced by ``validate_entity_leaf_placement`` at the API edge:
+ * an entity leaf may not appear under ``not`` — the two permissive fallbacks
+ * (the Python-side post-filter and the non-memory_units surfaces that strip
+ * entity leaves) evaluate an unknown entity constraint as "matches", and a NOT
+ * over a permissive "matches" silently inverts into "exclude everything".
+ */
+export type TagGroupEntityLeaf = {
+  /**
+   * Entities
+   */
+  entities: Array<string>;
+  /**
+   * EntityMatch
+   */
+  match?: "any" | "all";
 };
 
 /**
@@ -4792,7 +4896,7 @@ export type TagGroupNotInput = {
   /**
    * Not
    */
-  not: TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput;
+  not: TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput;
 };
 
 /**
@@ -4804,7 +4908,7 @@ export type TagGroupNotOutput = {
   /**
    * Not
    */
-  not: TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput;
+  not: TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput;
 };
 
 /**
@@ -4816,7 +4920,9 @@ export type TagGroupOrInput = {
   /**
    * Or
    */
-  or: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+  or: Array<
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
+  >;
 };
 
 /**
@@ -4828,7 +4934,9 @@ export type TagGroupOrOutput = {
   /**
    * Or
    */
-  or: Array<TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput>;
+  or: Array<
+    TagGroupLeaf | TagGroupEntityLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
+  >;
 };
 
 /**

@@ -145,9 +145,10 @@ async def test_hierarchical_fields_categorization():
     assert "enable_temporal_retrieval" in configurable
     assert "enable_graph_retrieval" in configurable
     assert "enable_reranking" in configurable
+    assert "mental_model_delta_fast_path" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 45
+    assert len(configurable) == 46
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

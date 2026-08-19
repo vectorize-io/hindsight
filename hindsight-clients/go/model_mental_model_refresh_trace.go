@@ -28,6 +28,8 @@ type MentalModelRefreshTrace struct {
 	ModeFallbackReason NullableString `json:"mode_fallback_reason,omitempty"`
 	// What the refresh did with the document.
 	Outcome string `json:"outcome"`
+	FastPath NullableString `json:"fast_path,omitempty"`
+	FastPathFallbackReason NullableString `json:"fast_path_fallback_reason,omitempty"`
 	// Reflect tool calls made during the refresh.
 	ToolCalls []MentalModelTraceToolCall `json:"tool_calls,omitempty"`
 	// LLM calls made during the refresh.
@@ -195,6 +197,90 @@ func (o *MentalModelRefreshTrace) GetOutcomeOk() (*string, bool) {
 // SetOutcome sets field value
 func (o *MentalModelRefreshTrace) SetOutcome(v string) {
 	o.Outcome = v
+}
+
+// GetFastPath returns the FastPath field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelRefreshTrace) GetFastPath() string {
+	if o == nil || IsNil(o.FastPath.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.FastPath.Get()
+}
+
+// GetFastPathOk returns a tuple with the FastPath field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelRefreshTrace) GetFastPathOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.FastPath.Get(), o.FastPath.IsSet()
+}
+
+// HasFastPath returns a boolean if a field has been set.
+func (o *MentalModelRefreshTrace) HasFastPath() bool {
+	if o != nil && o.FastPath.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetFastPath gets a reference to the given NullableString and assigns it to the FastPath field.
+func (o *MentalModelRefreshTrace) SetFastPath(v string) {
+	o.FastPath.Set(&v)
+}
+// SetFastPathNil sets the value for FastPath to be an explicit nil
+func (o *MentalModelRefreshTrace) SetFastPathNil() {
+	o.FastPath.Set(nil)
+}
+
+// UnsetFastPath ensures that no value is present for FastPath, not even an explicit nil
+func (o *MentalModelRefreshTrace) UnsetFastPath() {
+	o.FastPath.Unset()
+}
+
+// GetFastPathFallbackReason returns the FastPathFallbackReason field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelRefreshTrace) GetFastPathFallbackReason() string {
+	if o == nil || IsNil(o.FastPathFallbackReason.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.FastPathFallbackReason.Get()
+}
+
+// GetFastPathFallbackReasonOk returns a tuple with the FastPathFallbackReason field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelRefreshTrace) GetFastPathFallbackReasonOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.FastPathFallbackReason.Get(), o.FastPathFallbackReason.IsSet()
+}
+
+// HasFastPathFallbackReason returns a boolean if a field has been set.
+func (o *MentalModelRefreshTrace) HasFastPathFallbackReason() bool {
+	if o != nil && o.FastPathFallbackReason.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetFastPathFallbackReason gets a reference to the given NullableString and assigns it to the FastPathFallbackReason field.
+func (o *MentalModelRefreshTrace) SetFastPathFallbackReason(v string) {
+	o.FastPathFallbackReason.Set(&v)
+}
+// SetFastPathFallbackReasonNil sets the value for FastPathFallbackReason to be an explicit nil
+func (o *MentalModelRefreshTrace) SetFastPathFallbackReasonNil() {
+	o.FastPathFallbackReason.Set(nil)
+}
+
+// UnsetFastPathFallbackReason ensures that no value is present for FastPathFallbackReason, not even an explicit nil
+func (o *MentalModelRefreshTrace) UnsetFastPathFallbackReason() {
+	o.FastPathFallbackReason.Unset()
 }
 
 // GetToolCalls returns the ToolCalls field value if set, zero value otherwise.
@@ -427,6 +513,12 @@ func (o MentalModelRefreshTrace) ToMap() (map[string]interface{}, error) {
 		toSerialize["mode_fallback_reason"] = o.ModeFallbackReason.Get()
 	}
 	toSerialize["outcome"] = o.Outcome
+	if o.FastPath.IsSet() {
+		toSerialize["fast_path"] = o.FastPath.Get()
+	}
+	if o.FastPathFallbackReason.IsSet() {
+		toSerialize["fast_path_fallback_reason"] = o.FastPathFallbackReason.Get()
+	}
 	if !IsNil(o.ToolCalls) {
 		toSerialize["tool_calls"] = o.ToolCalls
 	}

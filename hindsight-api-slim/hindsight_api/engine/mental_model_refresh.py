@@ -39,6 +39,25 @@ RefreshOutcome = Literal[
     "content_preserved_no_new_facts",
     "refresh_failed_empty_candidate",
     "refresh_failed_delta_not_applied",
+    "refresh_failed_identifier_retention",
+]
+
+#: Which tier of the deterministic delta fast path produced a refresh. ``tier0``
+#: read the window and found nothing new, so it made no LLM call at all;
+#: ``tier1`` turned the window's facts into edit operations with exactly one.
+#: Null means the refresh came from the agentic reflect loop, as every refresh
+#: did before the fast path existed.
+MentalModelFastPathTier = Literal["tier0", "tier1"]
+
+#: Why the fast path handed a delta refresh back to the agentic loop. Kept
+#: separate from ``ModeFallbackReason`` on purpose: the mode is still delta, and
+#: the outcome is whatever the loop then produced — only the route changed.
+FastPathFallbackReason = Literal[
+    "no_delta_baseline",
+    "needs_full_context",
+    "delta_ops_failed",
+    "delta_ops_invalid",
+    "delta_ops_all_skipped",
 ]
 
 
@@ -167,6 +186,17 @@ class MentalModelRefreshTrace(BaseModel):
         default=None, description="Why delta was requested but not applied, if that happened."
     )
     outcome: RefreshOutcome = Field(description="What the refresh did with the document.")
+    fast_path: MentalModelFastPathTier | None = Field(
+        default=None,
+        description=(
+            "Which tier of the deterministic delta fast path produced this refresh, if any. "
+            "Null means the agentic reflect loop did."
+        ),
+    )
+    fast_path_fallback_reason: FastPathFallbackReason | None = Field(
+        default=None,
+        description="Why the fast path handed this refresh back to the agentic loop, if that happened.",
+    )
     tool_calls: list[MentalModelTraceToolCall] = Field(
         default_factory=list, description="Reflect tool calls made during the refresh."
     )
@@ -215,6 +245,18 @@ class MentalModelDryRunRefreshResult(BaseModel):
         default=None, description="Why delta was requested but not applied, if that happened."
     )
     outcome: RefreshOutcome = Field(description="What a real refresh would do with the document.")
+    fast_path: MentalModelFastPathTier | None = Field(
+        default=None,
+        description=(
+            "Which tier of the deterministic delta fast path produced this run, if any. Null means "
+            "the agentic reflect loop did — either because the fast path was off, did not apply, or "
+            "handed back (see fast_path_fallback_reason)."
+        ),
+    )
+    fast_path_fallback_reason: FastPathFallbackReason | None = Field(
+        default=None,
+        description="Why the fast path handed this run back to the agentic loop, if that happened.",
+    )
     would_persist: bool = Field(description="Whether a real refresh would write new content.")
     scope: MentalModelRefreshScope = Field(description="The resolved memory scope.")
     window: MentalModelRefreshWindow = Field(description="The snapshot window read from.")
@@ -228,7 +270,15 @@ class MentalModelDryRunRefreshResult(BaseModel):
         ),
     )
     current_content: str = Field(description="The model's content as it stands now.")
-    candidate_content: str = Field(description="Raw reflect synthesis, before any delta operations.")
+    candidate_content: str = Field(
+        description=(
+            "The document the run's synthesis step produced, before any delta operations: the raw "
+            "reflect answer when the agentic loop ran. The delta fast path has no synthesis step, "
+            "so it reports what it would write instead — the current content on tier 0 (nothing "
+            "new was found), and the post-operation document on tier 1 (identical to "
+            "preview_content). Compare against preview_content to see what the delta changed."
+        )
+    )
     preview_content: str = Field(
         description="The content a real refresh would store: the delta-edited document, or the candidate in full mode."
     )

@@ -812,6 +812,9 @@ ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
 ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
 ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
 
+# Mental model refresh
+ENV_MENTAL_MODEL_DELTA_FAST_PATH = "HINDSIGHT_API_MENTAL_MODEL_DELTA_FAST_PATH"
+
 # Recall pipeline stages. Each arm of recall costs latency, and a bank whose
 # content has no temporal or relational structure pays for stages it cannot use
 # (e.g. a chunk-extraction bank used as plain retrieval). These switch the
@@ -1391,6 +1394,12 @@ DEFAULT_REFLECT_MAX_COMPLETION_TOKENS: int | None = None
 DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
 DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
 DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned by internal recall
+
+# Mental model refresh: run the deterministic delta fast path before the agentic
+# reflect loop. On by default — the fast path preserves every outcome and hands
+# back to the loop on any doubt, so the loop still produces the result whenever
+# a surgical edit is not obviously safe. Set false to always run the loop.
+DEFAULT_MENTAL_MODEL_DELTA_FAST_PATH = True
 
 # Recall pipeline stages — all on by default, so recall behaviour is unchanged
 # unless a bank opts out.
@@ -2581,6 +2590,9 @@ class HindsightConfig:
     recall_max_tokens: int
     recall_chunks_max_tokens: int
 
+    # Mental model refresh: deterministic delta fast path before the agentic loop
+    mental_model_delta_fast_path: bool
+
     # Recall budget mapping: how the Budget enum (LOW/MID/HIGH) maps to thinking_budget integer.
     # function="fixed": use the recall_budget_fixed_* values directly (legacy behavior).
     # function="adaptive": compute round(max_tokens * recall_budget_adaptive_*),
@@ -2853,6 +2865,8 @@ class HindsightConfig:
         "recall_include_chunks",
         "recall_max_tokens",
         "recall_chunks_max_tokens",
+        # Mental model refresh (per-model override lives on trigger.delta_fast_path)
+        "mental_model_delta_fast_path",
         # Recall budget mapping (Budget enum -> thinking_budget integer)
         "recall_budget_function",
         "recall_budget_fixed_low",
@@ -3955,6 +3969,10 @@ class HindsightConfig:
             recall_chunks_max_tokens=int(
                 os.getenv(ENV_RECALL_CHUNKS_MAX_TOKENS, str(DEFAULT_RECALL_CHUNKS_MAX_TOKENS))
             ),
+            mental_model_delta_fast_path=os.getenv(
+                ENV_MENTAL_MODEL_DELTA_FAST_PATH, str(DEFAULT_MENTAL_MODEL_DELTA_FAST_PATH)
+            ).lower()
+            in ("true", "1", "yes"),
             recall_budget_function=_validate_recall_budget_function(
                 os.getenv(ENV_RECALL_BUDGET_FUNCTION, DEFAULT_RECALL_BUDGET_FUNCTION)
             ),

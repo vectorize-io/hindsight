@@ -196,6 +196,7 @@ export function TraceSummary({ trace }: { trace: MentalModelRefreshTrace }) {
     content_preserved_no_new_facts: t("outcomePreserved"),
     refresh_failed_empty_candidate: t("outcomeFailed"),
     refresh_failed_delta_not_applied: t("outcomeDeltaNotApplied"),
+    refresh_failed_identifier_retention: t("outcomeIdentifierRetention"),
   };
   const fallbackLabels: Record<ModeFallbackReason, string> = {
     no_baseline_content: t("fallbackNoBaseline"),
@@ -212,6 +213,33 @@ export function TraceSummary({ trace }: { trace: MentalModelRefreshTrace }) {
         <span className="text-amber-700 dark:text-amber-400">
           {" "}
           &middot; {fallbackLabels[trace.mode_fallback_reason]}
+        </span>
+      )}
+      {/*
+        Which route produced the refresh, and — when the deterministic fast path
+        declined — why the agentic loop ran anyway. Rendered as the raw API
+        values in mono, like `effective_mode` directly above, rather than as
+        translated prose: these are the enum names the dry-run payload, the
+        stored trace and the docs all use, so a reader comparing this line
+        against a `reflect_response` sees the same token.
+
+        The enum NAMES sit in `{"..."}` expressions rather than bare JSX text so
+        `npm run i18n:check` does not read them as untranslated prose: that check
+        scans JSXText nodes and human-facing attributes, and an expression-container
+        string literal is neither. Keep them wrapped if you edit this line.
+      */}
+      {trace.fast_path && (
+        <span className="font-mono">
+          {" "}
+          &middot; {"fast_path="}
+          {trace.fast_path}
+        </span>
+      )}
+      {trace.fast_path_fallback_reason && (
+        <span className="font-mono text-amber-700 dark:text-amber-400">
+          {" "}
+          &middot; {"fast_path_fallback_reason="}
+          {trace.fast_path_fallback_reason}
         </span>
       )}
     </span>

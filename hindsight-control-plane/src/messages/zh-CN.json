@@ -1853,6 +1853,7 @@
     "outcomePreserved": "没有新事实，保留内容",
     "outcomeFailed": "结果为空，刷新失败",
     "outcomeDeltaNotApplied": "未应用增量，刷新失败",
+    "outcomeIdentifierRetention": "标识符丢失，刷新失败",
     "warningsTitle": "警告",
     "traceResults": "{count} 条结果",
     "executionTraceTitle": "执行追踪",

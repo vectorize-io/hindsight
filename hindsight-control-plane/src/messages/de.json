@@ -1853,6 +1853,7 @@
     "outcomePreserved": "Keine neuen Fakten, Inhalt behalten",
     "outcomeFailed": "Leeres Ergebnis, Aktualisierung schlägt fehl",
     "outcomeDeltaNotApplied": "Delta nicht angewendet, Aktualisierung schlägt fehl",
+    "outcomeIdentifierRetention": "Bezeichner verloren, Aktualisierung schlägt fehl",
     "warningsTitle": "Warnungen",
     "traceResults": "{count} Ergebnisse",
     "executionTraceTitle": "Ausführungsablauf",

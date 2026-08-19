@@ -14,6 +14,8 @@ mechanical guarantees that the structured-delta architecture relies on:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from hindsight_api.engine.reflect.delta_ops import (
@@ -26,7 +28,9 @@ from hindsight_api.engine.reflect.delta_ops import (
     RenameSectionOp,
     ReplaceBlockOp,
     ReplaceSectionBlocksOp,
+    _block_content_text,
     apply_operations,
+    serialize_document_for_delta_prompt,
 )
 from hindsight_api.engine.reflect.structured_doc import (
     BulletListBlock,
@@ -348,6 +352,9 @@ class TestApplyOperations:
         op = InsertBlockOp(
             section_id="members",
             index=0,
+            # Verbatim excerpt of the block currently at index 0 (the bullet
+            # list this insert lands before).
+            anchor="**Alice** — team lead",
             block=ParagraphBlock(text="Roster as of 2026:"),
         )
         result = apply_operations(doc, [op])
@@ -362,11 +369,39 @@ class TestApplyOperations:
         assert result.applied == []
         assert "index out of range" in result.skipped[0]["reason"]
 
+    def test_insert_block_at_append_position_needs_no_anchor(self):
+        """index == len(blocks) is a pure append: there is no existing block
+        there to anchor against, so an empty/omitted anchor still applies."""
+        doc = _team_overview_doc()
+        members_len = len(doc.section_by_id("members").blocks)
+        op = InsertBlockOp(section_id="members", index=members_len, block=ParagraphBlock(text="Appended."))
+        result = apply_operations(doc, [op])
+        assert result.applied
+        members = result.document.section_by_id("members")
+        assert members.blocks[-1].text == "Appended."
+
+    def test_insert_block_wrong_anchor_skipped(self):
+        """index < len(blocks) DOES name an existing block, so a wrong
+        anchor there must still be caught."""
+        doc = _team_overview_doc()
+        op = InsertBlockOp(
+            section_id="members",
+            index=0,
+            anchor="Standups happen daily",  # content from a different section
+            block=ParagraphBlock(text="x"),
+        )
+        result = apply_operations(doc, [op])
+        assert result.applied == []
+        assert "anchor" in result.skipped[0]["reason"]
+        # Nothing was inserted.
+        assert len(result.document.section_by_id("members").blocks) == 1
+
     def test_replace_block(self):
         doc = _team_overview_doc()
         op = ReplaceBlockOp(
             section_id="cadence",
             index=0,
+            anchor="Standups happen daily at 9am.",
             block=ParagraphBlock(text="Standups happen daily at 10am."),
         )
         result = apply_operations(doc, [op])
@@ -374,12 +409,127 @@ class TestApplyOperations:
         assert isinstance(cadence.blocks[0], ParagraphBlock)
         assert cadence.blocks[0].text.endswith("10am.")
 
+    def test_replace_table_block_anchor_uses_cell_text(self):
+        doc = StructuredDocument(
+            sections=[
+                Section(
+                    id="layers",
+                    heading="Layers",
+                    blocks=[
+                        TableBlock(headers=["Layer", "Role"], rows=[["API", "HTTP"], ["Engine", "Memory"]]),
+                    ],
+                )
+            ]
+        )
+        op = ReplaceBlockOp(
+            section_id="layers",
+            index=0,
+            anchor="Layer Role API HTTP",
+            block=ParagraphBlock(text="replaced"),
+        )
+        result = apply_operations(doc, [op])
+        assert result.applied
+        assert isinstance(result.document.section_by_id("layers").blocks[0], ParagraphBlock)
+
+    def test_table_block_wrong_anchor_is_skipped_not_raised(self):
+        """A table used to raise TypeError in _block_content_text and abort the refresh."""
+        doc = StructuredDocument(
+            sections=[
+                Section(
+                    id="layers",
+                    heading="Layers",
+                    blocks=[TableBlock(headers=["Layer", "Role"], rows=[["API", "HTTP"]])],
+                )
+            ]
+        )
+        op = ReplaceBlockOp(
+            section_id="layers",
+            index=0,
+            anchor="this text is not in the table",
+            block=ParagraphBlock(text="x"),
+        )
+        result = apply_operations(doc, [op])
+        assert result.applied == []
+        assert "anchor" in result.skipped[0]["reason"]
+        assert isinstance(result.document.section_by_id("layers").blocks[0], TableBlock)
+
+    def test_replace_block_missing_anchor_skipped(self):
+        doc = _team_overview_doc()
+        op = ReplaceBlockOp(section_id="cadence", index=0, block=ParagraphBlock(text="new text"))
+        result = apply_operations(doc, [op])
+        assert result.applied == []
+        assert result.skipped[0]["reason"] == "missing anchor"
+        # Original content untouched.
+        assert result.document.section_by_id("cadence").blocks[0].text == "Standups happen daily at 9am."
+
+    def test_replace_block_anchor_whitespace_normalized(self):
+        """Irregular whitespace in the quoted anchor (extra spaces, a
+        line-wrapped newline) must not cause a false mismatch."""
+        doc = _team_overview_doc()
+        op = ReplaceBlockOp(
+            section_id="cadence",
+            index=0,
+            anchor="Standups   happen\ndaily  at 9am.",
+            block=ParagraphBlock(text="Standups happen daily at 10am."),
+        )
+        result = apply_operations(doc, [op])
+        assert result.applied
+        assert result.document.section_by_id("cadence").blocks[0].text.endswith("10am.")
+
+    def test_off_by_one_index_with_neighbor_anchor_is_skipped(self):
+        """Regression test for the measured production defect: a delta
+        refresh computed an off-by-one ``index`` (miscounting an 8-block
+        section's array elements) and replaced the wrong block, because
+        range validation alone cannot tell a wrong-but-in-range index from a
+        correct one.
+
+        Here the op claims ``index=4`` but its anchor actually names the
+        content of the block at index 5 (its neighbor) -- exactly the shape
+        of the measured defect, where the model's intended target and its
+        claimed index pointed at different blocks. The anchor guard must
+        catch the mismatch and skip the op rather than silently overwriting
+        block 4 with content meant for block 5.
+        """
+        blocks = [ParagraphBlock(text=f"Paragraph number {i} of the long section.") for i in range(8)]
+        doc = StructuredDocument(sections=[Section(id="long", heading="Long Section", level=2, blocks=blocks)])
+        neighbor_text = blocks[5].text
+        op = ReplaceBlockOp(
+            section_id="long",
+            index=4,
+            anchor=neighbor_text[:40],
+            block=ParagraphBlock(text="REPLACED CONTENT"),
+        )
+        result = apply_operations(doc, [op])
+        assert result.applied == []
+        assert len(result.skipped) == 1
+        assert "anchor" in result.skipped[0]["reason"]
+        section = result.document.section_by_id("long")
+        # Neither the wrongly-targeted block (4) nor its neighbor (5) changed.
+        assert section.blocks[4].model_dump() == blocks[4].model_dump()
+        assert section.blocks[5].model_dump() == blocks[5].model_dump()
+
     def test_remove_block(self):
         doc = _team_overview_doc()
-        op = RemoveBlockOp(section_id="members", index=0)
+        op = RemoveBlockOp(section_id="members", index=0, anchor="**Alice** — team lead")
         result = apply_operations(doc, [op])
         members = result.document.section_by_id("members")
         assert members.blocks == []
+
+    def test_remove_block_missing_anchor_skipped(self):
+        doc = _team_overview_doc()
+        op = RemoveBlockOp(section_id="members", index=0)
+        result = apply_operations(doc, [op])
+        assert result.applied == []
+        assert result.skipped[0]["reason"] == "missing anchor"
+        assert len(result.document.section_by_id("members").blocks) == 1
+
+    def test_remove_block_wrong_anchor_skipped(self):
+        doc = _team_overview_doc()
+        op = RemoveBlockOp(section_id="members", index=0, anchor="Standups happen daily")
+        result = apply_operations(doc, [op])
+        assert result.applied == []
+        assert "anchor" in result.skipped[0]["reason"]
+        assert len(result.document.section_by_id("members").blocks) == 1
 
     def test_add_section_at_end(self):
         doc = _team_overview_doc()
@@ -466,6 +616,71 @@ class TestApplyOperations:
         after_cadence = render_section(result.document.section_by_id("cadence"))
         assert before_overview == after_overview
         assert before_cadence == after_cadence
+
+
+class TestSerializeDocumentForDeltaPrompt:
+    """``serialize_document_for_delta_prompt`` is the prompt-facing view that
+    annotates each block with its own index, so the model reads its position
+    instead of silently counting array elements (the root cause behind the
+    off-by-one regression tested above). The tests below check that this
+    annotation is absent from the real persisted dump, and that feeding the
+    annotated view back through ``StructuredDocument``'s own strict schema
+    validation (the only parse path currently used to reconstruct a
+    document) is rejected rather than silently accepted.
+    """
+
+    def test_annotates_each_block_with_its_index(self):
+        doc = _team_overview_doc()
+        payload = json.loads(serialize_document_for_delta_prompt(doc))
+        members_section = next(s for s in payload["sections"] if s["id"] == "members")
+        assert members_section["blocks"][0]["index"] == 0
+        cadence_section = next(s for s in payload["sections"] if s["id"] == "cadence")
+        assert cadence_section["blocks"][0]["index"] == 0
+
+    def test_multi_block_section_indices_are_sequential(self):
+        blocks = [ParagraphBlock(text=f"p{i}") for i in range(5)]
+        doc = StructuredDocument(sections=[Section(id="s", heading="S", level=2, blocks=blocks)])
+        payload = json.loads(serialize_document_for_delta_prompt(doc))
+        assert [b["index"] for b in payload["sections"][0]["blocks"]] == [0, 1, 2, 3, 4]
+
+    def test_index_annotation_does_not_leak_into_persisted_document(self):
+        doc = _team_overview_doc()
+        # None of this fixture's blocks carry an "index" key in the real
+        # persisted dump (checked for every section/block in _team_overview_doc).
+        persisted = json.loads(doc.model_dump_json())
+        for section in persisted["sections"]:
+            for block in section["blocks"]:
+                assert "index" not in block
+
+        # The annotated, prompt-facing view is rejected by the strict
+        # (extra="forbid") Block/StructuredDocument schema when fed back
+        # through model_validate -- the same validation path used to parse
+        # a document today -- rather than being silently accepted.
+        annotated_payload = json.loads(serialize_document_for_delta_prompt(doc))
+        with pytest.raises(Exception):  # pydantic ValidationError
+            StructuredDocument.model_validate(annotated_payload)
+
+
+class TestBlockContentText:
+    """Anchor extraction must tolerate every block type, including ones the
+    union grew after the first delta-ops commit, and must never raise."""
+
+    def test_table_joins_headers_and_rows(self):
+        text = _block_content_text(TableBlock(headers=["Layer", "Role"], rows=[["API", "HTTP"], ["Engine", "Memory"]]))
+        assert text == "Layer Role API HTTP Engine Memory"
+
+    def test_unknown_block_with_table_shape_does_not_raise(self):
+        class _FutureTable:
+            headers = ["a"]
+            rows = [["b", "c"]]
+
+        assert _block_content_text(_FutureTable()) == "a b c"
+
+    def test_opaque_unknown_block_is_empty_not_raised(self):
+        class _Opaque:
+            pass
+
+        assert _block_content_text(_Opaque()) == ""
 
 
 class TestDeltaOperationListSchema:

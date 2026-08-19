@@ -29,8 +29,15 @@ import pytest
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.llm_wrapper import LLMConfig
 from hindsight_api.engine.maintenance import MaintenanceLoop
-from hindsight_api.engine.response_models import ReflectResult
+from hindsight_api.engine.response_models import ReflectResult, TokenUsage
 from hindsight_api.engine.retain import embedding_utils
+
+#: Trigger for the tests below that pin the AGENTIC delta path — the reflect loop
+#: plus the structured-delta call they patch. The deterministic fast path is on by
+#: default and would answer these refreshes itself off the (empty) delta window,
+#: never reaching the loop, so they opt out explicitly. The fast path's own tiers
+#: are covered by TestDeltaFastPath.
+_AGENTIC_DELTA = {"mode": "delta", "delta_fast_path": False}
 
 
 def _canned_reflect_result(text: str, facts: list[dict] | None = None) -> ReflectResult:
@@ -303,7 +310,7 @@ class TestDeltaRefreshPlumbing:
             name="User Preferences",
             source_query="What are the user's durable collaboration preferences?",
             content=existing,
-            trigger={"mode": "delta", "refresh_cron": "* * * * *"},
+            trigger={**_AGENTIC_DELTA, "refresh_cron": "* * * * *"},
             request_context=request_context,
         )
 
@@ -431,7 +438,7 @@ class TestDeltaRefreshPlumbing:
             name="User Preferences",
             source_query="What are the user's durable collaboration preferences?",
             content="# Preferences\n\nThe user prefers concise answers.\n",
-            trigger={"mode": "delta", "refresh_cron": "* * * * *"},
+            trigger={**_AGENTIC_DELTA, "refresh_cron": "* * * * *"},
             request_context=request_context,
         )
 
@@ -556,7 +563,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
 
@@ -657,7 +664,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
 
@@ -724,7 +731,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
 
@@ -813,7 +820,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
         # First refresh: parses + renders existing into structured form. The output
@@ -867,7 +874,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
         # Seed tracking column + structured baseline with a successful zero-op refresh.
@@ -947,7 +954,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
 
@@ -974,12 +981,17 @@ class TestDeltaRefreshPlumbing:
             ],
         )
 
-        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+        from hindsight_api.engine.memory_engine import (
+            MentalModelRefreshError,
+            _is_non_retryable_task_error,
+        )
 
-        with pytest.raises(MentalModelRefreshError):
+        with pytest.raises(MentalModelRefreshError) as exc_info:
             await memory.refresh_mental_model(
                 bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
             )
+        assert exc_info.value.retryable is False
+        assert _is_non_retryable_task_error(exc_info.value) is True
 
         preserved = await memory.get_mental_model(
             bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
@@ -1016,7 +1028,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content="# Team\n\nAlice is the lead.\n",
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
         # First refresh establishes the structured doc, so section ids are known.
@@ -1094,7 +1106,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content="# Team\n\nAlice is the lead.\n",
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
         # Valid JSON, wrong shape — what a schema change or a hand edit leaves behind.
@@ -1152,7 +1164,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
 
@@ -1257,7 +1269,7 @@ class TestDeltaRefreshPlumbing:
             name="Team Info",
             source_query="Tell me about the team",
             content=existing,
-            trigger={"mode": "delta"},
+            trigger=_AGENTIC_DELTA,
             request_context=request_context,
         )
 
@@ -1301,6 +1313,946 @@ class TestDeltaRefreshPlumbing:
         assert rr.get("refresh_skipped") == "empty_candidate"
 
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic delta fast path
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def patch_window_facts(monkeypatch):
+    """Patch the two typed retrieval calls the delta fast path makes itself.
+
+    The fast path reads the delta window directly instead of letting the reflect
+    agent's tools do it, so what that read returns is exactly what decides tier 0
+    from tier 1. Patching the two wrappers makes that decision deterministic
+    without seeding embeddings; ``test_tier1_over_real_retrieval`` covers the
+    unpatched wiring end to end.
+
+    These are the same module-level names ``reflect_async`` binds its tool
+    callbacks to, which is harmless here: every test using this fixture also
+    patches ``reflect_async`` itself.
+    """
+    from hindsight_api.engine import memory_engine as engine_module
+
+    def _install(
+        memory: MemoryEngine,
+        *,
+        memories: list[dict] | None = None,
+        observations: list[dict] | None = None,
+    ) -> list[dict]:
+        calls: list[dict] = []
+
+        async def fake_recall(_engine, bank_id, query, request_context, **kwargs):
+            calls.append({"tool": "recall", "bank_id": bank_id, "query": query, **kwargs})
+            return {"query": query, "memories": list(memories or []), "chunks": {}}
+
+        async def fake_search_observations(_engine, bank_id, query, request_context, **kwargs):
+            calls.append({"tool": "search_observations", "bank_id": bank_id, "query": query, **kwargs})
+            return {
+                "query": query,
+                "count": len(observations or []),
+                "observations": list(observations or []),
+                "source_facts": {},
+                "is_stale": False,
+                "freshness": "up_to_date",
+            }
+
+        monkeypatch.setattr(engine_module, "tool_recall", fake_recall)
+        monkeypatch.setattr(engine_module, "tool_search_observations", fake_search_observations)
+        return calls
+
+    return _install
+
+
+@pytest.fixture
+def patch_delta_llm_calls(monkeypatch):
+    """Patch the structured-delta LLM call with one canned response per call.
+
+    Differs from ``patch_llm_call`` in two ways the fast path needs: responses are
+    consumed in order (so a test can make the fast path decline and then let the
+    agentic path succeed), and ``return_usage=True`` is honoured, since tier 1
+    asks for its own call's usage. Each recorded call also carries the trace
+    attribution that was bound around it — that is what ends up in the
+    ``llm_requests`` operation column.
+    """
+
+    def _install(memory: MemoryEngine, *, responses: list) -> list[dict]:
+        calls: list[dict] = []
+        queued = list(responses)
+        assert queued, "at least one canned response is required"
+
+        async def fake_call(*, messages, **kwargs):
+            from hindsight_api.engine.llm_trace import current_trace_context
+
+            trace_ctx = current_trace_context()
+            calls.append(
+                {
+                    "messages": messages,
+                    "operation": trace_ctx.operation if trace_ctx else None,
+                    "trace_bank_id": trace_ctx.bank_id if trace_ctx else None,
+                    **kwargs,
+                }
+            )
+            response = queued.pop(0) if len(queued) > 1 else queued[0]
+            if isinstance(response, Exception):
+                raise response
+            if kwargs.get("return_usage"):
+                return response, TokenUsage(input_tokens=1200, output_tokens=90, total_tokens=1290)
+            return response
+
+        monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
+        return calls
+
+    return _install
+
+
+async def _age_watermark_and_seed_fact(
+    memory: MemoryEngine,
+    bank_id: str,
+    mental_model_id: str,
+    *,
+    text: str = "The build server runs Linux.",
+):
+    """Age the model's watermark by a day and commit one in-scope fact.
+
+    Gives the refresh a real delta window (so ``created_after`` is set and the
+    persisted watermark is the fact's ``updated_at`` rather than the model's own
+    prior watermark), and records ``last_refreshed_source_query`` so the mode
+    decision stays in delta. Returns the fact's ``updated_at``.
+
+    Both timestamps are aged: since #3538 the watermark lives in
+    ``last_memory_seen_at`` and ``last_refreshed_at`` is the wall-clock time of
+    the last refresh, and the window reads ``COALESCE(last_memory_seen_at,
+    last_refreshed_at)`` — so ageing only one of them leaves the window's origin
+    depending on which column the row happens to have stamped.
+    """
+    assert memory._pool is not None
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE mental_models
+            SET last_refreshed_at = NOW() - INTERVAL '1 day',
+                last_memory_seen_at = NOW() - INTERVAL '1 day',
+                last_refreshed_source_query = source_query
+            WHERE bank_id = $1 AND id = $2
+            """,
+            bank_id,
+            mental_model_id,
+        )
+        return await conn.fetchval(
+            """
+            INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at, updated_at)
+            VALUES ($1, $2, $3, 'world', ARRAY[]::varchar[],
+                    NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '2 minutes')
+            RETURNING updated_at
+            """,
+            uuid.uuid4(),
+            bank_id,
+            text,
+        )
+
+
+_APPEND_BOB_OP = {
+    "op": "append_block",
+    "section_id": "members",
+    "block": {"type": "bullet_list", "items": ["Bob — junior engineer"]},
+}
+_NEW_OBSERVATION = {
+    "id": "obs-bob",
+    "text": "Bob joined the team as junior engineer",
+    "fact_type": "observation",
+    "context": None,
+}
+
+
+class TestDeltaFastPath:
+    """Delta refreshes that never reach the agentic loop.
+
+    Tier 0 reads the window and finds nothing new — no LLM call at all. Tier 1
+    turns what it found into edit operations with exactly one. The whole point is
+    a negative (the loop did not run), so these assert call counts on the mocks
+    rather than only inspecting the document, which would pass just as happily if
+    the loop had produced it.
+    """
+
+    SOURCE_QUERY = "Tell me about the team"
+    BASELINE = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n"
+
+    async def _delta_model(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        bank_id: str,
+        *,
+        trigger: dict | None = None,
+        content: str | None = None,
+    ) -> dict:
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        return await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query=self.SOURCE_QUERY,
+            content=self.BASELINE if content is None else content,
+            trigger={"mode": "delta"} if trigger is None else trigger,
+            request_context=request_context,
+        )
+
+    # -- tier 1 ------------------------------------------------------------
+
+    async def test_tier1_edits_the_document_in_one_call_without_reflect(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """The decisive assertion: pending facts, one LLM call, no reflect loop.
+
+        Everything else here (ops applied, content updated, watermark advanced,
+        history written) already held on the agentic path — the change is that
+        reaching it costs one call instead of a multi-call loop.
+        """
+        bank_id = f"test-fastpath-tier1-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        fact_updated_at = await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+
+        reflect_calls = patch_reflect(memory, text="MUST NOT BE USED")
+        retrieval = patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        llm_calls = patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert reflect_calls == [], "the agentic reflect loop must not run on the fast path"
+        assert len(llm_calls) == 1, "tier 1 is exactly one LLM call"
+        assert {call["tool"] for call in retrieval} == {"recall", "search_observations"}
+
+        assert "Bob — junior engineer" in refreshed["content"]
+        assert "Alice is the lead." in refreshed["content"], "untouched sections come through unchanged"
+        rr = refreshed["reflect_response"]
+        assert rr["fast_path"] == "tier1"
+        assert rr["fast_path_fallback_reason"] is None
+        assert rr["delta_applied"] is True
+        assert [op["op"] for op in rr["delta_operations_applied"]] == ["append_block"]
+
+        # The single call carries the document and the window's facts — not a
+        # reflect synthesis, which is the call being skipped.
+        user_msg = llm_calls[0]["messages"][1]["content"]
+        assert "obs-bob" in user_msg
+        assert '"members"' in user_msg
+
+        # get_mental_model renders timestamps as ISO strings. The watermark is
+        # last_memory_seen_at since #3538 split it out of last_refreshed_at.
+        assert refreshed["last_memory_seen_at"] == fact_updated_at.isoformat(), (
+            "the watermark must advance on a tier-1 write"
+        )
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert len(history) == 1, "a tier-1 write is recorded in history like any other content write"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_tier1_over_real_retrieval(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_delta_llm_calls,
+    ):
+        """The same path with nothing between the fast path and the database.
+
+        The other tier-1 tests patch the two retrieval wrappers to keep the tier
+        decision deterministic; this one retains a real memory and lets the fast
+        path find it, so the scope, window and budget wiring is exercised rather
+        than assumed.
+        """
+        bank_id = f"test-fastpath-real-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE mental_models
+                SET last_refreshed_at = NOW() - INTERVAL '1 day',
+                    last_refreshed_source_query = source_query
+                WHERE bank_id = $1 AND id = $2
+                """,
+                bank_id,
+                mm["id"],
+            )
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Bob joined the team as a junior engineer on the platform squad."}],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        reflect_calls = patch_reflect(memory, text="MUST NOT BE USED")
+        llm_calls = patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert reflect_calls == [], "the agentic reflect loop must not run on the fast path"
+        assert len(llm_calls) == 1
+        assert refreshed["reflect_response"]["fast_path"] == "tier1"
+        assert "Bob — junior engineer" in refreshed["content"]
+        # The retained fact reached the prompt through the real retrieval path.
+        assert "Bob joined the team" in llm_calls[0]["messages"][1]["content"]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    # -- tier 0 ------------------------------------------------------------
+
+    async def test_tier0_costs_no_llm_call_and_advances_the_watermark(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """An empty window is answered for free.
+
+        Before the fast path this same outcome cost a full agentic loop first, run
+        only to discover there was nothing to write.
+        """
+        bank_id = f"test-fastpath-tier0-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id, trigger={"mode": "delta", "keep_trace": True})
+        fact_updated_at = await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+
+        reflect_calls = patch_reflect(memory, text="MUST NOT BE USED")
+        patch_window_facts(memory)  # nothing in the window
+        llm_calls = patch_delta_llm_calls(memory, responses=["MUST NOT BE CALLED"])
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert reflect_calls == [], "tier 0 must not run the reflect loop"
+        assert llm_calls == [], "tier 0 must make no LLM call at all"
+
+        assert refreshed["content"] == self.BASELINE, "content is preserved byte for byte"
+        rr = refreshed["reflect_response"]
+        assert rr["fast_path"] == "tier0"
+        assert rr["delta_applied"] is False
+        assert rr["delta_skipped_reason"] == "no_new_facts"
+
+        async with memory._pool.acquire() as conn:
+            newest_in_scope = await conn.fetchval(
+                "SELECT MAX(updated_at) FROM memory_units WHERE bank_id = $1", bank_id
+            )
+        assert newest_in_scope == fact_updated_at
+        assert refreshed["last_memory_seen_at"] == newest_in_scope.isoformat()
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert history == [], "preserving content is not a new version"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    # -- usage, trace and attribution --------------------------------------
+
+    async def test_trace_and_usage_are_coherent_on_both_tiers(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """keep_trace on a fast-path refresh records what it actually did.
+
+        Tier 0 books no LLM call and no tokens; tier 1 books exactly its own call.
+        Both record the retrieval they performed, which is the line that answers
+        "why did my refresh not pick up my memory" — the reason the trace exists.
+        """
+        bank_id = f"test-fastpath-trace-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id, trigger={"mode": "delta", "keep_trace": True})
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+        patch_reflect(memory, text="MUST NOT BE USED")
+
+        patch_window_facts(memory)
+        patch_delta_llm_calls(memory, responses=["MUST NOT BE CALLED"])
+        tier0 = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        trace = tier0["reflect_response"]["trace"]
+        assert trace["fast_path"] == "tier0"
+        assert trace["effective_mode"] == "delta"
+        assert trace["outcome"] == "content_preserved_no_new_facts"
+        assert trace["llm_calls"] == []
+        assert trace["usage"]["total_tokens"] == 0
+        assert [tc["tool"] for tc in trace["tool_calls"]] == ["recall", "search_observations"]
+        assert all(tc["result_count"] == 0 for tc in trace["tool_calls"])
+        assert all(tc["updated_at"] is not None for tc in trace["tool_calls"]), (
+            "both fast-path fetches are window-bounded, so the trace must show the bound"
+        )
+
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+        tier1 = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        trace = tier1["reflect_response"]["trace"]
+        assert trace["fast_path"] == "tier1"
+        assert trace["outcome"] == "content_written"
+        assert [lc["scope"] for lc in trace["llm_calls"]] == ["mental_model_delta_ops"]
+        assert trace["usage"]["total_tokens"] == 1290, "tier 1 books exactly one call's usage"
+        assert trace["delta_operations"]["applied"], "the operations it applied are on the trace"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_ops_call_is_attributed_to_the_refresh_operation(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """The delta call must not log with a blank operation.
+
+        It used to: reflect's trace context is already reset by the time the
+        agentic path makes it, and a bare provider call binds none of its own, so
+        every structured-delta request landed in llm_requests unattributed and
+        uncountable. Both routes now bind a label of their own — the fast path
+        books its single call under the refresh operation itself, and the agentic
+        route under the ``mental_model_delta_ops`` label #3424 gave it.
+        """
+        bank_id = f"test-fastpath-label-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+        patch_reflect(memory, text="MUST NOT BE USED")
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        llm_calls = patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+        assert llm_calls[0]["operation"] == "refresh_mental_model"
+        assert llm_calls[0]["trace_bank_id"] == bank_id
+        assert llm_calls[0]["scope"] == "mental_model_delta_ops"
+
+        # Same guarantee on the agentic route, which makes the same call.
+        agentic_bank = f"test-agentic-label-{uuid.uuid4().hex[:8]}"
+        agentic_mm = await self._delta_model(memory, request_context, agentic_bank, trigger=_AGENTIC_DELTA)
+        patch_reflect(
+            memory,
+            text="# Team\n\nNarrow candidate.\n",
+            facts=[{"id": "obs-new", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        agentic_calls = patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+        await memory.refresh_mental_model(
+            bank_id=agentic_bank, mental_model_id=agentic_mm["id"], request_context=request_context
+        )
+        # #3424 binds the agentic delta-ops call under its own label so the
+        # row is countable after reflect's trace context has already reset.
+        assert agentic_calls[0]["operation"] == "mental_model_delta_ops"
+        assert agentic_calls[0]["scope"] == "mental_model_delta_ops"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+        await memory.delete_bank(agentic_bank, request_context=request_context)
+
+    # -- handing back to the agentic loop ----------------------------------
+
+    async def test_needs_full_context_hands_back_to_the_reflect_loop(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """The escape hatch: the model says the window alone is not enough.
+
+        The fast path trades the loop's retrieval for one call, so the model has
+        to be able to say it needed that retrieval — otherwise the trade would be
+        paid for in silently worse edits.
+        """
+        bank_id = f"test-fastpath-escape-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+
+        reflect_calls = patch_reflect(
+            memory,
+            text="# Team\n\nSynthesis from the full loop.\n",
+            facts=[{"id": "obs-bob", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        llm_calls = patch_delta_llm_calls(
+            memory,
+            responses=['{"operations": [], "needs_full_context": true}', {"operations": [_APPEND_BOB_OP]}],
+        )
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert len(reflect_calls) == 1, "declining must reach the agentic loop"
+        assert len(llm_calls) == 2, "the fast path's call, then the loop's own delta call"
+        rr = refreshed["reflect_response"]
+        assert rr["fast_path"] is None
+        assert rr["fast_path_fallback_reason"] == "needs_full_context"
+        assert rr["delta_applied"] is True
+        assert "Bob — junior engineer" in refreshed["content"]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_all_ops_invalid_hands_back_without_regenerating(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """Unparseable operations are the loop's problem, not a reason to rewrite.
+
+        The refresh stays in delta: a full regenerate would read the unbounded
+        window and replace the document, which is a much larger action than the
+        one that just failed.
+        """
+        bank_id = f"test-fastpath-invalid-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+
+        reflect_calls = patch_reflect(
+            memory,
+            text="# Team\n\nSynthesis from the full loop.\n",
+            facts=[{"id": "obs-bob", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        patch_delta_llm_calls(
+            memory,
+            responses=[
+                {"operations": [{"op": "not_an_operation", "section_id": "members"}]},
+                {"operations": [_APPEND_BOB_OP]},
+            ],
+        )
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        rr = refreshed["reflect_response"]
+        assert rr["fast_path"] is None
+        assert rr["fast_path_fallback_reason"] == "delta_ops_invalid"
+        assert rr["delta_applied"] is True
+        assert reflect_calls[0].get("created_after") is not None, (
+            "the hand-off must stay a delta refresh, not become a full regenerate"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_all_ops_skipped_hands_back_without_regenerating(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """Operations that all bounce leave the document untouched — the loop retries.
+
+        Distinct from the invalid case above: these parsed fine and were rejected
+        when applied, which is the signature of a model editing against section
+        ids it could not see.
+        """
+        bank_id = f"test-fastpath-skipped-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+
+        reflect_calls = patch_reflect(
+            memory,
+            text="# Team\n\nSynthesis from the full loop.\n",
+            facts=[{"id": "obs-bob", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        missing_section = {
+            "op": "append_block",
+            "section_id": "does-not-exist",
+            "block": {"type": "paragraph", "text": "Bob joined the team."},
+        }
+        patch_delta_llm_calls(memory, responses=[{"operations": [missing_section]}, {"operations": [_APPEND_BOB_OP]}])
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        rr = refreshed["reflect_response"]
+        assert rr["fast_path"] is None
+        assert rr["fast_path_fallback_reason"] == "delta_ops_all_skipped"
+        assert reflect_calls[0].get("created_after") is not None
+        assert "Bob — junior engineer" in refreshed["content"]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_hand_back_into_a_failing_loop_preserves_the_watermark(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """Declining must not cost the facts it declined on.
+
+        Once the fast path hands back, the refresh is the agentic one in every
+        respect — including that a failure preserves both the document and
+        ``last_refreshed_at``, so the retry reads the same window rather than
+        skipping past facts that never landed.
+        """
+        bank_id = f"test-fastpath-preserve-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+        before = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        patch_reflect(
+            memory,
+            text="# Team\n\nNarrow candidate covering only the new fact.\n",
+            facts=[{"id": "obs-bob", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        patch_delta_llm_calls(
+            memory,
+            responses=['{"operations": [], "needs_full_context": true}', RuntimeError("simulated provider 500")],
+        )
+
+        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+        with pytest.raises(MentalModelRefreshError):
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+
+        preserved = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert preserved["content"] == before["content"]
+        assert preserved["last_refreshed_at"] == before["last_refreshed_at"]
+        rr = preserved["reflect_response"]
+        assert rr["refresh_skipped"] == "delta_ops_failed"
+        assert rr["fast_path_fallback_reason"] == "needs_full_context", "the ledger must still explain why the loop ran"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_unreadable_baseline_hands_back_and_the_reason_survives_the_trace(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+        monkeypatch,
+    ):
+        """The one hand-back that happens before any LLM call, end to end.
+
+        Also the regression test for the reason vocabulary: ``keep_trace`` builds
+        ``MentalModelRefreshTrace`` — a Pydantic model whose
+        ``fast_path_fallback_reason`` is a Literal — for every refresh, failing
+        ones included, and it does so before the outcome is dispatched. A reason
+        the engine can emit but the Literal does not list therefore turns a
+        legible refresh failure into a ValidationError from the trace builder,
+        with the real cause nowhere in it.
+        """
+        bank_id = f"test-fastpath-nobaseline-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id, trigger={"mode": "delta", "keep_trace": True})
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+
+        from hindsight_api.engine.reflect import structured_doc
+
+        def unparseable(_markdown: str):
+            raise ValueError("simulated unparseable markdown")
+
+        monkeypatch.setattr(structured_doc, "parse_markdown", unparseable)
+
+        patch_reflect(
+            memory,
+            text="# Team\n\nNarrow candidate covering only the new fact.\n",
+            facts=[{"id": "obs-bob", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        delta_calls = patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        llm_calls = patch_delta_llm_calls(memory, responses=["{}"])
+
+        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+        with pytest.raises(MentalModelRefreshError):
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+
+        # Declined before spending anything: no window read, no delta call.
+        assert delta_calls == []
+        assert llm_calls == []
+
+        preserved = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        rr = preserved["reflect_response"]
+        assert rr["fast_path"] is None
+        assert rr["fast_path_fallback_reason"] == "no_delta_baseline"
+        assert rr["trace"]["fast_path_fallback_reason"] == "no_delta_baseline"
+        # The mode fallback is the agentic path's own verdict on the same
+        # baseline, recorded separately because the two answer different
+        # questions: which route ran, and which mode it ran in.
+        assert rr["trace"]["mode_fallback_reason"] == "structured_doc_unreadable"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    # -- when the fast path is not consulted at all ------------------------
+
+    async def test_full_mode_never_reaches_the_fast_path(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """Full mode regenerates the whole document, which edit ops cannot express."""
+        bank_id = f"test-fastpath-fullmode-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id, trigger={"mode": "full"})
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+
+        reflect_calls = patch_reflect(memory, text="# Team\n\nRegenerated from scratch.")
+        retrieval = patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        llm_calls = patch_delta_llm_calls(memory, responses=["MUST NOT BE CALLED"])
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert len(reflect_calls) == 1
+        assert retrieval == [], "full mode must not run the fast path's window read"
+        assert llm_calls == []
+        assert refreshed["content"] == "# Team\n\nRegenerated from scratch."
+        assert refreshed["reflect_response"]["fast_path"] is None
+        assert refreshed["reflect_response"]["fast_path_fallback_reason"] is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_mode_fallbacks_are_decided_before_the_fast_path(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """No baseline and a changed topic still resolve to full mode first.
+
+        Both mean there is nothing to edit surgically, so the fast path is never
+        consulted — it is strictly a route within delta, not a new mode decision.
+        """
+        no_baseline_bank = f"test-fastpath-nobase-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, no_baseline_bank, content="")
+        patch_reflect(memory, text="# Team\n\nFull fresh synthesis.")
+        retrieval = patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        patch_delta_llm_calls(memory, responses=["MUST NOT BE CALLED"])
+        refreshed = await memory.refresh_mental_model(
+            bank_id=no_baseline_bank, mental_model_id=mm["id"], request_context=request_context
+        )
+        assert retrieval == []
+        assert refreshed["reflect_response"]["fast_path"] is None
+
+        changed_bank = f"test-fastpath-querychg-{uuid.uuid4().hex[:8]}"
+        changed_mm = await self._delta_model(memory, request_context, changed_bank)
+        await memory.update_mental_model(
+            changed_bank,
+            changed_mm["id"],
+            last_refreshed_source_query="A completely different question",
+            request_context=request_context,
+        )
+        patch_reflect(memory, text="# Team\n\nBrand new topic.")
+        retrieval = patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        refreshed = await memory.refresh_mental_model(
+            bank_id=changed_bank, mental_model_id=changed_mm["id"], request_context=request_context
+        )
+        assert retrieval == []
+        assert refreshed["reflect_response"]["fast_path"] is None
+
+        await memory.delete_bank(no_baseline_bank, request_context=request_context)
+        await memory.delete_bank(changed_bank, request_context=request_context)
+
+    # -- kill switches -----------------------------------------------------
+
+    async def test_bank_config_can_switch_the_fast_path_off(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """The knob is hierarchical, so one bank can opt out without a redeploy."""
+        bank_id = f"test-fastpath-bankoff-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+        await memory.update_bank_config(
+            bank_id, {"mental_model_delta_fast_path": False}, request_context=request_context
+        )
+
+        reflect_calls = patch_reflect(
+            memory,
+            text="# Team\n\nSynthesis from the full loop.\n",
+            facts=[{"id": "obs-bob", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        retrieval = patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert len(reflect_calls) == 1
+        assert retrieval == []
+        rr = refreshed["reflect_response"]
+        assert rr["fast_path"] is None
+        assert rr["fast_path_fallback_reason"] is None, "never consulted is not the same as declined"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_trigger_overrides_the_resolved_default_in_both_directions(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """Per-model beats per-bank, off and on."""
+        off_bank = f"test-fastpath-trigoff-{uuid.uuid4().hex[:8]}"
+        off_mm = await self._delta_model(memory, request_context, off_bank, trigger=_AGENTIC_DELTA)
+        await _age_watermark_and_seed_fact(memory, off_bank, off_mm["id"])
+        reflect_calls = patch_reflect(
+            memory,
+            text="# Team\n\nSynthesis from the full loop.\n",
+            facts=[{"id": "obs-bob", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        retrieval = patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+        refreshed = await memory.refresh_mental_model(
+            bank_id=off_bank, mental_model_id=off_mm["id"], request_context=request_context
+        )
+        assert len(reflect_calls) == 1, "trigger false must win over the default-on knob"
+        assert retrieval == []
+        assert refreshed["reflect_response"]["fast_path"] is None
+
+        on_bank = f"test-fastpath-trigon-{uuid.uuid4().hex[:8]}"
+        on_mm = await self._delta_model(
+            memory, request_context, on_bank, trigger={"mode": "delta", "delta_fast_path": True}
+        )
+        await _age_watermark_and_seed_fact(memory, on_bank, on_mm["id"])
+        await memory.update_bank_config(
+            on_bank, {"mental_model_delta_fast_path": False}, request_context=request_context
+        )
+        reflect_calls = patch_reflect(memory, text="MUST NOT BE USED")
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        llm_calls = patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+        refreshed = await memory.refresh_mental_model(
+            bank_id=on_bank, mental_model_id=on_mm["id"], request_context=request_context
+        )
+        assert reflect_calls == [], "trigger true must win over a bank that switched it off"
+        assert len(llm_calls) == 1
+        assert refreshed["reflect_response"]["fast_path"] == "tier1"
+
+        await memory.delete_bank(off_bank, request_context=request_context)
+        await memory.delete_bank(on_bank, request_context=request_context)
+
+    def test_env_var_controls_the_default(self, monkeypatch):
+        """The server-level default reads from the environment.
+
+        Asserted against ``HindsightConfig.from_env`` rather than a live refresh:
+        the resolver snapshots the global config when the engine is built, so a
+        mid-test setenv would prove nothing about the engine already running.
+        """
+        from hindsight_api.config import ENV_MENTAL_MODEL_DELTA_FAST_PATH, HindsightConfig
+
+        monkeypatch.delenv(ENV_MENTAL_MODEL_DELTA_FAST_PATH, raising=False)
+        assert HindsightConfig.from_env().mental_model_delta_fast_path is True
+
+        monkeypatch.setenv(ENV_MENTAL_MODEL_DELTA_FAST_PATH, "false")
+        assert HindsightConfig.from_env().mental_model_delta_fast_path is False
+
+        monkeypatch.setenv(ENV_MENTAL_MODEL_DELTA_FAST_PATH, "true")
+        assert HindsightConfig.from_env().mental_model_delta_fast_path is True
+
+    def test_trigger_accepts_true_false_and_none(self):
+        """The per-model override is tri-state, and validation is otherwise untouched."""
+        from hindsight_api.api.http import MentalModelTrigger
+
+        assert MentalModelTrigger().delta_fast_path is None
+        assert MentalModelTrigger(delta_fast_path=True).delta_fast_path is True
+        assert MentalModelTrigger(delta_fast_path=False).delta_fast_path is False
+
+        with pytest.raises(ValueError):
+            MentalModelTrigger(refresh_after_consolidation=True, refresh_cron="0 3 * * *")
+
+    # -- dry run -----------------------------------------------------------
+
+    async def test_dry_run_previews_both_tiers_and_persists_nothing(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_window_facts,
+        patch_delta_llm_calls,
+    ):
+        """A preview that skipped the fast path would stop predicting the refresh.
+
+        Also pins what ``candidate_content`` means here: the fast path has no
+        synthesis step, so it reports the document it would write — the current
+        content on tier 0, the post-operation document on tier 1.
+        """
+        bank_id = f"test-fastpath-dryrun-{uuid.uuid4().hex[:8]}"
+        mm = await self._delta_model(memory, request_context, bank_id)
+        await _age_watermark_and_seed_fact(memory, bank_id, mm["id"])
+        before = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        reflect_calls = patch_reflect(memory, text="MUST NOT BE USED")
+
+        patch_window_facts(memory, observations=[_NEW_OBSERVATION])
+        patch_delta_llm_calls(memory, responses=[{"operations": [_APPEND_BOB_OP]}])
+        tier1 = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert tier1.fast_path == "tier1"
+        assert tier1.fast_path_fallback_reason is None
+        assert tier1.effective_mode == "delta"
+        assert tier1.outcome == "content_written"
+        assert tier1.would_persist is True
+        assert "Bob — junior engineer" in tier1.preview_content
+        assert tier1.candidate_content == tier1.preview_content
+        assert tier1.diff, "a preview that changes the document must show a diff"
+
+        patch_window_facts(memory)
+        patch_delta_llm_calls(memory, responses=["MUST NOT BE CALLED"])
+        tier0 = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert tier0.fast_path == "tier0"
+        assert tier0.outcome == "content_preserved_no_new_facts"
+        assert tier0.would_persist is False
+        assert tier0.candidate_content == tier0.current_content
+        assert tier0.diff == ""
+
+        assert reflect_calls == [], "neither preview may run the agentic loop"
+        after = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert after["content"] == before["content"]
+        assert after["last_refreshed_at"] == before["last_refreshed_at"]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    # -- prompt -------------------------------------------------------------
+
+    def test_fast_path_prompt_extends_the_shared_one_without_changing_it(self):
+        """The agentic route's prompt must stay byte-identical.
+
+        It shares the structured-delta system prompt but does not read
+        ``needs_full_context``, so a model answering "I cannot do this properly"
+        there would be ignored and its empty op list written anyway. The escape
+        hatch is therefore an addendum, not an edit.
+        """
+        from hindsight_api.engine.reflect.prompts import (
+            STRUCTURED_DELTA_FAST_PATH_SYSTEM_PROMPT,
+            STRUCTURED_DELTA_SYSTEM_PROMPT,
+        )
+
+        assert STRUCTURED_DELTA_FAST_PATH_SYSTEM_PROMPT.startswith(STRUCTURED_DELTA_SYSTEM_PROMPT)
+        assert "needs_full_context" not in STRUCTURED_DELTA_SYSTEM_PROMPT
+        assert "needs_full_context" in STRUCTURED_DELTA_FAST_PATH_SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------

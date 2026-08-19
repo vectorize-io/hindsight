@@ -1853,6 +1853,7 @@
     "outcomePreserved": "新しい事実なし、コンテンツを維持",
     "outcomeFailed": "結果が空のため更新は失敗します",
     "outcomeDeltaNotApplied": "デルタが適用されず更新は失敗します",
+    "outcomeIdentifierRetention": "識別子が失われたため更新は失敗します",
     "warningsTitle": "警告",
     "traceResults": "{count} 件の結果",
     "executionTraceTitle": "実行トレース",

@@ -1841,6 +1841,13 @@ async def _run_consolidation_job(
     if operation_id:
         all_refresh_tags |= await _read_pending_refresh_tags(pool, operation_id)
 
+    # A round that processed exactly max_memories_per_round and emptied the
+    # queue used to leave hit_round_limit set (remaining <= 0) and skip the
+    # refresh forever — the follow-up job saw no_new_memories and never
+    # fanned out. Treat an empty leftover as the final round.
+    if hit_round_limit and await _count_unconsolidated() == 0:
+        hit_round_limit = False
+
     if hit_round_limit:
         remaining = total_count - stats["memories_processed"]
         logger.info(

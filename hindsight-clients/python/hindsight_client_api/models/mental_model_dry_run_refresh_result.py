@@ -38,13 +38,15 @@ class MentalModelDryRunRefreshResult(BaseModel):
     effective_mode: StrictStr = Field(description="The mode the refresh actually ran in.")
     mode_fallback_reason: Optional[StrictStr] = None
     outcome: StrictStr = Field(description="What a real refresh would do with the document.")
+    fast_path: Optional[StrictStr] = None
+    fast_path_fallback_reason: Optional[StrictStr] = None
     would_persist: StrictBool = Field(description="Whether a real refresh would write new content.")
     scope: MentalModelRefreshScope = Field(description="The resolved memory scope.")
     window: MentalModelRefreshWindow = Field(description="The snapshot window read from.")
     facts: MentalModelFactCounts = Field(description="Facts retrieved versus actually used.")
     based_on: Optional[Dict[str, List[Dict[str, Any]]]] = Field(default=None, description="The evidence this run would ground the document on, keyed by fact type — the same shape a refresh persists under reflect_response.based_on. Returned so a preview can show its sources without having to write them anywhere.")
     current_content: StrictStr = Field(description="The model's content as it stands now.")
-    candidate_content: StrictStr = Field(description="Raw reflect synthesis, before any delta operations.")
+    candidate_content: StrictStr = Field(description="The document the run's synthesis step produced, before any delta operations: the raw reflect answer when the agentic loop ran. The delta fast path has no synthesis step, so it reports what it would write instead — the current content on tier 0 (nothing new was found), and the post-operation document on tier 1 (identical to preview_content). Compare against preview_content to see what the delta changed.")
     preview_content: StrictStr = Field(description="The content a real refresh would store: the delta-edited document, or the candidate in full mode.")
     diff: StrictStr = Field(description="Unified diff from current_content to preview_content. Empty when identical.")
     delta_operations: Optional[MentalModelDeltaOperations] = None
@@ -52,7 +54,7 @@ class MentalModelDryRunRefreshResult(BaseModel):
     usage: Optional[TokenUsage] = Field(default=None, description="Token usage across the run's LLM calls.")
     duration_ms: Optional[StrictInt] = Field(default=0, description="Wall-clock duration of the run.")
     warnings: Optional[List[StrictStr]] = Field(default=None, description="Conditions worth a human's attention, in plain language.")
-    __properties: ClassVar[List[str]] = ["mental_model_id", "name", "requested_mode", "effective_mode", "mode_fallback_reason", "outcome", "would_persist", "scope", "window", "facts", "based_on", "current_content", "candidate_content", "preview_content", "diff", "delta_operations", "trace", "usage", "duration_ms", "warnings"]
+    __properties: ClassVar[List[str]] = ["mental_model_id", "name", "requested_mode", "effective_mode", "mode_fallback_reason", "outcome", "fast_path", "fast_path_fallback_reason", "would_persist", "scope", "window", "facts", "based_on", "current_content", "candidate_content", "preview_content", "diff", "delta_operations", "trace", "usage", "duration_ms", "warnings"]
 
     @field_validator('requested_mode')
     def requested_mode_validate_enum(cls, value):
@@ -81,8 +83,28 @@ class MentalModelDryRunRefreshResult(BaseModel):
     @field_validator('outcome')
     def outcome_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied']):
-            raise ValueError("must be one of enum values ('content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied')")
+        if value not in set(['content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_identifier_retention']):
+            raise ValueError("must be one of enum values ('content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_identifier_retention')")
+        return value
+
+    @field_validator('fast_path')
+    def fast_path_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['tier0', 'tier1']):
+            raise ValueError("must be one of enum values ('tier0', 'tier1')")
+        return value
+
+    @field_validator('fast_path_fallback_reason')
+    def fast_path_fallback_reason_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['no_delta_baseline', 'needs_full_context', 'delta_ops_failed', 'delta_ops_invalid', 'delta_ops_all_skipped']):
+            raise ValueError("must be one of enum values ('no_delta_baseline', 'needs_full_context', 'delta_ops_failed', 'delta_ops_invalid', 'delta_ops_all_skipped')")
         return value
 
     model_config = ConfigDict(
@@ -147,6 +169,16 @@ class MentalModelDryRunRefreshResult(BaseModel):
         if self.mode_fallback_reason is None and "mode_fallback_reason" in self.model_fields_set:
             _dict['mode_fallback_reason'] = None
 
+        # set to None if fast_path (nullable) is None
+        # and model_fields_set contains the field
+        if self.fast_path is None and "fast_path" in self.model_fields_set:
+            _dict['fast_path'] = None
+
+        # set to None if fast_path_fallback_reason (nullable) is None
+        # and model_fields_set contains the field
+        if self.fast_path_fallback_reason is None and "fast_path_fallback_reason" in self.model_fields_set:
+            _dict['fast_path_fallback_reason'] = None
+
         # set to None if delta_operations (nullable) is None
         # and model_fields_set contains the field
         if self.delta_operations is None and "delta_operations" in self.model_fields_set:
@@ -170,6 +202,8 @@ class MentalModelDryRunRefreshResult(BaseModel):
             "effective_mode": obj.get("effective_mode"),
             "mode_fallback_reason": obj.get("mode_fallback_reason"),
             "outcome": obj.get("outcome"),
+            "fast_path": obj.get("fast_path"),
+            "fast_path_fallback_reason": obj.get("fast_path_fallback_reason"),
             "would_persist": obj.get("would_persist"),
             "scope": MentalModelRefreshScope.from_dict(obj["scope"]) if obj.get("scope") is not None else None,
             "window": MentalModelRefreshWindow.from_dict(obj["window"]) if obj.get("window") is not None else None,

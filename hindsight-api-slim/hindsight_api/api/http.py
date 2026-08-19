@@ -184,7 +184,7 @@ from hindsight_api.engine.response_models import (
     RecallScores,
     TokenUsage,
 )
-from hindsight_api.engine.search.tags import TagGroup, TagsMatch
+from hindsight_api.engine.search.tags import TagGroup, TagsMatch, validate_entity_leaf_placement
 from hindsight_api.engine.structured_output import validate_response_schema
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.liveness import LivenessResponse, liveness_response
@@ -366,6 +366,13 @@ class RecallRequest(BaseModel):
         if self.tags is not None and self.tag_groups is not None:
             raise ValueError("'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.")
         return self
+
+    @field_validator("tag_groups")
+    @classmethod
+    def validate_recall_entity_leaf_placement(cls, v: list[TagGroup] | None) -> list[TagGroup] | None:
+        # Entity leaves may not sit under 'not' -- see validate_entity_leaf_placement.
+        validate_entity_leaf_placement(v)
+        return v
 
 
 class RecallResult(BaseModel):
@@ -1041,6 +1048,13 @@ class ReflectRequest(BaseModel):
         if self.tags is not None and self.tag_groups is not None:
             raise ValueError("'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.")
         return self
+
+    @field_validator("tag_groups")
+    @classmethod
+    def validate_reflect_entity_leaf_placement(cls, v: list[TagGroup] | None) -> list[TagGroup] | None:
+        # Entity leaves may not sit under 'not' -- see validate_entity_leaf_placement.
+        validate_entity_leaf_placement(v)
+        return v
 
 
 class ReflectFact(BaseModel):
@@ -2225,9 +2239,22 @@ class MentalModelTrigger(BaseModel):
         description=(
             "Compound boolean tag expressions to use during refresh instead of the model's own tags. "
             "When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. "
-            "Supports nested and/or/not expressions for complex tag-based scoping."
+            "Supports nested and/or/not expressions for complex tag-based scoping, plus entity leaves "
+            "({entities: [names], match: any|all}) that scope by what a memory is ABOUT rather than which "
+            "tag compartment it lives in -- matched case-insensitively against canonical entity names, "
+            "including entities reached through an observation's source memories. The same expressions "
+            "drive the staleness gate, so an entity-scoped model refreshes exactly when facts about its "
+            "entities arrive. Entity leaves may not appear under 'not'."
         ),
     )
+
+    @field_validator("tag_groups")
+    @classmethod
+    def validate_trigger_entity_leaf_placement(cls, v: list[TagGroup] | None) -> list[TagGroup] | None:
+        # Entity leaves may not sit under 'not' -- see validate_entity_leaf_placement.
+        validate_entity_leaf_placement(v)
+        return v
+
     include_chunks: bool | None = Field(
         default=None,
         description=(
@@ -2247,6 +2274,18 @@ class MentalModelTrigger(BaseModel):
         description=(
             "Override the token budget for raw chunks returned by the internal recall during refresh. "
             "None means use the bank/global config default (recall_chunks_max_tokens)."
+        ),
+    )
+    delta_fast_path: bool | None = Field(
+        default=None,
+        description=(
+            "Override whether a delta refresh may take the deterministic fast path: fetch the "
+            "memories created since the last refresh and, if there are any, turn them into edit "
+            "operations with a single LLM call instead of running the agentic reflect loop. An "
+            "empty window costs no LLM call at all. The fast path hands back to the loop whenever "
+            "a surgical edit is not obviously safe, so every outcome is preserved either way. "
+            "None means use the bank/global config default (mental_model_delta_fast_path). "
+            "Ignored in full mode, which never takes the fast path."
         ),
     )
     response_schema: dict | None = Field(

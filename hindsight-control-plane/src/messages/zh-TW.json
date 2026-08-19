@@ -1853,6 +1853,7 @@
     "outcomePreserved": "沒有新事實，保留內容",
     "outcomeFailed": "結果為空，重新整理失敗",
     "outcomeDeltaNotApplied": "未套用增量，重新整理失敗",
+    "outcomeIdentifierRetention": "識別碼遺失，重新整理失敗",
     "warningsTitle": "警告",
     "traceResults": "{count} 筆結果",
     "executionTraceTitle": "執行追蹤",

@@ -176,6 +176,7 @@ Mental models can be configured to **automatically refresh** when observations a
 | `include_chunks` | bool \| null | null | Override whether the refresh's internal recall returns raw chunk text. `null` uses the bank/global `recall_include_chunks` default. |
 | `recall_max_tokens` | int \| null | null | Override the token budget for facts retrieved during refresh. `null` uses the bank/global default. |
 | `recall_chunks_max_tokens` | int \| null | null | Override the token budget for raw chunks retrieved during refresh. `null` uses the bank/global default. |
+| `delta_fast_path` | bool \| null | null | Override whether a `delta` refresh may skip the agentic reflect loop: read the memories created since the last refresh and, if there are any, turn them into edit operations with a single LLM call (an empty window costs no call at all). The fast path hands back to the loop whenever a surgical edit is not obviously safe, so every outcome is preserved either way. `null` uses the bank/global `mental_model_delta_fast_path` default. Ignored in `full` mode. See [Refresh Mode](#refresh-mode). |
 | `response_schema` | object \| null | null | JSON Schema for structured output. When set, each refresh also stores a `structured_output` alongside the markdown content. See [Structured Output](#structured-output) below. |
 | `keep_trace` | bool | false | Record how each refresh reached its result under `reflect_response.trace`. See [Troubleshoot a Refresh](#troubleshoot-a-refresh). |
 
@@ -249,11 +250,23 @@ Hindsight keeps an authoritative **structured** representation of the document �
 
 Anything no operation mentions is copied through untouched, so unchanged prose is preserved rather than regenerated and checked. This matters because "preserve the unchanged content" is only a soft constraint on an LLM — generating the next token from a gestalt of the input is what it intrinsically does, so instructed-to-preserve prose drifts over many refreshes.
 
-Failure modes are conservative by design: an operation referencing a section or block that doesn't exist is **dropped** rather than guessed at, and the rest of the operations still apply. The refresh records which ones were dropped and why, so you can see that part of that round's new information didn't make it into the document.
+`replace_block`, `remove_block`, and `insert_block` (when its `index` names an existing block) also require an `anchor`: a short verbatim excerpt of the block the model believes is at that index. Each block in the document shown to the model is annotated with its own index, so the model reads the position instead of counting array elements — but a miscount is still possible, and a wrong-but-in-range index is otherwise indistinguishable from a correct one. Before applying the op, Hindsight checks the anchor against the block actually at that index and drops the op on a mismatch (or a missing anchor) instead of risking it landing on the wrong block.
+
+Failure modes are conservative by design: an operation referencing a section or block that doesn't exist, or whose anchor doesn't match the block at its index, is **dropped** rather than guessed at, and the rest of the operations still apply. The refresh records which ones were dropped and why, so you can see that part of that round's new information didn't make it into the document.
 
 Delta mode falls back to a full regeneration automatically in two cases:
 1. The mental model has no existing content yet (nothing to anchor edits on).
 2. The `source_query` has changed since the last refresh (the topic has shifted; the existing structure may no longer apply).
+
+#### What a delta refresh costs
+
+Delta mode's premise is incremental work, so a delta refresh reads its window before reaching for the agentic loop:
+
+- **Nothing new in the window** — the document is preserved and the refresh's watermark advances, with **no LLM call at all**. (`fast_path: "tier0"`, outcome `content_preserved_no_new_facts`.)
+- **New memories in the window** — they and the current document go to the operations prompt in **exactly one** call, and the result is applied. (`fast_path: "tier1"`.)
+- **Anything less than clearly safe** — no readable baseline, the model reporting that the retrieved facts are not enough to edit correctly, or operations that fail to parse or all bounce — hands the refresh to the agentic loop, which retrieves more broadly and produces the result exactly as it always did. The reason is recorded as `fast_path_fallback_reason` so a loop run is never unexplained.
+
+Every outcome is reachable either way; what changes is the cost. Set `trigger.delta_fast_path: false` (or `HINDSIGHT_API_MENTAL_MODEL_DELTA_FAST_PATH=false`) to always run the loop.
 
 **A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one.
 
@@ -511,6 +524,8 @@ The response answers the questions the stored document can't:
 |-------|-------------------|
 | `requested_mode` / `effective_mode` | Whether the refresh ran in the mode you configured |
 | `mode_fallback_reason` | Why the delta edits weren't applied: `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, or `delta_ops_all_skipped` (every operation was rejected) |
+| `fast_path` | Which tier produced the run — `tier0` (window empty, no LLM call), `tier1` (one call), or `null` for the agentic loop |
+| `fast_path_fallback_reason` | Why the fast path handed this run to the loop: `no_delta_baseline`, `needs_full_context`, `delta_ops_failed`, `delta_ops_invalid`, or `delta_ops_all_skipped`. `null` with `fast_path: null` means it never ran (full mode, or switched off) |
 | `scope` | The tags, match mode, and fact types that actually filtered memories — not the ones stored on the model |
 | `window` | The `created_after`/`created_before` bounds read, and the watermark that would be persisted |
 | `facts.retrieved` vs `facts.used` | How much retrieval returned versus how much the reflect agent judged relevant |
@@ -560,7 +575,9 @@ somewhere else.
 |-------|----------|
 | `effective_mode` | Whether the run ended up `full` or `delta` |
 | `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` |
-| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed) |
+| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed), or `refresh_failed_identifier_retention` (the candidate dropped too many anchored identifiers — dates, paths, ids — so the document was kept; the warning names them) |
+| `fast_path` | `tier0` (no LLM call), `tier1` (one call), or `null` when the agentic loop produced the run |
+| `fast_path_fallback_reason` | Why the fast path handed this run to the loop — `no_delta_baseline`, `needs_full_context`, `delta_ops_failed`, `delta_ops_invalid`, `delta_ops_all_skipped` |
 | `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
 | `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |
 | `delta_operations` | The operations emitted in delta mode, `applied` and `skipped` |

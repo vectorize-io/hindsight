@@ -32,6 +32,8 @@ type MentalModelDryRunRefreshResult struct {
 	ModeFallbackReason NullableString `json:"mode_fallback_reason,omitempty"`
 	// What a real refresh would do with the document.
 	Outcome string `json:"outcome"`
+	FastPath NullableString `json:"fast_path,omitempty"`
+	FastPathFallbackReason NullableString `json:"fast_path_fallback_reason,omitempty"`
 	// Whether a real refresh would write new content.
 	WouldPersist bool `json:"would_persist"`
 	// The resolved memory scope.
@@ -44,7 +46,7 @@ type MentalModelDryRunRefreshResult struct {
 	BasedOn map[string][]map[string]interface{} `json:"based_on,omitempty"`
 	// The model's content as it stands now.
 	CurrentContent string `json:"current_content"`
-	// Raw reflect synthesis, before any delta operations.
+	// The document the run's synthesis step produced, before any delta operations: the raw reflect answer when the agentic loop ran. The delta fast path has no synthesis step, so it reports what it would write instead — the current content on tier 0 (nothing new was found), and the post-operation document on tier 1 (identical to preview_content). Compare against preview_content to see what the delta changed.
 	CandidateContent string `json:"candidate_content"`
 	// The content a real refresh would store: the delta-edited document, or the candidate in full mode.
 	PreviewContent string `json:"preview_content"`
@@ -258,6 +260,90 @@ func (o *MentalModelDryRunRefreshResult) GetOutcomeOk() (*string, bool) {
 // SetOutcome sets field value
 func (o *MentalModelDryRunRefreshResult) SetOutcome(v string) {
 	o.Outcome = v
+}
+
+// GetFastPath returns the FastPath field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelDryRunRefreshResult) GetFastPath() string {
+	if o == nil || IsNil(o.FastPath.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.FastPath.Get()
+}
+
+// GetFastPathOk returns a tuple with the FastPath field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelDryRunRefreshResult) GetFastPathOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.FastPath.Get(), o.FastPath.IsSet()
+}
+
+// HasFastPath returns a boolean if a field has been set.
+func (o *MentalModelDryRunRefreshResult) HasFastPath() bool {
+	if o != nil && o.FastPath.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetFastPath gets a reference to the given NullableString and assigns it to the FastPath field.
+func (o *MentalModelDryRunRefreshResult) SetFastPath(v string) {
+	o.FastPath.Set(&v)
+}
+// SetFastPathNil sets the value for FastPath to be an explicit nil
+func (o *MentalModelDryRunRefreshResult) SetFastPathNil() {
+	o.FastPath.Set(nil)
+}
+
+// UnsetFastPath ensures that no value is present for FastPath, not even an explicit nil
+func (o *MentalModelDryRunRefreshResult) UnsetFastPath() {
+	o.FastPath.Unset()
+}
+
+// GetFastPathFallbackReason returns the FastPathFallbackReason field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelDryRunRefreshResult) GetFastPathFallbackReason() string {
+	if o == nil || IsNil(o.FastPathFallbackReason.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.FastPathFallbackReason.Get()
+}
+
+// GetFastPathFallbackReasonOk returns a tuple with the FastPathFallbackReason field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelDryRunRefreshResult) GetFastPathFallbackReasonOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.FastPathFallbackReason.Get(), o.FastPathFallbackReason.IsSet()
+}
+
+// HasFastPathFallbackReason returns a boolean if a field has been set.
+func (o *MentalModelDryRunRefreshResult) HasFastPathFallbackReason() bool {
+	if o != nil && o.FastPathFallbackReason.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetFastPathFallbackReason gets a reference to the given NullableString and assigns it to the FastPathFallbackReason field.
+func (o *MentalModelDryRunRefreshResult) SetFastPathFallbackReason(v string) {
+	o.FastPathFallbackReason.Set(&v)
+}
+// SetFastPathFallbackReasonNil sets the value for FastPathFallbackReason to be an explicit nil
+func (o *MentalModelDryRunRefreshResult) SetFastPathFallbackReasonNil() {
+	o.FastPathFallbackReason.Set(nil)
+}
+
+// UnsetFastPathFallbackReason ensures that no value is present for FastPathFallbackReason, not even an explicit nil
+func (o *MentalModelDryRunRefreshResult) UnsetFastPathFallbackReason() {
+	o.FastPathFallbackReason.Unset()
 }
 
 // GetWouldPersist returns the WouldPersist field value
@@ -664,6 +750,12 @@ func (o MentalModelDryRunRefreshResult) ToMap() (map[string]interface{}, error) 
 		toSerialize["mode_fallback_reason"] = o.ModeFallbackReason.Get()
 	}
 	toSerialize["outcome"] = o.Outcome
+	if o.FastPath.IsSet() {
+		toSerialize["fast_path"] = o.FastPath.Get()
+	}
+	if o.FastPathFallbackReason.IsSet() {
+		toSerialize["fast_path_fallback_reason"] = o.FastPathFallbackReason.Get()
+	}
 	toSerialize["would_persist"] = o.WouldPersist
 	toSerialize["scope"] = o.Scope
 	toSerialize["window"] = o.Window

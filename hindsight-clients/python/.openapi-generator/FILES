@@ -154,6 +154,7 @@ hindsight_client_api/models/retry_operation_response.py
 hindsight_client_api/models/source_facts_include_options.py
 hindsight_client_api/models/tag_group_and_input.py
 hindsight_client_api/models/tag_group_and_output.py
+hindsight_client_api/models/tag_group_entity_leaf.py
 hindsight_client_api/models/tag_group_leaf.py
 hindsight_client_api/models/tag_group_not_input.py
 hindsight_client_api/models/tag_group_not_output.py

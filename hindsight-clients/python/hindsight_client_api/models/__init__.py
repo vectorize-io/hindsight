@@ -147,6 +147,7 @@ from hindsight_client_api.models.retry_operation_response import RetryOperationR
 from hindsight_client_api.models.source_facts_include_options import SourceFactsIncludeOptions
 from hindsight_client_api.models.tag_group_and_input import TagGroupAndInput
 from hindsight_client_api.models.tag_group_and_output import TagGroupAndOutput
+from hindsight_client_api.models.tag_group_entity_leaf import TagGroupEntityLeaf
 from hindsight_client_api.models.tag_group_leaf import TagGroupLeaf
 from hindsight_client_api.models.tag_group_not_input import TagGroupNotInput
 from hindsight_client_api.models.tag_group_not_output import TagGroupNotOutput

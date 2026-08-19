@@ -1867,6 +1867,15 @@ These knobs control the recall tool that runs inside `reflect_async` (e.g. when 
 | `HINDSIGHT_API_RECALL_MAX_TOKENS` | Token budget for facts returned by the internal recall. | `2048` |
 | `HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS` | Token budget for raw chunks returned by the internal recall. | `1000` |
 
+#### Mental model delta fast path
+
+Hierarchical — overridable per bank via the [config API](#hierarchical-configuration), and per mental model via the `trigger.delta_fast_path` field (`null` inherits this default). Only applies to `trigger.mode: "delta"`; full-mode refreshes always run the agentic loop.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_MENTAL_MODEL_DELTA_FAST_PATH` | Whether a delta refresh may skip the agentic reflect loop. When on, the refresh first reads the memories created since the last refresh: an empty window preserves the document with **no LLM call at all**, and a non-empty one turns those memories into edit operations with **exactly one** call, instead of the multi-call loop. The fast path hands back to the loop whenever a surgical edit is not obviously safe (no readable baseline, the model reports the facts are insufficient, or the operations fail to apply), so every outcome remains reachable either way — the difference is what a refresh costs. Set `false` to always run the loop. | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_IDENTIFIER_LOSS_REFUSE` | How many **distinct anchored identifiers** (dates, file paths, commit hashes, UUIDs, URLs, env vars, ports, version numbers) a refresh may drop from existing content before it is refused. A refresh can lose identifiers while the document *grows*, which no emptiness or length check can see. Below the threshold the refresh proceeds with a warning naming the lost identifiers verbatim (also recorded under `reflect_response.identifier_retention`); at or above it the refresh fails with outcome `refresh_failed_identifier_retention` and the existing content is preserved. `0` disables refusal entirely (warn-only). Bootstrap writes over empty/`PENDING` content are never refused. | `3` |
+
 #### Disposition
 
 Disposition traits control how the bank reasons during reflect operations. Each trait is on a scale of 1–5. These are hierarchical — they can be overridden per bank via the [config API](./configuration.md#hierarchical-configuration).

@@ -19,12 +19,13 @@ import pprint
 import re  # noqa: F401
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
 from typing import Optional
+from hindsight_client_api.models.tag_group_entity_leaf import TagGroupEntityLeaf
 from hindsight_client_api.models.tag_group_leaf import TagGroupLeaf
 from typing import Union, Any, List, Set, TYPE_CHECKING, Optional, Dict
 from typing_extensions import Literal, Self
 from pydantic import Field
 
-MENTALMODELREFRESHSCOPETAGGROUPSINNER_ANY_OF_SCHEMAS = ["TagGroupAndOutput", "TagGroupLeaf", "TagGroupNotOutput", "TagGroupOrOutput"]
+MENTALMODELREFRESHSCOPETAGGROUPSINNER_ANY_OF_SCHEMAS = ["TagGroupAndOutput", "TagGroupEntityLeaf", "TagGroupLeaf", "TagGroupNotOutput", "TagGroupOrOutput"]
 
 class MentalModelRefreshScopeTagGroupsInner(BaseModel):
     """
@@ -33,17 +34,19 @@ class MentalModelRefreshScopeTagGroupsInner(BaseModel):
 
     # data type: TagGroupLeaf
     anyof_schema_1_validator: Optional[TagGroupLeaf] = None
+    # data type: TagGroupEntityLeaf
+    anyof_schema_2_validator: Optional[TagGroupEntityLeaf] = None
     # data type: TagGroupAndOutput
-    anyof_schema_2_validator: Optional[TagGroupAndOutput] = None
+    anyof_schema_3_validator: Optional[TagGroupAndOutput] = None
     # data type: TagGroupOrOutput
-    anyof_schema_3_validator: Optional[TagGroupOrOutput] = None
+    anyof_schema_4_validator: Optional[TagGroupOrOutput] = None
     # data type: TagGroupNotOutput
-    anyof_schema_4_validator: Optional[TagGroupNotOutput] = None
+    anyof_schema_5_validator: Optional[TagGroupNotOutput] = None
     if TYPE_CHECKING:
-        actual_instance: Optional[Union[TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput]] = None
+        actual_instance: Optional[Union[TagGroupAndOutput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput]] = None
     else:
         actual_instance: Any = None
-    any_of_schemas: Set[str] = { "TagGroupAndOutput", "TagGroupLeaf", "TagGroupNotOutput", "TagGroupOrOutput" }
+    any_of_schemas: Set[str] = { "TagGroupAndOutput", "TagGroupEntityLeaf", "TagGroupLeaf", "TagGroupNotOutput", "TagGroupOrOutput" }
 
     model_config = {
         "validate_assignment": True,
@@ -70,6 +73,12 @@ class MentalModelRefreshScopeTagGroupsInner(BaseModel):
         else:
             return v
 
+        # validate data type: TagGroupEntityLeaf
+        if not isinstance(v, TagGroupEntityLeaf):
+            error_messages.append(f"Error! Input type `{type(v)}` is not `TagGroupEntityLeaf`")
+        else:
+            return v
+
         # validate data type: TagGroupAndOutput
         if not isinstance(v, TagGroupAndOutput):
             error_messages.append(f"Error! Input type `{type(v)}` is not `TagGroupAndOutput`")
@@ -90,7 +99,7 @@ class MentalModelRefreshScopeTagGroupsInner(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when setting the actual_instance in MentalModelRefreshScopeTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when setting the actual_instance in MentalModelRefreshScopeTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
         else:
             return v
 
@@ -109,19 +118,25 @@ class MentalModelRefreshScopeTagGroupsInner(BaseModel):
             return instance
         except (ValidationError, ValueError) as e:
              error_messages.append(str(e))
-        # anyof_schema_2_validator: Optional[TagGroupAndOutput] = None
+        # anyof_schema_2_validator: Optional[TagGroupEntityLeaf] = None
+        try:
+            instance.actual_instance = TagGroupEntityLeaf.from_json(json_str)
+            return instance
+        except (ValidationError, ValueError) as e:
+             error_messages.append(str(e))
+        # anyof_schema_3_validator: Optional[TagGroupAndOutput] = None
         try:
             instance.actual_instance = TagGroupAndOutput.from_json(json_str)
             return instance
         except (ValidationError, ValueError) as e:
              error_messages.append(str(e))
-        # anyof_schema_3_validator: Optional[TagGroupOrOutput] = None
+        # anyof_schema_4_validator: Optional[TagGroupOrOutput] = None
         try:
             instance.actual_instance = TagGroupOrOutput.from_json(json_str)
             return instance
         except (ValidationError, ValueError) as e:
              error_messages.append(str(e))
-        # anyof_schema_4_validator: Optional[TagGroupNotOutput] = None
+        # anyof_schema_5_validator: Optional[TagGroupNotOutput] = None
         try:
             instance.actual_instance = TagGroupNotOutput.from_json(json_str)
             return instance
@@ -130,7 +145,7 @@ class MentalModelRefreshScopeTagGroupsInner(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when deserializing the JSON string into MentalModelRefreshScopeTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when deserializing the JSON string into MentalModelRefreshScopeTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
         else:
             return instance
 
@@ -144,7 +159,7 @@ class MentalModelRefreshScopeTagGroupsInner(BaseModel):
         else:
             return json.dumps(self.actual_instance)
 
-    def to_dict(self) -> Optional[Union[Dict[str, Any], TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput]]:
+    def to_dict(self) -> Optional[Union[Dict[str, Any], TagGroupAndOutput, TagGroupEntityLeaf, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput]]:
         """Returns the dict representation of the actual instance"""
         if self.actual_instance is None:
             return None

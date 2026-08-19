@@ -920,6 +920,9 @@
                     "$ref": "#/$defs/TagGroupLeaf"
                   },
                   {
+                    "$ref": "#/$defs/TagGroupEntityLeaf"
+                  },
+                  {
                     "$ref": "#/$defs/TagGroupAnd"
                   },
                   {
@@ -937,7 +940,7 @@
             }
           ],
           "default": null,
-          "description": "Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.",
+          "description": "Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping, plus entity leaves ({entities: [names], match: any|all}) that scope by what a memory is ABOUT rather than which tag compartment it lives in -- matched case-insensitively against canonical entity names, including entities reached through an observation's source memories. The same expressions drive the staleness gate, so an entity-scoped model refreshes exactly when facts about its entities arrive. Entity leaves may not appear under 'not'.",
           "title": "Tag Groups"
         },
         "include_chunks": {
@@ -979,6 +982,19 @@
           "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).",
           "title": "Recall Chunks Max Tokens"
         },
+        "delta_fast_path": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override whether a delta refresh may take the deterministic fast path: fetch the memories created since the last refresh and, if there are any, turn them into edit operations with a single LLM call instead of running the agentic reflect loop. An empty window costs no LLM call at all. The fast path hands back to the loop whenever a surgical edit is not obviously safe, so every outcome is preserved either way. None means use the bank/global config default (mental_model_delta_fast_path). Ignored in full mode, which never takes the fast path.",
+          "title": "Delta Fast Path"
+        },
         "response_schema": {
           "anyOf": [
             {
@@ -1013,6 +1029,9 @@
                 "$ref": "#/$defs/TagGroupLeaf"
               },
               {
+                "$ref": "#/$defs/TagGroupEntityLeaf"
+              },
+              {
                 "$ref": "#/$defs/TagGroupAnd"
               },
               {
@@ -1031,6 +1050,33 @@
         "and"
       ],
       "title": "TagGroupAnd",
+      "type": "object"
+    },
+    "TagGroupEntityLeaf": {
+      "description": "A leaf ENTITY filter: matches memories by the entities they mention.\n\nTags describe which *compartment* a memory lives in; entities describe what it\nis *about*. On a bank whose tag vocabulary is a handful of broad topics, a tag\nscope cannot isolate a subject \u2014 measured on a production bank (2026-08-08),\nthe best tag scope for one subject reached 25% precision against a 15.5% base\nrate, while the entity association reached 94.2% precision / 86.2% recall on\nthe same corpus. This leaf makes that association usable anywhere a\n``TagGroup`` already is: mental-model refresh scope, the staleness gate, and\nretrieval filtering, through the same recursive grammar.\n\n``entities`` are canonical names, matched case-insensitively \u2014 the same\nnormalisation the entity registry itself enforces via its\n``(bank_id, LOWER(canonical_name))`` uniqueness.\n\nAssociation is inheritance-aware: a memory matches if it links the entity\ndirectly (``unit_entities``) or through any of its ``source_memory_ids`` \u2014 the\nlane observations use, since consolidation-produced observations carry no\ndirect postings by design (their entity association is transitive through\ntheir sources; see ``memories/pg/graph.py:_entity_rows_for_units_sql``).\n\n``match=\"any\"``: mentions at least one listed entity. ``match=\"all\"``: mentions\nevery listed entity (directly or via sources, per entity).\n\nConstraints, enforced by ``validate_entity_leaf_placement`` at the API edge:\nan entity leaf may not appear under ``not`` \u2014 the two permissive fallbacks\n(the Python-side post-filter and the non-memory_units surfaces that strip\nentity leaves) evaluate an unknown entity constraint as \"matches\", and a NOT\nover a permissive \"matches\" silently inverts into \"exclude everything\".",
+      "properties": {
+        "entities": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Entities",
+          "type": "array"
+        },
+        "match": {
+          "default": "any",
+          "enum": [
+            "any",
+            "all"
+          ],
+          "title": "EntityMatch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entities"
+      ],
+      "title": "TagGroupEntityLeaf",
       "type": "object"
     },
     "TagGroupLeaf": {
@@ -1071,6 +1117,9 @@
               "$ref": "#/$defs/TagGroupLeaf"
             },
             {
+              "$ref": "#/$defs/TagGroupEntityLeaf"
+            },
+            {
               "$ref": "#/$defs/TagGroupAnd"
             },
             {
@@ -1097,6 +1146,9 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TagGroupLeaf"
+              },
+              {
+                "$ref": "#/$defs/TagGroupEntityLeaf"
               },
               {
                 "$ref": "#/$defs/TagGroupAnd"

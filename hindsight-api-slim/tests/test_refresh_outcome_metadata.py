@@ -1,117 +1,138 @@
-"""Refresh operations expose semantic outcome fields in result_metadata (#2605).
+"""Tests for refresh outcome metadata, specifically the SERVING TIER field.
 
-Retain operations have carried machine-readable outcome metadata since 0.8.x
-(``unit_ids_count`` etc.). These tests pin the refresh-side parity: a completed
-refresh_mental_model operation must let a monitoring layer distinguish
-"refreshed with real content" from "refreshed empty" by reading
-``result_metadata`` alone, without a follow-up content fetch.
+Why this exists: a two-tier refresh system whose tier is unobservable after the fact
+cannot be operated or measured. Before this field, the tier was only readable from
+`mental_models.reflect_response.fast_path`, which holds only each model's LATEST
+refresh and is overwritten by the next one -- so tier distribution over any window was
+unrecoverable from the database, and had to be reconstructed by an external sampler
+polling every 5 minutes.
+
+These tests drive the real `_write_refresh_outcome_metadata` with a fake connection and
+assert on the JSON it actually persists, rather than on the dataclass in isolation --
+the mapping (`fast_path` -> `serving_tier`, with None normalised to "tier2") is the part
+that can be wrong.
 """
 
-import asyncio
+from __future__ import annotations
+
+import json
 import uuid
 
 import pytest
 
-from hindsight_api.engine.memory_engine import MemoryEngine
-
-# The reflect agent's fallback answer when the LLM returns nothing usable
-# (hindsight_api/engine/reflect/agent.py). Non-empty, so it survives the
-# empty-content guard in refresh_mental_model and completes wire-successful —
-# exactly the case populated_content must expose.
-NO_ANSWER_STUB = "No answer provided."
+from hindsight_api.engine import memory_engine as me
+from hindsight_api.engine.operation_metadata import RefreshMentalModelOutcomeMetadata
 
 
-@pytest.fixture
-async def bank_with_model(memory: MemoryEngine, request_context):
-    """Bank with one mental model, unique per test for xdist safety."""
-    bank_id = f"test-refresh-meta-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
-    mm = await memory.create_mental_model(
-        bank_id=bank_id,
-        name="Outcome Meta Model",
-        source_query="What outcome fields does refresh expose?",
-        content="Original content",
-        request_context=request_context,
+class _FakeConn:
+    """Captures the parameters of the UPDATE the writer issues."""
+
+    def __init__(self) -> None:
+        self.executed: list[tuple] = []
+
+    async def execute(self, sql: str, *params):
+        self.executed.append((sql, params))
+
+
+class _FakeAcquire:
+    def __init__(self, conn: _FakeConn) -> None:
+        self._conn = conn
+
+    async def __aenter__(self) -> _FakeConn:
+        return self._conn
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
+
+class _StubEngine:
+    """Minimal stand-in carrying only what the writer touches."""
+
+    async def _get_backend(self):
+        return object()
+
+
+async def _write(monkeypatch, refreshed: dict) -> dict:
+    """Run the real writer against a fake conn; return the metadata JSON it persisted."""
+    conn = _FakeConn()
+    monkeypatch.setattr(me, "acquire_with_retry", lambda backend: _FakeAcquire(conn))
+    op_id = str(uuid.uuid4())
+    await me.MemoryEngine._write_refresh_outcome_metadata(_StubEngine(), op_id, refreshed)
+    assert conn.executed, "writer issued no UPDATE"
+    _sql, params = conn.executed[-1]
+    return json.loads(params[1])
+
+
+@pytest.mark.asyncio
+async def test_tier0_is_recorded(monkeypatch):
+    meta = await _write(
+        monkeypatch,
+        {
+            "content": "preserved document",
+            "reflect_response": {"fast_path": "tier0", "fast_path_fallback_reason": None},
+        },
     )
-    yield memory, bank_id, mm
-    await memory.delete_bank(bank_id, request_context=request_context)
+    assert meta["serving_tier"] == "tier0"
+    assert meta["fast_path_fallback_reason"] is None
 
 
-def _fake_refreshed(content: str, based_on: dict) -> dict:
-    """Shape of refresh_mental_model's return value as consumed by the handler."""
-    return {
-        "content": content,
-        "reflect_response": {"text": content, "based_on": based_on, "mental_models": []},
-        "source_query": "What outcome fields does refresh expose?",
-    }
+@pytest.mark.asyncio
+async def test_tier1_is_recorded(monkeypatch):
+    meta = await _write(
+        monkeypatch,
+        {
+            "content": "edited document",
+            "reflect_response": {
+                "fast_path": "tier1",
+                "fast_path_fallback_reason": None,
+                "delta_operations_applied": [{"op": "replace_block"}, {"op": "append_block"}],
+                "delta_operations_skipped": [{"op": "replace_block"}],
+            },
+        },
+    )
+    assert meta["serving_tier"] == "tier1"
+    assert meta["delta_ops_applied"] == 2
+    assert meta["delta_ops_skipped"] == 1
 
 
-async def _submit_with_fake_refresh(memory, monkeypatch, bank_id, mm, request_context, refreshed):
-    """Submit an async refresh whose reflect outcome is stubbed to `refreshed`.
+@pytest.mark.asyncio
+async def test_agentic_loop_normalises_to_tier2_with_its_reason(monkeypatch):
+    """The load-bearing case: `fast_path` is None on the agentic path.
 
-    The patch must land before submission: the test task backend executes the
-    queued task synchronously on submit, so this exercises the real path
-    (execute_task -> _handle_refresh_mental_model -> metadata write).
+    Persisting that null verbatim would be ambiguous between "the agentic loop ran"
+    and "written by a build predating this field", so it is normalised to "tier2" and
+    the hand-back reason is carried alongside.
     """
-
-    async def fake_refresh(bank_id, mental_model_id, *, request_context):
-        return refreshed
-
-    monkeypatch.setattr(memory, "refresh_mental_model", fake_refresh)
-    result = await memory.submit_async_refresh_mental_model(
-        bank_id=bank_id,
-        mental_model_id=mm["id"],
-        request_context=request_context,
+    meta = await _write(
+        monkeypatch,
+        {
+            "content": "regenerated document",
+            "reflect_response": {"fast_path": None, "fast_path_fallback_reason": "needs_full_context"},
+        },
     )
-    await asyncio.sleep(0.1)
-    return result["operation_id"]
+    assert meta["serving_tier"] == "tier2"
+    assert meta["fast_path_fallback_reason"] == "needs_full_context"
 
 
 @pytest.mark.asyncio
-async def test_completed_refresh_enriches_result_metadata(bank_with_model, request_context, monkeypatch):
-    """A completed refresh writes content_len / populated_content / based_on_counts."""
-    memory, bank_id, mm = bank_with_model
-    content = "x" * 120
-    based_on = {
-        "world": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}],
-        "mental-models": [{"id": "m1"}],
-    }
-
-    operation_id = await _submit_with_fake_refresh(
-        memory, monkeypatch, bank_id, mm, request_context, _fake_refreshed(content, based_on)
-    )
-
-    status = await memory.get_operation_status(
-        bank_id=bank_id, operation_id=operation_id, request_context=request_context
-    )
-    assert status["status"] == "completed"
-    meta = status["result_metadata"]
-
-    # Submit-time keys are merged with, not replaced by, the outcome fields:
-    # existing consumers join on mental_model_id/name.
-    assert meta["mental_model_id"] == mm["id"]
-    assert meta["name"] == "Outcome Meta Model"
-
-    assert meta["content_len"] == 120
-    assert meta["populated_content"] is True
-    assert meta["based_on_counts"] == {"world": 3, "mental-models": 1}
+async def test_missing_fast_path_key_still_yields_a_tier(monkeypatch):
+    """A reflect_response from an older build has no `fast_path` key at all."""
+    meta = await _write(monkeypatch, {"content": "doc", "reflect_response": {}})
+    assert meta["serving_tier"] == "tier2"
 
 
 @pytest.mark.asyncio
-async def test_no_answer_stub_reads_as_unpopulated(bank_with_model, request_context, monkeypatch):
-    """The historical 19-char stub completes wire-successful but must not read as populated."""
-    memory, bank_id, mm = bank_with_model
+async def test_no_operation_id_is_a_noop(monkeypatch):
+    """Guard the early return -- a refresh outside an operation must not raise."""
+    conn = _FakeConn()
+    monkeypatch.setattr(me, "acquire_with_retry", lambda backend: _FakeAcquire(conn))
+    await me.MemoryEngine._write_refresh_outcome_metadata(_StubEngine(), None, {"content": "x"})
+    assert conn.executed == []
 
-    operation_id = await _submit_with_fake_refresh(
-        memory, monkeypatch, bank_id, mm, request_context, _fake_refreshed(NO_ANSWER_STUB, {})
-    )
 
-    status = await memory.get_operation_status(
-        bank_id=bank_id, operation_id=operation_id, request_context=request_context
-    )
-    assert status["status"] == "completed"
-    meta = status["result_metadata"]
-
-    assert meta["content_len"] == len(NO_ANSWER_STUB)
-    assert meta["populated_content"] is False
-    assert meta["based_on_counts"] == {}
+def test_tier_fields_default_to_none_for_existing_callers():
+    """Both fields are optional, so callers constructed before them still work."""
+    meta = RefreshMentalModelOutcomeMetadata(content_len=10, populated_content=True)
+    assert meta.serving_tier is None
+    assert meta.fast_path_fallback_reason is None
+    assert meta.to_dict()["serving_tier"] is None

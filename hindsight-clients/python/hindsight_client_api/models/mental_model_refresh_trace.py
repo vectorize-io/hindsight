@@ -35,13 +35,15 @@ class MentalModelRefreshTrace(BaseModel):
     effective_mode: StrictStr = Field(description="Whether the refresh ran as full or delta.")
     mode_fallback_reason: Optional[StrictStr] = None
     outcome: StrictStr = Field(description="What the refresh did with the document.")
+    fast_path: Optional[StrictStr] = None
+    fast_path_fallback_reason: Optional[StrictStr] = None
     tool_calls: Optional[List[MentalModelTraceToolCall]] = Field(default=None, description="Reflect tool calls made during the refresh.")
     llm_calls: Optional[List[LLMCallTrace]] = Field(default=None, description="LLM calls made during the refresh.")
     delta_operations: Optional[MentalModelDeltaOperations] = None
     usage: Optional[TokenUsage] = None
     duration_ms: Optional[StrictInt] = Field(default=0, description="Wall-clock duration of the refresh.")
     warnings: Optional[List[StrictStr]] = Field(default=None, description="Conditions worth a human's attention, in plain language.")
-    __properties: ClassVar[List[str]] = ["recorded_at", "effective_mode", "mode_fallback_reason", "outcome", "tool_calls", "llm_calls", "delta_operations", "usage", "duration_ms", "warnings"]
+    __properties: ClassVar[List[str]] = ["recorded_at", "effective_mode", "mode_fallback_reason", "outcome", "fast_path", "fast_path_fallback_reason", "tool_calls", "llm_calls", "delta_operations", "usage", "duration_ms", "warnings"]
 
     @field_validator('effective_mode')
     def effective_mode_validate_enum(cls, value):
@@ -63,8 +65,28 @@ class MentalModelRefreshTrace(BaseModel):
     @field_validator('outcome')
     def outcome_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied']):
-            raise ValueError("must be one of enum values ('content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied')")
+        if value not in set(['content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_identifier_retention']):
+            raise ValueError("must be one of enum values ('content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_identifier_retention')")
+        return value
+
+    @field_validator('fast_path')
+    def fast_path_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['tier0', 'tier1']):
+            raise ValueError("must be one of enum values ('tier0', 'tier1')")
+        return value
+
+    @field_validator('fast_path_fallback_reason')
+    def fast_path_fallback_reason_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['no_delta_baseline', 'needs_full_context', 'delta_ops_failed', 'delta_ops_invalid', 'delta_ops_all_skipped']):
+            raise ValueError("must be one of enum values ('no_delta_baseline', 'needs_full_context', 'delta_ops_failed', 'delta_ops_invalid', 'delta_ops_all_skipped')")
         return value
 
     model_config = ConfigDict(
@@ -136,6 +158,16 @@ class MentalModelRefreshTrace(BaseModel):
         if self.mode_fallback_reason is None and "mode_fallback_reason" in self.model_fields_set:
             _dict['mode_fallback_reason'] = None
 
+        # set to None if fast_path (nullable) is None
+        # and model_fields_set contains the field
+        if self.fast_path is None and "fast_path" in self.model_fields_set:
+            _dict['fast_path'] = None
+
+        # set to None if fast_path_fallback_reason (nullable) is None
+        # and model_fields_set contains the field
+        if self.fast_path_fallback_reason is None and "fast_path_fallback_reason" in self.model_fields_set:
+            _dict['fast_path_fallback_reason'] = None
+
         # set to None if delta_operations (nullable) is None
         # and model_fields_set contains the field
         if self.delta_operations is None and "delta_operations" in self.model_fields_set:
@@ -162,6 +194,8 @@ class MentalModelRefreshTrace(BaseModel):
             "effective_mode": obj.get("effective_mode"),
             "mode_fallback_reason": obj.get("mode_fallback_reason"),
             "outcome": obj.get("outcome"),
+            "fast_path": obj.get("fast_path"),
+            "fast_path_fallback_reason": obj.get("fast_path_fallback_reason"),
             "tool_calls": [MentalModelTraceToolCall.from_dict(_item) for _item in obj["tool_calls"]] if obj.get("tool_calls") is not None else None,
             "llm_calls": [LLMCallTrace.from_dict(_item) for _item in obj["llm_calls"]] if obj.get("llm_calls") is not None else None,
             "delta_operations": MentalModelDeltaOperations.from_dict(obj["delta_operations"]) if obj.get("delta_operations") is not None else None,

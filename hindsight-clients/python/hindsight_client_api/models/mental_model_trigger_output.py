@@ -38,9 +38,10 @@ class MentalModelTriggerOutput(BaseModel):
     include_chunks: Optional[StrictBool] = None
     recall_max_tokens: Optional[StrictInt] = None
     recall_chunks_max_tokens: Optional[StrictInt] = None
+    delta_fast_path: Optional[StrictBool] = None
     response_schema: Optional[Dict[str, Any]] = None
     keep_trace: Optional[StrictBool] = Field(default=False, description="If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.")
-    __properties: ClassVar[List[str]] = ["mode", "refresh_after_consolidation", "refresh_cron", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "tags_match", "tag_groups", "include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "response_schema", "keep_trace"]
+    __properties: ClassVar[List[str]] = ["mode", "refresh_after_consolidation", "refresh_cron", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "tags_match", "tag_groups", "include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "delta_fast_path", "response_schema", "keep_trace"]
 
     @field_validator('mode')
     def mode_validate_enum(cls, value):
@@ -159,6 +160,11 @@ class MentalModelTriggerOutput(BaseModel):
         if self.recall_chunks_max_tokens is None and "recall_chunks_max_tokens" in self.model_fields_set:
             _dict['recall_chunks_max_tokens'] = None
 
+        # set to None if delta_fast_path (nullable) is None
+        # and model_fields_set contains the field
+        if self.delta_fast_path is None and "delta_fast_path" in self.model_fields_set:
+            _dict['delta_fast_path'] = None
+
         # set to None if response_schema (nullable) is None
         # and model_fields_set contains the field
         if self.response_schema is None and "response_schema" in self.model_fields_set:
@@ -187,6 +193,7 @@ class MentalModelTriggerOutput(BaseModel):
             "include_chunks": obj.get("include_chunks"),
             "recall_max_tokens": obj.get("recall_max_tokens"),
             "recall_chunks_max_tokens": obj.get("recall_chunks_max_tokens"),
+            "delta_fast_path": obj.get("delta_fast_path"),
             "response_schema": obj.get("response_schema"),
             "keep_trace": obj.get("keep_trace") if obj.get("keep_trace") is not None else False
         })

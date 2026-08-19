@@ -212,6 +212,7 @@ export interface MentalModel {
     include_chunks?: boolean;
     recall_max_tokens?: number;
     recall_chunks_max_tokens?: number;
+    delta_fast_path?: boolean;
     response_schema?: Record<string, unknown>;
     keep_trace?: boolean;
   };
@@ -237,7 +238,28 @@ export type RefreshOutcome =
   | "content_written"
   | "content_preserved_no_new_facts"
   | "refresh_failed_empty_candidate"
-  | "refresh_failed_delta_not_applied";
+  | "refresh_failed_delta_not_applied"
+  | "refresh_failed_identifier_retention";
+
+/**
+ * Which tier of the deterministic delta fast path produced a refresh: `tier0`
+ * read the window, found nothing new and made no LLM call; `tier1` turned what
+ * it found into edit operations with exactly one. Null means the agentic
+ * reflect loop produced it, as every refresh did before the fast path existed.
+ */
+export type MentalModelFastPathTier = "tier0" | "tier1";
+
+/**
+ * Why the fast path handed a delta refresh back to the agentic loop. Separate
+ * from `ModeFallbackReason`: the mode is still delta and the outcome is
+ * whatever the loop then produced — only the route changed.
+ */
+export type FastPathFallbackReason =
+  | "no_delta_baseline"
+  | "needs_full_context"
+  | "delta_ops_failed"
+  | "delta_ops_invalid"
+  | "delta_ops_all_skipped";
 
 export interface MentalModelRefreshScope {
   tags?: string[] | null;
@@ -274,6 +296,8 @@ export interface MentalModelRefreshTrace {
   effective_mode: RefreshMode;
   mode_fallback_reason?: ModeFallbackReason | null;
   outcome: RefreshOutcome;
+  fast_path?: MentalModelFastPathTier | null;
+  fast_path_fallback_reason?: FastPathFallbackReason | null;
   tool_calls: Array<{
     tool: string;
     reason?: string | null;
@@ -300,6 +324,8 @@ export interface MentalModelDryRunRefreshResult {
   effective_mode: RefreshMode;
   mode_fallback_reason?: ModeFallbackReason | null;
   outcome: RefreshOutcome;
+  fast_path?: MentalModelFastPathTier | null;
+  fast_path_fallback_reason?: FastPathFallbackReason | null;
   would_persist: boolean;
   scope: MentalModelRefreshScope;
   window: MentalModelRefreshWindow;
@@ -1485,6 +1511,7 @@ export class ControlPlaneClient {
           include_chunks?: boolean;
           recall_max_tokens?: number;
           recall_chunks_max_tokens?: number;
+          delta_fast_path?: boolean;
           response_schema?: Record<string, unknown>;
           keep_trace?: boolean;
         };
@@ -1547,6 +1574,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        delta_fast_path?: boolean;
         response_schema?: Record<string, unknown>;
         keep_trace?: boolean;
       };
@@ -1592,6 +1620,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        delta_fast_path?: boolean;
         response_schema?: Record<string, unknown>;
         keep_trace?: boolean;
       };
@@ -1616,6 +1645,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        delta_fast_path?: boolean;
         response_schema?: Record<string, unknown>;
         keep_trace?: boolean;
       };

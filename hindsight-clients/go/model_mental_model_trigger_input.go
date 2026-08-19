@@ -33,6 +33,7 @@ type MentalModelTriggerInput struct {
 	IncludeChunks NullableBool `json:"include_chunks,omitempty"`
 	RecallMaxTokens NullableInt32 `json:"recall_max_tokens,omitempty"`
 	RecallChunksMaxTokens NullableInt32 `json:"recall_chunks_max_tokens,omitempty"`
+	DeltaFastPath NullableBool `json:"delta_fast_path,omitempty"`
 	ResponseSchema map[string]interface{} `json:"response_schema,omitempty"`
 	// If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.
 	KeepTrace *bool `json:"keep_trace,omitempty"`
@@ -476,6 +477,48 @@ func (o *MentalModelTriggerInput) UnsetRecallChunksMaxTokens() {
 	o.RecallChunksMaxTokens.Unset()
 }
 
+// GetDeltaFastPath returns the DeltaFastPath field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelTriggerInput) GetDeltaFastPath() bool {
+	if o == nil || IsNil(o.DeltaFastPath.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.DeltaFastPath.Get()
+}
+
+// GetDeltaFastPathOk returns a tuple with the DeltaFastPath field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelTriggerInput) GetDeltaFastPathOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.DeltaFastPath.Get(), o.DeltaFastPath.IsSet()
+}
+
+// HasDeltaFastPath returns a boolean if a field has been set.
+func (o *MentalModelTriggerInput) HasDeltaFastPath() bool {
+	if o != nil && o.DeltaFastPath.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetDeltaFastPath gets a reference to the given NullableBool and assigns it to the DeltaFastPath field.
+func (o *MentalModelTriggerInput) SetDeltaFastPath(v bool) {
+	o.DeltaFastPath.Set(&v)
+}
+// SetDeltaFastPathNil sets the value for DeltaFastPath to be an explicit nil
+func (o *MentalModelTriggerInput) SetDeltaFastPathNil() {
+	o.DeltaFastPath.Set(nil)
+}
+
+// UnsetDeltaFastPath ensures that no value is present for DeltaFastPath, not even an explicit nil
+func (o *MentalModelTriggerInput) UnsetDeltaFastPath() {
+	o.DeltaFastPath.Unset()
+}
+
 // GetResponseSchema returns the ResponseSchema field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelTriggerInput) GetResponseSchema() map[string]interface{} {
 	if o == nil {
@@ -583,6 +626,9 @@ func (o MentalModelTriggerInput) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RecallChunksMaxTokens.IsSet() {
 		toSerialize["recall_chunks_max_tokens"] = o.RecallChunksMaxTokens.Get()
+	}
+	if o.DeltaFastPath.IsSet() {
+		toSerialize["delta_fast_path"] = o.DeltaFastPath.Get()
 	}
 	if o.ResponseSchema != nil {
 		toSerialize["response_schema"] = o.ResponseSchema

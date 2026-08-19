@@ -168,6 +168,22 @@ def test_invalid_embedding_dimension_error_is_non_retryable(message):
     assert _is_non_retryable_task_error(RuntimeError(message)) is True
 
 
+def test_all_skipped_refresh_error_is_non_retryable():
+    """A deterministic delta skip must not consume worker retry slots.
+
+    ``delta_ops_all_skipped`` is the same rejected ops on every temperature-0
+    retry. Transient refresh failures (provider 500, empty candidate) stay
+    retryable so a flaky call can recover.
+    """
+    from hindsight_api.engine.memory_engine import (
+        MentalModelRefreshError,
+        _is_non_retryable_task_error,
+    )
+
+    assert _is_non_retryable_task_error(MentalModelRefreshError("all skipped", retryable=False)) is True
+    assert _is_non_retryable_task_error(MentalModelRefreshError("provider 500")) is False
+
+
 class _AsyncNullCtx:
     """Async context manager that yields a preset value — stands in for
     ``acquire_with_retry(pool)`` (yields a conn) and ``conn.transaction()``

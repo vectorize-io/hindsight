@@ -254,7 +254,9 @@ class TestDryRunExplainsTheModeDecision:
             name="Team Info",
             source_query="Tell me about the team",
             content="# Team\n\nYears of accumulated detail.",
-            trigger={"mode": "delta"},
+            # Pins the agentic delta path: the failing call under test is the one
+            # the reflect loop makes, which the fast path would otherwise pre-empt.
+            trigger={"mode": "delta", "delta_fast_path": False},
             request_context=request_context,
         )
         await memory.update_mental_model(
@@ -461,6 +463,76 @@ class TestDryRunReportsRetrievalHealth:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_identifier_retention_refusal_reports_its_own_outcome(
+        self, memory: MemoryEngine, request_context: RequestContext, patch_reflect
+    ):
+        """A non-empty candidate that drops the document's anchored identifiers
+        is refused under its OWN outcome — not relabelled as an empty candidate
+        — and the warning names the lost identifiers verbatim."""
+        anchored = "# Ops\n\nDeployed 2026-07-27 via build.py; see TRIAL-CLOSE-RUNBOOK.md at commit 5ef5a70."
+        bank_id = await _make_bank(memory, request_context, "test-dryrun-identloss")
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Ops Info",
+            source_query="Tell me about ops",
+            content=anchored,
+            trigger={"mode": "full"},
+            request_context=request_context,
+        )
+
+        patch_reflect(memory, text="# Ops\n\nEverything was rewritten and the anchors are gone.")
+        result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        assert result.outcome == "refresh_failed_identifier_retention"
+        assert result.would_persist is False
+        assert result.preview_content == anchored, "the stored content must survive the refusal"
+        assert any("TRIAL-CLOSE-RUNBOOK.md" in w for w in result.warnings), (
+            "the warning must name the lost identifiers verbatim",
+            result.warnings,
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_not_applied_wins_over_identifier_retention(
+        self, memory: MemoryEngine, request_context: RequestContext, patch_reflect, patch_delta_llm
+    ):
+        """Guard ordering: a failed delta's window-only candidate ALSO drops the
+        document's identifiers, so both refusals apply — the #3112 guard must
+        win, because "the candidate is one window, not a document" is the more
+        precise diagnosis. This pins the call-site order the unit tests cannot
+        see."""
+        anchored = "# Ops\n\nDeployed 2026-07-27 via build.py; see TRIAL-CLOSE-RUNBOOK.md at commit 5ef5a70."
+        bank_id = await _make_bank(memory, request_context, "test-dryrun-identorder")
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Ops Info",
+            source_query="Tell me about ops",
+            content=anchored,
+            trigger={"mode": "delta", "delta_fast_path": False},
+            request_context=request_context,
+        )
+        await memory.update_mental_model(
+            bank_id,
+            mm["id"],
+            last_refreshed_source_query="Tell me about ops",
+            request_context=request_context,
+        )
+
+        patch_reflect(
+            memory,
+            text="# Ops\n\nOnly the newest fact, no anchors.",
+            facts=[{"id": "f1", "text": "Carol joined ops", "fact_type": "observation"}],
+        )
+        patch_delta_llm(memory, returns=RuntimeError("provider exploded"))
+
+        result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        assert result.outcome == "refresh_failed_delta_not_applied"
+        assert result.would_persist is False
+        assert result.preview_content == anchored
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestDryRunScopeResolution:
     """A model's stored tags are not what filters memories; the resolved scope is."""
@@ -586,6 +658,8 @@ class TestKeepTrace:
             "effective_mode",
             "mode_fallback_reason",
             "outcome",
+            "fast_path",
+            "fast_path_fallback_reason",
             "tool_calls",
             "llm_calls",
             "delta_operations",
