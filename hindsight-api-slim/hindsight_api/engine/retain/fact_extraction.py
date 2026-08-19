@@ -258,8 +258,8 @@ def _split_chunk_for_output_retry(chunk: str) -> tuple[str, str] | None:
         parsed = None
 
     if isinstance(parsed, list):
-        # Some OpenAI-compatible providers wrap a conversation array once more;
-        # normalize that shape before applying the existing array split logic.
+        # Some integrations wrap a conversation array once more; normalize that
+        # shape before applying the existing array split logic.
         if len(parsed) == 1 and isinstance(parsed[0], list) and all(isinstance(item, dict) for item in parsed[0]):
             parsed = parsed[0]
 

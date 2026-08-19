@@ -39,7 +39,7 @@ def test_output_retry_split_preserves_conversation_array_boundaries():
 
 
 def test_output_retry_split_unwraps_nested_conversation_array():
-    """A provider-wrapped conversation array should use the normal turn splitter."""
+    """A nested conversation array should use the normal turn splitter."""
     from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
 
     turns = [
@@ -55,6 +55,30 @@ def test_output_retry_split_unwraps_nested_conversation_array():
     first, second = split
     assert json.loads(first) == turns[:2]
     assert json.loads(second) == turns[2:]
+
+
+def test_output_retry_split_unwraps_nested_single_conversation_turn():
+    """A nested single turn should reach the existing content splitter."""
+    from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
+
+    turn = {
+        "role": "user",
+        "content": "abcdefghijklmnopqrstuvwxyz" * 40,
+        "name": "casey",
+    }
+
+    split = _split_chunk_for_output_retry(json.dumps([[turn]]))
+
+    assert split is not None
+    first, second = split
+
+    first_turn = json.loads(first)[0]
+    second_turn = json.loads(second)[0]
+    assert first_turn["role"] == "user"
+    assert second_turn["role"] == "user"
+    assert first_turn["name"] == "casey"
+    assert second_turn["name"] == "casey"
+    assert first_turn["content"] + second_turn["content"] == turn["content"]
 
 
 def test_output_retry_split_divides_single_oversized_turn_content():
