@@ -541,8 +541,36 @@ def test_build_request_body_retain_strict_false_overrides_global_true():
     assert body["response_format"]["json_schema"]["schema"] == {"schema": "non-strict"}
     assert body["response_format"]["json_schema"]["strict"] is False
 @pytest.mark.asyncio
-async def test_fact_saturation_raises_output_too_long_for_existing_split_path():
-    """A saturated facts array must enter the existing recursive split path."""
+async def test_fact_saturation_boundary_allows_fifteen_facts():
+    """A response below the saturation boundary remains a normal success."""
+    from hindsight_api.engine.retain.fact_extraction import RETAIN_FACTS_MAX_ITEMS, _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=0)
+    fact_count = RETAIN_FACTS_MAX_ITEMS - 1
+    llm_config = _make_llm_config(mock_response={"facts": [{"what": f"fact {index}"} for index in range(fact_count)]})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="A normal chunk.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="agent",
+        )
+
+    assert len(facts) == fact_count
+    assert llm_config.call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fact_saturation_boundary_raises_output_too_long():
+    """A response at the saturation boundary must enter the split path."""
     from hindsight_api.engine.llm_wrapper import OutputTooLongError
     from hindsight_api.engine.retain.fact_extraction import RETAIN_FACTS_MAX_ITEMS, _extract_facts_from_chunk
 
@@ -568,6 +596,48 @@ async def test_fact_saturation_raises_output_too_long_for_existing_split_path():
             )
 
     assert llm_config.call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fact_saturation_uses_auto_split_and_returns_subchunk_facts():
+    """Saturation must split the chunk and return facts from both sub-chunks."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain.fact_extraction import (
+        RETAIN_FACTS_MAX_ITEMS,
+        _extract_facts_with_auto_split,
+    )
+
+    config = _make_config(llm_max_retries=0)
+    llm_config = _make_llm_config(mock_response=None)
+    llm_config.call = AsyncMock(
+        side_effect=[
+            (
+                {"facts": [{"what": f"saturated fact {index}"} for index in range(RETAIN_FACTS_MAX_ITEMS)]},
+                TokenUsage(),
+            ),
+            ({"facts": [{"what": "left fact"}]}, TokenUsage()),
+            ({"facts": [{"what": "right fact"}]}, TokenUsage()),
+        ]
+    )
+    chunk = "A sentence that needs extraction. " * 40
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_with_auto_split(
+            chunk=chunk,
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="agent",
+        )
+
+    assert [fact.fact for fact in facts] == ["left fact", "right fact"]
+    assert llm_config.call.call_count == 3
 
 
 # --- Retry budget semantics (issue #2731) -----------------------------------

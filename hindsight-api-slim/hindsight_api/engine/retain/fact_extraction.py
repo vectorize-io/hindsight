@@ -465,8 +465,9 @@ class VerbatimFactExtractionResponse(BaseModel):
     facts: list[VerbatimExtractedFact] = Field(description="List of metadata entries (one per chunk)")
 
 
-# A response at this cap is treated as saturated and sent through the existing
-# split/retry path, so the schema bound cannot silently truncate a dense chunk.
+# This is a saturation/split threshold, not an extraction or storage limit. A
+# response at this cap is sent through the existing split/retry path, so the
+# schema bound cannot silently truncate a degenerate or excessively dense chunk.
 RETAIN_FACTS_MAX_ITEMS = 16
 
 
