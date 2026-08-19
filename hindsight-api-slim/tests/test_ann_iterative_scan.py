@@ -185,8 +185,9 @@ def _near_query_vector(seed: int) -> str:
     return "[" + ",".join(f"{v / norm:.5f}" for v in values) + "]"
 
 
+@pytest.mark.xdist_group("vector_index_reconcile")
 @pytest.mark.asyncio
-async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_context, ann_config):
+async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_context, ann_config, monkeypatch):
     """End to end, through the pool: on, the budget reaches the index; off, it does not.
 
     Both halves matter. On is the fix — with iterative scans off the ground-layer search
@@ -200,14 +201,20 @@ async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_contex
     index are built directly: the property belongs to the index scan, and going through
     retain would drag in extraction and consolidation.
     """
+    from hindsight_api.engine import vector_index_health
+    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.engine.retain.bank_utils import _vector_index_clause, get_or_create_bank_profile
     from hindsight_api.engine.search.retrieval import retrieve_semantic_bm25_combined_sql
-    from hindsight_api.engine.retain.bank_utils import get_or_create_bank_profile
     from hindsight_api.engine.task_backend import fq_table
+    from hindsight_api.engine.vector_index_health import reconcile_bank_vector_indexes
 
     bank_id = f"test_iter_scan_{uuid.uuid4().hex[:8]}"
     budget = 400  # deliberately above the standing ef_search of 200
-    # Creating the bank also builds its per-(bank, fact_type) partial vector index —
-    # the same one recall uses — so this exercises the production index, not a stand-in.
+    # The suite raises this threshold out of reach to stop incidental index DDL.
+    # Restore the shipped default here because this test deliberately exercises
+    # the production per-(bank, fact_type) index lifecycle.
+    monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows > 0)
+    monkeypatch.setattr(vector_index_health, "should_keep_per_bank_index", lambda rows: rows > 0)
     await get_or_create_bank_profile(memory._backend, bank_id)
     pool = await memory._get_pool()
     probe = _near_query_vector(0)
@@ -219,6 +226,12 @@ async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_contex
                 [(bank_id, f"filler fact {i}", _near_query_vector(i)) for i in range(_ROWS)],
             )
             await conn.execute(f"ANALYZE {table}")
+            # Bank creation no longer builds empty indexes. Reconcile after the
+            # rows exist, just as vector_index_maintenance does in production.
+            index_clause = _vector_index_clause()
+            assert index_clause is not None
+            index_result = await reconcile_bank_vector_indexes(conn, get_current_schema(), bank_id, index_clause)
+            assert index_result.created == 1 and index_result.failed == 0, index_result
 
         async def semantic_rows(iterative: bool) -> int:
             ann_config("ann_iterative_scan", iterative)
