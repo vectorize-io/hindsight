@@ -1130,9 +1130,9 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
         base_response_class = FactExtractionResponseNoCausal
 
     # Add entity labels section if configured and build dynamic schema
-    entity_labels_raw = getattr(config, "entity_labels", None)
+    entity_labels_raw = config.entity_labels
     labels_cfg = parse_entity_labels(entity_labels_raw)
-    free_form_entities = getattr(config, "entities_allow_free_form", True)
+    free_form_entities = config.entities_allow_free_form
     labels_section = _build_labels_prompt_section(labels_cfg, free_form_entities)
     if labels_section:
         prompt = prompt + labels_section
@@ -1145,7 +1145,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     # tokenization and LLM output language are separate concerns.
     from ..prompt_utils import output_language_directive
 
-    prompt = prompt + output_language_directive(getattr(config, "llm_output_language", None))
+    prompt = prompt + output_language_directive(config.llm_output_language)
 
     response_schema = base_response_class
 
@@ -1193,7 +1193,7 @@ def _retain_mission_preamble(config) -> str:
     No brace-escaping needed: unlike the system template, the user message is
     used verbatim, not passed through str.format().
     """
-    retain_mission = getattr(config, "retain_mission", None)
+    retain_mission = config.retain_mission
     if not retain_mission:
         return ""
     return (
@@ -1543,9 +1543,9 @@ async def _extract_facts_from_chunk(
                 validated_entities = _coerce_entity_strings(get_value("entities"))
 
                 # Post-process label entities from structured labels object
-                entity_labels_raw = getattr(config, "entity_labels", None)
+                entity_labels_raw = config.entity_labels
                 labels_cfg = parse_entity_labels(entity_labels_raw)
-                free_form_entities = getattr(config, "entities_allow_free_form", True)
+                free_form_entities = config.entities_allow_free_form
                 if labels_cfg and labels_cfg.attributes:
                     labels_lookup = build_labels_lookup(labels_cfg)
                     labels_data = llm_fact.get("labels") or {}
@@ -2297,9 +2297,9 @@ async def extract_facts_from_contents_batch_api(
             validated_entities = _coerce_entity_strings(get_value("entities"))
 
             # Post-process label entities from structured labels object
-            entity_labels_raw = getattr(config, "entity_labels", None)
+            entity_labels_raw = config.entity_labels
             labels_cfg_batch = parse_entity_labels(entity_labels_raw)
-            free_form_entities_batch = getattr(config, "entities_allow_free_form", True)
+            free_form_entities_batch = config.entities_allow_free_form
             if labels_cfg_batch and labels_cfg_batch.attributes:
                 labels_lookup_batch = build_labels_lookup(labels_cfg_batch)
                 labels_data = llm_fact.get("labels") or {}
@@ -2758,7 +2758,7 @@ def _inject_label_tags(facts: list[ExtractedFactType], config) -> None:
     This lets entity labels double as tags, enabling filtering via the
     existing tags API without any extra query infrastructure.
     """
-    labels_cfg = parse_entity_labels(getattr(config, "entity_labels", None))
+    labels_cfg = parse_entity_labels(config.entity_labels)
     if not labels_cfg:
         return
     tag_group_keys = {g.key.lower() for g in labels_cfg.attributes if g.tag}

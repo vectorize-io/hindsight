@@ -1339,6 +1339,14 @@ export class ControlPlaneClient {
         is_parent?: boolean;
         [key: string]: any;
       } | null;
+      /** Typed, per-operation-type outcome payload, discriminated by its own
+       *  operation_type. Null for types that report none and for operations
+       *  still in flight. */
+      details?: {
+        operation_type: "refresh_mental_model";
+        outcome: string;
+        failure_reason?: string | null;
+      } | null;
       child_operations?: Array<{
         operation_id: string;
         status: string;

@@ -539,6 +539,7 @@
       "progress": "Progress",
       "lastHeartbeat": "Last heartbeat"
     },
+    "outcomeDetails": "Outcome details",
     "metadata": "Metadata",
     "error": "Error",
     "rawPayloadParentHelp": "This is a parent operation — the raw payload is stored on each sub-batch. Open a child operation to inspect its payload.",

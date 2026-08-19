@@ -881,8 +881,18 @@ class OpenAICompatibleLLM(LLMInterface):
             OutputTooLongError: If output exceeds token limits.
             Exception: Re-raises API errors after retries exhausted.
         """
-        # Handle Ollama with native API for structured output (better schema enforcement)
-        if self.provider == "ollama" and response_format is not None:
+        # Ollama's native /api/chat is the only endpoint that can carry a context
+        # window: the OpenAI-compatible handler decodes a fixed field set (model,
+        # messages, max_tokens, temperature, seed, top_p, ...) and silently drops
+        # everything else, so num_ctx has no representation on /v1/chat/completions
+        # and nesting it under an "options" object there is a no-op
+        # (ollama/ollama#6544). Structured output goes native for schema
+        # enforcement; a configured num_ctx sends the free-form calls -- including
+        # verify_connection()'s startup probe -- there too. Ollama keys a loaded
+        # model instance by context size, so a request at the server default
+        # reloads the model and re-tunes it for every other consumer of a shared
+        # host (issue #3599).
+        if self.provider == "ollama" and (response_format is not None or self.ollama_num_ctx is not None):
             return await self._call_ollama_native(
                 messages=messages,
                 response_format=response_format,
@@ -1363,7 +1373,12 @@ class OpenAICompatibleLLM(LLMInterface):
         if self._sends_reasoning_effort():
             call_params["reasoning_effort"] = self.reasoning_effort
 
-        # Provider-specific parameters
+        # Provider-specific parameters. Note for Ollama: unlike call(), this path
+        # has no native /api/chat equivalent here, so a configured ollama_num_ctx
+        # cannot reach the server — the OpenAI-compatible endpoint has no field for
+        # it and sending one under "options" is silently dropped (issue #3599).
+        # Porting tool calls to the native API means translating the tool-call
+        # request and response shapes both ways, so it is deliberately not done.
         extra_body: dict[str, Any] = {**self._config_extra_body}
         self._apply_provider_extra_body_defaults(extra_body)
         if self.provider == "groq":
@@ -1519,7 +1534,7 @@ class OpenAICompatibleLLM(LLMInterface):
     async def _call_ollama_native(
         self,
         messages: list[dict[str, str]],
-        response_format: Any,
+        response_format: Any | None,
         max_completion_tokens: int | None,
         temperature: float | None,
         max_retries: int,
@@ -1531,10 +1546,13 @@ class OpenAICompatibleLLM(LLMInterface):
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
-        Call Ollama using native API with JSON schema enforcement.
+        Call Ollama using its native API.
 
         Ollama's native API supports passing a full JSON schema in the 'format' parameter,
         which provides better structured output control than the OpenAI-compatible API.
+        ``response_format=None`` runs the same request without a schema and returns the
+        message text, so free-form calls can reach the one endpoint that honours
+        ``options.num_ctx``.
         """
         start_time = time.time()
 
@@ -1604,33 +1622,46 @@ class OpenAICompatibleLLM(LLMInterface):
                     result = response.json()
                     content = result.get("message", {}).get("content", "")
 
-                    # Strip markdown code fences if present (safety net —
-                    # Ollama with schema enforcement usually returns bare JSON,
-                    # but some models may still wrap in fences)
-                    clean_content = _strip_code_fences(content)
-                    try:
-                        json_data = json.loads(clean_content)
-                    except json.JSONDecodeError:
-                        # Fallback to raw content
-                        try:
-                            json_data = json.loads(content)
-                        except json.JSONDecodeError as json_err:
-                            content_preview = content[:500] if content else "<empty>"
-                            if content and len(content) > 700:
-                                content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
-                            logger.warning(
-                                f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
-                                f"  Model: ollama/{self.model}\n"
-                                f"  Content length: {len(content) if content else 0} chars\n"
-                                f"  Content preview: {content_preview!r}"
+                    if response_format is None:
+                        # Free-form output: no schema, nothing to parse. Reasoning
+                        # models still wrap their chain-of-thought in <think> tags
+                        # in the message body, so strip them exactly like the
+                        # OpenAI-compatible path does.
+                        text = _strip_reasoning_tags(content)
+                        if not text:
+                            raise ProviderResponseError(
+                                f"Provider returned empty message content (ollama/{self.model}, "
+                                f"scope={scope}, done_reason={result.get('done_reason')})",
+                                retryable=True,
                             )
-                            if attempt < max_retries:
-                                backoff = min(initial_backoff * (2**attempt), max_backoff)
-                                await asyncio.sleep(backoff)
-                                last_exception = json_err
-                                continue
-                            else:
-                                raise
+                    else:
+                        # Strip markdown code fences if present (safety net —
+                        # Ollama with schema enforcement usually returns bare JSON,
+                        # but some models may still wrap in fences)
+                        clean_content = _strip_code_fences(content)
+                        try:
+                            json_data = json.loads(clean_content)
+                        except json.JSONDecodeError:
+                            # Fallback to raw content
+                            try:
+                                json_data = json.loads(content)
+                            except json.JSONDecodeError as json_err:
+                                content_preview = content[:500] if content else "<empty>"
+                                if content and len(content) > 700:
+                                    content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
+                                logger.warning(
+                                    f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
+                                    f"  Model: ollama/{self.model}\n"
+                                    f"  Content length: {len(content) if content else 0} chars\n"
+                                    f"  Content preview: {content_preview!r}"
+                                )
+                                if attempt < max_retries:
+                                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                    await asyncio.sleep(backoff)
+                                    last_exception = json_err
+                                    continue
+                                else:
+                                    raise
 
                     # Extract token usage from Ollama response
                     duration = time.time() - start_time
@@ -1650,11 +1681,31 @@ class OpenAICompatibleLLM(LLMInterface):
                         success=True,
                     )
 
-                    # Validate against Pydantic model or return raw JSON
-                    if skip_validation:
+                    # Return text as-is, or validate against the Pydantic model
+                    if response_format is None:
+                        validated_result = text
+                    elif skip_validation:
                         validated_result = json_data
                     else:
                         validated_result = response_format.model_validate(json_data)
+
+                    # Record trace span. The native path carries every Ollama
+                    # structured call and, once num_ctx is set, the free-form ones
+                    # too, so without this those calls are missing from traces.
+                    from hindsight_api.tracing import _serialize_for_span, get_span_recorder
+
+                    get_span_recorder().record_llm_call(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=payload["messages"],
+                        response_content=_serialize_for_span(validated_result),
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        duration=duration,
+                        finish_reason=result.get("done_reason"),
+                        error=None,
+                    )
 
                     if return_usage:
                         token_usage = TokenUsage(
@@ -1664,6 +1715,16 @@ class OpenAICompatibleLLM(LLMInterface):
                         )
                         return validated_result, token_usage
                     return validated_result
+
+                except ProviderResponseError as e:
+                    last_exception = e
+                    if e.retryable and attempt < max_retries:
+                        logger.warning(f"Ollama response error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                        backoff = min(initial_backoff * (2**attempt), max_backoff)
+                        await asyncio.sleep(backoff)
+                        continue
+                    logger.error(f"Ollama response error after {attempt + 1} attempts: {e}")
+                    raise
 
                 except httpx.HTTPStatusError as e:
                     last_exception = e

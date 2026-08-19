@@ -1064,6 +1064,159 @@ def build_structured_delta_prompt(
     )
 
 
+STRUCTURED_RETRACTION_SYSTEM_PROMPT = """You are removing *retracted information* from an existing structured document.
+
+You will be given:
+1. TOPIC — the question this document answers.
+2. CURRENT DOCUMENT (JSON) — the existing document. Each section has a stable
+   ``id``, a ``heading``, a ``level`` (1..6), and an ordered list of ``blocks``.
+   Blocks are typed: ``paragraph``, ``bullet_list``, ``ordered_list``, ``code``,
+   or ``table``.
+3. RETRACTED FACTS — facts this document was built from that have since been
+   removed from the memory bank. They are no longer true, no longer supported,
+   or were withdrawn. The document may still state them.
+4. STILL-SUPPORTED FACTS — other facts this document is built on that remain
+   valid. They are listed so you can tell which content survives.
+
+Your task: output a JSON object ``{"operations": [...]}`` that removes from
+CURRENT DOCUMENT anything that rests on the RETRACTED FACTS, and nothing else.
+
+RULES
+- **Remove only what the retracted facts support.** If a sentence, bullet, row, or
+  section states a retracted fact, remove it (``remove_block``, ``remove_section``)
+  or rewrite it to drop just that claim (``replace_block``,
+  ``replace_section_blocks``) when the block also carries content that survives.
+- **When in doubt, keep it.** The document was written from far more facts than you
+  are shown, and blocks do not record which fact they came from. Content that merely
+  looks related to a retracted fact, or that could plausibly rest on evidence you
+  cannot see, must be left exactly as it is. Removing something still true is worse
+  than leaving something stale: the deletion is not recoverable, and no later pass
+  can restore it.
+- **A restated fact was not retracted.** If a retracted fact's content also appears
+  in STILL-SUPPORTED FACTS, the underlying information was re-ingested rather than
+  withdrawn — only its identifier changed. Keep that content.
+- **Do not add anything.** No ``append_block``, no ``insert_block``, no
+  ``add_section``. This pass only takes away.
+- **Do not tidy.** No rewording, reordering, or reformatting of surviving content.
+  Never leave a note saying something was removed — the document must read as though
+  the retracted claim was never there.
+- If removing a block would leave its section empty and the section exists only for
+  that content, remove the section instead.
+- Output ``{"operations": []}`` when nothing in the document rests on the retracted
+  facts. That is a normal, expected answer.
+
+ALLOWED OPERATIONS (each line shows the JSON shape)
+- ``{"op": "remove_block", "section_id": "...", "index": N}``
+- ``{"op": "remove_section", "section_id": "..."}``
+- ``{"op": "replace_block", "section_id": "...", "index": N, "block": {...}}``
+- ``{"op": "replace_section_blocks", "section_id": "...", "blocks": [...]}``
+
+Block shapes
+- ``{"type": "paragraph", "text": "..."}``
+- ``{"type": "bullet_list", "items": ["...", "..."]}``
+- ``{"type": "ordered_list", "items": ["...", "..."]}``
+- ``{"type": "code", "language": "json", "text": "..."}``
+- ``{"type": "table", "headers": ["col1", "col2"], "rows": [["a", "b"], ["c", "d"]]}``
+
+IMPORTANT: ``remove_block`` operations are applied in the order you emit them, and
+each one shifts the indices of every later block in that section. When removing
+several blocks from the same section, emit them in DESCENDING index order.
+
+OUTPUT FORMAT
+Return ONLY a single JSON object, with no prose before or after, no markdown code
+fences, no commentary. The object must have exactly one top-level key,
+``operations``, whose value is an array of operation objects (empty array when
+nothing changes).
+
+JSON STRING RULES (critical)
+- Every ``text`` and ``items`` string must be valid JSON: escape ``"`` as ``\\"``,
+  backslashes as ``\\\\``, and newlines as ``\\n``.
+- Do not append extra ``]`` or ``}`` after the closing ``}`` of the root object."""
+
+
+def build_structured_retraction_prompt(
+    *,
+    current_document_json: str,
+    retracted_facts: list[dict[str, Any]],
+    surviving_facts: list[dict[str, Any]],
+    source_query: str,
+    max_output_tokens: int | None = None,
+    max_input_tokens: int | None = None,
+) -> str:
+    """Build the user prompt for the retraction ("unsay") pass of a delta refresh.
+
+    ``retracted_facts`` and ``surviving_facts`` are stored ``based_on`` entries —
+    ``{id, text, type, context}``. The retracted ones are quoted from the document's
+    own record because the rows themselves are gone: an observation swept away with
+    its source keeps no history, so this copy is all that is left of what it said.
+
+    ``surviving_facts`` are passed so the model can tell re-ingestion from
+    withdrawal. When a document is re-retained its facts return under fresh ids, and
+    the old ids read as retracted even though nothing was actually withdrawn; seeing
+    the same content on both lists is what stops that from deleting live content.
+    """
+
+    def _lines(facts: list[dict[str, Any]]) -> str:
+        out: list[str] = []
+        for fact in facts:
+            text = (fact.get("text") or "").strip().replace("\n", " ")
+            out.append(f"- [{fact.get('type', '')}] {text}")
+        return "\n".join(out)
+
+    retracted_block = _lines(retracted_facts) or "(none)"
+    surviving_block = _lines(surviving_facts) or "(none listed)"
+
+    budget_hint = ""
+    if max_output_tokens is not None:
+        budget_hint = (
+            f"\n\n## Output budget\n"
+            f"Your JSON response must fit within ~{max_output_tokens} tokens. If more "
+            "removals are needed than fit, prefer the highest-leverage ones first "
+            "(``replace_section_blocks`` over many block-level ops) so the response "
+            "always parses as valid JSON."
+        )
+
+    task_footer = (
+        "## Task\n"
+        "Output a JSON object matching the operations schema, removing content that "
+        "rests on the RETRACTED FACTS. Leave everything else untouched. Emit "
+        '``{"operations": []}`` if nothing in the document rests on them.'
+    )
+
+    # Reuse the delta fitter: same three oversized inputs (document, and two fact
+    # lists standing in for synthesis + facts), same budget split, so a large
+    # document cannot push the retracted list out of the window.
+    input_cap = max_input_tokens if max_input_tokens is not None else _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS
+    doc_json, surviving_body, retracted_body, input_truncated = _fit_structured_delta_prompt_parts(
+        source_query=source_query,
+        current_document_json=current_document_json,
+        candidate_markdown=surviving_block,
+        facts_block=retracted_block,
+        budget_hint=budget_hint,
+        task_footer=task_footer,
+        max_input_tokens=input_cap,
+    )
+    truncation_note = ""
+    if input_truncated:
+        truncation_note = (
+            "\n\n*Note: Document or fact lists were truncated to fit the model context "
+            "window. Prefer minimal, high-leverage operations, and keep anything you "
+            "cannot confidently attribute to a retracted fact.*"
+        )
+
+    return (
+        f"## Topic\n{source_query}\n\n"
+        f"## CURRENT DOCUMENT (apply ops to this; reference section ids as listed)\n"
+        f"```json\n{doc_json}\n```\n\n"
+        f"## STILL-SUPPORTED FACTS (these remain valid — do not remove content resting on them)\n"
+        f"{surviving_body}\n\n"
+        f"## RETRACTED FACTS (no longer in the memory bank — remove content resting on these)\n"
+        f"{retracted_body}"
+        f"{budget_hint}{truncation_note}\n\n"
+        f"{task_footer}"
+    )
+
+
 DELTA_SYSTEM_PROMPT = """You are performing a surgical delta update to an existing mental model document.
 
 You will be given:

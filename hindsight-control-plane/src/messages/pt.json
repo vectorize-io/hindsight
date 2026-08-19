@@ -539,6 +539,7 @@
       "progress": "Progresso",
       "lastHeartbeat": "Último sinal"
     },
+    "outcomeDetails": "Detalhes do resultado",
     "metadata": "Metadados",
     "error": "Erro",
     "rawPayloadParentHelp": "Esta é uma operação pai: o payload bruto é armazenado em cada sublote. Abra uma operação filha para inspecionar seu payload.",

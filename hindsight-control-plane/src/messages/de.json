@@ -539,6 +539,7 @@
       "progress": "Fortschritt",
       "lastHeartbeat": "Letzter Heartbeat"
     },
+    "outcomeDetails": "Ergebnisdetails",
     "metadata": "Metadaten",
     "error": "Fehler",
     "rawPayloadParentHelp": "Dies ist ein übergeordneter Vorgang: Die Rohdaten-Payload wird in jedem Teilbatch gespeichert. Öffnen Sie einen untergeordneten Vorgang, um seine Payload zu prüfen.",

@@ -1022,6 +1022,20 @@ class MemoriesExtension(Extension, ABC):
             for scope in scopes
         }
 
+    async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
+        """Which of ``unit_ids`` still exist among the bank's live memories.
+
+        Backs the retraction check behind the mental-model refresh: a document's
+        grounding is a set of ids on ``reflect_response.based_on``, and one that no
+        longer answers here has been retracted. Invalidated, deleted, and swept-as-
+        stale are deliberately not distinguished — from the document's point of view
+        all three mean the same thing, so this asks only whether the row is live.
+
+        Ids that are not memory ids (or do not parse) read as absent rather than
+        raising, so callers may pass a mixed set.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ count surfaces
     #
     # The stats/admin views that aggregate memories by a key: consolidation

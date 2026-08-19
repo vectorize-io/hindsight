@@ -27,6 +27,7 @@ type OperationResponse struct {
 	DocumentId NullableString `json:"document_id,omitempty"`
 	Filename NullableString `json:"filename,omitempty"`
 	MentalModelId NullableString `json:"mental_model_id,omitempty"`
+	Details NullableRefreshMentalModelOperationDetails `json:"details,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	Status string `json:"status"`
@@ -257,6 +258,48 @@ func (o *OperationResponse) SetMentalModelIdNil() {
 // UnsetMentalModelId ensures that no value is present for MentalModelId, not even an explicit nil
 func (o *OperationResponse) UnsetMentalModelId() {
 	o.MentalModelId.Unset()
+}
+
+// GetDetails returns the Details field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetDetails() RefreshMentalModelOperationDetails {
+	if o == nil || IsNil(o.Details.Get()) {
+		var ret RefreshMentalModelOperationDetails
+		return ret
+	}
+	return *o.Details.Get()
+}
+
+// GetDetailsOk returns a tuple with the Details field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetDetailsOk() (*RefreshMentalModelOperationDetails, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Details.Get(), o.Details.IsSet()
+}
+
+// HasDetails returns a boolean if a field has been set.
+func (o *OperationResponse) HasDetails() bool {
+	if o != nil && o.Details.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetDetails gets a reference to the given NullableRefreshMentalModelOperationDetails and assigns it to the Details field.
+func (o *OperationResponse) SetDetails(v RefreshMentalModelOperationDetails) {
+	o.Details.Set(&v)
+}
+// SetDetailsNil sets the value for Details to be an explicit nil
+func (o *OperationResponse) SetDetailsNil() {
+	o.Details.Set(nil)
+}
+
+// UnsetDetails ensures that no value is present for Details, not even an explicit nil
+func (o *OperationResponse) UnsetDetails() {
+	o.Details.Unset()
 }
 
 // GetCreatedAt returns the CreatedAt field value
@@ -522,6 +565,9 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.MentalModelId.IsSet() {
 		toSerialize["mental_model_id"] = o.MentalModelId.Get()
+	}
+	if o.Details.IsSet() {
+		toSerialize["details"] = o.Details.Get()
 	}
 	toSerialize["created_at"] = o.CreatedAt
 	if o.UpdatedAt.IsSet() {

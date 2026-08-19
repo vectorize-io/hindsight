@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from ...config import DEFAULT_BM25_MAX_QUERY_TERMS, get_config
+from ...config import get_config
 from ..db.ops import UpdatedWindow
 from ..memory_engine import fq_table, get_current_schema
 from ..sql import create_sql_dialect
@@ -267,7 +267,7 @@ async def retrieve_semantic_bm25_combined_sql(
     # --- BM25 UNION ALL arms (one per fact_type, only when tokens present) ---
     if _include_bm25:
         text_ext = config.text_search_extension
-        max_query_terms = getattr(config, "bm25_max_query_terms", DEFAULT_BM25_MAX_QUERY_TERMS)
+        max_query_terms = config.bm25_max_query_terms
         bm25_tokens = tokens
         # Native tsvector has no IDF and ranks every `@@` match, so a long OR
         # query over common terms scans and ranks a large fraction of the bank
@@ -281,7 +281,7 @@ async def retrieve_semantic_bm25_combined_sql(
             text_ext == "native"
             and max_query_terms > 0
             and len(tokens) > max_query_terms
-            and getattr(config, "bm25_selective_terms", True)
+            and config.bm25_selective_terms
             and getattr(conn, "backend_type", "postgresql") == "postgresql"
         ):
             bm25_tokens = await select_selective_bm25_tokens(

@@ -539,6 +539,7 @@
       "progress": "进度",
       "lastHeartbeat": "最后心跳"
     },
+    "outcomeDetails": "结果详情",
     "metadata": "元数据",
     "error": "错误",
     "rawPayloadParentHelp": "这是父级操作，原始载荷存储在每个子批次上。打开子操作以查看其载荷。",

@@ -33,6 +33,7 @@ type MentalModelRefreshTrace struct {
 	// LLM calls made during the refresh.
 	LlmCalls []LLMCallTrace `json:"llm_calls,omitempty"`
 	DeltaOperations NullableMentalModelDeltaOperations `json:"delta_operations,omitempty"`
+	Retraction NullableMentalModelRetraction `json:"retraction,omitempty"`
 	Usage NullableTokenUsage `json:"usage,omitempty"`
 	// Wall-clock duration of the refresh.
 	DurationMs *int32 `json:"duration_ms,omitempty"`
@@ -303,6 +304,48 @@ func (o *MentalModelRefreshTrace) UnsetDeltaOperations() {
 	o.DeltaOperations.Unset()
 }
 
+// GetRetraction returns the Retraction field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelRefreshTrace) GetRetraction() MentalModelRetraction {
+	if o == nil || IsNil(o.Retraction.Get()) {
+		var ret MentalModelRetraction
+		return ret
+	}
+	return *o.Retraction.Get()
+}
+
+// GetRetractionOk returns a tuple with the Retraction field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelRefreshTrace) GetRetractionOk() (*MentalModelRetraction, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Retraction.Get(), o.Retraction.IsSet()
+}
+
+// HasRetraction returns a boolean if a field has been set.
+func (o *MentalModelRefreshTrace) HasRetraction() bool {
+	if o != nil && o.Retraction.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetraction gets a reference to the given NullableMentalModelRetraction and assigns it to the Retraction field.
+func (o *MentalModelRefreshTrace) SetRetraction(v MentalModelRetraction) {
+	o.Retraction.Set(&v)
+}
+// SetRetractionNil sets the value for Retraction to be an explicit nil
+func (o *MentalModelRefreshTrace) SetRetractionNil() {
+	o.Retraction.Set(nil)
+}
+
+// UnsetRetraction ensures that no value is present for Retraction, not even an explicit nil
+func (o *MentalModelRefreshTrace) UnsetRetraction() {
+	o.Retraction.Unset()
+}
+
 // GetUsage returns the Usage field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelRefreshTrace) GetUsage() TokenUsage {
 	if o == nil || IsNil(o.Usage.Get()) {
@@ -435,6 +478,9 @@ func (o MentalModelRefreshTrace) ToMap() (map[string]interface{}, error) {
 	}
 	if o.DeltaOperations.IsSet() {
 		toSerialize["delta_operations"] = o.DeltaOperations.Get()
+	}
+	if o.Retraction.IsSet() {
+		toSerialize["retraction"] = o.Retraction.Get()
 	}
 	if o.Usage.IsSet() {
 		toSerialize["usage"] = o.Usage.Get()

@@ -52,5 +52,10 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "overrides": {
+    "brace-expansion": ">=5.0.7 <6.0.0",
+    "pdfjs-dist": ">=6.2.108 <7.0.0",
+    "postcss": ">=8.5.23 <9.0.0"
   }
 }

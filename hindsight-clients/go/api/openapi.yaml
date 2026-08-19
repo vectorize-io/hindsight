@@ -8159,6 +8159,7 @@ components:
           description: What a real refresh would do with the document.
           enum:
           - content_written
+          - content_unchanged
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
           - refresh_failed_delta_not_applied
@@ -8203,6 +8204,8 @@ components:
           type: string
         delta_operations:
           $ref: '#/components/schemas/MentalModelDeltaOperations'
+        retraction:
+          $ref: '#/components/schemas/MentalModelRetraction'
         trace:
           $ref: '#/components/schemas/MentalModelRefreshTrace'
         usage:
@@ -8450,6 +8453,7 @@ components:
           description: What the refresh did with the document.
           enum:
           - content_written
+          - content_unchanged
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
           - refresh_failed_delta_not_applied
@@ -8467,6 +8471,8 @@ components:
           type: array
         delta_operations:
           $ref: '#/components/schemas/MentalModelDeltaOperations'
+        retraction:
+          $ref: '#/components/schemas/MentalModelRetraction'
         usage:
           $ref: '#/components/schemas/TokenUsage'
         duration_ms:
@@ -8595,6 +8601,39 @@ components:
       - id
       - name
       title: MentalModelResponse
+    MentalModelRetraction:
+      description: |-
+        Facts the document cited that no longer exist, and what was done about them.
+
+        A retraction is the one refresh input that is *invisible* in every other
+        report: the fact is gone from the bank, so it appears in no recall, no tool
+        call, and no supporting-fact list. Without this, a refresh that quietly
+        deleted a paragraph — or quietly declined to — leaves no evidence of why.
+      properties:
+        fact_ids:
+          description: Ids the document's based_on cites that no longer exist in the
+            bank.
+          items:
+            type: string
+          type: array
+        fact_texts:
+          description: "What those facts said, as the document recorded them. The\
+            \ rows themselves are gone — an observation swept away with its source\
+            \ keeps no history — so this copy is the only surviving record."
+          items:
+            type: string
+          type: array
+        applied:
+          description: Whether the pass that removes them ran to completion (zero
+            edits still counts).
+          title: Applied
+          type: boolean
+        deferred_reason:
+          nullable: true
+          type: string
+      required:
+      - applied
+      title: MentalModelRetraction
     MentalModelTraceToolCall:
       description: |-
         One reflect tool call made during a refresh.
@@ -8988,6 +9027,8 @@ components:
         mental_model_id:
           nullable: true
           type: string
+        details:
+          $ref: '#/components/schemas/RefreshMentalModelOperationDetails'
         created_at:
           title: Created At
           type: string
@@ -9065,6 +9106,8 @@ components:
         result_metadata:
           additionalProperties: {}
           nullable: true
+        details:
+          $ref: '#/components/schemas/RefreshMentalModelOperationDetails'
         child_operations:
           items:
             $ref: '#/components/schemas/ChildOperationStatus'
@@ -9684,6 +9727,53 @@ components:
             $ref: '#/components/schemas/ReflectLLMCall'
           type: array
       title: ReflectTrace
+    RefreshMentalModelOperationDetails:
+      description: |-
+        What a refresh_mental_model operation did, on the operation record itself.
+
+        Reported under an async operation's ``details``, which is keyed by
+        ``operation_type``: each type that has a typed outcome to report contributes
+        its own shape there, rather than every type's fields being flattened onto the
+        operation. Today refresh is the only one.
+
+        This exists because ``result_metadata`` — the only per-refresh record kept
+        indefinitely — could not say what a refresh did (#3274), and is documented as
+        debug-only and unstable, so it is not something a caller can build on.
+      properties:
+        operation_type:
+          default: refresh_mental_model
+          description: "Discriminator: which operation type this detail describes."
+          enum:
+          - refresh_mental_model
+          title: Operation Type
+          type: string
+        outcome:
+          description: "What the refresh did with the document: rewrote it (`content_written`),\
+            \ produced a document identical to the stored one (`content_unchanged`),\
+            \ had no new facts to read at all (`content_preserved_no_new_facts`),\
+            \ or refused to write (the `refresh_failed_*` values)."
+          enum:
+          - content_written
+          - content_unchanged
+          - content_preserved_no_new_facts
+          - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
+          - refresh_failed_structured_output
+          title: Outcome
+          type: string
+        failure_reason:
+          enum:
+          - empty_candidate
+          - structured_doc_unreadable
+          - delta_ops_failed
+          - delta_ops_all_skipped
+          - delta_not_applied
+          - structured_output_failed
+          nullable: true
+          type: string
+      required:
+      - outcome
+      title: RefreshMentalModelOperationDetails
     ReprocessDocumentResponse:
       description: Response model for reprocess document endpoint.
       example:

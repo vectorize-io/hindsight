@@ -7,7 +7,7 @@
  *
  * Resolution order:
  *   1. `mapPathToBank` — absolute path -> bank; LONGEST matching prefix wins, so mapping a
- *      repo root covers every subdirectory (and worktree paths can be pinned individually).
+ *      repo root covers every subdirectory and linked worktree of that repo.
  *      Overrides everything, including an explicit bankId.
  *   2. static — when `dynamicBankId` is false, or left unset WITH an explicit `bankId`
  *      (the benchmark harness and single-bank setups).
@@ -110,20 +110,35 @@ function dirName(directory: string): string {
   return (directory && basename(directory)) || "unknown";
 }
 
+/**
+ * The main-worktree root for a location, or null — ONE cascade, shared by the two things that ask
+ * it: which repo names this bank (`gitProjectName`) and which repo's approval and mapping this
+ * directory inherits (`lookupDirectories`). They used to walk their own copies, and the copies
+ * disagreed: bank identity consulted the session root while approval did not, so a directory could
+ * be named after a repo it was not allowed to be remembered for.
+ *
+ * The directory itself comes first (via the walk, a no-op when it exists), so anything git can
+ * still resolve keeps its historical answer and no existing bank moves. The session root and the
+ * exported roots are a last rescue, not a new source of truth — and both name the CURRENT
+ * session's own project, so neither can reach a repo this session was not already working in.
+ */
+function mainWorktreeRoot(directory: string, sessionRoot = ""): string | null {
+  const candidates = [
+    nearestExistingDir(directory),
+    sessionRoot,
+    ...PROJECT_ROOT_ENV.map((v) => process.env[v] || ""),
+  ];
+  for (const candidate of candidates) {
+    const root = candidate ? getProjectRootFromGit(candidate) : null;
+    if (root) return root;
+  }
+  return null;
+}
+
 function gitProjectName(directory: string, resolveWorktrees: boolean, sessionRoot = ""): string {
   if (resolveWorktrees) {
-    // The directory itself first (via the walk, which is a no-op when it exists), so anything git
-    // can still resolve keeps its historical answer and no existing bank moves. The session root
-    // and the exported roots are a last rescue, not a new source of truth.
-    const candidates = [
-      nearestExistingDir(directory),
-      sessionRoot,
-      ...PROJECT_ROOT_ENV.map((v) => process.env[v] || ""),
-    ];
-    for (const candidate of candidates) {
-      const root = candidate ? getProjectRootFromGit(candidate) : null;
-      if (root) return basename(root);
-    }
+    const root = mainWorktreeRoot(directory, sessionRoot);
+    if (root) return basename(root);
   }
   // Nothing git can name. `directory` is the agent's LIVE working directory and it moves during
   // normal work; inside a repo that was harmless because every subdirectory resolved back to the
@@ -158,6 +173,21 @@ function mapLookup(map: Record<string, string>, directory: string): string | und
   return best?.bank;
 }
 
+/** Current directory first, then its main Git root. Keeping the literal path first preserves an
+ * explicit worktree-specific mapping while letting an approved checkout carry that approval to
+ * linked worktrees outside the configured directory tree. Same cascade the bank name resolves
+ * through, session root included, so approval and identity cannot disagree about which repo a
+ * directory belongs to. */
+function lookupDirectories(config: BankConfig, directory: string, sessionRoot = ""): string[] {
+  const directories = [normalize(directory)];
+  if (config.resolveWorktrees ?? true) {
+    const root = mainWorktreeRoot(directory, sessionRoot);
+    const normalizedRoot = root ? normalize(root) : "";
+    if (normalizedRoot && normalizedRoot !== directories[0]) directories.push(normalizedRoot);
+  }
+  return directories;
+}
+
 /**
  * Whether memory may run for this directory at all.
  *
@@ -177,10 +207,17 @@ function mapLookup(map: Record<string, string>, directory: string): string | und
 export function isOptedIn(config: BankConfig, directory: string): boolean {
   if (!config.optInOnly) return true;
   if (!directory) return false;
-  const cwd = normalize(directory);
-  if ((config.optInPaths ?? []).some((dir) => dir && isWithin(cwd, configuredDir(dir))))
+  const directories = lookupDirectories(config, directory);
+  if (
+    directories.some((candidate) =>
+      (config.optInPaths ?? []).some(
+        (configured) => configured && isWithin(candidate, configuredDir(configured))
+      )
+    )
+  )
     return true;
-  return Boolean(config.mapPathToBank && mapLookup(config.mapPathToBank, directory));
+  const pathMap = config.mapPathToBank;
+  return Boolean(pathMap && directories.some((candidate) => mapLookup(pathMap, candidate)));
 }
 
 /** Derive the bank id for a working directory (see module doc for the resolution order). */
@@ -189,11 +226,18 @@ export function deriveBankId(
   directory: string,
   harness = "coding",
   /** Where the SESSION started, when the caller knows it (hook runtimes do — see
-   *  `sessionRootDir`). Used only where the live directory yields no project: see gitProjectName. */
+   *  `sessionRootDir`). A rescue for a live directory git cannot name: it resolves both the
+   *  project the bank is named after (gitProjectName) and the checkout whose `mapPathToBank`
+   *  entry this directory inherits (lookupDirectories). */
   sessionRoot?: string
 ): string {
+  const pathMap = config.mapPathToBank;
   const mapped =
-    directory && config.mapPathToBank ? mapLookup(config.mapPathToBank, directory) : undefined;
+    directory && pathMap
+      ? lookupDirectories(config, directory, sessionRoot)
+          .map((candidate) => mapLookup(pathMap, candidate))
+          .find((bank) => bank !== undefined)
+      : undefined;
   if (mapped) return mapped;
 
   // dynamic by default — but an explicit bankId (without dynamicBankId: true) means "static".

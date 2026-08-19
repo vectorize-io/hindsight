@@ -539,6 +539,7 @@
       "progress": "Progreso",
       "lastHeartbeat": "Último latido"
     },
+    "outcomeDetails": "Detalles del resultado",
     "metadata": "Metadatos",
     "error": "Error",
     "rawPayloadParentHelp": "Esta es una operación principal: la carga útil sin procesar se almacena en cada sublote. Abre una operación secundaria para inspeccionar su carga útil.",

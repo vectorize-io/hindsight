@@ -539,6 +539,7 @@
       "progress": "進捗",
       "lastHeartbeat": "最終更新"
     },
+    "outcomeDetails": "結果の詳細",
     "metadata": "メタデータ",
     "error": "エラー",
     "rawPayloadParentHelp": "これは親操作です。生のペイロードは各サブバッチに保存されています。子操作を開いてペイロードを確認してください。",

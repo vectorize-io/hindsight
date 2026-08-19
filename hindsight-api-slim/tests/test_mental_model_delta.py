@@ -116,6 +116,48 @@ def patch_llm_call(monkeypatch):
     return _install
 
 
+async def _seed_fact_row(memory: MemoryEngine, bank_id: str, text: str) -> str:
+    """Insert one real memory and return its id.
+
+    Canned ``based_on`` entries have to name rows that actually exist: a refresh now
+    checks its stored grounding against the live memories and treats a document whose
+    citations resolve to nothing as a restored/copied bank rather than as evidence
+    about this one (see ``reflect.retractions``). Synthetic ids would trip that.
+    """
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.memories import get_memories
+
+    store = get_memories()
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        unit_ids = await store.insert_facts(
+            conn=conn,
+            ops=memory._backend.ops,
+            bank_id=bank_id,
+            facts=[
+                SimpleNamespace(
+                    fact_text=text,
+                    embedding=memory.embeddings.encode([text])[0],
+                    fact_type="observation",
+                    tags=[],
+                    context=None,
+                    document_id=None,
+                    chunk_id=None,
+                    metadata=None,
+                    observation_scopes=None,
+                    entities=[],
+                    causal_relations=[],
+                    occurred_start=None,
+                    occurred_end=None,
+                    mentioned_at=None,
+                )
+            ],
+            document_id=None,
+        )
+    return unit_ids[0]
+
+
 class TestDeltaRefreshPlumbing:
     """Deterministic tests that verify the branching/plumbing of delta-mode refresh."""
 
@@ -728,13 +770,16 @@ class TestDeltaRefreshPlumbing:
             request_context=request_context,
         )
 
+        old_id = await _seed_fact_row(memory, bank_id, "Alice has been the team lead since 2019")
+        new_id = await _seed_fact_row(memory, bank_id, "Bob joined the team as junior engineer")
+
         # First refresh seeds prior based_on with an OLD fact (zero ops applied).
         patch_reflect(
             memory,
             text="ignored — delta keeps existing",
             facts=[
                 {
-                    "id": "obs-old-alice",
+                    "id": old_id,
                     "text": "Alice has been the team lead since 2019",
                     "type": "observation",
                     "context": None,
@@ -746,7 +791,7 @@ class TestDeltaRefreshPlumbing:
             bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
         )
         first_based_on = (first.get("reflect_response") or {}).get("based_on") or {}
-        assert "obs-old-alice" in {f.get("id") for f in first_based_on.get("observation", [])}
+        assert old_id in {f.get("id") for f in first_based_on.get("observation", [])}
 
         # Second refresh brings only a NEW fact.
         patch_reflect(
@@ -754,7 +799,7 @@ class TestDeltaRefreshPlumbing:
             text="# Team\n\nAlice is the lead. Bob joined.",
             facts=[
                 {
-                    "id": "obs-new-bob",
+                    "id": new_id,
                     "text": "Bob joined the team as junior engineer",
                     "type": "observation",
                     "context": None,
@@ -777,16 +822,16 @@ class TestDeltaRefreshPlumbing:
         assert len(llm_calls) == 1
         user_msg = llm_calls[0]["messages"][1]["content"]
         # The NEW fact is sent to the delta call...
-        assert "obs-new-bob" in user_msg
+        assert new_id in user_msg
         assert "Bob joined the team" in user_msg
         # ...but the accumulated OLD fact must NOT be re-sent (the regression).
-        assert "obs-old-alice" not in user_msg
+        assert old_id not in user_msg
         assert "Alice has been the team lead since 2019" not in user_msg
 
         # based_on still ACCUMULATES both facts for grounding/audit.
         based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
         obs_ids = {f.get("id") for f in based_on.get("observation", [])}
-        assert obs_ids == {"obs-new-bob", "obs-old-alice"}
+        assert obs_ids == {new_id, old_id}
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,7 +25,10 @@ describe("optInOnly", () => {
     }
   });
 
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    delete process.env.CLAUDE_PROJECT_DIR;
+  });
 
   it("allows everything when it is off — the zero-setup default is unchanged", () => {
     const cfg = resolveConfig({});
@@ -52,6 +55,152 @@ describe("optInOnly", () => {
     const cfg = resolveConfig({ optInOnly: true, mapPathToBank: { [approved]: "client-x" } });
     expect(isOptedIn(cfg, approved)).toBe(true);
     expect(isOptedIn(cfg, other)).toBe(false);
+  });
+
+  it("carries path approval and bank mapping from a checkout to its linked worktree", () => {
+    const worktree = join(root, "external-worktrees", "client-x");
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "seed",
+      ],
+      { cwd: approved }
+    );
+    mkdirSync(join(root, "external-worktrees"), { recursive: true });
+    execFileSync("git", ["worktree", "add", "-q", "-b", "linked", worktree], { cwd: approved });
+
+    const checkoutParent = join(realpathSync(root), "work");
+    const byPath = resolveConfig({ optInOnly: true, optInPaths: [checkoutParent] });
+    expect(isOptedIn(byPath, worktree)).toBe(true);
+
+    const byMap = resolveConfig({
+      optInOnly: true,
+      mapPathToBank: { [checkoutParent]: "client-x" },
+    });
+    expect(isOptedIn(byMap, worktree)).toBe(true);
+    expect(deriveBankId(byMap, worktree, "codex")).toBe("client-x");
+
+    const nested = join(worktree, "src", "deep");
+    mkdirSync(nested, { recursive: true });
+    expect(isOptedIn(byMap, nested)).toBe(true);
+    expect(deriveBankId(byMap, nested, "codex")).toBe("client-x");
+
+    rmSync(nested, { recursive: true });
+    expect(isOptedIn(byMap, nested)).toBe(true);
+    expect(deriveBankId(byMap, nested, "codex")).toBe("client-x");
+
+    const worktreeOverride = resolveConfig({
+      optInOnly: true,
+      mapPathToBank: {
+        [checkoutParent]: "client-x",
+        [worktree]: "client-x-experiment",
+      },
+    });
+    expect(deriveBankId(worktreeOverride, worktree, "codex")).toBe("client-x-experiment");
+
+    execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: approved });
+    process.env.CLAUDE_PROJECT_DIR = approved;
+    expect(isOptedIn(byPath, worktree)).toBe(true);
+    expect(isOptedIn(byMap, worktree)).toBe(true);
+    expect(deriveBankId(byMap, worktree, "claude-code")).toBe("client-x");
+  });
+
+  // The session root reaches the removed worktree for EVERY harness; CLAUDE_PROJECT_DIR only
+  // rescues Claude Code. The bank name has always resolved through it — the mapping used to drop
+  // it, so a Codex session in a removed worktree fell off its mapped bank while the same session
+  // under Claude Code kept it.
+  it("resolves a removed worktree's mapping from the session root, with no harness env var", () => {
+    const worktree = join(root, "external-worktrees", "session-rooted");
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "seed",
+      ],
+      { cwd: approved }
+    );
+    mkdirSync(join(root, "external-worktrees"), { recursive: true });
+    execFileSync("git", ["worktree", "add", "-q", "-b", "session-rooted", worktree], {
+      cwd: approved,
+    });
+    execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: approved });
+
+    const cfg = resolveConfig({
+      optInOnly: true,
+      mapPathToBank: { [join(realpathSync(root), "work")]: "client-x" },
+    });
+    expect(process.env.CLAUDE_PROJECT_DIR).toBeUndefined();
+    expect(deriveBankId(cfg, worktree, "codex", approved)).toBe("client-x");
+    // Without the session root there is nothing left to resolve the vanished path by.
+    expect(deriveBankId(cfg, worktree, "codex")).not.toBe("client-x");
+  });
+
+  it("keeps a linked worktree denied when its checkout is outside every approved path", () => {
+    const worktree = join(root, "external-worktrees", "throwaway");
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "seed",
+      ],
+      { cwd: other }
+    );
+    mkdirSync(join(root, "external-worktrees"), { recursive: true });
+    execFileSync("git", ["worktree", "add", "-q", "-b", "linked", worktree], { cwd: other });
+
+    const cfg = resolveConfig({
+      optInOnly: true,
+      mapPathToBank: { [join(realpathSync(root), "work")]: "client-x" },
+    });
+    expect(isOptedIn(cfg, worktree)).toBe(false);
+  });
+
+  it("does not carry checkout approval to linked worktrees when resolution is disabled", () => {
+    const worktree = join(root, "external-worktrees", "client-x");
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "seed",
+      ],
+      { cwd: approved }
+    );
+    mkdirSync(join(root, "external-worktrees"), { recursive: true });
+    execFileSync("git", ["worktree", "add", "-q", "-b", "linked", worktree], { cwd: approved });
+
+    const cfg = resolveConfig({
+      optInOnly: true,
+      optInPaths: [join(realpathSync(root), "work")],
+      mapPathToBank: { [join(realpathSync(root), "work")]: "client-x" },
+      resolveWorktrees: false,
+    });
+    expect(isOptedIn(cfg, worktree)).toBe(false);
+    expect(deriveBankId(cfg, worktree, "codex")).toBe("coding-agent::client-x");
   });
 
   it("does not let a bare bankId approve anything", () => {

@@ -9,6 +9,7 @@ BaseException'), which happened when last_error was only set in the
 BadRequestError handler and not for non-dict JSON responses.
 """
 
+import dataclasses
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -134,22 +135,23 @@ async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
 
 def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = None):
     """Build a minimal HindsightConfig for fact extraction tests."""
-    from hindsight_api.config import HindsightConfig
+    from hindsight_api.config import _get_raw_config
 
-    cfg = MagicMock(spec=HindsightConfig)
-    cfg.retain_llm_max_retries = retain_llm_max_retries
-    cfg.llm_max_retries = llm_max_retries
-    cfg.retain_llm_initial_backoff = None
-    cfg.llm_initial_backoff = 0.0
-    cfg.retain_llm_max_backoff = None
-    cfg.llm_max_backoff = 0.0
-    cfg.retain_max_completion_tokens = 8192
-    cfg.retain_extraction_mode = "concise"
-    cfg.retain_extract_causal_links = False
-    cfg.retain_mission = None
-    cfg.llm_temperature_retain = 0.1
-    cfg.llm_strict_schema_retain = False
-    return cfg
+    return dataclasses.replace(
+        _get_raw_config(),
+        retain_llm_max_retries=retain_llm_max_retries,
+        llm_max_retries=llm_max_retries,
+        retain_llm_initial_backoff=None,
+        llm_initial_backoff=0.0,
+        retain_llm_max_backoff=None,
+        llm_max_backoff=0.0,
+        retain_max_completion_tokens=8192,
+        retain_extraction_mode="concise",
+        retain_extract_causal_links=False,
+        retain_mission=None,
+        llm_temperature_retain=0.1,
+        llm_strict_schema_retain=False,
+    )
 
 
 def _make_llm_config(mock_response):

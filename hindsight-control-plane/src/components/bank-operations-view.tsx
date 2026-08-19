@@ -64,6 +64,14 @@ interface ChildOperationStatus {
   error_message: string | null;
 }
 
+/** Per-operation-type outcome payload the API reports under `details`.
+ *  Discriminated by its own `operation_type`; refresh is the only type today. */
+interface RefreshOperationDetail {
+  operation_type: "refresh_mental_model";
+  outcome: string;
+  failure_reason?: string | null;
+}
+
 type OperationDetails =
   | {
       operation_id: string;
@@ -81,6 +89,7 @@ type OperationDetails =
         is_parent?: boolean;
         [key: string]: any;
       } | null;
+      details?: RefreshOperationDetail | null;
       child_operations?: ChildOperationStatus[] | null;
       task_payload?: Record<string, unknown> | null;
       error?: never; // Not present in success case
@@ -96,6 +105,7 @@ type OperationDetails =
       error_message?: never;
       progress?: never;
       result_metadata?: never;
+      details?: never;
       child_operations?: never;
       task_payload?: never;
     };
@@ -926,6 +936,18 @@ export function BankOperationsView() {
                           {t("action.download")}
                         </Button>
                       )}
+                    </div>
+                  )}
+
+                  {/* Outcome details (typed, per-operation-type) */}
+                  {selectedOperation.details && (
+                    <div>
+                      <div className="text-sm font-medium text-muted-foreground mb-2">
+                        {t("outcomeDetails")}
+                      </div>
+                      <pre className="rounded-lg border bg-muted/30 p-3 text-xs font-mono overflow-x-auto max-h-96 whitespace-pre-wrap break-words">
+                        {JSON.stringify(selectedOperation.details, null, 2)}
+                      </pre>
                     </div>
                   )}
 

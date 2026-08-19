@@ -2987,7 +2987,7 @@ export type MemoryItem = {
    *
    * When the content occurred. Accepts an ISO 8601 datetime string (e.g. '2024-01-15T10:30:00Z'), null/omitted (defaults to now), or the special string 'unset' to explicitly store without any timestamp (use this for timeless content such as fictional documents or static reference material).
    */
-  timestamp?: string | null;
+  timestamp?: string | string | null;
   /**
    * Context
    */
@@ -3159,6 +3159,7 @@ export type MentalModelDryRunRefreshResult = {
    */
   outcome:
     | "content_written"
+    | "content_unchanged"
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
     | "refresh_failed_delta_not_applied";
@@ -3218,6 +3219,10 @@ export type MentalModelDryRunRefreshResult = {
    * Structured operations emitted, in delta mode.
    */
   delta_operations?: MentalModelDeltaOperations | null;
+  /**
+   * Facts the document cites that no longer exist, and what a real refresh would do about them.
+   */
+  retraction?: MentalModelRetraction | null;
   /**
    * Execution trace of the run, always included for a dry run.
    */
@@ -3391,6 +3396,7 @@ export type MentalModelRefreshTrace = {
    */
   outcome:
     | "content_written"
+    | "content_unchanged"
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
     | "refresh_failed_delta_not_applied";
@@ -3410,6 +3416,10 @@ export type MentalModelRefreshTrace = {
    * Structured operations emitted, in delta mode.
    */
   delta_operations?: MentalModelDeltaOperations | null;
+  /**
+   * Facts the document cited that no longer exist, when the refresh found any.
+   */
+  retraction?: MentalModelRetraction | null;
   /**
    * Token usage across the refresh's LLM calls.
    */
@@ -3521,6 +3531,43 @@ export type MentalModelResponse = {
    * True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at — the same check that decides whether a scheduled refresh does any work, so a model flagged here is one a refresh would actually rewrite. Populated on both the single read and the list. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag.
    */
   is_stale?: boolean | null;
+};
+
+/**
+ * MentalModelRetraction
+ *
+ * Facts the document cited that no longer exist, and what was done about them.
+ *
+ * A retraction is the one refresh input that is *invisible* in every other
+ * report: the fact is gone from the bank, so it appears in no recall, no tool
+ * call, and no supporting-fact list. Without this, a refresh that quietly
+ * deleted a paragraph — or quietly declined to — leaves no evidence of why.
+ */
+export type MentalModelRetraction = {
+  /**
+   * Fact Ids
+   *
+   * Ids the document's based_on cites that no longer exist in the bank.
+   */
+  fact_ids?: Array<string>;
+  /**
+   * Fact Texts
+   *
+   * What those facts said, as the document recorded them. The rows themselves are gone — an observation swept away with its source keeps no history — so this copy is the only surviving record.
+   */
+  fact_texts?: Array<string>;
+  /**
+   * Applied
+   *
+   * Whether the pass that removes them ran to completion (zero edits still counts).
+   */
+  applied: boolean;
+  /**
+   * Deferred Reason
+   *
+   * Why removal was postponed, when it was. Re-ingested facts return under new ids once consolidation catches up, so a retraction seen while facts are still pending is not acted on — removing content before the replacements land would delete claims that are still true.
+   */
+  deferred_reason?: string | null;
 };
 
 /**
@@ -3921,6 +3968,10 @@ export type OperationResponse = {
    */
   mental_model_id?: string | null;
   /**
+   * Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field — new operation types add their own shape here rather than flattening fields onto the operation.
+   */
+  details?: RefreshMentalModelOperationDetails | null;
+  /**
    * Created At
    */
   created_at: string;
@@ -4014,6 +4065,10 @@ export type OperationStatusResponse = {
   result_metadata?: {
     [key: string]: unknown;
   } | null;
+  /**
+   * Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field — new operation types add their own shape here rather than flattening fields onto the operation.
+   */
+  details?: RefreshMentalModelOperationDetails | null;
   /**
    * Child Operations
    *
@@ -4607,6 +4662,54 @@ export type ReflectTrace = {
    * LLM calls made during reflection
    */
   llm_calls?: Array<ReflectLlmCall>;
+};
+
+/**
+ * RefreshMentalModelOperationDetails
+ *
+ * What a refresh_mental_model operation did, on the operation record itself.
+ *
+ * Reported under an async operation's ``details``, which is keyed by
+ * ``operation_type``: each type that has a typed outcome to report contributes
+ * its own shape there, rather than every type's fields being flattened onto the
+ * operation. Today refresh is the only one.
+ *
+ * This exists because ``result_metadata`` — the only per-refresh record kept
+ * indefinitely — could not say what a refresh did (#3274), and is documented as
+ * debug-only and unstable, so it is not something a caller can build on.
+ */
+export type RefreshMentalModelOperationDetails = {
+  /**
+   * Operation Type
+   *
+   * Discriminator: which operation type this detail describes.
+   */
+  operation_type?: "refresh_mental_model";
+  /**
+   * Outcome
+   *
+   * What the refresh did with the document: rewrote it (`content_written`), produced a document identical to the stored one (`content_unchanged`), had no new facts to read at all (`content_preserved_no_new_facts`), or refused to write (the `refresh_failed_*` values).
+   */
+  outcome:
+    | "content_written"
+    | "content_unchanged"
+    | "content_preserved_no_new_facts"
+    | "refresh_failed_empty_candidate"
+    | "refresh_failed_delta_not_applied"
+    | "refresh_failed_structured_output";
+  /**
+   * Failure Reason
+   *
+   * Why the refresh refused to write, finer-grained than the outcome — it distinguishes an op call that failed from one whose operations were all rejected, and from a baseline document that could not be read. Null unless `outcome` is one of the `refresh_failed_*` values.
+   */
+  failure_reason?:
+    | "empty_candidate"
+    | "structured_doc_unreadable"
+    | "delta_ops_failed"
+    | "delta_ops_all_skipped"
+    | "delta_not_applied"
+    | "structured_output_failed"
+    | null;
 };
 
 /**

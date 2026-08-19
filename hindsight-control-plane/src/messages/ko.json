@@ -539,6 +539,7 @@
       "progress": "진행 상황",
       "lastHeartbeat": "마지막 신호"
     },
+    "outcomeDetails": "결과 세부 정보",
     "metadata": "메타데이터",
     "error": "오류",
     "rawPayloadParentHelp": "이 작업은 상위 작업입니다. 원시 페이로드는 각 하위 배치에 저장됩니다. 하위 작업을 열어 페이로드를 확인하세요.",

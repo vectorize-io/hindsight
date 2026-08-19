@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.operation_progress import OperationProgress
+from hindsight_client_api.models.refresh_mental_model_operation_details import RefreshMentalModelOperationDetails
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -33,6 +34,7 @@ class OperationResponse(BaseModel):
     document_id: Optional[StrictStr] = None
     filename: Optional[StrictStr] = None
     mental_model_id: Optional[StrictStr] = None
+    details: Optional[RefreshMentalModelOperationDetails] = None
     created_at: StrictStr
     updated_at: Optional[StrictStr] = None
     status: StrictStr
@@ -40,7 +42,7 @@ class OperationResponse(BaseModel):
     retry_count: Optional[StrictInt] = None
     next_retry_at: Optional[StrictStr] = None
     progress: Optional[OperationProgress] = None
-    __properties: ClassVar[List[str]] = ["id", "task_type", "items_count", "document_id", "filename", "mental_model_id", "created_at", "updated_at", "status", "error_message", "retry_count", "next_retry_at", "progress"]
+    __properties: ClassVar[List[str]] = ["id", "task_type", "items_count", "document_id", "filename", "mental_model_id", "details", "created_at", "updated_at", "status", "error_message", "retry_count", "next_retry_at", "progress"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -81,6 +83,9 @@ class OperationResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of details
+        if self.details:
+            _dict['details'] = self.details.to_dict()
         # override the default output from pydantic by calling `to_dict()` of progress
         if self.progress:
             _dict['progress'] = self.progress.to_dict()
@@ -98,6 +103,11 @@ class OperationResponse(BaseModel):
         # and model_fields_set contains the field
         if self.mental_model_id is None and "mental_model_id" in self.model_fields_set:
             _dict['mental_model_id'] = None
+
+        # set to None if details (nullable) is None
+        # and model_fields_set contains the field
+        if self.details is None and "details" in self.model_fields_set:
+            _dict['details'] = None
 
         # set to None if updated_at (nullable) is None
         # and model_fields_set contains the field
@@ -142,6 +152,7 @@ class OperationResponse(BaseModel):
             "document_id": obj.get("document_id"),
             "filename": obj.get("filename"),
             "mental_model_id": obj.get("mental_model_id"),
+            "details": RefreshMentalModelOperationDetails.from_dict(obj["details"]) if obj.get("details") is not None else None,
             "created_at": obj.get("created_at"),
             "updated_at": obj.get("updated_at"),
             "status": obj.get("status"),

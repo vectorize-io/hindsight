@@ -20,6 +20,8 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
+
 import random
 import uuid
 from types import SimpleNamespace
@@ -106,7 +108,10 @@ class FakeConn:
 @pytest.fixture
 def search_path(monkeypatch):
     dialect = FakeDialect()
-    config = SimpleNamespace(
+    from hindsight_api.config import _get_raw_config
+
+    config = dataclasses.replace(
+        _get_raw_config(),
         semantic_min_similarity=0.0,
         bm25_min_score=0.0,
         text_search_extension="native",

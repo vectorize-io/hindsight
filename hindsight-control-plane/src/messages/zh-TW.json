@@ -539,6 +539,7 @@
       "progress": "進度",
       "lastHeartbeat": "最後心跳"
     },
+    "outcomeDetails": "結果詳情",
     "metadata": "中繼資料",
     "error": "錯誤",
     "rawPayloadParentHelp": "這是父級操作，原始酬載存放在每個子批次上。開啟子操作以檢視其酬載。",

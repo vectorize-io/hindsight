@@ -539,6 +539,7 @@
       "progress": "Progression",
       "lastHeartbeat": "Dernier signal"
     },
+    "outcomeDetails": "Détails du résultat",
     "metadata": "Métadonnées",
     "error": "Erreur",
     "rawPayloadParentHelp": "Il s'agit d'une opération parente : la charge utile brute est stockée dans chaque sous-lot. Ouvrez une opération enfant pour inspecter sa charge utile.",

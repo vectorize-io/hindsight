@@ -85,19 +85,19 @@ dependencies = [
     "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "protobuf>=7.35.1", # JSON recursion depth bypass fix (>=6.33.5); requires otel>=1.44 (proto <1.44 caps protobuf<7.0)
     "pillow>=12.3.0", # Multiple HIGH image parsing vulnerabilities fixed in 12.3.0
-    "cryptography>=48.0.1", # GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
+    "cryptography>=50.0.0", # GHSA-g6cj-pr64-35w5: Bleichenbacher oracle in PKCS#7 EnvelopedData decryption (supersedes the >=48.0.1 GHSA-537c-gmf6-5ccf floor). GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix
     "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
     "orjson>=3.11.6", # Unbounded recursion DoS fix
     "python-multipart>=0.0.22", # Arbitrary file write via non-default configuration fix
     "tornado>=6.5.5", # DoS multipart/incomplete cookie validation fix
-    "aiohttp>=3.13.3", # Multiple DoS vulnerabilities
+    "aiohttp>=3.14.3", # GHSA-cq5v-8q36-5273: OOB heap read in the C response parser, plus earlier DoS fixes
     "pygments>=2.20.0", # ReDoS via inefficient GUID regex fix
     "claude-agent-sdk>=0.2.82",
     "boto3>=1.42.74",
     "croniter>=2.0.0", # Cron parsing for scheduled mental model refresh
-    "json-repair>=0.30.0", # Structural repair of malformed LLM JSON (last-resort parse fallback)
+    "json-repair>=0.63.2", # Structural repair of malformed LLM JSON (last-resort parse fallback); >=0.60.1 also fixes the circular-$ref unbounded-CPU DoS
 ]
 
 [project.optional-dependencies]

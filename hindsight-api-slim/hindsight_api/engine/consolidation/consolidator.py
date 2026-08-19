@@ -217,7 +217,7 @@ def _dedup_active(config: Any) -> bool:
     skipped — it behaves exactly as it did before this feature, regardless of the configured
     threshold. This is why the feature can ship enabled-by-default without breaking Oracle.
     """
-    if config is None or getattr(config, "consolidation_dedup_threshold", 1.0) >= 1.0:
+    if config is None or config.consolidation_dedup_threshold >= 1.0:
         return False
     return get_config().database_backend != "oracle"
 
@@ -962,7 +962,7 @@ def _effective_scope_limit(config: Any, fact_tags: list[str]) -> int:
     """
     if config is None:
         return -1
-    for rule in _parse_scope_limit_rules(getattr(config, "observation_scope_limits", None)):
+    for rule in _parse_scope_limit_rules(config.observation_scope_limits):
         if _scope_matches_globs(rule.globs, fact_tags):
             return rule.limit
     return config.max_observations_per_scope
@@ -2900,7 +2900,7 @@ async def _consolidate_batch_with_llm(
     # note, and response_schema (all bank/batch-variable) are kept OUT of the
     # cached prefix so one cache serves all and it never busts within a run.
     system_prompt = build_consolidation_system_prompt(
-        llm_output_language=getattr(config, "llm_output_language", None),
+        llm_output_language=config.llm_output_language if config is not None else None,
     )
     user_content = build_consolidation_input(
         facts_text=facts_lines,
