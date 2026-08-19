@@ -78,6 +78,20 @@ class StoreWriteUnavailable(RuntimeError):
     retry_after: int = 30
 
 
+class StoreWriteConflict(RuntimeError):
+    """A conditional write lost its race: the state it was based on moved before it committed.
+
+    Raised by a store whose write carried a precondition — the read-modify-write case, where the
+    caller read something, derived a new value from it, and asked the store to accept that value
+    only if nothing had changed underneath. Nothing was written.
+
+    Distinct from :class:`StoreWriteUnavailable`: that one means "not now, try again shortly" and
+    the same write will succeed unchanged. This one means the write is STALE — retrying it as-is
+    would re-apply a decision made on an old base. The caller has to re-read and redo the work,
+    which is what makes concurrent appends to one document safe rather than last-writer-wins.
+    """
+
+
 # Keys used in an implementation's opaque metadata bag for the `memory_units`
 # columns it has no first-class model of. These round-trip verbatim: they are
 # stored without interpretation and returned on every hit, which is what lets
@@ -173,6 +187,10 @@ class StoredMemory:
     occurred_end: datetime | None = None
     mentioned_at: datetime | None = None
     created_at: datetime | None = None
+    # Write time, as opposed to the four content times above: when the memory was last
+    # written, which is the watermark a caller compares against to detect a change. Distinct
+    # from `created_at`, which never moves after the first write.
+    updated_at: datetime | None = None
     # Which observation scopes a memory is routed to. Consolidation reads it off
     # its candidates to decide which observation each one belongs in, so it has
     # to survive the round trip through the store.
@@ -183,6 +201,11 @@ class StoredMemory:
     # Derived kNN edges `(target_unit_id, weight)`, populated only when the read
     # asked for them — the ranking path never does.
     semantic_edges: list[tuple[str, float]] = field(default_factory=list)
+    # Intrinsic causal edges the memory was written with, same shape the write model
+    # carries. Populated only when the read asked for edges. A store that keeps memories
+    # outside SQL has no `memory_links` table to reconstruct these from, so without them
+    # on the read model an export of such a bank silently loses every causal relation.
+    causal_edges: list[CausalEdgeRecord] = field(default_factory=list)
 
 
 @dataclass
@@ -495,6 +518,40 @@ class MemoriesExtension(Extension, ABC):
     #: the inline SQL. Cold, never-searched, key-based — see docs/documents-chunks.md.
     owns_document_store: bool = False
 
+    #: Whether this store commits the ENTIRE retain — entity resolution/minting, the memory upserts,
+    #: and the document replace — in ONE atomic server-side call (its ``retain`` method). Default
+    #: False: the host runs its normal retain (Phase-1 entity resolution in SQL, then the write). A
+    #: store that sets this True resolves entity NAMES itself and needs no Postgres connection phase,
+    #: so the orchestrator skips SQL entity resolution + the documents/chunks/entities rows + the
+    #: commit witness and issues one ``retain`` instead. Bank-scoped via
+    #: :meth:`store_owned_retain_for`.
+    store_owned_retain: bool = False
+
+    def store_owned_retain_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`store_owned_retain`. Defaults to the class attribute; a router
+        that keeps some banks in a store-owned backend and others in SQL overrides it to answer PER
+        BANK. See :meth:`owns_document_store_for`."""
+        return self.store_owned_retain
+
+    async def retain(
+        self,
+        bank_id: str,
+        unit_ids: list[str],
+        facts: list,
+        *,
+        document_id: str | None = None,
+        unit_entity_names: dict[str, list[str]] | None = None,
+        replace_document_id: str = "",
+        resolve_threshold: float = 0.0,
+    ):
+        """Commit an entire retain in one server-side call — resolve/mint the ``unit_entity_names``
+        against the store's own registry, write the memories with the resulting entity ids, and
+        (when ``replace_document_id`` is set) tombstone the document's prior version — all atomically.
+        Only a store advertising :attr:`store_owned_retain` implements this; the orchestrator calls it
+        exactly when :meth:`store_owned_retain_for` is true, so the default never runs. It exists on
+        the interface so a routing extension delegates it automatically (see RoutingMemories)."""
+        raise NotImplementedError("this store does not support a store-owned retain")
+
     def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
         """Per-bank form of :attr:`writes_memory_rows_in_sql`. Defaults to the class attribute, so a
         single-store extension needs no override. A store that keeps different banks in different
@@ -635,6 +692,7 @@ class MemoriesExtension(Extension, ABC):
         facts: list,
         document_id: str | None = None,
         unit_entity_ids: dict[str, list[str]] | None = None,
+        txn: "MemoryTxn | None" = None,
     ) -> None:
         """Index facts whose ids came from a deferred :meth:`insert_facts`.
 
@@ -689,10 +747,23 @@ class MemoriesExtension(Extension, ABC):
         file_content_type: str = "",
         file_original_name: str = "",
         txn: "MemoryTxn | None" = None,
+        expect_watermark: "int | None" = None,
     ) -> None:
         """Store (or replace) a document's bodies: its extracted text, its ordered chunk texts, and
         optionally the original uploaded file. Idempotent by content — re-ingest re-uploads only
-        what changed. Under a ``txn`` the record commits atomically with the retain's facts."""
+        what changed. Under a ``txn`` the record commits atomically with the retain's facts.
+
+        ``chunk_texts`` REPLACES the document's chunk list, so a caller holding only part of a
+        document (a retain sub-batch) must send the whole list, not its slice — see
+        ``_store_document_bodies``, which restores the prefix before calling this.
+
+        ``expect_watermark`` makes this a compare-and-set: the write is applied only if the store's
+        state is still the one the caller read (the ``watermark`` from
+        :meth:`get_document_record`), and otherwise raises :class:`StoreWriteConflict` having
+        written nothing. This is what makes a read-modify-write — appending onto the stored body —
+        safe against a concurrent one, which without it silently erases the other's turn. ``None``
+        writes unconditionally. A store with no notion of a watermark ignores it, and is expected
+        to serialize such writes some other way."""
         raise NotImplementedError
 
     async def document_content_hash(self, *, bank_id: str, document_id: str) -> "str | None":
@@ -700,12 +771,107 @@ class MemoriesExtension(Extension, ABC):
         raise NotImplementedError
 
     async def get_document_record(self, *, bank_id: str, document_id: str, include_text: bool = False) -> "dict | None":
-        """A document's metadata (and, if asked, its extracted ``original_text``), or ``None``."""
+        """A document's metadata (and, if asked, its extracted ``original_text``), or ``None``.
+
+        A returned record may carry a ``watermark``: an opaque token for the store state this read
+        observed, to hand back as ``put_document(expect_watermark=...)`` when the write is derived
+        from what was just read. Absent for a store that does not support conditional writes."""
+        raise NotImplementedError
+
+    async def list_documents(
+        self,
+        *,
+        bank_id: str,
+        search_query: "str | None" = None,
+        tags: "list[str] | None" = None,
+        tags_match: str = "any_strict",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """Page this bank's documents from the store's OWN registry — the ``{items, total, limit,
+        offset}`` shape the documents browser expects. Only a store that owns its document metadata
+        overrides this (a Postgres-backed store lists from the SQL ``documents`` table instead, so
+        the engine only calls this for an ``owns_document_store`` store). Default raises so a
+        mis-routed call is loud rather than silently empty.
+
+        ``tags``/``tags_match`` filter by the documents' tags with the same modes and meanings as
+        anywhere else, and ``total`` must count what MATCHES — a page filtered after the fact would
+        report the unfiltered total and drop every match past the window."""
+        raise NotImplementedError
+
+    async def count_documents(self, *, bank_id: str) -> int:
+        """This bank's document count, from the store's own registry — the bank-stats document
+        total. Only an ``owns_document_store`` store overrides this (a Postgres store counts the
+        SQL ``documents`` table instead); the engine only calls it for a store that owns its docs."""
+        raise NotImplementedError
+
+    async def get_entity_graph(self, *, bank_id: str, limit: int = 1000, min_count: int = 1) -> dict:
+        """The entity co-occurrence graph (``{nodes, edges, ...}``) from the store's OWN aggregate.
+        Only a store that owns its entities overrides this (a Postgres store reads its
+        ``entity_cooccurrences`` table); the engine calls it only for a store-owned bank, whose SQL
+        table is empty."""
         raise NotImplementedError
 
     async def get_chunk_text(self, *, bank_id: str, document_id: str, chunk_index: int) -> "str | None":
         """One chunk's text by position, or ``None`` if the document/index does not exist."""
         raise NotImplementedError
+
+    async def hydrate_results(self, *, bank_id: str, results: "list") -> None:
+        """Fill in the payload for retrieval results a store returned without one, IN PLACE.
+
+        Default: nothing to do. A store that returns fully-populated results from retrieval — the
+        Postgres one does — is already hydrated, and this costs it a single ``return``.
+
+        It exists because ranking does not need payloads. Fusion orders candidates by id and arm
+        score, and only the few that survive are ever read, so a store CAN return scores for the
+        wide arms and materialize the rest afterwards. A store that does so must populate at least
+        ``text`` here, and should also restore ``entity_ids`` — leaving it ``None`` sends recall down
+        the ``entity_map_for_units`` path, which re-fetches the very memories this just fetched.
+
+        Declared here rather than probed for, because a routing store generates its delegators from
+        this interface: a method that exists only on a concrete store is unreachable in a cloud
+        deployment, and the call silently does nothing. That has cost three optimisations already.
+        """
+        return None
+
+    async def count_memories_many(self, *, bank_ids: "list[str]", strong: bool = False) -> "dict[str, dict[str, int]]":
+        """Per-bank fact counts for MANY banks — ``{bank_id: {fact_type: count}}``.
+
+        A bank absent from the result has nothing to count, so one unknown bank cannot fail a page.
+
+        Declared here for the same reason as :meth:`get_chunk_texts`: a bank list wants a count for
+        every bank on the page, and the per-bank shape makes that a round-trip per bank. A store
+        that can answer them together overrides this; the default is the per-bank loop, which is
+        correct everywhere and merely saves nothing.
+
+        ``strong`` asks for read-your-writes. A store whose counts lag (because they come from a
+        periodically-refreshed index rather than a live read) may answer the default form from that
+        lagging view; the loop below ignores the flag because a per-bank count is already live.
+        """
+        out: dict[str, dict[str, int]] = {}
+        for bank_id in bank_ids:
+            counts = await self.count_memories(conn=None, fq_table=None, bank_id=bank_id)
+            if counts:
+                out[bank_id] = counts
+        return out
+
+    async def get_chunk_texts(self, *, bank_id: str, refs: "list[tuple[str, int]]") -> "list[str | None]":
+        """Many chunks' text at once — ``refs`` is ``(document_id, chunk_index)``.
+
+        Returns one entry per ref, in the SAME order, ``None`` where the chunk does not exist.
+
+        Declared here, not left to the store, because a chunk-hydrated recall wants one chunk from
+        each of many documents and the per-chunk shape makes that a round-trip per document. A store
+        that can fetch them together overrides this; the default below is correct for every store and
+        simply does not save anything.
+
+        **It has to be on this interface to be reachable.** A routing store generates its delegators
+        from the methods declared here, so a fetch-many that exists only on a concrete store is
+        invisible through the router — the call silently falls back and the optimisation is dead code
+        in exactly the deployment it was written for. That has now happened twice; see
+        ``store_owned_retain_for``.
+        """
+        return [await self.get_chunk_text(bank_id=bank_id, document_id=doc_id, chunk_index=idx) for doc_id, idx in refs]
 
     async def list_chunk_texts(self, *, bank_id: str, document_id: str) -> "list[str] | None":
         """Every chunk's text in order, or ``None`` if the document does not exist."""
@@ -713,6 +879,19 @@ class MemoriesExtension(Extension, ABC):
 
     async def count_chunks(self, *, bank_id: str, document_id: str) -> int:
         """How many chunks a document has (0 if it does not exist)."""
+        raise NotImplementedError
+
+    async def set_document_tags(self, *, bank_id: str, document_id: str, tags: "list[str]") -> None:
+        """Replace a document RECORD's tags, leaving its bodies alone.
+
+        Only an ``owns_document_store`` store implements this; a Postgres store updates its own
+        ``documents`` row instead, so the engine calls it only for a store-owned bank. It exists
+        because re-tagging must not mean re-uploading: the record already carries every body's
+        content hash, so a store can rewrite the record with new tags and move no bytes.
+
+        Without it, `update_document(tags=...)` changed the memories' tags and left the document
+        itself showing the old ones, which is the sort of half-applied edit that only surfaces in
+        the browser a week later."""
         raise NotImplementedError
 
     async def delete_document_record(self, *, bank_id: str, document_id: str, txn: "MemoryTxn | None" = None) -> None:
@@ -1212,6 +1391,7 @@ class MemoriesExtension(Extension, ABC):
         event_date,
         mentioned_at,
         entity_ids: list[str] | None,
+        entity_names: list[str] | None = None,
         txn=None,
     ) -> None:
         """Apply a curation field edit to a live memory.
@@ -1222,10 +1402,20 @@ class MemoriesExtension(Extension, ABC):
         embedding is *not* written here — the caller re-embeds from the new fields
         and calls :meth:`set_memory_embedding` after.
 
-        ``entity_ids`` is the resolved entity set the memory should now carry; a
-        store that keeps them on the memory writes them here, one that keeps them
-        in a join table has already re-linked them and ignores this. ``None`` means
-        the entity set was not part of this edit.
+        The new entity set for the memory is supplied one of two ways, and a store
+        uses whichever fits how it keeps its registry:
+
+        * ``entity_names`` — the raw names the edit resolved to. A store that owns
+          its entity registry resolves + mints these against its OWN registry
+          (exactly as its :meth:`retain` does) and rewrites the memory's entity
+          ids from the result, so a brand-new entity created by an edit lands in
+          that registry. When it is not ``None`` it is the authoritative set and
+          ``entity_ids`` is ignored.
+        * ``entity_ids`` — the already-resolved set, for a store whose registry is
+          the host's SQL (the host minted them and, for a join-table store, has
+          already re-linked them, so it ignores this).
+
+        Both ``None`` means the entity set was not part of this edit.
         """
         raise NotImplementedError
 

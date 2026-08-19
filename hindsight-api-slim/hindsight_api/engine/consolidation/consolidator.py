@@ -350,6 +350,7 @@ async def _dedup_adjudicate(
         await dedup_llm_config.call(
             messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
             response_format=_DedupDecision,
+            temperature=config.llm_temperature_consolidation,
             scope="consolidation_dedup",
             strict_schema=get_config().llm_strict_schema_consolidation,
         )
@@ -1481,8 +1482,19 @@ async def _run_consolidation_job(
             # they are durable-but-invisible in the external store while this batch runs its LLM work. The
             # witness row + decide happen in ONE short transaction at the end (below) — we must not
             # hold a Postgres transaction across the LLM calls in the sub-batch loop.
+            #
+            # A store that owns the whole retain (store_owned_retain) keeps ALL of this batch's memory
+            # writes — observation upserts/deletes and the mark_consolidated stamps — in ITS store, not
+            # Postgres, so there is nothing to make atomic with a Postgres witness. Skip the write-group
+            # entirely (``_batch_txn = None`` → the writes below are plain, immediately-visible writes).
+            # This is also why consolidation was the source of the undecided write-group txns that stall
+            # the store's indexer: mint-early / witness-late meant a crash or a sibling-cancel between
+            # mint and decide left a pending txn with no witness. With no txn there is nothing to leave
+            # undecided. The mental-model refresh-tag bookkeeping below becomes a plain Postgres write
+            # (best-effort rather than atomic-with-the-batch — a missed tag only defers a refresh).
             _txn_provider = get_memories()
-            _batch_txn = await _txn_provider.mint_txn(bank_id=bank_id, mutating=True)
+            _store_owned = _txn_provider.store_owned_retain_for(bank_id)
+            _batch_txn = None if _store_owned else await _txn_provider.mint_txn(bank_id=bank_id, mutating=True)
 
             try:
                 pending: list[list[dict[str, Any]]] = [llm_batch_local]
@@ -1597,11 +1609,13 @@ async def _run_consolidation_job(
                             txn=_batch_txn,
                         )
                     async with conn.transaction():
-                        await _txn_provider.write_txn_witness(_batch_txn, conn=conn, fq_table=fq_table)
+                        if _batch_txn is not None:
+                            await _txn_provider.write_txn_witness(_batch_txn, conn=conn, fq_table=fq_table)
                         # Persist this batch's mental-model refresh tags atomically with the
                         # witness, so they share the batch's fate: durable iff the batch is
                         # (#3411). Only the succeeded source facts — the ones just marked
-                        # consolidated — contribute a tag.
+                        # consolidated — contribute a tag. (Store-owned: no witness, so this is a
+                        # plain best-effort write; a missed tag only defers a mental-model refresh.)
                         if operation_id and succeeded_ids:
                             succeeded_set = {str(mem_id) for mem_id in succeeded_ids}
                             batch_tags = sorted(
@@ -1621,18 +1635,29 @@ async def _run_consolidation_job(
                 # task mid-batch instead of letting it run to completion. Kept OUTSIDE the
                 # decide(commit=True) below on purpose: once the witness has committed, the
                 # batch's fate is decided and an abort here would discard durable writes.
-                try:
-                    await _txn_provider.decide_txn(_batch_txn, commit=False)
-                except Exception:
-                    logger.warning(
-                        f"[CONSOLIDATION] bank={bank_id} failed to abort write-group for"
-                        f" llm_batch #{batch_num_local}; recovery sweep will resolve it",
-                        exc_info=True,
-                    )
+                # Store-owned batches hold no write-group (writes were plain and are already
+                # durable/visible); there is nothing to abort — consolidation is idempotent on retry.
+                if not _store_owned:
+                    try:
+                        await _txn_provider.decide_txn(_batch_txn, commit=False)
+                    except Exception:
+                        logger.warning(
+                            f"[CONSOLIDATION] bank={bank_id} failed to abort write-group for"
+                            f" llm_batch #{batch_num_local}; recovery sweep will resolve it",
+                            exc_info=True,
+                        )
                 raise
             # Postgres committed the witness: publish the batch's write-group. On a crash before
-            # here the writes stay invisible and the recovery sweep resolves them (spec §5).
-            await _txn_provider.decide_txn(_batch_txn, commit=True)
+            # here the writes stay invisible and the recovery sweep resolves them (spec §5). No-op for
+            # a store-owned batch (no write-group; its writes were already visible).
+            #
+            # Guarded on `_store_owned`, NOT on `_batch_txn is not None`: a store whose `mint_txn`
+            # legitimately returns None (Postgres does) still has its decide called, exactly as
+            # before this skip existed. Guarding on the handle silently dropped that call for every
+            # SQL bank — behaviourally a no-op, but it is the one observable the write-group tests
+            # assert on, and it made two of them fail.
+            if not _store_owned:
+                await _txn_provider.decide_txn(_batch_txn, commit=True)
 
             cancelled_local = False
             if operation_id and not await memory_engine._check_op_alive(operation_id):
@@ -2952,6 +2977,7 @@ async def _consolidate_batch_with_llm(
                     {"role": "user", "content": user_content},
                 ],
                 "response_format": response_model,
+                "temperature": config.llm_temperature_consolidation,
                 "scope": "consolidation",
                 # Resolved per operation (HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION, falling
                 # back to the global flag) so an operator can grammar-enforce consolidation's

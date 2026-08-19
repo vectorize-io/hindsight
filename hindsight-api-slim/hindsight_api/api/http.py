@@ -302,7 +302,7 @@ class RecallRequest(BaseModel):
     query: str
     types: list[str] | None = Field(
         default=None,
-        description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified.",
+        description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to all fact types if not specified.",
     )
     prefer_observations: bool = Field(
         default=False,
@@ -4700,9 +4700,11 @@ def _register_routes(app: FastAPI):
         response_model=RecallResponse,
         summary="Recall memory",
         description="Recall memory using semantic similarity and spreading activation.\n\n"
-        "The type parameter is optional and must be one of:\n"
+        "The `types` parameter is optional and may contain any of:\n"
         "- `world`: General knowledge about people, places, events, and things that happen\n"
-        "- `experience`: Memories about experience, conversations, actions taken, and tasks performed",
+        "- `experience`: Memories about experience, conversations, actions taken, and tasks performed\n"
+        "- `observation`: Consolidated knowledge synthesized from facts\n\n"
+        "If `types` is omitted, all fact types are recalled.",
         operation_id="recall_memories",
         tags=["Memory"],
     )
@@ -4731,7 +4733,7 @@ def _register_routes(app: FastAPI):
             )
 
         try:
-            # Default to world and experience if not specified (exclude observation)
+            # Default to all fact types if not specified
             fact_types = request.types if request.types else list(VALID_RECALL_FACT_TYPES)
 
             # Parse query_timestamp if provided

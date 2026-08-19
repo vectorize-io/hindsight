@@ -36,6 +36,19 @@ class _NonSqlStore:
         self.capability_calls.append(bank_id)
         return False
 
+    # This fake is duck-typed rather than a MemoriesExtension subclass, so it answers only what the
+    # paths under test reach. Bank DELETION also counts what it removed through the store now (the
+    # SQL tables are empty for such a bank, so COUNT(*) reported 0 while dropping everything), and
+    # the fixture's teardown deletes the bank — hence these three.
+    def owns_document_store_for(self, bank_id: str) -> bool:
+        return False
+
+    async def count_documents(self, *, bank_id: str) -> int:
+        return 0
+
+    async def list_entities(self, *, conn, fq_table, bank_id: str, search=None, limit=100, offset=0) -> dict:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
     async def count_memories(self, *, conn, fq_table, bank_id: str) -> dict:
         self.count_calls.append(bank_id)
         return {"world": 7}

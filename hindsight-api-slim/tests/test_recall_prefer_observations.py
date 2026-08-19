@@ -19,6 +19,14 @@ import pytest_asyncio
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.retain import embedding_utils
 
+# This module seeds every case with `_insert_unit`, an INSERT into `memory_units`. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# table empty, so the seed lands nowhere the code under test can see it: the failing cases find
+# nothing, and the ones that still pass do so vacuously (an assertion that a result set is EMPTY
+# holds trivially when nothing was ever seeded). Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+pytestmark = pytest.mark.memory_backend_incompatible
+
+
 RC = RequestContext(tenant_id="default")
 
 QUERY = "Alice mountain hiking"

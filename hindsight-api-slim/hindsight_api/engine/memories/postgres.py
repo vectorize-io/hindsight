@@ -557,6 +557,7 @@ class PostgresMemories(MemoriesExtension):
         event_date,
         mentioned_at,
         entity_ids: list[str] | None,
+        entity_names: list[str] | None = None,  # noqa: ARG002 — this store's registry is SQL; the host already minted+linked, so entity_ids is authoritative.
         txn=None,
     ) -> None:
         await writes.apply_edit(

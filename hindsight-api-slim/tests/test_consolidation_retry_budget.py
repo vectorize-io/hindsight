@@ -26,6 +26,7 @@ def mock_config():
     config.consolidation_llm_max_retries = None
     config.consolidation_max_completion_tokens = None
     config.llm_strict_schema_consolidation = False
+    config.llm_temperature_consolidation = 0.0
     return config
 
 
@@ -82,6 +83,19 @@ class TestConsolidationRetryBudget:
             config=mock_config,
         )
         assert mock_llm_config.call.call_args.kwargs.get("strict_schema") is True
+
+    @pytest.mark.asyncio
+    async def test_temperature_threaded_to_call(self, mock_llm_config, mock_config):
+        """llm_temperature_consolidation is passed to llm_config.call()."""
+        mock_config.llm_temperature_consolidation = 0.65
+        await _consolidate_batch_with_llm(
+            llm_config=mock_llm_config,
+            memories=[{"id": "m1", "text": "test"}],
+            union_observations=[],
+            union_source_facts={},
+            config=mock_config,
+        )
+        assert mock_llm_config.call.call_args.kwargs.get("temperature") == 0.65
 
     @pytest.mark.asyncio
     async def test_strict_schema_passed_as_explicit_false(self, mock_llm_config, mock_config):

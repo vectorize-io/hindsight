@@ -54,7 +54,6 @@ import {
   Pencil,
   FolderOpen,
   FileText,
-  Clock,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -69,6 +68,8 @@ import { ResponseSchemaField } from "./response-schema-field";
 import { TagFilterInput } from "./tag-filter-input";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
+import { StalenessBadge } from "./staleness-badge";
+import { FreshnessLine } from "./freshness-line";
 import { TagChip } from "@/components/ui/facet-chip";
 
 interface ReflectResponseBasedOnFact {
@@ -108,6 +109,10 @@ interface MentalModel {
     keep_trace?: boolean;
   };
   last_refreshed_at: string;
+  /** Newest in-scope memory this model has read. Staleness compares against this. */
+  last_memory_seen_at: string | null;
+  /** Whether a memory in this model's own scope has been written since it last read them. */
+  is_stale?: boolean | null;
   created_at: string;
   reflect_response?: ReflectResponse;
 }
@@ -412,29 +417,28 @@ export function MentalModelsView() {
                             <CompactMarkdown>{m.content}</CompactMarkdown>
                             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent" />
                           </div>
-                          <div className="flex items-center justify-between text-xs border-t border-border pt-3">
-                            <div className="flex items-center gap-2">
-                              {m.tags.length > 0 && (
-                                <div className="flex gap-1">
-                                  {m.tags.slice(0, 2).map((tag) => (
-                                    <TagChip key={tag} tag={tag} size="xs" />
-                                  ))}
-                                  {m.tags.length > 2 && (
-                                    <span className="px-1.5 py-0.5 rounded text-xs bg-muted text-muted-foreground">
-                                      +{m.tags.length - 2}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                            <div className="text-right text-muted-foreground">
-                              <div title={formatAbsoluteDateTime(m.last_refreshed_at)}>
-                                {formatRelativeTime(m.last_refreshed_at)}
+                          {/* Tags and freshness on their own rows: side by side the
+                              freshness line wrapped mid-sentence against the tags in a
+                              three-column grid, and right-aligned wrapping reads ragged. */}
+                          <div className="border-t border-border pt-3 text-xs space-y-1.5">
+                            {m.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {m.tags.slice(0, 2).map((tag) => (
+                                  <TagChip key={tag} tag={tag} size="xs" />
+                                ))}
+                                {m.tags.length > 2 && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs bg-muted text-muted-foreground">
+                                    +{m.tags.length - 2}
+                                  </span>
+                                )}
                               </div>
-                              <div className="text-[11px] text-muted-foreground/70">
-                                {t("nextRefreshLabel")}: <NextRefresh trigger={m.trigger} />
-                              </div>
-                            </div>
+                            )}
+                            <FreshnessLine
+                              isStale={m.is_stale}
+                              trigger={m.trigger}
+                              lastRefreshedAt={m.last_refreshed_at}
+                              lastMemorySeenAt={m.last_memory_seen_at}
+                            />
                           </div>
                         </CardContent>
                       </Card>
@@ -1767,8 +1771,14 @@ function FilesView({
                       >
                         {m.name}
                       </span>
+                      <StalenessBadge
+                        isStale={m.is_stale}
+                        trigger={m.trigger}
+                        variant="dot"
+                        className="ml-auto"
+                      />
                       <span
-                        className="ml-auto text-[10px] text-muted-foreground flex-shrink-0"
+                        className="text-[10px] text-muted-foreground flex-shrink-0"
                         title={formatAbsoluteDateTime(m.last_refreshed_at)}
                       >
                         {formatRelativeTime(m.last_refreshed_at)}
@@ -1802,26 +1812,20 @@ function FilesView({
                       &ldquo;{selected.source_query}&rdquo;
                     </p>
                   )}
-                  <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
-                    <span
-                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-muted-foreground"
-                      title={formatAbsoluteDateTime(selected.last_refreshed_at)}
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      {t("refreshedLabel")} {formatRelativeTime(selected.last_refreshed_at)}
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-blue-600 dark:text-blue-400">
-                      <Clock className="w-3 h-3" />
-                      {t("nextRefreshLabel")}: <NextRefresh trigger={selected.trigger} />
-                    </span>
-                    {selected.tags.length > 0 && (
-                      <div className="flex gap-1">
-                        {selected.tags.map((tag) => (
-                          <TagChip key={tag} tag={tag} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <FreshnessLine
+                    className="mt-2"
+                    isStale={selected.is_stale}
+                    trigger={selected.trigger}
+                    lastRefreshedAt={selected.last_refreshed_at}
+                    lastMemorySeenAt={selected.last_memory_seen_at}
+                  />
+                  {selected.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {selected.tags.map((tag) => (
+                        <TagChip key={tag} tag={tag} />
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <Button variant="outline" size="sm" onClick={() => onOpenDetail(selected)}>

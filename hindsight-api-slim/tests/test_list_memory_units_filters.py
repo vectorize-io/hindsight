@@ -15,6 +15,12 @@ from hindsight_api import RequestContext
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain import embedding_processing
 
+# This module seeds `memory_units` rows directly to build the filter matrix. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# tables empty, so the seed lands nowhere the code under test can see it and every assertion here
+# measures the storage layout rather than the behaviour. Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 async def _ensure_bank(memory: MemoryEngine, bank_id: str, request_context: RequestContext) -> None:
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)

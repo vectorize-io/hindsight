@@ -15,6 +15,12 @@ from hindsight_api.engine.memories import get_memories
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.schema import fq_table
 
+# This module seeds `memory_units` rows directly to control the consolidated/unconsolidated split. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# tables empty, so the seed lands nowhere the code under test can see it and every assertion here
+# measures the storage layout rather than the behaviour. Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 async def _seed(conn, bank_id: str, *, tags: list[str], consolidated: bool = False) -> str:
     mem_id = uuid.uuid4()

@@ -119,6 +119,10 @@ class _LoadedFacts:
 
     facts_by_doc: dict[str, list[TransferFact]] = field(default_factory=dict)
     unit_index: dict[Any, _UnitLocation] = field(default_factory=dict)
+    # Populated only by the store-owned loader, where the entity postings and causal edges ride on
+    # the memory instead of living in `unit_entities` / `memory_links` for a later join.
+    entity_ids_by_unit: dict[str, list[str]] = field(default_factory=dict)
+    causal_by_unit: dict[str, list[Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -168,12 +172,23 @@ def _chunk_index_from_chunk_id(chunk_id: str | None) -> int | None:
         return None
 
 
+def _is_store_owned(memories: Any, bank_id: str) -> bool:
+    """Whether this bank's memories live outside SQL, so the loaders must go through the store."""
+    if memories is None:
+        return False
+    try:
+        return not memories.writes_memory_rows_in_sql_for(bank_id)
+    except Exception:  # noqa: BLE001 - a store that cannot answer is treated as SQL-backed
+        return False
+
+
 async def export_documents(
     backend: Any,
     bank_id: str,
     document_ids: list[str] | None = None,
     *,
     include_observations: bool = False,
+    memories: Any = None,
 ) -> bytes:
     """Export documents from ``bank_id`` into an in-memory ZIP archive.
 
@@ -198,15 +213,26 @@ async def export_documents(
     if include_observations and document_ids is not None:
         raise ValueError("include_observations is only supported when exporting the whole bank (omit document_id)")
 
-    async with acquire_with_retry(backend) as conn:
-        # Carry per-fact consolidation lifecycle exactly when observations are
-        # carried: with observations in the archive the target must NOT re-derive
-        # them, so imported facts keep their consolidated/failed state. Without
-        # observations (the default document export) the target re-consolidates
-        # from scratch, so lifecycle is deliberately dropped.
-        loaded = await _load_documents(conn, bank_id, document_ids, include_lifecycle=include_observations)
+    # Carry per-fact consolidation lifecycle exactly when observations are
+    # carried: with observations in the archive the target must NOT re-derive
+    # them, so imported facts keep their consolidated/failed state. Without
+    # observations (the default document export) the target re-consolidates
+    # from scratch, so lifecycle is deliberately dropped.
+    if _is_store_owned(memories, bank_id):
+        # No connection is taken at all: for this bank every table the SQL loaders read is empty,
+        # so holding one would only make the empty result look better-founded than it is.
+        loaded = await _load_documents_from_store(
+            memories, bank_id, document_ids, include_lifecycle=include_observations
+        )
         documents = loaded.documents
-        observations = await _load_observations(conn, bank_id, loaded.unit_index) if include_observations else []
+        observations = (
+            await _load_observations_from_store(memories, bank_id, loaded.unit_index) if include_observations else []
+        )
+    else:
+        async with acquire_with_retry(backend) as conn:
+            loaded = await _load_documents(conn, bank_id, document_ids, include_lifecycle=include_observations)
+            documents = loaded.documents
+            observations = await _load_observations(conn, bank_id, loaded.unit_index) if include_observations else []
 
     fact_total = sum(len(document.facts) for document in documents)
     manifest = TransferManifest(
@@ -348,6 +374,7 @@ async def export_bank(
     *,
     include_history: bool = False,
     bank_rows_json_encoding: BankRowsJSONEncoding = "serialized",
+    memories: Any = None,
 ) -> bytes:
     """Export an entire bank into a portable ZIP archive (no embeddings).
 
@@ -366,9 +393,18 @@ async def export_bank(
     # Whole-bank export always carries observations (they're bank-level state)
     # and, with them, the per-fact consolidation lifecycle so the target restores
     # exact eligibility instead of re-consolidating historical facts (#2965).
-    loaded = await _load_documents(conn, bank_id, None, include_lifecycle=True)
-    documents = loaded.documents
-    observations = await _load_observations(conn, bank_id, loaded.unit_index)
+    #
+    # Only the memories move to the store. Everything below — bank config, mental models,
+    # directives, webhooks, knowledge pages, the history tails — lives in Postgres for every
+    # deployment, so `conn` stays the source for all of it.
+    if _is_store_owned(memories, bank_id):
+        loaded = await _load_documents_from_store(memories, bank_id, None, include_lifecycle=True)
+        documents = loaded.documents
+        observations = await _load_observations_from_store(memories, bank_id, loaded.unit_index)
+    else:
+        loaded = await _load_documents(conn, bank_id, None, include_lifecycle=True)
+        documents = loaded.documents
+        observations = await _load_observations(conn, bank_id, loaded.unit_index)
 
     bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
     for table in CARRIED_HISTORY_TABLES:
@@ -433,6 +469,207 @@ async def export_bank(
         " (with history)" if include_history else "",
     )
     return archive.getvalue()
+
+
+# One page of a store scan/listing. Export is a bulk operation and the store pages server-side,
+# so this trades round trips against peak memory rather than against latency.
+_STORE_PAGE = 500
+
+
+async def _load_documents_from_store(
+    memories: Any,
+    bank_id: str,
+    document_ids: list[str] | None,
+    include_lifecycle: bool = False,
+) -> _LoadedExport:
+    """The SQL loader's counterpart for a bank whose memories are not in SQL.
+
+    Same archive, assembled through the memories interface: `list_documents` + `get_document_record`
+    for the document and its text, `list_chunk_texts` for the chunks, `scan_memories` for the facts,
+    and each memory's own `entity_ids` / `causal_edges` for what SQL reads out of `unit_entities` and
+    `memory_links`.
+
+    Fact order is re-established here rather than inherited. The SQL query orders by
+    `(document_id, created_at, id)` and `causal_relations.target_fact_index` is an ordinal into that
+    order, so a scan returning a different one would silently repoint every causal edge. Sorting
+    explicitly makes the archive independent of how a store happens to walk.
+
+    One field cannot be carried: `consolidation_failed_at` has no interface field — it is written
+    into the store's metadata bag and nothing reads it back — so it exports as unset. That loses the
+    record of a consolidation that gave up, not any memory.
+    """
+    listing = await memories.list_documents(bank_id=bank_id, limit=_STORE_PAGE, offset=0)
+    items = list(listing.get("items", []))
+    total = int(listing.get("total") or len(items))
+    while len(items) < total:
+        page = await memories.list_documents(bank_id=bank_id, limit=_STORE_PAGE, offset=len(items))
+        page_items = list(page.get("items", []))
+        if not page_items:
+            break
+        items.extend(page_items)
+
+    wanted = set(document_ids) if document_ids else None
+    doc_items = [it for it in items if wanted is None or it.get("id") in wanted]
+    doc_items.sort(key=lambda it: (it.get("created_at") or datetime.min.replace(tzinfo=UTC), str(it.get("id"))))
+    if not doc_items:
+        return _LoadedExport()
+
+    selected_ids = [it["id"] for it in doc_items]
+    loaded = await _load_facts_from_store(memories, bank_id, selected_ids, include_lifecycle=include_lifecycle)
+    await _attach_entities_from_store(memories, bank_id, loaded)
+    _attach_causal_relations_from_store(loaded)
+
+    documents: list[TransferDocument] = []
+    for item in doc_items:
+        doc_id = item["id"]
+        record = await memories.get_document_record(bank_id=bank_id, document_id=doc_id, include_text=True)
+        texts = await memories.list_chunk_texts(bank_id=bank_id, document_id=doc_id) or []
+        documents.append(
+            TransferDocument(
+                id=doc_id,
+                original_text=(record or {}).get("original_text") or (record or {}).get("text") or "",
+                retain_params=_as_jsonb(item.get("retain_params")),
+                tags=list(item.get("tags") or []),
+                created_at=item.get("created_at"),
+                chunks=[TransferChunk(chunk_index=i, chunk_text=t) for i, t in enumerate(texts)],
+                facts=loaded.facts_by_doc.get(doc_id, []),
+            )
+        )
+    return _LoadedExport(documents=documents, unit_index=loaded.unit_index)
+
+
+async def _scan_all_memories(memories: Any, bank_id: str, fact_types: list[str] | None) -> list[Any]:
+    """Every memory of the given fact types, walked to exhaustion."""
+    out: list[Any] = []
+    token = ""
+    while True:
+        page = await memories.scan_memories(
+            conn=None,
+            fq_table=None,
+            bank_id=bank_id,
+            fact_types=fact_types,
+            limit=_STORE_PAGE,
+            page_token=token,
+            include_edges=True,
+        )
+        out.extend(page.memories)
+        token = page.next_page_token
+        if not token:
+            return out
+
+
+async def _load_facts_from_store(
+    memories: Any, bank_id: str, doc_ids: list[str], include_lifecycle: bool = False
+) -> _LoadedFacts:
+    """Non-observation facts grouped by document, ordered the way the SQL loader orders them."""
+    wanted = set(doc_ids)
+    stored = [
+        m for m in await _scan_all_memories(memories, bank_id, list(_EXPORTED_FACT_TYPES)) if m.document_id in wanted
+    ]
+    stored.sort(key=lambda m: (m.document_id, m.created_at or datetime.min.replace(tzinfo=UTC), m.unit_id))
+
+    loaded = _LoadedFacts()
+    for memory in stored:
+        bucket = loaded.facts_by_doc.setdefault(memory.document_id, [])
+        ordinal = len(bucket)
+        bucket.append(
+            TransferFact(
+                text=memory.text,
+                fact_type=memory.fact_type,
+                context=memory.context,
+                event_date=memory.event_date,
+                occurred_start=memory.occurred_start,
+                occurred_end=memory.occurred_end,
+                mentioned_at=memory.mentioned_at,
+                metadata=as_string_metadata(memory.metadata),
+                tags=list(memory.tags or []),
+                observation_scopes=memory.observation_scopes,
+                chunk_index=_chunk_index_from_chunk_id(memory.chunk_id),
+                created_at=memory.created_at if include_lifecycle else None,
+                consolidated_at=memory.consolidated_at if include_lifecycle else None,
+                consolidation_failed_at=None,
+            )
+        )
+        loaded.unit_index[memory.unit_id] = _UnitLocation(document_id=memory.document_id, ordinal=ordinal)
+        loaded.causal_by_unit[memory.unit_id] = list(memory.causal_edges or [])
+        loaded.entity_ids_by_unit[memory.unit_id] = list(memory.entity_ids or [])
+    return loaded
+
+
+async def _attach_entities_from_store(memories: Any, bank_id: str, loaded: _LoadedFacts) -> None:
+    """Entity canonical names, from the ids each memory carries."""
+    if not loaded.entity_ids_by_unit:
+        return
+    every_id = {e for ids in loaded.entity_ids_by_unit.values() for e in ids}
+    names = await memories.resolve_entity_names(conn=None, fq_table=None, bank_id=bank_id, entity_ids=sorted(every_id))
+    for unit_id, ids in loaded.entity_ids_by_unit.items():
+        location = loaded.unit_index.get(unit_id)
+        if location is None:
+            continue
+        fact = loaded.facts_by_doc[location.document_id][location.ordinal]
+        fact.entities.extend(sorted(n for n in (names.get(e) for e in ids) if n))
+
+
+def _attach_causal_relations_from_store(loaded: _LoadedFacts) -> None:
+    """Causal edges as ordinals, from the edges the memories carry.
+
+    Same rule as the SQL path: an edge whose endpoints land in different documents is skipped,
+    because the ordinal is only meaningful within one document's fact list.
+    """
+    for unit_id, edges in loaded.causal_by_unit.items():
+        source = loaded.unit_index.get(unit_id)
+        if source is None:
+            continue
+        for edge in edges:
+            target = loaded.unit_index.get(edge.target_unit_id)
+            if target is None or target.document_id != source.document_id:
+                continue
+            loaded.facts_by_doc[source.document_id][source.ordinal].causal_relations.append(
+                TransferCausalRelation(relation_type=edge.relation_type, target_fact_index=target.ordinal)
+            )
+
+
+async def _load_observations_from_store(
+    memories: Any, bank_id: str, unit_index: dict[Any, _UnitLocation]
+) -> list[TransferObservation]:
+    """Observations whose every source fact is present in the exported set.
+
+    Same rule as the SQL loader: an observation referencing a fact outside the export would import
+    as a dangling reference, so it is skipped rather than emitted. Sources come off the memory's own
+    `source_memory_ids` here instead of a column, which is also how the memlake path already
+    resolves them — an observation's sources are denormalised onto it at write time.
+    """
+    stored = await _scan_all_memories(memories, bank_id, ["observation"])
+    stored.sort(key=lambda m: (m.created_at or datetime.min.replace(tzinfo=UTC), m.unit_id))
+
+    observations: list[TransferObservation] = []
+    skipped = 0
+    for memory in stored:
+        source_ids = list(memory.source_memory_ids or [])
+        locations = [unit_index.get(sid) for sid in source_ids]
+        if not source_ids or any(loc is None for loc in locations):
+            skipped += 1
+            continue
+        observations.append(
+            TransferObservation(
+                text=memory.text,
+                tags=list(memory.tags or []),
+                event_date=memory.event_date,
+                occurred_start=memory.occurred_start,
+                occurred_end=memory.occurred_end,
+                mentioned_at=memory.mentioned_at,
+                observation_scopes=memory.observation_scopes,
+                proof_count=memory.proof_count or len(source_ids),
+                sources=[
+                    TransferObservationSource(document_id=loc.document_id, fact_index=loc.ordinal)
+                    for loc in locations
+                    if loc is not None
+                ],
+            )
+        )
+    if skipped:
+        logger.info("[transfer] Skipped %d observation(s) with sources outside the exported documents", skipped)
+    return observations
 
 
 async def _load_documents(

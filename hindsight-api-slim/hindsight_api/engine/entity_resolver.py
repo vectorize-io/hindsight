@@ -1294,6 +1294,7 @@ class EntityResolver:
         self,
         unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
         bank_id: str | None = None,
+        store_write: bool = True,
         txn=None,
     ):
         """Store-owned variant of :meth:`link_units_to_entities_batch` that touches NO
@@ -1307,9 +1308,17 @@ class EntityResolver:
         object-store write. NOT for the Postgres store, whose posting is a real ``unit_entities``
         INSERT that requires the connection.
 
+        ``store_write=False`` skips the store-side posting and does ONLY the co-occurrence
+        accumulation. The caller uses this when it has already attached entity ids to the memories
+        as part of the same write (a single deferred write with entities inline, instead of
+        write-then-reattach) — so the store row is already correct and a second store write would
+        be redundant. Co-occurrence still runs: it references only ``entities`` and is needed by the
+        entity-graph endpoint and resolution's disambiguation signal regardless of who wrote the row.
+
         ``txn`` is the caller's write-group handle. For a store that keeps the posting on the
         memory, this re-writes rows the same write-group just created, so it belongs to that
-        group — see :meth:`MemoriesExtension.record_unit_entities`.
+        group — see :meth:`MemoriesExtension.record_unit_entities`. It is only consulted when the
+        store write actually happens: under ``store_write=False`` there is no write to enrol.
         """
         if not unit_entity_pairs:
             return
@@ -1318,10 +1327,17 @@ class EntityResolver:
             (t[0], t[1], t[2] if len(t) >= 3 else None)  # type: ignore[misc]
             for t in unit_entity_pairs
         ]
-        return await self._link_units_to_entities_batch_impl(None, normalized, bank_id, txn=txn)
+        return await self._link_units_to_entities_batch_impl(
+            None, normalized, bank_id, store_write=store_write, txn=txn
+        )
 
     async def _link_units_to_entities_batch_impl(
-        self, conn, unit_entity_pairs: list[tuple[str, str, datetime | None]], bank_id: str | None = None, txn=None
+        self,
+        conn,
+        unit_entity_pairs: list[tuple[str, str, datetime | None]],
+        bank_id: str | None = None,
+        store_write: bool = True,
+        txn=None,
     ):
         # Sorted bulk insert to prevent deadlocks from inconsistent lock ordering
         # across concurrent transactions on the unit_entities unique index.
@@ -1333,17 +1349,20 @@ class EntityResolver:
         # memories store records it. Co-occurrence below is separate and unaffected:
         # it references only `entities`, which stays in Postgres either way, and is
         # read by the entity-graph endpoint and by resolution's disambiguation signal.
+        # `store_write=False` means the caller already wrote the postings inline with the
+        # memories, so we skip the (redundant) second store write and keep only co-occurrence.
         from .memories import get_memories
 
-        await get_memories().record_unit_entities(
-            conn=conn,
-            ops=self._ops,
-            fq_table=fq_table,
-            bank_id=bank_id,
-            unit_ids=unit_ids,
-            entity_ids=entity_ids,
-            txn=txn,
-        )
+        if store_write:
+            await get_memories().record_unit_entities(
+                conn=conn,
+                ops=self._ops,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                unit_ids=unit_ids,
+                entity_ids=entity_ids,
+                txn=txn,
+            )
 
         # Build maps keyed by unit_id:
         #   unit_to_entities: entity set per unit (for the co-occurrence cross-product)

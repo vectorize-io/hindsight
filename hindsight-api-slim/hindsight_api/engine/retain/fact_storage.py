@@ -110,16 +110,21 @@ async def index_facts(
     facts: list[ProcessedFact],
     document_id: str | None = None,
     unit_entity_ids: dict[str, list[str]] | None = None,
+    txn=None,
 ) -> None:
     """Complete a deferred `insert_facts_batch`, now that the edges are known.
 
     ``unit_entity_ids`` is the unit→entity posting and each fact's causal
     relations are its edges; both travel with the memory for a store that owns
     them. A no-op for the Postgres store, which wrote all of it already.
+
+    ``txn`` rides a cross-store write-group handle so this single, entity-bearing
+    write commits (and becomes visible) atomically with the rest of the group —
+    the store-owned retain path writes facts ONCE here rather than write-then-reattach.
     """
     from ..memories import get_memories
 
-    await get_memories().index_facts(bank_id, unit_ids, facts, document_id, unit_entity_ids)
+    await get_memories().index_facts(bank_id, unit_ids, facts, document_id, unit_entity_ids, txn=txn)
 
 
 async def ensure_bank_exists(conn, bank_id: str, ops=None) -> None:

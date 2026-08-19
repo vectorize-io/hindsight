@@ -4144,7 +4144,7 @@ export type RecallRequest = {
   /**
    * Types
    *
-   * List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified.
+   * List of fact types to recall: 'world', 'experience', 'observation'. Defaults to all fact types if not specified.
    */
   types?: Array<string> | null;
   /**

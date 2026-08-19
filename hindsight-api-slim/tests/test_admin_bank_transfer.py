@@ -28,6 +28,11 @@ async def test_run_export_bank_declares_decoded_json_rows(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(cli, "_admin_connect", fake_admin_connect)
     monkeypatch.setattr(cli, "export_bank", export_bank)
+    # The CLI resolves the configured memories store and hands it to the export: a bank whose
+    # memories live outside SQL cannot be read from this connection, and without the store the
+    # archive would come out well-formed and empty.
+    store = object()
+    monkeypatch.setattr(cli, "get_memories", lambda: store)
 
     output = tmp_path / "bank.zip"
     size = await cli._run_export_bank(
@@ -43,6 +48,7 @@ async def test_run_export_bank_declares_decoded_json_rows(monkeypatch: pytest.Mo
         "source-bank",
         include_history=True,
         bank_rows_json_encoding="decoded",
+        memories=store,
     )
     assert output.read_bytes() == b"archive"
     assert size == len(b"archive")

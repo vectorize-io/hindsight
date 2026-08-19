@@ -8,12 +8,14 @@ Sections:
   * bank config validation (DB)
   * retain: allow / redact / block / webhook (DB)
   * document-body scrubbing (DB)
+  * redact_document_body in isolation (unit)
 """
 
 import json
 
 import pytest
 
+from hindsight_api.config import HindsightConfig
 from hindsight_api.extensions.builtin.memory_defense_regex import MemoryDefenseRegexExtension
 from hindsight_api.extensions.loader import ExtensionLoadError, load_extension
 from hindsight_api.extensions.memory_defense import (
@@ -880,3 +882,82 @@ async def test_scrubs_secrets_from_oversized_chunked_input(api_client) -> None:
     original_text = r3.json()["original_text"]
     assert secret not in original_text, "oversized document.original_text leaked github token"
     assert ssn not in original_text, "oversized document.original_text leaked SSN"
+
+
+# ---------------------------------------------------------------------------
+# redact_document_body: the oversized-item scrubber, in isolation
+# ---------------------------------------------------------------------------
+
+
+def _defense_config(memory_defense: dict | None) -> HindsightConfig:
+    """A real resolved config carrying the given raw memory_defense policy.
+
+    Not a stub: ``redact_document_body`` reads ``config.memory_defense`` directly,
+    and a partial stand-in would raise AttributeError rather than exercise the parse.
+    """
+    import dataclasses
+
+    from hindsight_api.config import _get_raw_config
+
+    return dataclasses.replace(_get_raw_config(), memory_defense=memory_defense)
+
+
+def test_redact_document_body_scrubs_when_the_policy_redacts():
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    secret = "ghp_" + "Q" * 36
+    out = redact_document_body(
+        f"deploy key: {secret}",
+        _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}),
+    )
+
+    assert secret not in out
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        None,
+        {"enabled": False, "rules": [{"on": "sensitive_data", "action": "redact"}]},
+        # Enabled, but no rule names the detector this OSS path screens for.
+        {"enabled": True, "rules": [{"on": "something_else", "action": "redact"}]},
+    ],
+    ids=["absent", "disabled", "no_sensitive_data_rule"],
+)
+def test_redact_document_body_passes_the_body_through_when_not_screening(policy):
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    body = "deploy key: ghp_" + "Q" * 36
+    assert redact_document_body(body, _defense_config(policy)) == body
+
+
+def test_redact_document_body_raises_on_a_malformed_policy():
+    """A policy that will not parse fails the retain instead of skipping screening.
+
+    This used to be wrapped in ``except Exception: return body``, which returned the
+    body unscrubbed. Fail-open is the wrong default for a security control, and the
+    catch bought nothing: ``retain_batch`` parses the same ``config.memory_defense``
+    unguarded, so the retain died moments later anyway — only without the traceback
+    saying why, and without any sign that screening had been skipped first.
+    """
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    body = "deploy key: ghp_" + "Q" * 36
+    malformed = {"enabled": True, "rules": [{"on": "sensitive_data", "action": "obliterate"}]}
+
+    with pytest.raises(ValueError, match="invalid action"):
+        redact_document_body(body, _defense_config(malformed))
+
+
+def test_redact_document_body_rejects_global_config():
+    """Handed global config, it raises rather than silently skipping screening.
+
+    ``memory_defense`` is bank-configurable, so ``StaticConfigProxy`` refuses it with
+    ConfigFieldAccessError — an AttributeError subclass the old blanket catch also
+    swallowed, turning a wrong-config bug into a silently unscrubbed document body.
+    """
+    from hindsight_api.config import ConfigFieldAccessError, StaticConfigProxy, _get_raw_config
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    with pytest.raises(ConfigFieldAccessError, match="memory_defense"):
+        redact_document_body("deploy key: ghp_" + "Q" * 36, StaticConfigProxy(_get_raw_config()))

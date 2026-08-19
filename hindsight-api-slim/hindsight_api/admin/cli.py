@@ -19,6 +19,7 @@ import asyncpg
 import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
+from ..engine.memories import get_memories
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
@@ -772,7 +773,17 @@ def repair_bank(
 
 
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
-    """Export a whole bank to a ZIP archive."""
+    """Export a whole bank to a ZIP archive.
+
+    The memories store is resolved from config here and handed to the export, because a bank whose
+    memories live outside SQL cannot be read from this connection: the tables would be empty and the
+    archive would come out well-formed and empty, which an operator only discovers at restore time.
+    A Postgres deployment resolves to the SQL store, whose capability probe sends the export down
+    exactly the path it always took.
+
+    Resolving it in a short-lived CLI process is safe because the store connects lazily on first
+    use rather than in `initialize()`.
+    """
     conn = await _admin_connect(db_url)
     try:
         # export_bank resolves table names via fq_table (the _current_schema
@@ -785,6 +796,7 @@ async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str,
             bank_id,
             include_history=include_history,
             bank_rows_json_encoding="decoded",
+            memories=get_memories(),
         )
     finally:
         await conn.close()

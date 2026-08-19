@@ -30,6 +30,13 @@ from hindsight_api import RequestContext
 from hindsight_api.engine.memories import get_memories
 from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
 
+# This module asserts the `memory_units.updated_at` COLUMN, and UPDATEs it directly to stage each case. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# tables empty, so the seed lands nowhere the code under test can see it and every assertion here
+# measures the storage layout rather than the behaviour. Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+pytestmark = pytest.mark.memory_backend_incompatible
+
+
 # A backdated baseline every case starts from, so "did this statement stamp the
 # column" is a comparison against a value no ``now()`` can collide with.
 _BASELINE = datetime(2020, 1, 1, tzinfo=timezone.utc)

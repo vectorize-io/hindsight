@@ -21,8 +21,7 @@ import warnings
 
 import uvicorn
 
-from . import MemoryEngine, __version__
-from .api import create_app
+from . import __version__
 from .banner import print_banner
 from .config import (
     DEFAULT_ACCESS_LOG,
@@ -41,7 +40,43 @@ from .daemon import (
     IdleTimeoutMiddleware,
     daemonize,
 )
-from .extensions import DefaultExtensionContext, OperationValidatorExtension, TenantExtension, load_extension
+
+# `create_app`, `MemoryEngine` and the extension machinery are NOT imported at module level, and
+# that is load-bearing rather than tidiness. uvicorn's multiprocess supervisor uses spawn, so every
+# worker rebuilds `__main__` by re-running `sys.argv[0]` — pip's console-script wrapper — whose top
+# line is `from hindsight_api.main import main`. Anything this module pulls in at import time is
+# therefore paid by EVERY spawned worker before uvicorn's child bootstrap begins; a worker still
+# importing when the supervisor's 5 s healthcheck arrives is SIGKILLed and respawned, forever, with
+# no traceback. Measured: `.api` alone is ~6.2 s to import and `.extensions` ~2.6 s, and the whole
+# line the console script runs went 6578 ms -> 312 ms by moving them here.
+#
+# They resolve through the module `__getattr__` below on first USE, which keeps them ordinary
+# module attributes: `main()` refers to them as plain globals, and `patch("hindsight_api.main.
+# MemoryEngine")` still finds and replaces them. Importing them inside `main()` instead would do
+# neither — the name would be invisible to `patch`, and a local import would shadow any patch that
+# did land. See docs/plans/recall-latency.md.
+_LAZY_IMPORTS: "dict[str, tuple[str, str]]" = {
+    "MemoryEngine": (".", "MemoryEngine"),
+    "create_app": (".api", "create_app"),
+    "DefaultExtensionContext": (".extensions", "DefaultExtensionContext"),
+    "OperationValidatorExtension": (".extensions", "OperationValidatorExtension"),
+    "TenantExtension": (".extensions", "TenantExtension"),
+    "load_extension": (".extensions", "load_extension"),
+}
+
+
+def __getattr__(name: str):
+    try:
+        module_name, attribute = _LAZY_IMPORTS[name]
+    except KeyError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+
+    from importlib import import_module
+
+    value = getattr(import_module(module_name, __package__), attribute)
+    globals()[name] = value
+    return value
+
 
 # Filter deprecation warnings from third-party libraries
 warnings.filterwarnings("ignore", message="websockets.legacy is deprecated")
@@ -51,7 +86,7 @@ warnings.filterwarnings("ignore", message="websockets.server.WebSocketServerProt
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Global reference for cleanup
-_memory: MemoryEngine | None = None
+_memory: "MemoryEngine | None" = None
 
 
 def _cleanup():
@@ -247,6 +282,19 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
+    # Bind the lazily-resolved names through the MODULE, not as bare globals: a module
+    # `__getattr__` (PEP 562) is consulted for `module.X` access, but NOT for a plain global lookup
+    # inside this module's own functions — that raises NameError. Reading them off the module object
+    # both triggers the lazy import and picks up anything a test has patched onto the module, which
+    # a local `from .x import y` would silently shadow.
+    _this = sys.modules[__name__]
+    MemoryEngine = _this.MemoryEngine
+    create_app = _this.create_app
+    load_extension = _this.load_extension
+    OperationValidatorExtension = _this.OperationValidatorExtension
+    TenantExtension = _this.TenantExtension
+    DefaultExtensionContext = _this.DefaultExtensionContext
+
     # Load operation validator extension if configured
     operation_validator = load_extension("OPERATION_VALIDATOR", OperationValidatorExtension)
     if operation_validator:
@@ -261,40 +309,63 @@ def main():
 
         logging.info(f"Loaded tenant extension: {tenant_extension.__class__.__name__}")
 
-    # Create MemoryEngine (reads configuration from environment)
-    _memory = MemoryEngine(
-        operation_validator=operation_validator,
-        tenant_extension=tenant_extension,
-        run_migrations=config.run_migrations_on_startup,
-    )
-
-    # Set extension context on tenant extension (needed for schema provisioning)
-    if tenant_extension:
-        extension_context = DefaultExtensionContext(
-            database_url=config.database_url,
-            memory_engine=_memory,
-        )
-        tenant_extension.set_context(extension_context)
-        logging.info("Extension context set on tenant extension")
-
-    # Create FastAPI app
-    app = create_app(
-        memory=_memory,
-        http_api_enabled=True,
-        mcp_api_enabled=config.mcp_enabled,
-        mcp_mount_path="/mcp",
-        initialize_memory=True,
-    )
-
-    # Wrap with idle timeout middleware in daemon mode
-    idle_middleware = None
-    if is_daemon:
-        idle_middleware = IdleTimeoutMiddleware(app, idle_timeout=args.idle_timeout)
-        app = idle_middleware
-
-    # Prepare uvicorn config
     # When using workers or reload, we must use import string so each worker can import the app
     use_import_string = args.workers > 1 or args.reload
+
+    # ...and in THAT mode the parent does not need to build the application at all: it hands
+    # uvicorn an import string, and every worker imports `hindsight_api.server:app` for itself, so
+    # the object built here was constructed and then thrown away — about ten seconds of work, a
+    # MemoryEngine and a whole FastAPI app, for nothing.
+    #
+    # This is a cleanup, NOT a fix for the worker respawn loop. It was first committed as that fix,
+    # on the theory that children inherited the parent's pools and locks across fork; uvicorn's
+    # multiprocess uses spawn, not fork, so nothing is inherited, and deploying this to dev left
+    # the loop exactly as it was. The real cause is that a spawn child rebuilds `__main__` by
+    # re-running `sys.argv[0]` — pip's console-script wrapper — whose top-level
+    # `from hindsight_api.main import main` pulls this package's `__init__` and the entire engine
+    # with it, before uvicorn's child bootstrap even starts. See docs/plans/recall-latency.md.
+    _memory = None
+    app = None
+    idle_middleware = None
+
+    if not use_import_string:
+        # Create MemoryEngine (reads configuration from environment)
+        _memory = MemoryEngine(
+            operation_validator=operation_validator,
+            tenant_extension=tenant_extension,
+            run_migrations=config.run_migrations_on_startup,
+        )
+
+        # Set extension context on tenant extension (needed for schema provisioning)
+        if tenant_extension:
+            extension_context = DefaultExtensionContext(
+                database_url=config.database_url,
+                memory_engine=_memory,
+            )
+            tenant_extension.set_context(extension_context)
+            logging.info("Extension context set on tenant extension")
+
+        # Create FastAPI app
+        app = create_app(
+            memory=_memory,
+            http_api_enabled=True,
+            mcp_api_enabled=config.mcp_enabled,
+            mcp_mount_path="/mcp",
+            initialize_memory=True,
+        )
+
+        # Wrap with idle timeout middleware in daemon mode
+        if is_daemon:
+            idle_middleware = IdleTimeoutMiddleware(app, idle_timeout=args.idle_timeout)
+            app = idle_middleware
+    elif is_daemon:
+        # The idle-timeout middleware wraps an app OBJECT, and this mode serves an import string,
+        # so there is nothing to wrap. That was already true and already silent; say it out loud
+        # rather than let a daemon quietly never time out.
+        logging.warning(
+            "--daemon idle timeout is not applied with --workers > 1 or --reload: "
+            "those modes serve an import string, which the middleware cannot wrap."
+        )
     # Check for uvloop/winloop availability
     loop_impl = "asyncio"
     if sys.platform == "win32":

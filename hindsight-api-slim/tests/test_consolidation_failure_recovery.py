@@ -17,6 +17,13 @@ from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
+# This module seeds every case with `_insert_memories`, an INSERT into `memory_units`. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# table empty, so the seed lands nowhere the code under test can see it: the failing cases find
+# nothing, and the ones that still pass do so vacuously (an assertion that a result set is EMPTY
+# holds trivially when nothing was ever seeded). Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 @pytest_asyncio.fixture(scope="function")
 async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, query_analyzer):

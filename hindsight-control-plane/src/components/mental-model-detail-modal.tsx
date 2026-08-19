@@ -31,6 +31,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
+import { StalenessBadge } from "./staleness-badge";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
 import {
@@ -932,21 +933,10 @@ export function MentalModelDetailModal({
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        {mentalModel.is_stale === true ? (
-                          <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                            title={t("staleTitle")}
-                          >
-                            {t("stale")}
-                          </span>
-                        ) : mentalModel.is_stale === false ? (
-                          <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-green-500/15 text-green-700 dark:text-green-400"
-                            title={t("inSyncTitle")}
-                          >
-                            {t("inSync")}
-                          </span>
-                        ) : null}
+                        <StalenessBadge
+                          isStale={mentalModel.is_stale}
+                          trigger={mentalModel.trigger}
+                        />
                         <span
                           title={formatDateTime(mentalModel.last_refreshed_at)}
                           className="flex items-center gap-1"

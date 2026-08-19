@@ -199,6 +199,49 @@ def count_tokens(text: str) -> int:
     return len(_get_tiktoken_encoding().encode(text))
 
 
+def _parse_chunk_id(chunk_id: str | None) -> "tuple[str, str, int] | None":
+    """Split a ``{bank_id}_{document_id}_{index}`` chunk_id into its parts.
+
+    Retain builds chunk ids in exactly this shape (see ``retain/chunk_storage.py``), which makes
+    them self-describing — the addressed chunk route has no bank in its path and normally recovers
+    it from the SQL row, but a store that owns the document store has no such row. Both splits are
+    from the RIGHT: the index is the final segment, and the document id before it is a UUID, which
+    contains no underscore. A bank id containing underscores is therefore still parsed correctly.
+
+    Returns ``None`` when the id is not in that shape, so the caller falls through to the SQL
+    lookup rather than guessing.
+    """
+    if not chunk_id:
+        return None
+    head, _, idx_s = chunk_id.rpartition("_")
+    if not head or not idx_s:
+        return None
+    bank_id, _, document_id = head.rpartition("_")
+    if not bank_id or not document_id:
+        return None
+    try:
+        return bank_id, document_id, int(idx_s)
+    except ValueError:
+        return None
+
+
+def _epoch_ms_to_datetime(value: Any) -> datetime | None:
+    """Epoch milliseconds -> aware datetime, for records read from a store rather than from SQL.
+
+    A store returns timestamps as integers; the SQL rows these records stand in for come back as
+    datetimes, and the response builders call ``.isoformat()`` on them. Normalising here keeps
+    those builders unaware of where the record came from. ``0`` means unset, not the epoch.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromtimestamp(int(value) / 1000.0, tz=timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
 def fq_table(table_name: str) -> str:
     """Get fully-qualified table name with current schema.
 
@@ -1582,6 +1625,9 @@ class _MemoryEditPlan:
     # mismatch (a concurrent entity-only edit landed between the phases) triggers a bounded in-txn
     # re-embed so the stored vector stays consistent with the committed entity set.
     names: list[str]
+    # The raw entity names to hand a store that owns its entity registry (it resolves + mints them
+    # itself). None for a SQL-registry store, which uses the pre-resolved ``edit_entity_ids`` instead.
+    entity_names_for_store: list[str] | None = None
     embedding: str | None = None
 
 
@@ -5157,9 +5203,21 @@ class MemoryEngine(MemoryEngineInterface):
                 item_doc_id = item.get("document_id")
                 if item.get("update_mode") == "append" and item_doc_id:
                     append_doc_ids.add(item_doc_id)
+            from .memories import get_memories
+
+            _docs_owner = get_memories()
             for append_doc_id in append_doc_ids:
                 async with acquire_with_retry(backend) as conn:
                     existing_text = await fact_storage.get_document_content(conn, bank_id, append_doc_id)
+                # Same read as the orchestrator's append base, and it has to branch the same way:
+                # a store that owns the document store keeps the body there and leaves the SQL
+                # `original_text` NULL, so the SQL read counts zero prepended chunks and every
+                # later sub-batch starts its chunk_index on top of the ones the prepend consumed.
+                if not existing_text and _docs_owner.owns_document_store_for(bank_id):
+                    _rec = await _docs_owner.get_document_record(
+                        bank_id=bank_id, document_id=append_doc_id, include_text=True
+                    )
+                    existing_text = _rec.get("original_text") if _rec else None
                 if existing_text:
                     append_prepend_chunks[append_doc_id] = len(
                         fact_extraction.chunk_text(
@@ -5445,10 +5503,20 @@ class MemoryEngine(MemoryEngineInterface):
         When ``include_observations`` is set, consolidated observations are also
         exported (and restored on import) instead of being regenerated.
         """
+        from .memories import get_memories
         from .transfer import export_documents
 
         await self._get_backend()
-        return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
+        # The store decides whether this bank's memories are in SQL at all: the loaders read
+        # `memory_units` directly, and for a store-owned bank that table is empty, which used to
+        # produce an empty archive with a 200 rather than an error.
+        return await export_documents(
+            self._backend,
+            bank_id,
+            document_ids,
+            include_observations=include_observations,
+            memories=get_memories(),
+        )
 
     async def submit_export_documents_async(
         self,
@@ -6445,8 +6513,21 @@ class MemoryEngine(MemoryEngineInterface):
                             fact_type=ft_name,
                         )
 
-                # Record entry points (from semantic results) for legacy graph view
-                for rank, retrieval in enumerate(semantic_results[:10], start=1):  # Top 10 as entry points
+                # Record entry points (from semantic results) for legacy graph view.
+                #
+                # These have to be hydrated first. The arms move ids and scores and the payload is
+                # fetched later, for only what survives the trim — so a store that does not return
+                # full results has no `text` on them yet, and the trace recorded every entry point
+                # with an empty string. Hydration happens here rather than by moving the recording
+                # after the trim, because an entry point is a top-10 SEMANTIC result and need not
+                # have survived fusion at all. Costs one extra fetch of at most ten records, and
+                # only when a trace was asked for.
+                _entry_points = semantic_results[:10]
+                if _entry_points:
+                    from .memories import get_memories as _get_memories_for_trace
+
+                    await _get_memories_for_trace().hydrate_results(bank_id=bank_id, results=_entry_points)
+                for rank, retrieval in enumerate(_entry_points, start=1):
                     tracer.add_entry_point(retrieval.id, retrieval.text, retrieval.similarity or 0.0, rank)
 
                 tracer.add_phase_metric(
@@ -6539,6 +6620,27 @@ class MemoryEngine(MemoryEngineInterface):
                     merged_candidates.sort(key=lambda mc: boosted_rrf_score(mc, strategy_boosts), reverse=True)
                     pre_filtered_count = len(merged_candidates) - max_candidates
                     merged_candidates = merged_candidates[:max_candidates]
+
+                # Materialize the payload for the candidates that survived fusion, for a store
+                # that returned scores rather than payloads. THIS is why ranking can be cheap: the
+                # wide arms move ids and scores, and only what got this far is fetched in full.
+                #
+                # Placed after the trim and before ANY reader of the payload — the reranker scores
+                # text, the boosts read timestamps, the response returns both. Nothing between
+                # retrieval and here touches it except the tracer's entry-point log.
+                # A store that already returns full results makes this a single `return`.
+                _hydrate_start = time.time()
+                from .memories import get_memories as _get_memories_for_hydrate
+
+                await _get_memories_for_hydrate().hydrate_results(
+                    bank_id=bank_id, results=[mc.retrieval for mc in merged_candidates]
+                )
+                if tracer:
+                    tracer.add_phase_metric(
+                        "hydrate_results",
+                        time.time() - _hydrate_start,
+                        {"candidates": len(merged_candidates)},
+                    )
 
                 if reranking == "cross_encoder":
                     # Cancellation checkpoint: the cross-encoder rerank is the
@@ -6851,10 +6953,11 @@ class MemoryEngine(MemoryEngineInterface):
                     # per-chunk ``dict`` allocation for an overlay it never runs.
                     _chunk_store = get_memories()
                     _owns_docs = _chunk_store.owns_document_store_for(bank_id)
-                    if _owns_docs:
-                        _chunk_cols = "chunk_id, chunk_text, chunk_index, document_id"
-                    else:
-                        _chunk_cols = "chunk_id, chunk_text, chunk_index"
+                    _chunk_cols = (
+                        "chunk_id, chunk_text, chunk_index, document_id"
+                        if _owns_docs
+                        else "chunk_id, chunk_text, chunk_index"
+                    )
                     async with acquire_with_retry(backend) as conn:
                         chunks_rows = await conn.fetch(
                             f"""
@@ -6864,23 +6967,76 @@ class MemoryEngine(MemoryEngineInterface):
                             """,
                             chunk_ids_ordered,
                         )
+                    if _owns_docs and not chunks_rows:
+                        # A store that owns the document store AND wrote no SQL chunks row (PG-free
+                        # retain) leaves the chunks table empty, so the query above found nothing.
+                        # Synthesize the metadata from the chunk_ids themselves — a chunk_id is
+                        # ``{bank_id}_{document_id}_{chunk_index}`` and bank_id is known, so the last
+                        # ``_``-segment is the index and everything between is the document_id — then
+                        # let the overlay below fill in the text from the store. Independent of the
+                        # per-request capability flags: it fires whenever docs are owned and SQL is
+                        # empty, which is exactly the PG-free case.
+                        _pfx = f"{bank_id}_"
+                        chunks_rows = []
+                        for _cid in chunk_ids_ordered:
+                            if not _cid.startswith(_pfx):
+                                continue
+                            _doc, _, _idx_s = _cid[len(_pfx) :].rpartition("_")
+                            if not _doc:
+                                continue
+                            try:
+                                _idx = int(_idx_s)
+                            except ValueError:
+                                continue
+                            chunks_rows.append(
+                                {"chunk_id": _cid, "chunk_text": "", "chunk_index": _idx, "document_id": _doc}
+                            )
 
                     if _owns_docs:
-                        # Overlay the store's chunk TEXT (empty in the SQL row for this store) —
-                        # one ``list_chunk_texts`` per document, indexed by ``chunk_index``, rather
-                        # than one ``get_chunk_text`` per chunk, so a many-chunk recall stays
-                        # O(documents) round-trips, not O(chunks). Rows are mutable dicts for it.
+                        # Overlay the store's chunk TEXT (empty in the SQL row for this store).
+                        # Rows are mutable dicts so the fetches below can write into them.
                         chunks_lookup = {row["chunk_id"]: dict(row) for row in chunks_rows}
                         if chunks_lookup:
                             rows_by_doc: dict[str, list[dict]] = {}
                             for row in chunks_lookup.values():
                                 rows_by_doc.setdefault(row["document_id"], []).append(row)
-                            for _doc_id, _doc_rows in rows_by_doc.items():
-                                _texts = await _chunk_store.list_chunk_texts(bank_id=bank_id, document_id=_doc_id) or []
-                                for row in _doc_rows:
-                                    _idx = row["chunk_index"]
-                                    if 0 <= _idx < len(_texts):
-                                        row["chunk_text"] = _texts[_idx]
+
+                            # Two things decide the cost here, and counting round-trips alone gets
+                            # both wrong.
+                            #
+                            # 1. `list_chunk_texts` downloads a document's WHOLE packed chunk blob.
+                            #    When a document contributes a single chunk to this recall — the
+                            #    common case, since hits are spread across documents — fetching that
+                            #    one chunk is strictly less data. So pick per document rather than
+                            #    using one call shape for everything.
+                            # 2. These were awaited in a loop, which serialises one store round-trip
+                            #    per document. That, not the number of calls, was the cost: measured
+                            #    end to end, a 30-hit recall spent ~20.6s here, ~690ms per document,
+                            #    against ~735ms for the entire un-hydrated recall.
+                            # 3. Concurrency only hides round-trips, it does not remove them. A
+                            #    recall's hits are spread thin across documents — measured, 88
+                            #    chunks over 76 documents — so per-document fetching was ~76 round
+                            #    trips, and at a bounded concurrency that is still several waves.
+                            #    `get_chunk_texts` asks for all of them at once; its default
+                            #    implementation on the interface is the per-chunk loop, so this is
+                            #    correct for every store and merely cheaper for one that batches.
+                            _rows = [r for rows in rows_by_doc.values() for r in rows]
+                            _refs = [(r["document_id"], r["chunk_index"]) for r in _rows]
+                            if _refs:
+                                try:
+                                    _texts = await _chunk_store.get_chunk_texts(bank_id=bank_id, refs=_refs)
+                                    for _row, _text in zip(_rows, _texts):
+                                        if _text is not None:
+                                            _row["chunk_text"] = _text
+                                except Exception as _err:
+                                    # Returning the hits without text beats failing a whole recall
+                                    # over chunk bodies, which is how the per-document path behaves
+                                    # too — one failure there costs one document, not the request.
+                                    logger.warning(
+                                        "batched chunk hydration failed; returning %d chunk(s) without text: %s",
+                                        len(_rows),
+                                        _err,
+                                    )
                     else:
                         # Default SQL store: chunk_text is already in the row — keep the asyncpg
                         # Records (no dict copy); the reads below index them the same way.
@@ -7501,23 +7657,48 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                 )
             else:
-                # A store that keeps memories outside SQL: the documents row is still SQL, but its
-                # per-fact-type counts come from the store (scan the document's memories; count the
-                # observations built on them via observations_for_sources).
-                _drow = await conn.fetchrow(
-                    f"""
-                    SELECT d.id, d.bank_id, d.original_text, d.content_hash,
-                           d.created_at, d.updated_at, d.tags, d.retain_params
-                    FROM {fq_table("documents")} d
-                    WHERE d.id = $1 AND d.bank_id = $2
-                    """,
-                    document_id,
-                    bank_id,
-                )
-                if _drow is None:
-                    doc = None
+                # A store that keeps memories outside SQL. Where the document RECORD lives depends
+                # on a second capability: a store that also owns the document store keeps no SQL
+                # `documents` row at all, so reading one here returns nothing and the caller 404s a
+                # document that the LIST route just returned. `list_documents` already branches on
+                # this; the addressed read has to branch the same way or the two disagree.
+                if _store.owns_document_store_for(bank_id):
+                    _rec = await _store.get_document_record(bank_id=bank_id, document_id=document_id, include_text=True)
+                    if _rec is None:
+                        doc = None
+                    else:
+                        doc = {
+                            "id": _rec.get("document_id") or document_id,
+                            "bank_id": bank_id,
+                            "original_text": _rec.get("original_text"),
+                            "content_hash": _rec.get("content_hash"),
+                            "created_at": _epoch_ms_to_datetime(_rec.get("created_at")),
+                            "updated_at": _epoch_ms_to_datetime(_rec.get("updated_at")),
+                            "tags": list(_rec.get("tags") or []),
+                            # The store's metadata map is string -> string, so the write path
+                            # carries retain_params as one JSON value (see
+                            # `retain/orchestrator._store_document_bodies`). Documents written
+                            # before that carry nothing here and still read back with null
+                            # params — null beats 404-ing the whole document.
+                            "retain_params": (_rec.get("metadata") or {}).get("retain_params"),
+                        }
                 else:
-                    doc = dict(_drow)
+                    # The documents row is still SQL; only the per-fact-type counts come from the
+                    # store (scan the document's memories; count the observations built on them
+                    # via observations_for_sources).
+                    _drow = await conn.fetchrow(
+                        f"""
+                        SELECT d.id, d.bank_id, d.original_text, d.content_hash,
+                               d.created_at, d.updated_at, d.tags, d.retain_params
+                        FROM {fq_table("documents")} d
+                        WHERE d.id = $1 AND d.bank_id = $2
+                        """,
+                        document_id,
+                        bank_id,
+                    )
+                    doc = dict(_drow) if _drow is not None else None
+
+                if doc is not None:
                     _page = await _store.scan_memories(
                         conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
                     )
@@ -7533,20 +7714,14 @@ class MemoryEngine(MemoryEngineInterface):
                         else []
                     )
                     doc["observation_count"] = len(_obs)
-                    # A store that owns the document store keeps the extracted text in
-                    # its own store, not in documents.original_text (which is NULL here). Overlay
-                    # it from the store so get_document still returns the body.
-                    if _store.owns_document_store_for(bank_id):
-                        _rec = await _store.get_document_record(
-                            bank_id=bank_id, document_id=document_id, include_text=True
-                        )
-                        if _rec is not None:
-                            doc["original_text"] = _rec.get("original_text")
+                    # No text overlay here any more: when the store owns the document store the
+                    # branch above already read the record WITH its text, so overlaying would be a
+                    # second round-trip for a value we hold.
 
             if not doc:
                 return None
 
-            retain_params_parsed = conn.parse_json(doc["retain_params"])
+            retain_params_parsed = conn.parse_json(doc["retain_params"]) if doc["retain_params"] else None
 
             # document_metadata is sourced from retain_params.metadata
             document_metadata = retain_params_parsed.get("metadata") if retain_params_parsed else None
@@ -7661,24 +7836,62 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
                 # For a store that keeps memories outside SQL, deleting the documents row does not
-                # cascade to its memories (they are not SQL rows) — drop them through the store,
-                # tagged with a write-group so the store tombstone commits atomically with the
-                # Postgres document delete (a rolled-back delete must not orphan the memories).
-                if deleted and not _store.writes_memory_rows_in_sql_for(bank_id):
-                    _del_txn = await _store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
-                    await _store.delete_document(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, txn=_del_txn
-                    )
-                    # A store that owns the document store also drops the document RECORD (its
-                    # extracted text + chunk bodies; the orphan sweep reclaims the blobs), under the
-                    # same write-group so it commits atomically with the Postgres document delete.
-                    # This is the EXPLICIT deletion — distinct from the re-ingest facts-delete above.
-                    if _store.owns_document_store_for(bank_id):
-                        await _store.delete_document_record(bank_id=bank_id, document_id=document_id, txn=_del_txn)
-                    # Re-record the witness now that the group's writes have happened, so the row
-                    # carries what they actually wrote. `begin_txn` recorded it before any write
-                    # existed; the upsert widens rather than replaces.
-                    await _store.write_txn_witness(_del_txn, conn=conn, fq_table=fq_table)
+                # cascade to its memories (they are not SQL rows) — drop them through the store.
+                if not _store.writes_memory_rows_in_sql_for(bank_id):
+                    # A store-owned (PG-free) bank writes NO Postgres documents row, so the DELETE
+                    # above is a no-op and `deleted` is None — the deletion must be DRIVEN off the
+                    # store, not gated on the SQL result (otherwise a store-owned document could never
+                    # be deleted at all). The memory tombstone-by-document and the doc-record delete
+                    # are the only writes, both in the store, so no write-group is needed — nothing in
+                    # Postgres to be atomic with. (The legacy path that DID write a documents row for
+                    # such a store still tagged a txn; that row no longer exists under PG-free retain.)
+                    had_memories = bool(unit_ids) or units_count > 0
+                    if _store.store_owned_retain_for(bank_id):
+                        # Whether the RECORD existed has to be established before deleting it, and it
+                        # cannot be inferred from `owns_document_store_for` — that is a capability of
+                        # the store, true for every bank it serves, so using it here reported a
+                        # successful deletion for a document that never existed and turned the 404
+                        # this endpoint promises into a 200.
+                        doc_existed = (
+                            await _store.document_content_hash(bank_id=bank_id, document_id=document_id) is not None
+                            if _store.owns_document_store_for(bank_id)
+                            else False
+                        )
+                        await _store.delete_document(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+                        )
+                        if _store.owns_document_store_for(bank_id):
+                            await _store.delete_document_record(bank_id=bank_id, document_id=document_id)
+                        # Report the deletion off the store's own state (SQL `deleted` is None here).
+                        #
+                        # When the store owns the document store its RECORD is the authority, and
+                        # the memory count is deliberately not consulted: "document not found" is a
+                        # statement about the document, and a document with no memories still
+                        # exists. It also cannot be trusted here — the per-document count is a
+                        # per-segment tally that does not subtract a delete still sitting in the
+                        # un-folded tail, so straight after a delete it reports the pre-delete
+                        # number and a second delete of the same document would report success. That
+                        # made the endpoint's 404 depend on how far behind the indexer happened to
+                        # be, which is why it passed alone and failed under load.
+                        if doc_existed if _store.owns_document_store_for(bank_id) else had_memories:
+                            deleted = deleted or document_id
+                    elif deleted:
+                        # Legacy store-outside-SQL that still writes a Postgres documents row: keep
+                        # the write-group so the store tombstone commits atomically with the SQL delete.
+                        _del_txn = await _store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
+                        await _store.delete_document(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, txn=_del_txn
+                        )
+                        # A store that owns the document store also drops the document RECORD (its
+                        # extracted text + chunk bodies; the orphan sweep reclaims the blobs), under
+                        # the same write-group. This is the EXPLICIT deletion — distinct from the
+                        # re-ingest facts-delete above.
+                        if _store.owns_document_store_for(bank_id):
+                            await _store.delete_document_record(bank_id=bank_id, document_id=document_id, txn=_del_txn)
+                        # Re-record the witness now that the group's writes have happened, so the row
+                        # carries what they actually wrote. `begin_txn` recorded it before any write
+                        # existed; the upsert widens rather than replaces.
+                        await _store.write_txn_witness(_del_txn, conn=conn, fq_table=fq_table)
 
                 # Invalidate observations referencing these (now-deleted) memories
                 if unit_ids:
@@ -7790,13 +8003,24 @@ class MemoryEngine(MemoryEngineInterface):
                     """,
                     *params,
                 )
+                from .memories import MemoryPatch, get_memories
+
+                _store = get_memories()
                 if not doc_id_found:
-                    return False
-
-                if tags is not None:
-                    from .memories import MemoryPatch, get_memories
-
-                    _store = get_memories()
+                    # A store-owned bank writes NO Postgres documents row, so the UPDATE above
+                    # matched nothing and `doc_id_found` is None for a document that plainly
+                    # exists. Returning False here made `update_document` a silent no-op for
+                    # exactly the store whose branch below was written to serve it — the retag
+                    # never ran, and the caller got "not found" for a document it had just read.
+                    # Drive existence off the STORE instead, the same way document DELETE had to.
+                    if not _store.owns_document_store_for(bank_id):
+                        return False
+                    if await _store.get_document_record(bank_id=bank_id, document_id=document_id) is None:
+                        return False
+                    if tags is not None:
+                        # The document's OWN tags live on the store's record; the memories are
+                        # retagged separately below. Both, or the browser shows one of them stale.
+                        await _store.set_document_tags(bank_id=bank_id, document_id=document_id, tags=list(tags))
                 if tags is not None and not _store.writes_memory_rows_in_sql_for(bank_id):
                     # A store that keeps memories outside SQL: retag the document's memories, then
                     # invalidate the observations built on them and requeue their sources so the
@@ -8019,13 +8243,24 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     deleted = unit_id if fact_type is not None else None
                     if deleted:
-                        # Tag the store tombstone so it commits atomically with this transaction.
-                        _del_txn = await _store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
-                        await _store.delete_facts(bank_id, [unit_id], txn=_del_txn)
-                        # Re-record the witness now that the group's write has happened, so the row
-                        # carries what it actually wrote. `begin_txn` recorded it before any write
-                        # existed; the upsert widens rather than replaces.
-                        await _store.write_txn_witness(_del_txn, conn=conn, fq_table=fq_table)
+                        if _store.store_owned_retain_for(bank_id):
+                            # Store-owned: the tombstone is the ONLY write here (the relink/prune
+                            # enqueues above join memory_units/unit_entities, which this store keeps
+                            # no rows in — so they touch nothing; stale-observation cleanup routes to
+                            # the store and is not part of this txn either). One memlake delete needs
+                            # no write-group — a plain, immediately-durable tombstone leaves no witness
+                            # to go undecided (a store-owned retain creates none of these either).
+                            await _store.delete_facts(bank_id, [unit_id])
+                        else:
+                            # Tag the store tombstone so it commits atomically with this transaction.
+                            _del_txn = await _store.begin_txn(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True
+                            )
+                            await _store.delete_facts(bank_id, [unit_id], txn=_del_txn)
+                            # Re-record the witness now that the group's write has happened, so the
+                            # row carries what it actually wrote. `begin_txn` recorded it before any
+                            # write existed; the upsert widens rather than replaces.
+                            await _store.write_txn_witness(_del_txn, conn=conn, fq_table=fq_table)
 
                 # Invalidate observations referencing this (now-deleted) source memory
                 if bank_id and fact_type in ("experience", "world"):
@@ -8401,15 +8636,35 @@ class MemoryEngine(MemoryEngineInterface):
                         result = {"memory_units_deleted": units_count, "entities_deleted": 0}
                     else:
                         # Delete all data for the bank — observations are included, no invalidation needed
-                        units_count = await conn.fetchval(
-                            f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id
-                        )
-                        entities_count = await conn.fetchval(
-                            f"SELECT COUNT(*) FROM {fq_table('entities')} WHERE bank_id = $1", bank_id
-                        )
-                        documents_count = await conn.fetchval(
-                            f"SELECT COUNT(*) FROM {fq_table('documents')} WHERE bank_id = $1", bank_id
-                        )
+                        # What was deleted has to be counted where it actually lives. For a bank
+                        # whose memories, documents and entity registry are outside SQL, these three
+                        # tables are empty, so the endpoint reported deleting nothing while dropping
+                        # the whole bank — a success message that reads like a no-op.
+                        from .memories import get_memories as _get_memories_for_delete
+
+                        _del_store = _get_memories_for_delete()
+                        if _del_store.writes_memory_rows_in_sql_for(bank_id):
+                            units_count = await conn.fetchval(
+                                f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id
+                            )
+                            entities_count = await conn.fetchval(
+                                f"SELECT COUNT(*) FROM {fq_table('entities')} WHERE bank_id = $1", bank_id
+                            )
+                            documents_count = await conn.fetchval(
+                                f"SELECT COUNT(*) FROM {fq_table('documents')} WHERE bank_id = $1", bank_id
+                            )
+                        else:
+                            _counts = await _del_store.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
+                            units_count = sum(_counts.values())
+                            documents_count = (
+                                await _del_store.count_documents(bank_id=bank_id)
+                                if _del_store.owns_document_store_for(bank_id)
+                                else 0
+                            )
+                            _ents = await _del_store.list_entities(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, search=None, limit=1, offset=0
+                            )
+                            entities_count = int(_ents.get("total") or 0)
 
                         # Delete documents (cascades to chunks)
                         await conn.execute(f"DELETE FROM {fq_table('documents')} WHERE bank_id = $1", bank_id)
@@ -9013,47 +9268,57 @@ class MemoryEngine(MemoryEngineInterface):
                 entity_resolution = None
                 resolved_for_unit = None
                 edit_entity_ids = None
+                entity_names_for_store = None
                 entity_date = None
                 if new_entities is not None:
                     entity_date = new_occ_start or live.mentioned_at
-                    # resolve_entities_only find-or-creates the corrected entities (idempotent) and
-                    # autocommits them on this short connection; the Phase-2 relink writes exactly
-                    # this resolved set, keeping the stored embedding consistent with the links.
-                    #
-                    # resolve_entities decides whether these names are a correction or another
-                    # guess (#3479). It defaults to True — retain's behaviour, kept as the default
-                    # so existing callers are unaffected — under which a similar-but-wrong entity
-                    # that is well-connected to the other names in this same list outscores the one
-                    # the caller actually named, and the edit lands on it with a 200 and no warning.
-                    # Callers correcting a fact by hand should pass False, which reuses an existing
-                    # entity only on a case-insensitive name match.
                     entities_resolved = True
-                    entity_resolution = await resolve_entities_only(
-                        self.entity_resolver,
-                        conn,
-                        bank_id,
-                        [str(memory_uuid)],
-                        [new_text],
-                        new_context or "",
-                        [entity_date],
-                        [[{"text": name, "type": "CONCEPT", "resolve": resolve_entities} for name in new_entities]],
-                        entity_labels=entity_labels,
-                    )
-                    resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
-                    edit_entity_ids = [str(eid) for eid in resolved_for_unit]
-                    # Canonical names of the newly-resolved set (the entity registry is always in
-                    # SQL, whichever store owns the memory rows), used to build the embedding.
-                    name_rows = (
-                        await conn.fetch(
-                            f"SELECT canonical_name FROM {fq_table('entities')} "
-                            f"WHERE id = ANY($1::uuid[]) AND bank_id = $2 ORDER BY id",
-                            resolved_for_unit,
+                    if store.store_owned_retain_for(bank_id):
+                        # The store owns its entity registry: hand it the raw names and let its
+                        # apply_edit resolve + mint them (exactly as its retain does), so a new
+                        # entity from an edit lands in that registry. Nothing is written to — or
+                        # read from — the SQL entities table; the names ARE the input, and the
+                        # embedding is built from them directly.
+                        names = list(new_entities)
+                        entity_names_for_store = names
+                    else:
+                        # resolve_entities_only find-or-creates the corrected entities (idempotent)
+                        # and autocommits them on this short connection; the Phase-2 relink writes
+                        # exactly this resolved set, keeping the embedding consistent with the links.
+                        #
+                        # resolve_entities decides whether these names are a correction or another
+                        # guess (#3479). It defaults to True — retain's behaviour, kept as the
+                        # default so existing callers are unaffected — under which a similar-but-
+                        # wrong entity that is well-connected to the other names in this same list
+                        # outscores the one the caller actually named, and the edit lands on it with
+                        # a 200 and no warning. Callers correcting a fact by hand should pass False,
+                        # which reuses an existing entity only on a case-insensitive name match.
+                        entity_resolution = await resolve_entities_only(
+                            self.entity_resolver,
+                            conn,
                             bank_id,
+                            [str(memory_uuid)],
+                            [new_text],
+                            new_context or "",
+                            [entity_date],
+                            [[{"text": name, "type": "CONCEPT", "resolve": resolve_entities} for name in new_entities]],
+                            entity_labels=entity_labels,
                         )
-                        if resolved_for_unit
-                        else []
-                    )
-                    names = [r["canonical_name"] for r in name_rows]
+                        resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
+                        edit_entity_ids = [str(eid) for eid in resolved_for_unit]
+                        # Canonical names of the newly-resolved set (this store's registry is the
+                        # host's SQL), used to build the embedding.
+                        name_rows = (
+                            await conn.fetch(
+                                f"SELECT canonical_name FROM {fq_table('entities')} "
+                                f"WHERE id = ANY($1::uuid[]) AND bank_id = $2 ORDER BY id",
+                                resolved_for_unit,
+                                bank_id,
+                            )
+                            if resolved_for_unit
+                            else []
+                        )
+                        names = [r["canonical_name"] for r in name_rows]
                 else:
                     # Entities untouched: the embedding uses the unit's current linked names.
                     emap = await store.entity_map_for_units(
@@ -9073,6 +9338,7 @@ class MemoryEngine(MemoryEngineInterface):
                     edit_entity_ids=edit_entity_ids,
                     entity_date=entity_date,
                     names=names,
+                    entity_names_for_store=entity_names_for_store,
                 )
 
             # --- Classify the state change (applied in Phase 2). Edit + invalidate can co-occur
@@ -9149,11 +9415,29 @@ class MemoryEngine(MemoryEngineInterface):
                     # One cross-store write-group for this curation edit/invalidate/revert: the
                     # store's writes below are tagged so they commit together with this Postgres
                     # transaction; decided (published) after it commits.
-                    _curation_txn = await store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
+                    #
+                    # A store that owns the whole retain keeps the edited MEMORY in the store (its
+                    # apply_edit / invalidate / restore below), and its one write is atomic on its own —
+                    # there is nothing to make atomic with a Postgres witness. Skip the write-group
+                    # (``_curation_txn = None`` → the store writes are plain, immediately visible), so
+                    # curation leaves no undecided txn to stall the store's indexer (same reasoning as
+                    # consolidation). The Postgres entity/posting writes below become plain best-effort
+                    # rows the store's reads no longer consult.
+                    _curation_txn = (
+                        None
+                        if store.store_owned_retain_for(bank_id)
+                        else await store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
+                    )
 
                     # --- Apply edit (live rows only) ---
                     if edit_plan is not None and live2:
-                        if edit_plan.resolved_for_unit is not None:
+                        if edit_plan.entity_names_for_store is not None:
+                            # The store owns its entity registry: apply_edit below resolves + mints
+                            # these names and rewrites the memory's entity ids. There are no SQL
+                            # postings to clear/relink and no prune queue — the store keeps entity
+                            # ids on the memory itself, so the edit's rewrite replaces the whole set.
+                            edit_embedding = edit_plan.embedding
+                        elif edit_plan.resolved_for_unit is not None:
                             # Entities are being changed: rebuild unit_entities to the resolved set.
                             # The entities this unit is about to stop referencing may have been
                             # holding on by that posting alone, so queue them as prune candidates
@@ -9216,6 +9500,7 @@ class MemoryEngine(MemoryEngineInterface):
                             event_date=edit_plan.new_event_date,
                             mentioned_at=edit_plan.mentioned_at,
                             entity_ids=edit_plan.edit_entity_ids,
+                            entity_names=edit_plan.entity_names_for_store,
                             txn=_curation_txn,
                         )
                         if edit_embedding is not None:
@@ -9298,7 +9583,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # Postgres committed the curation change: publish the store's write-group. On a
                 # crash before here the writes stay invisible and the recovery sweep resolves them.
-                await store.decide_txn(_curation_txn, commit=True)
+                # No-op for a store-owned edit (no write-group; its store writes were already visible).
+                if _curation_txn is not None:
+                    await store.decide_txn(_curation_txn, commit=True)
                 phase2_committed = True
         finally:
             # Entities were resolved (and possibly autocommitted) in Phase 1 but the edit did not
@@ -9979,6 +10266,25 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENTS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        # A store that owns its document metadata keeps no rows in the SQL `documents` table, so the
+        # query below would return an empty page for it. List from the store's own registry instead.
+        from .memories import get_memories
+
+        _docs_store = get_memories()
+        if _docs_store.owns_document_store_for(bank_id):
+            # `tags`/`tags_match` go WITH the call: dropping them here silently returned the
+            # unfiltered page — every document, including the untagged ones a strict mode excludes
+            # — with a `total` that ignored the filter. The store applies them and counts what
+            # matches, the same way the SQL branch below does.
+            return await _docs_store.list_documents(
+                bank_id=bank_id,
+                search_query=search_query,
+                tags=tags,
+                tags_match=tags_match,
+                limit=limit,
+                offset=offset,
+            )
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             # Build query conditions
@@ -10113,18 +10419,35 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT fact_type, source_memory_ids
-                FROM {fq_table("memory_units")}
-                WHERE id = $1 AND bank_id = $2
-                """,
-                memory_uuid,
-                bank_id,
-            )
-            if not row:
-                return None
-            if row["fact_type"] != "observation":
+            from .memories import get_memories
+
+            _hist_store = get_memories()
+            if _hist_store.writes_memory_rows_in_sql_for(bank_id):
+                row = await conn.fetchrow(
+                    f"""
+                    SELECT fact_type, source_memory_ids
+                    FROM {fq_table("memory_units")}
+                    WHERE id = $1 AND bank_id = $2
+                    """,
+                    memory_uuid,
+                    bank_id,
+                )
+                if not row:
+                    return None
+                fact_type = row["fact_type"]
+            else:
+                # A store that keeps memories outside SQL has no `memory_units` row to check
+                # existence against, so this lookup could only ever miss and the caller 404'd a
+                # memory that `memories/list` had just returned. The HISTORY rows themselves stay
+                # in SQL (`observation_history` below) — it is only the existence + fact_type probe
+                # that has to come from the store.
+                _found = await _hist_store.get_memories(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                )
+                if not _found:
+                    return None
+                fact_type = _found[0].fact_type
+            if fact_type != "observation":
                 return []
 
             # History now lives in the dedicated observation_history table
@@ -10234,6 +10557,37 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with chunk details including chunk_text, or None if not found
         """
         await self._authenticate_tenant(request_context)
+
+        # A store that owns the document store keeps no SQL `chunks` row to look this id up in.
+        # The id is self-describing — retain builds it as `{bank_id}_{document_id}_{index}` — so
+        # the bank and document are recoverable from it without a row. Attempted before touching
+        # SQL because for such a bank the SELECT below can only ever miss.
+        _parsed = _parse_chunk_id(chunk_id)
+        if _parsed is not None:
+            _cbank, _cdoc, _cidx = _parsed
+            from .memories import get_memories
+
+            _chunk_store = get_memories()
+            if _chunk_store.owns_document_store_for(_cbank):
+                if self._operation_validator:
+                    from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+                    ctx = BankReadContext(
+                        bank_id=_cbank, operation=BankReadOperation.GET_CHUNK, request_context=request_context
+                    )
+                    await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+                _text = await _chunk_store.get_chunk_text(bank_id=_cbank, document_id=_cdoc, chunk_index=_cidx)
+                if _text is None:
+                    return None
+                return {
+                    "chunk_id": chunk_id,
+                    "document_id": _cdoc,
+                    "bank_id": _cbank,
+                    "chunk_index": _cidx,
+                    "chunk_text": _text,
+                    "created_at": "",
+                }
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             chunk = await conn.fetchrow(
@@ -10316,6 +10670,41 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENT_CHUNKS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        from .memories import get_memories
+
+        _chunks_store = get_memories()
+        if _chunks_store.owns_document_store_for(bank_id):
+            # A store that owns the document store keeps neither the SQL `documents` row nor the
+            # SQL `chunks` rows, so the existence check below 404s and the page below is empty.
+            # Serve the whole route from the store instead of overlaying text onto rows that do
+            # not exist.
+            texts = await _chunks_store.list_chunk_texts(bank_id=bank_id, document_id=document_id)
+            if texts is None:
+                return None
+            total = len(texts)
+            window = list(enumerate(texts))[offset : offset + limit]
+            return {
+                "items": [
+                    {
+                        # Rebuilt to the same shape retain writes
+                        # (chunk_storage.py: f"{bank_id}_{document_id}_{index}") so an id from
+                        # this route is accepted by the addressed chunk route.
+                        "chunk_id": f"{bank_id}_{document_id}_{idx}",
+                        "document_id": document_id,
+                        "bank_id": bank_id,
+                        "chunk_index": idx,
+                        "chunk_text": text,
+                        # The store does not carry a per-chunk creation time; the document's is
+                        # the closest true value and inventing one per chunk would be worse.
+                        "created_at": "",
+                    }
+                    for idx, text in window
+                ],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             # Verify document exists
@@ -12167,6 +12556,14 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_ENTITY_GRAPH, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        # A store that owns its entities keeps no rows in the SQL entity_cooccurrences/entities
+        # tables, so the query below would return an empty graph. Read the store's own aggregate.
+        from .memories import get_memories
+
+        _eg_store = get_memories()
+        if _eg_store.store_owned_retain_for(bank_id):
+            return await _eg_store.get_entity_graph(bank_id=bank_id, limit=limit, min_count=min_count)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             edge_rows = await conn.fetch(
@@ -12501,10 +12898,16 @@ class MemoryEngine(MemoryEngineInterface):
                 """,
                 bank_id,
             )
-            doc_count_row = await conn.fetchrow(
-                f"SELECT COUNT(*) as count FROM {fq_table('documents')} WHERE bank_id = $1",
-                bank_id,
-            )
+            # Document count, like link/node counts above, must be asked of the store: a store that
+            # owns its documents keeps no rows in the SQL `documents` table, so the query returns 0.
+            if store.owns_document_store_for(bank_id):
+                total_documents = await store.count_documents(bank_id=bank_id)
+            else:
+                doc_count_row = await conn.fetchrow(
+                    f"SELECT COUNT(*) as count FROM {fq_table('documents')} WHERE bank_id = $1",
+                    bank_id,
+                )
+                total_documents = doc_count_row["count"] if doc_count_row else 0
             # Consolidation freshness (last-consolidated, pending, failed) lives on the memories,
             # so a store that keeps them outside SQL must answer this — the memory_units query
             # returns 0/None for it. Same {last_consolidated_at, pending, failed} shape either way.
@@ -12557,7 +12960,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "link_counts_by_fact_type": {},
                 "link_breakdown": [],
                 "operations": ops_by_status,
-                "total_documents": doc_count_row["count"] if doc_count_row else 0,
+                "total_documents": total_documents,
                 "last_consolidated_at": last_consolidated_at.isoformat() if last_consolidated_at else None,
                 "last_memory_write_at": last_memory_write_at.isoformat() if last_memory_write_at else None,
                 "pending_consolidation": consolidation_row["pending"] if consolidation_row else 0,
@@ -12793,6 +13196,33 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_ENTITY, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        from .memories import get_memories
+
+        _store = get_memories()
+        if _store.store_owned_retain_for(bank_id):
+            # A store that owns its entity registry writes no SQL `entities` rows, so the query
+            # below matches nothing and the caller 404s an entity that `list_entities` just
+            # returned. Resolve the one id against the store's registry instead — an ADDRESSED
+            # lookup, not a page-and-scan, so this stays O(1) in the registry size.
+            _id = str(entity_uuid)
+            names = await _store.resolve_entity_names(conn=None, fq_table=None, bank_id=bank_id, entity_ids=[_id])
+            if _id not in names:
+                return None
+            counts = await _store.entity_memory_counts(conn=None, fq_table=None, bank_id=bank_id, entity_ids=[_id])
+            return {
+                "id": _id,
+                "canonical_name": names[_id],
+                # Absent from the counts map means no live memories reference it (an orphan),
+                # which is 0 rather than missing.
+                "mention_count": counts.get(_id, 0),
+                # first/last seen live on the registry record, which this lookup does not carry;
+                # `list_entities` is the route that surfaces them.
+                "first_seen": None,
+                "last_seen": None,
+                "metadata": {},
+                "observations": [],
+            }
+
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:

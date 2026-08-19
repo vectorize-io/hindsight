@@ -450,9 +450,12 @@ export const getObservationHistory = <ThrowOnError extends boolean = false>(
  *
  * Recall memory using semantic similarity and spreading activation.
  *
- * The type parameter is optional and must be one of:
+ * The `types` parameter is optional and may contain any of:
  * - `world`: General knowledge about people, places, events, and things that happen
  * - `experience`: Memories about experience, conversations, actions taken, and tasks performed
+ * - `observation`: Consolidated knowledge synthesized from facts
+ *
+ * If `types` is omitted, all fact types are recalled.
  */
 export const recallMemories = <ThrowOnError extends boolean = false>(
   options: Options<RecallMemoriesData, ThrowOnError>

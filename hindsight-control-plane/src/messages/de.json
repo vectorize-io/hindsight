@@ -277,8 +277,6 @@
     "viewFailedMemoriesLabel": "Fehlgeschlagene Erinnerungen anzeigen",
     "mentalModels": "Mentale Modelle",
     "noMentalModels": "Keine mentalen Modelle",
-    "upToDate": "Aktuell",
-    "needsRefresh": "Aktualisierung nötig",
     "total": "Gesamt",
     "activity": "Aktivität",
     "memoriesIngested": "Aufgenommene Erinnerungen",
@@ -778,6 +776,10 @@
     "badgeAutoRefresh": "Automatische Aktualisierung",
     "badgeScheduled": "Geplant",
     "nextRefreshLabel": "Nächste Aktualisierung",
+    "freshnessRefreshed": "aktualisiert {time}",
+    "freshnessReadTo": "gelesen bis {time}",
+    "freshnessNext": "nächste:",
+    "scopeFactTypesTitle": "Welche Faktentypen dieses Modell liest.",
     "refreshedLabel": "Aktualisiert",
     "nextRefreshAuto": "bei neuen Erinnerungen",
     "nextRefreshManual": "bei Bedarf",
@@ -1444,10 +1446,6 @@
     "actionDelete": "Löschen",
     "storedContent": "Gespeicherter Inhalt",
     "charsCount": "{count} Zeichen",
-    "stale": "Veraltet",
-    "staleTitle": "Seit der letzten Aktualisierung dieses mentalen Modells wurden neue Erinnerungen in seinem Bereich aufgenommen",
-    "inSync": "Synchronisiert",
-    "inSyncTitle": "Seit der letzten Aktualisierung dieses mentalen Modells keine neuen Erinnerungen in seinem Bereich",
     "lastRefreshed": "Zuletzt aktualisiert {time}",
     "basedOn": "Basiert auf",
     "basedOnWithCount": "Basiert auf ({count})",
@@ -1798,8 +1796,6 @@
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
     "autoBadge": "auto",
-    "inSync": "In sync",
-    "needsRefresh": "Aktualisierung nötig",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1878,5 +1874,12 @@
     "toolOutputLabel": "Ausgabe:",
     "toolWindowBound": "Fenster: nur Erinnerungen, die nach {time} aktualisiert wurden",
     "toolWindowUnbounded": "Fenster: keines – dieses Tool ist nicht zeitlich begrenzt"
+  },
+  "staleness": {
+    "stale": "Veraltet",
+    "inSync": "Aktuell",
+    "staleAutoTitle": "Neue Erinnerungen im Bereich dieses Modells — es aktualisiert sich selbst",
+    "staleManualTitle": "Neue Erinnerungen im Bereich dieses Modells — aktualisieren, um aufzuholen",
+    "inSyncTitle": "Keine neuen Erinnerungen im Bereich dieses Modells"
   }
 }

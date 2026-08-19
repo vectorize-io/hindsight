@@ -3025,7 +3025,7 @@ class MemoryApi:
     ) -> RecallResponse:
         """Recall memory
 
-        Recall memory using semantic similarity and spreading activation.  The type parameter is optional and must be one of: - `world`: General knowledge about people, places, events, and things that happen - `experience`: Memories about experience, conversations, actions taken, and tasks performed
+        Recall memory using semantic similarity and spreading activation.  The `types` parameter is optional and may contain any of: - `world`: General knowledge about people, places, events, and things that happen - `experience`: Memories about experience, conversations, actions taken, and tasks performed - `observation`: Consolidated knowledge synthesized from facts  If `types` is omitted, all fact types are recalled.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -3101,7 +3101,7 @@ class MemoryApi:
     ) -> ApiResponse[RecallResponse]:
         """Recall memory
 
-        Recall memory using semantic similarity and spreading activation.  The type parameter is optional and must be one of: - `world`: General knowledge about people, places, events, and things that happen - `experience`: Memories about experience, conversations, actions taken, and tasks performed
+        Recall memory using semantic similarity and spreading activation.  The `types` parameter is optional and may contain any of: - `world`: General knowledge about people, places, events, and things that happen - `experience`: Memories about experience, conversations, actions taken, and tasks performed - `observation`: Consolidated knowledge synthesized from facts  If `types` is omitted, all fact types are recalled.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -3177,7 +3177,7 @@ class MemoryApi:
     ) -> RESTResponseType:
         """Recall memory
 
-        Recall memory using semantic similarity and spreading activation.  The type parameter is optional and must be one of: - `world`: General knowledge about people, places, events, and things that happen - `experience`: Memories about experience, conversations, actions taken, and tasks performed
+        Recall memory using semantic similarity and spreading activation.  The `types` parameter is optional and may contain any of: - `world`: General knowledge about people, places, events, and things that happen - `experience`: Memories about experience, conversations, actions taken, and tasks performed - `observation`: Consolidated knowledge synthesized from facts  If `types` is omitted, all fact types are recalled.
 
         :param bank_id: (required)
         :type bank_id: str

@@ -638,6 +638,40 @@ const RUNTIME_MESSAGE_ID_LINE_RE = /^\[message_id:\s*(?:om|ou|oc)_[A-Za-z0-9_-]+
 const RUNTIME_OPAQUE_ID_LINE_RE = /^(?:om|ou|oc)_[A-Za-z0-9_-]+$/i;
 const RUNTIME_OPAQUE_SENDER_PREFIX_RE = /^\s*(?:om|ou|oc)_[A-Za-z0-9_-]+\s*:\s*/i;
 
+// Opt-in display-name prefix stripping (#3070). Some channels prepend a human
+// display name to the user text ("Alice: today weather?"), which pollutes both
+// the recall query and the retained transcript (the name gets extracted as a
+// fact). No payload field carries the display name, and a generic `Word:`
+// heuristic would eat ordinary user text ("计划: 今天修 retain 污染"), so the
+// pattern is operator-supplied. Unset = byte-identical to the old behaviour.
+// One process-global compiled pattern, armed from getPluginConfig(): the host
+// holds a single hindsight-openclaw config, so every session in the process
+// shares it. Compile per config if that ever stops being true.
+let senderPrefixRe: RegExp | undefined;
+let senderPrefixSource: string | undefined;
+
+/**
+ * Set (or clear) the display-name prefix pattern stripped by
+ * {@link stripRuntimeEnvelope}. The pattern is the name alternation only
+ * (e.g. `Alice|Bob` or `[A-Za-z ]{1,20}`); the anchor, surrounding whitespace
+ * and the `:` separator are supplied here. An invalid regex fails closed:
+ * stripping stays off and nothing throws.
+ */
+export function configureSenderPrefixStripping(pattern: string | undefined): void {
+  if (pattern === senderPrefixSource) return; // no recompile, and no repeat warn
+  senderPrefixSource = pattern;
+  if (!pattern) {
+    senderPrefixRe = undefined;
+    return;
+  }
+  try {
+    senderPrefixRe = new RegExp(`^\\s*(?:${pattern})\\s*:\\s*`);
+  } catch (error) {
+    senderPrefixRe = undefined;
+    log.warn(`ignoring invalid senderPrefixPattern ${JSON.stringify(pattern)}: ${error}`);
+  }
+}
+
 /**
  * Strip inline OpenClaw/Feishu runtime headers that can appear before user text.
  * These identifiers are routing/runtime metadata, not semantic conversation content.
@@ -651,7 +685,8 @@ export function stripRuntimeEnvelope(content: string): string {
     return !RUNTIME_MESSAGE_ID_LINE_RE.test(trimmed) && !RUNTIME_OPAQUE_ID_LINE_RE.test(trimmed);
   });
 
-  return kept.join("\n").replace(RUNTIME_OPAQUE_SENDER_PREFIX_RE, "");
+  const stripped = kept.join("\n").replace(RUNTIME_OPAQUE_SENDER_PREFIX_RE, "");
+  return senderPrefixRe ? stripped.replace(senderPrefixRe, "") : stripped;
 }
 
 /**
@@ -1705,6 +1740,13 @@ export function normalizeRetainTags(value: unknown): string[] {
 export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
   const config = api.config.plugins?.entries?.["hindsight-openclaw"]?.config || {};
 
+  const senderPrefixPattern =
+    typeof config.senderPrefixPattern === "string" && config.senderPrefixPattern.trim().length > 0
+      ? config.senderPrefixPattern.trim()
+      : undefined;
+  // Arm the shared stripper used by every recall/retain text path (#3070).
+  configureSenderPrefixStripping(senderPrefixPattern);
+
   // No default fallback for missions: if the user doesn't set one, the plugin
   // does not stamp anything. This lets per-bank missions written via the API
   // (PATCH /banks/{id}) survive gateway restarts. (#1270)
@@ -1835,6 +1877,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
         ? config.retainQueueFlushIntervalMs
         : undefined,
     enableKnowledgeTools: config.enableKnowledgeTools === true,
+    senderPrefixPattern,
   };
 }
 

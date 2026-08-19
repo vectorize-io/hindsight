@@ -198,6 +198,7 @@ def _ctx(threshold: float = 0.97):
         # config, so these must be present (production defaults: native/english).
         config=types.SimpleNamespace(
             consolidation_dedup_threshold=threshold,
+            llm_temperature_consolidation=0.0,
             text_search_extension="native",
             text_search_extension_native_language="english",
         ),
@@ -240,6 +241,7 @@ async def test_dedup_llm_keep_does_not_merge() -> None:
         result = await _dedup_reconcile_create(**kwargs)
     assert result is None
     llm.call.assert_awaited_once()
+    assert llm.call.await_args.kwargs["temperature"] == 0.0
     conn.fetchval.assert_not_called()  # kept distinct → no merge
 
 
@@ -409,6 +411,7 @@ def _update_ctx(threshold: float = 0.97):
         # config, so these must be present (production defaults: native/english).
         config=types.SimpleNamespace(
             consolidation_dedup_threshold=threshold,
+            llm_temperature_consolidation=0.0,
             text_search_extension="native",
             text_search_extension_native_language="english",
         ),
