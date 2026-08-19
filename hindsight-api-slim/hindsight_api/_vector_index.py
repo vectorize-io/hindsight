@@ -253,6 +253,11 @@ def uses_per_bank_vector_indexes(ext: str) -> bool:
 def per_bank_index_min_rows() -> int:
     """Rows a (bank, fact_type) needs before it earns its own partial vector index.
 
+    ``0`` — the default — means the threshold is off entirely: indexes are
+    created up front at bank creation, exactly as they were before the threshold
+    existed, and no maintenance operation ever runs. Everything below applies
+    only when an operator sets a positive value.
+
     Distinct from :func:`minimum_rows_for_index`, which is ScaNN's *build*
     requirement for its single global index (AlloyDB cannot construct one below
     a floor). This is a cost policy for the per-bank backends: the indexes sit on
@@ -272,59 +277,63 @@ def per_bank_index_min_rows() -> int:
     return get_config().vector_index_min_rows
 
 
-def per_bank_index_drop_rows() -> int:
-    """Row count below which an existing per-bank vector index is dropped.
+def per_bank_indexes_are_eager() -> bool:
+    """Whether indexes are created up front at bank creation rather than earned.
 
-    Strictly below :func:`per_bank_index_min_rows` so the build and drop
-    decisions cannot both be true at one row count. Without the gap, a bank
-    hovering at the threshold — consolidation prunes a few facts, retain adds
-    them back — would rebuild and drop the same ANN index on alternating sweeps.
+    True at the default threshold of ``0``, where this reverts to the behaviour
+    that predates the threshold: the bank-create transaction builds all three
+    partial indexes (instant — the bank is empty), bank deletion drops them, and
+    nothing in between inspects row counts. No ``vector_index_maintenance``
+    operation is submitted, and no write pays a coverage pre-check.
+
+    Making ``0`` mean *eager* rather than *lazy with no minimum* is what keeps
+    the default deployment on exactly its pre-#3561 behaviour. Lazily building
+    the same indexes on first write produced identical coverage, but reached it
+    through a visible async operation per (bank, fact_type) and charged every
+    subsequent write a row count to rediscover there was nothing to do.
+    """
+    return per_bank_index_min_rows() == 0
+
+
+def per_bank_index_build_bound() -> int:
+    """Rows at which a partition earns an index. Only meaningful when not eager.
+
+    Returned as a bound to *test membership against* rather than a count to
+    compare with, because nothing needs the exact size of a partition — only
+    whether it reaches this many rows. That distinction is what lets the planner
+    answer with an index-only probe bounded by the threshold instead of counting
+    every row the bank owns (issue #3485 made those counts run on every write).
+    """
+    return max(per_bank_index_min_rows(), 1)
+
+
+def per_bank_index_keep_bound() -> int:
+    """Rows below which an existing index is dropped. Only meaningful when not eager.
+
+    Deliberately lower than :func:`per_bank_index_build_bound` — keeping starts
+    below building — so a partition hovering at the threshold does not rebuild
+    and drop the same ANN index on alternating writes.
+
+    Never below 1: an emptied partition loses its index at every threshold,
+    whatever the ratio works out to. Without that floor a bank written to once
+    and then cleared would hold three indexes over nothing, which is the
+    accumulation the threshold exists to prevent.
     """
     from .config import VECTOR_INDEX_DROP_RATIO
 
-    return int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO)
+    return max(int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO), 1)
 
 
-def should_keep_per_bank_index(row_count: int) -> bool:
-    """Whether an *existing* index on a partition of ``row_count`` rows is kept.
+def per_bank_index_min_submit_interval_seconds() -> int:
+    """Shortest gap between two maintenance operations for one bank.
 
-    The counterpart to :func:`qualifies_for_per_bank_index`, and deliberately a
-    separate, lower bound: keeping starts below building, so a partition
-    hovering at the threshold does not rebuild and drop the same ANN index on
-    alternating writes.
-
-    The ``row_count > 0`` term is not redundant with the ratio. At the default
-    threshold of 0 the drop floor is also 0, so a bare ``row_count >= floor``
-    keeps an index over an *emptied* partition forever — every bank ever written
-    to and then cleared would hold three indexes over nothing, which is the
-    accumulation the threshold exists to prevent. An emptied partition loses its
-    index at every threshold.
+    Lives here with the rest of the policy rather than being read from config at
+    the call site so tests can shift it the same way they shift the bounds, and
+    so every reader of the policy is in one file.
     """
-    return row_count > 0 and row_count >= per_bank_index_drop_rows()
+    from .config import get_config
 
-
-def qualifies_for_per_bank_index(row_count: int) -> bool:
-    """Whether a (bank, fact_type) holding ``row_count`` rows should have an index.
-
-    At the default threshold of 0 this is true for every partition that holds
-    any rows at all, which is the behaviour before the threshold existed.
-
-    An empty partition is excluded explicitly rather than by arithmetic: at a
-    threshold of 0, ``row_count >= minimum`` alone is true for zero rows, so
-    every bank in the deployment would be entitled to three indexes over nothing
-    the moment it was created — the exact index explosion the threshold exists
-    to prevent, reintroduced by its own default.
-
-    Only the build side: an existing index is kept until the count falls under
-    :func:`per_bank_index_drop_rows`, so callers reconciling live state must
-    consult both bounds rather than treating this as the full policy.
-
-    Takes no extension: the backend question is settled before any reconcile
-    runs (``uses_per_bank_vector_indexes`` gates the maintenance operation and
-    ``_vector_index_clause`` gates the admin command), so re-asking it here
-    would be a second, weaker copy of a decision already made.
-    """
-    return row_count > 0 and row_count >= per_bank_index_min_rows()
+    return get_config().vector_index_maintenance_min_interval_seconds
 
 
 def bootstrap_extension(conn: Connection, ext: str) -> None:

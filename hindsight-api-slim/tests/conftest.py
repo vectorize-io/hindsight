@@ -124,23 +124,6 @@ os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", 
 os.environ.setdefault("HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
 
-# Keep incidental per-bank vector-index DDL out of the suite. The shipped default
-# is 0 — every bank holding rows earns its three indexes — which is right for a
-# deployment whose banks are long-lived and get built once, but wrong here: the
-# suite creates thousands of throwaway banks and writes one or two facts to each,
-# so every one of them would queue a build. Eight xdist workers issuing
-# CREATE INDEX CONCURRENTLY against a single shared memory_units deadlock each
-# other by design (CONCURRENTLY holds ShareUpdateExclusive while it waits out
-# every session whose snapshot could still see the index, including other
-# sessions' index DDL), and that lands on whatever unrelated test happens to be
-# writing at the time.
-#
-# A threshold no test bank can reach means the coverage machinery is inert unless
-# a test asks for it: tests that exercise it patch the threshold themselves (see
-# the low_threshold / default_threshold fixtures in
-# test_repair_bank_vector_indexes.py).
-os.environ.setdefault("HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS", "1000000")
-
 
 # Load environment variables from .env at the start of test session
 def pytest_configure(config):

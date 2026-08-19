@@ -13,7 +13,7 @@ from typing import Any
 from ...config import _get_raw_config
 from ..memory_engine import fq_table
 from ..metadata_utils import drop_null_values
-from .bank_utils import DEFAULT_DISPOSITION
+from .bank_utils import DEFAULT_DISPOSITION, create_bank_vector_indexes
 from .fact_extraction import _sanitize_text
 from .types import ProcessedFact
 
@@ -122,7 +122,7 @@ async def index_facts(
     await get_memories().index_facts(bank_id, unit_ids, facts, document_id, unit_entity_ids)
 
 
-async def ensure_bank_exists(conn, bank_id: str, ops=None) -> None:
+async def ensure_bank_exists(conn, bank_id: str, *, ops) -> None:
     """
     Ensure bank exists in the database.
 
@@ -131,27 +131,33 @@ async def ensure_bank_exists(conn, bank_id: str, ops=None) -> None:
     Args:
         conn: Database connection
         bank_id: Bank identifier
+        ops: Backend ``DataAccessOps``, needed for the per-bank vector index DDL
+            a fresh bank gets while the size threshold is off. Required rather
+            than defaulting to None, because it is dereferenced only in that
+            branch — a caller that omitted it worked until the threshold was off.
     """
     # internal_id is generated here rather than defaulted server-side so the
-    # value is known without a RETURNING round-trip; the vector-index sweep
-    # derives index names from it.
-    #
-    # No vector-index DDL on this path. A fresh bank holds no rows, so it cannot
-    # meet the size threshold that earns a per-(bank, fact_type) partial index;
-    # the maintenance sweep builds one if the bank later grows into it. See
-    # issue #3485.
-    await conn.execute(
+    # value is known without a RETURNING round-trip: the index names derive
+    # from it.
+    internal_id = uuid.uuid4()
+    inserted = await conn.fetchval(
         f"""
         INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
         VALUES ($1, $2, $3::jsonb, $4, $5)
         ON CONFLICT (bank_id) DO NOTHING
+        RETURNING bank_id
         """,
         bank_id,
         bank_id,  # Default name is the bank_id (matches get_or_create_bank_profile)
         json.dumps(DEFAULT_DISPOSITION),
         "",
-        uuid.uuid4(),
+        internal_id,
     )
+    if inserted:
+        # Fresh insert — create per-bank vector indexes. A no-op unless the size
+        # threshold is off, in which case the maintenance operation owns them;
+        # see create_bank_vector_indexes.
+        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
 
 async def delete_stale_observations_for_memories(

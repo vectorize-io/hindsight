@@ -138,8 +138,9 @@ Hindsight supports four PostgreSQL vector extensions:
 #### Limiting vector indexes on large deployments
 
 On `pgvector`, `pgvectorscale` and `vchord`, a bank's memories are indexed per
-`(bank, fact_type)`. By default every bank that holds memories gets its own
-indexes, which is the right thing for most deployments.
+`(bank, fact_type)`. By default every bank gets its own indexes when it is
+created, which is the right thing for most deployments and needs no
+configuration.
 
 It stops being the right thing when you have thousands of banks. These indexes
 all live on one shared table, and PostgreSQL inspects and locks **every** index
@@ -158,14 +159,21 @@ limit.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS` | Memories a bank needs, in one fact type, before that fact type gets its own vector index. `0` (the default) means no minimum — every bank holding memories is indexed. `10000` is a good starting point for deployments with thousands of banks. | `0` |
+| `HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS` | Memories a bank needs, in one fact type, before that fact type gets its own vector index. `0` (the default) turns the threshold **off**: every bank is indexed from the moment it is created. `10000` is a good starting point for deployments with thousands of banks. | `0` |
+| `HINDSIGHT_API_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS` | Shortest gap between two index-maintenance runs for one bank. Stops a bank whose size hovers at the threshold from building and dropping the same index repeatedly. Unused while the threshold is off. | `900` |
 
-Coverage is maintained for you. Every write that could move a bank across the
-threshold queues a background `vector_index_maintenance` operation, which builds
-an index when a bank grows past the threshold and removes it if the bank shrinks
-well below it (the gap between those two points prevents churn at the boundary).
-Bank creation, ingestion and import never build indexes themselves, so no
-request ever waits on index DDL.
+**With the threshold off (the default),** indexes are created inside the
+transaction that creates the bank — instantly, because the bank is empty — and
+dropped when the bank is deleted. Nothing inspects bank sizes, and no background
+operation runs.
+
+**With a threshold set,** bank creation, ingestion and import build no indexes at
+all, so no request ever waits on index DDL. Instead, a write that could move a
+bank across the threshold queues a background `vector_index_maintenance`
+operation, which builds an index when a bank grows past the threshold and removes
+it if the bank shrinks well below it (the gap between those two points prevents
+churn at the boundary). You will see these operations in the bank's operations
+list.
 
 To reconcile without waiting for a write — after a restore, an upgrade, or an
 extension switch — run:
@@ -173,6 +181,9 @@ extension switch — run:
 ```bash
 hindsight-admin repair-bank --all
 ```
+
+This works in both modes: with the threshold off it rebuilds any index a bank is
+missing, and with one set it also drops what a bank no longer earns.
 
 **Switching extensions:**
 

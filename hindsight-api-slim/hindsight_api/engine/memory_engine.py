@@ -31,7 +31,12 @@ import asyncpg
 import httpx
 from pydantic import ValidationError
 
-from .._vector_index import ann_search_tuning_settings, configured_vector_extension
+from .._vector_index import (
+    ann_search_tuning_settings,
+    configured_vector_extension,
+    per_bank_index_min_submit_interval_seconds,
+    per_bank_indexes_are_eager,
+)
 from ..cancellation import OperationCancelledError
 from ..config import (
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
@@ -53,6 +58,7 @@ from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
 from .db import DatabaseBackend, DatabaseConnection, ResultRow, create_database_backend
 from .db.ops_postgresql import pg_search_vector_expr
+from .db.postgresql import PostgreSQLBackend
 from .db.postgresql import apply_session_settings as _apply_session_settings
 from .db_budget import budgeted_operation
 from .llm_interface import ProviderRateLimitResetError
@@ -442,6 +448,7 @@ if TYPE_CHECKING:
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoryScopeWatermark
     from .transfer import BankImportResult, ImportResult
+    from .vector_index_health import CoverageTrigger
 
 
 from enum import Enum
@@ -2680,7 +2687,7 @@ class MemoryEngine(MemoryEngineInterface):
         # partition. Retain's post-insert hook cannot see them — a bank whose
         # observations crossed the threshold here would otherwise wait for an
         # unrelated retain to notice (issue #3485).
-        await self._submit_vector_index_maintenance_quietly(bank_id, internal_context, after="consolidation")
+        await self._submit_vector_index_maintenance_quietly(bank_id, internal_context, after="consolidation", grew=True)
         return result
 
     async def _handle_graph_maintenance(self, task_dict: dict[str, Any]):
@@ -4853,7 +4860,7 @@ class MemoryEngine(MemoryEngineInterface):
             await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
         except Exception as e:
             logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
-        await self._submit_vector_index_maintenance_quietly(bank_id, request_context, after="retain")
+        await self._submit_vector_index_maintenance_quietly(bank_id, request_context, after="retain", grew=True)
 
     async def _submit_vector_index_maintenance_quietly(
         self,
@@ -4861,6 +4868,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         *,
         after: str,
+        grew: bool,
     ) -> None:
         """Queue a vector-index reconcile for ``bank_id``, swallowing failures.
 
@@ -4871,12 +4879,24 @@ class MemoryEngine(MemoryEngineInterface):
         with nothing else scanning for that, an emptied bank that is never
         written to again would carry them forever.
 
+        ``grew`` is which way this caller moved the row count, and it is not
+        bookkeeping: it halves the work the pre-check has to do, because coverage
+        can only go wrong in one direction at a time (see
+        :class:`CoverageTrigger`). Every call site knows the answer statically —
+        a delete cannot add rows — so it costs nothing to say.
+
         Never raises. Index coverage is an optimisation — a bank without it
         falls back to exact search — so it must not be able to fail the delete or
         retain that produced the change.
         """
+        from .vector_index_health import CoverageTrigger
+
         try:
-            await self.submit_async_vector_index_maintenance(bank_id=bank_id, request_context=request_context)
+            await self.submit_async_vector_index_maintenance(
+                bank_id=bank_id,
+                request_context=request_context,
+                trigger=CoverageTrigger.GREW if grew else CoverageTrigger.SHRANK,
+            )
         except Exception as e:
             logger.warning(f"Failed to submit vector index maintenance after {after} for bank {bank_id}: {e}")
 
@@ -7597,7 +7617,9 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             except Exception as e:
                 logger.warning(f"Failed to submit graph maintenance after document deletion for bank {bank_id}: {e}")
-            await self._submit_vector_index_maintenance_quietly(bank_id, request_context, after="document deletion")
+            await self._submit_vector_index_maintenance_quietly(
+                bank_id, request_context, after="document deletion", grew=False
+            )
 
         return result
 
@@ -7962,7 +7984,7 @@ class MemoryEngine(MemoryEngineInterface):
         if deleted and bank_id:
             await self._submit_refreshes_for_retracted_grounding(bank_id, request_context=request_context)
             await self._submit_vector_index_maintenance_quietly(
-                bank_id_for_graph_maintenance, request_context, after="memory deletion"
+                bank_id_for_graph_maintenance, request_context, after="memory deletion", grew=False
             )
 
         return result
@@ -8148,7 +8170,9 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             except Exception as e:
                 logger.warning(f"Failed to submit graph maintenance after bulk memory deletion for bank {bank_id}: {e}")
-            await self._submit_vector_index_maintenance_quietly(bank_id, request_context, after="bulk memory deletion")
+            await self._submit_vector_index_maintenance_quietly(
+                bank_id, request_context, after="bulk memory deletion", grew=False
+            )
 
         return {
             "requested": len(unit_ids),
@@ -8392,7 +8416,7 @@ class MemoryEngine(MemoryEngineInterface):
         # an emptied bank is exactly the one nobody writes to again.
         if not delete_bank_profile:
             await self._submit_vector_index_maintenance_quietly(
-                bank_id, request_context, after="clearing bank memories"
+                bank_id, request_context, after="clearing bank memories", grew=False
             )
 
         return result
@@ -17644,43 +17668,66 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         request_context: "RequestContext",
+        trigger: "CoverageTrigger",
         dedupe_excludes_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Bring a bank's per-(bank, fact_type) vector indexes back in line with its size.
 
-        Called after a write that could have changed the bank's coverage —
-        retain, import, consolidation, curation. Only writes move a bank across
-        the threshold, so there is nothing for a periodic sweep to discover that
-        the writer did not already know; this replaces one.
+        Only ever does anything when ``HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS`` is
+        set. At its default of 0 the threshold is off, indexes are created with
+        the bank and dropped with it, and this returns ``no_work`` before issuing
+        a single query — no operation, and no per-write cost at all.
 
-        Idempotent and self-limiting: it plans first and short-circuits with
-        ``no_work=True`` when the bank's coverage already matches, so callers
-        can invoke it unconditionally without paying for an async_operations
-        row. At the default threshold of 0 that means one operation per
-        (bank, fact_type) at first write and silence forever after.
+        With a threshold set, this is called after a write that could have moved
+        the bank across it. Only writes move a bank, so there is nothing for a
+        periodic sweep to discover that the writer did not already know.
+        ``trigger`` says which way the bank moved, which is what lets the
+        pre-check settle most partitions from the catalog alone; see
+        :class:`CoverageTrigger`.
 
-        Deduplicates by bank against a job that is pending *or* already running:
-        the job re-plans from live row counts when it starts, so a job in flight
-        already covers a write that landed after it was queued.
+        Idempotent and self-limiting three ways, so an unconditional caller pays
+        almost nothing on a converged bank: it plans first and short-circuits
+        with ``no_work=True`` when coverage already matches; it dedupes by bank
+        against a job that is pending *or* already running (the job re-plans from
+        live counts when it starts, so one in flight already covers a write that
+        landed after it was queued); and it will not re-submit for a bank
+        reconciled within the last ``vector_index_maintenance_min_interval_seconds``.
 
         A no-op on backends without per-bank indexes (ScaNN keeps one global
         index) and on Oracle (partitioned by bank, no partial vector indexes).
         """
         await self._authenticate_tenant(request_context)
 
+        # Threshold off: coverage is settled at bank creation, so there is
+        # nothing to reconcile and nothing to look at. Checked before anything
+        # else because this is the default, and the whole point of it is that an
+        # ordinary deployment never pays for this path.
+        if per_bank_indexes_are_eager():
+            return {"operation_id": None, "no_work": True}
+
         index_clause = bank_utils._vector_index_clause()
         if index_clause is None:
             return {"operation_id": None, "no_work": True}
 
-        # Cheap pre-check: two bank-scoped index-only queries plus a catalog
-        # lookup. Mirrors submit_async_graph_maintenance — an unconditional
-        # caller must not create an empty worker task on every write.
+        # Postgres-only, and gated on the backend rather than on the configured
+        # extension name: an Oracle deployment leaves HINDSIGHT_API_VECTOR_EXTENSION
+        # at its pgvector default, so the clause above is not None there. Without
+        # this the planner would run asyncpg-shaped SQL against Oracle on every
+        # write, and the job would then find no DSN to build with and re-queue
+        # itself on the next one, forever.
+        backend = await self._get_backend()
+        if not isinstance(backend, PostgreSQLBackend):
+            return {"operation_id": None, "no_work": True}
+
+        # Cheap pre-check: one catalog lookup plus, for the partitions this
+        # direction cannot settle from the catalog, one capped count. Mirrors
+        # submit_async_graph_maintenance — an unconditional caller must not
+        # create an empty worker task on every write.
         from .vector_index_health import plan_bank_vector_indexes
 
-        backend = await self._get_backend()
         try:
             async with acquire_with_retry(backend) as conn:
-                plan = await plan_bank_vector_indexes(conn, get_current_schema(), bank_id)
+                plan = await plan_bank_vector_indexes(conn, get_current_schema(), bank_id, trigger=trigger)
         except Exception as e:
             # Planning is advisory: a bank whose coverage we could not read is
             # picked up by the next write, or by `hindsight-admin repair-bank`.
@@ -17688,6 +17735,41 @@ class MemoryEngine(MemoryEngineInterface):
             return {"operation_id": None, "no_work": True}
         if plan.is_empty:
             return {"operation_id": None, "no_work": True}
+
+        # There is work, but possibly not work worth doing yet. Index DDL is the
+        # expensive thing here, and two situations make a bank ask for it over
+        # and over: a partition oscillating across the threshold (each crossing
+        # is an ANN build or drop), and a build that keeps failing — the job logs
+        # rather than raises, so the plan stays non-empty and the next write
+        # queues it again. Both are damped by refusing to reconcile the same bank
+        # twice inside the interval. Checked only now, so a converged bank never
+        # pays for it, and skipped for the job's own hand-off, whose whole
+        # purpose is to re-check immediately when the bank moved under it.
+        if dedupe_excludes_operation_id is None:
+            interval = per_bank_index_min_submit_interval_seconds()
+            since = datetime.now(UTC) - timedelta(seconds=interval)
+            try:
+                async with acquire_with_retry(backend) as conn:
+                    recent = await conn.fetchval(
+                        f"""
+                        SELECT 1 FROM {fq_table("async_operations")}
+                        WHERE bank_id = $1 AND operation_type = 'vector_index_maintenance'
+                          AND created_at > $2
+                        LIMIT 1
+                        """,
+                        bank_id,
+                        since,
+                    )
+            except Exception as e:
+                # Advisory, like the plan above: failing to read the cooldown is
+                # not a reason to skip work the plan says is due.
+                logger.warning(f"Vector index cooldown check failed for bank {bank_id}: {e}")
+                recent = None
+            if recent is not None:
+                logger.debug(
+                    f"Vector index maintenance for bank {bank_id} deferred: reconciled within the last {interval}s"
+                )
+                return {"operation_id": None, "no_work": True}
 
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
@@ -17733,10 +17815,15 @@ class MemoryEngine(MemoryEngineInterface):
         import asyncpg
 
         from ..pg0 import resolve_database_url
-        from .vector_index_health import reconcile_bank_vector_indexes
+        from .vector_index_health import CoverageTrigger, reconcile_bank_vector_indexes
 
         bank_id = task_dict.get("bank_id")
         if not bank_id:
+            return
+        # The threshold can be turned off while a job is queued. Coverage is then
+        # whatever bank creation gave the bank, and reconciling against a policy
+        # that no longer applies would drop indexes the deployment expects to keep.
+        if per_bank_indexes_are_eager():
             return
         index_clause = bank_utils._vector_index_clause()
         if index_clause is None:
@@ -17755,7 +17842,13 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         url = get_config().migration_database_url or getattr(backend, "dsn", None)
         if not url:
-            logger.debug("Vector index maintenance skipped: no database URL available")
+            # Not transient, unlike a failed build: nothing about the next write
+            # will produce a DSN. Warn rather than debug so the operator sees why
+            # coverage never converges, and return without the hand-off below.
+            logger.warning(
+                f"Vector index maintenance for bank {bank_id} skipped: no direct database URL available. "
+                f"Set HINDSIGHT_API_MIGRATION_DATABASE_URL to a session-pooled connection."
+            )
             return
 
         from hindsight_api.models import RequestContext
@@ -17816,6 +17909,10 @@ class MemoryEngine(MemoryEngineInterface):
             await self.submit_async_vector_index_maintenance(
                 bank_id=bank_id,
                 request_context=request_context,
+                # The job does not know which way the bank moved under it, and a
+                # hand-off is exactly the case where the directional
+                # short-circuits would be wrong to apply.
+                trigger=CoverageTrigger.FULL,
                 dedupe_excludes_operation_id=task_dict.get("operation_id"),
             )
         except Exception:

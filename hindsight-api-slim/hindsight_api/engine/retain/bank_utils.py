@@ -11,7 +11,7 @@ from typing import TypedDict
 
 from pydantic import BaseModel, Field
 
-from ..._vector_index import index_using_clause, uses_per_bank_vector_indexes
+from ..._vector_index import index_using_clause, per_bank_indexes_are_eager, uses_per_bank_vector_indexes
 from ...config import get_config
 from ..db_utils import acquire_with_retry, retry_with_backoff
 from ..memory_engine import fq_table, get_current_schema
@@ -43,6 +43,55 @@ def _vector_index_clause() -> str | None:
     if not uses_per_bank_vector_indexes(ext):
         return None
     return index_using_clause(ext)
+
+
+async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, *, ops) -> None:
+    """Create per-(bank, fact_type) partial vector indexes for a newly created bank.
+
+    Only does anything when the size threshold is off — the default — where a
+    bank is entitled to its indexes from the moment it exists and building them
+    here is instant, because the bank is empty. That is the behaviour that
+    predates the threshold, and keeping it means the default deployment never
+    submits a ``vector_index_maintenance`` operation and never pays a coverage
+    check on a write.
+
+    With ``HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS`` set, a fresh bank has not earned
+    anything yet, so this is a no-op and the maintenance operation builds an
+    index CONCURRENTLY if and when the bank grows into one — which also keeps
+    CREATE INDEX's ShareLock on the shared memory_units table off the write path.
+
+    Respects the HINDSIGHT_API_VECTOR_EXTENSION config to use the appropriate
+    index type (HNSW for pgvector, DiskANN for pgvectorscale, vchordrq for vchord).
+
+    AlloyDB ScaNN uses global vector indexes with filtered vector search; it
+    cannot safely create per-bank indexes at bank-creation time because new
+    banks have no embedding rows. On Oracle 23ai this is likewise a no-op —
+    Oracle uses a single global vector index created during migrations, and does
+    not support partial (WHERE-clause) vector indexes.
+
+    bank_id is escaped for SQL literal safety (apostrophes doubled).
+
+    ``ops`` is required rather than defaulting to None: it is only dereferenced
+    in the eager branch, so a caller that forgot it used to work fine until the
+    threshold happened to be off, and then failed on an AttributeError from
+    inside bank creation.
+    """
+    if not per_bank_indexes_are_eager():
+        return
+
+    index_clause = _vector_index_clause()
+    if index_clause is None:
+        logger.debug("Skipping per-bank vector indexes for configured backend")
+        return
+
+    await ops.create_bank_vector_indexes(
+        conn,
+        fq_table("memory_units"),
+        bank_id,
+        internal_id,
+        index_clause,
+        _BANK_INDEX_FACT_TYPES,
+    )
 
 
 async def drop_bank_vector_indexes(conn, internal_id: str, ops=None) -> None:
@@ -160,12 +209,15 @@ async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
     ``get_or_create_bank_profile_on_conn`` instead.
     """
 
-    # Retried as a whole transaction. This used to guard the per-bank CREATE
-    # INDEX that ran inline here and took a ShareLock on the shared memory_units
-    # table; that DDL is gone (#3485), but the lazy create can still lose a
-    # deadlock (40P01 / ORA-00060) to a concurrent writer touching the same
-    # bank row, and the body is idempotent (INSERT ... ON CONFLICT DO NOTHING),
-    # so retrying stays correct and cheap.
+    # Retried as a whole transaction. With the size threshold off (the default)
+    # a fresh bank builds its per-(bank, fact_type) partial vector indexes with a
+    # plain CREATE INDEX — it must, since this runs inside the bank-create tx and
+    # CONCURRENTLY cannot — and that CREATE takes a ShareLock on the shared
+    # memory_units table, which can deadlock with concurrent writers. Even with
+    # no DDL to issue, the lazy create can lose a deadlock (40P01 / ORA-00060) to
+    # a concurrent writer touching the same bank row. The body is idempotent
+    # (INSERT ... ON CONFLICT DO NOTHING + CREATE INDEX IF NOT EXISTS), so
+    # retrying the whole tx stays correct and cheap.
     async def _create() -> BankProfileResult:
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
@@ -214,14 +266,9 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
 
     # Bank doesn't exist, create with defaults. internal_id is minted here rather
     # than defaulted server-side so its value is known without a RETURNING
-    # round-trip; the vector-index sweep derives index names from it.
-    #
-    # No vector-index DDL here. A fresh bank holds no rows, so it cannot meet
-    # the size threshold that earns a per-(bank, fact_type) partial index; the
-    # maintenance sweep builds one if and when the bank grows into it. Keeping
-    # DDL out of this path also takes CREATE INDEX's ShareLock on the shared
-    # memory_units table off the retain hot path, where it deadlocked against
-    # concurrent writers. See issue #3485.
+    # round-trip: the index names derive from it, both for the eager create below
+    # and for the maintenance operation when a threshold is set.
+    internal_id = uuid.uuid4()
     inserted = await conn.fetchval(
         f"""
         INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
@@ -233,10 +280,16 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
         bank_id,  # Default name is the bank_id
         json.dumps(DEFAULT_DISPOSITION),
         "",
-        uuid.uuid4(),
+        internal_id,
     )
 
     created = inserted is not None
+    if created:
+        # Fresh insert — create per-bank vector indexes (instant on an empty
+        # bank). A no-op unless the size threshold is off; see
+        # create_bank_vector_indexes.
+        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+
     return BankProfileResult(
         profile=BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission=""),
         created=created,

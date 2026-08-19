@@ -30,12 +30,20 @@ from asyncpg.exceptions import DeadlockDetectedError
 from hindsight_api import RequestContext
 from hindsight_api.admin import cli
 from hindsight_api.admin.cli import _run_repair_bank
+from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine import vector_index_health
 from hindsight_api.engine.db_utils import acquire_with_retry, retry_with_backoff
 from hindsight_api.engine.memory_engine import MemoryEngine
-from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name, _vector_index_clause
+from hindsight_api.engine.retain import bank_utils
+from hindsight_api.engine.retain.fact_storage import ensure_bank_exists
+from hindsight_api.engine.retain.bank_utils import (
+    _BANK_INDEX_FACT_TYPES,
+    _bank_index_name,
+    _vector_index_clause,
+)
 from hindsight_api.engine.transfer import export_bank
 from hindsight_api.engine.vector_index_health import (
+    CoverageTrigger,
     drop_orphaned_bank_indexes,
     plan_bank_vector_indexes,
     reconcile_bank_vector_indexes,
@@ -63,33 +71,36 @@ _DROP_BELOW = 2
 _BETWEEN = 3
 
 
+# The three modules that import the policy helpers *by name*. Patching the config
+# would not reach an already-bound reference, so a fixture has to name every
+# importer; missing one is how a test silently keeps production's 10,000-row
+# threshold and turns into a vacuous pass. ``raising=True`` (monkeypatch's
+# default) is deliberate for the same reason: if a module stops using a helper,
+# the fixture must fail loudly rather than quietly do nothing.
+_POLICY_IMPORTERS = (vector_index_health, bank_utils, memory_engine_module)
+
+
 @pytest.fixture
 def low_threshold(monkeypatch):
     """Shrink the size threshold so tests need 4 rows, not 10,000.
 
-    Patched on ``vector_index_health``'s namespace because it imports both
-    helpers by name; patching the config would not reach the already-bound
-    references. ``raising=True`` (the default) is deliberate — if the reconcile
-    stops using one of these, this fixture must fail loudly rather than silently
-    leave the production 10,000-row threshold in place, which would turn every
-    test below into a vacuous pass.
+    Also pins eager mode *off*: the two are alternatives, and a threshold test
+    that ran in eager mode would assert nothing about the threshold.
     """
-    monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows >= _BUILD_AT)
-    monkeypatch.setattr(
-        vector_index_health, "should_keep_per_bank_index", lambda rows: rows > 0 and rows >= _DROP_BELOW
-    )
+    for module in _POLICY_IMPORTERS:
+        monkeypatch.setattr(module, "per_bank_indexes_are_eager", lambda: False)
+    monkeypatch.setattr(vector_index_health, "per_bank_index_build_bound", lambda: _BUILD_AT)
+    monkeypatch.setattr(vector_index_health, "per_bank_index_keep_bound", lambda: _DROP_BELOW)
 
 
-@pytest.fixture
-def default_threshold(monkeypatch):
-    """Restore the *shipped* default (0 = no minimum) for this test.
+def _patch_cooldown(monkeypatch, seconds: int) -> None:
+    """Set the per-bank submission cooldown for one test.
 
-    conftest raises the threshold out of reach for the whole suite so thousands
-    of throwaway banks don't each queue an index build; a test asserting the
-    default behaviour has to put it back.
+    Patched on the module that imported it by name, like the other policy
+    helpers — the config object itself is read-only, and re-reading the
+    environment would not reach the cached singleton anyway.
     """
-    monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows > 0)
-    monkeypatch.setattr(vector_index_health, "should_keep_per_bank_index", lambda rows: rows > 0)
+    monkeypatch.setattr(memory_engine_module, "per_bank_index_min_submit_interval_seconds", lambda: seconds)
 
 
 async def _bank_internal_id(conn, bank_id: str) -> str:
@@ -147,8 +158,10 @@ async def _insert_memory(conn, bank_id: str, fact_type: str, text: str) -> None:
 async def _seed_bank(memory: MemoryEngine, request_context: RequestContext, rows_per_fact_type: int) -> str:
     """Create a bank and give every fact_type ``rows_per_fact_type`` memories.
 
-    Bank creation issues no index DDL under the size policy, so whatever indexes
-    the bank ends up with are the ones a reconcile decided it earned.
+    Under ``low_threshold`` bank creation issues no index DDL, so whatever
+    indexes the bank ends up with are the ones a reconcile decided it earned. At
+    the shipped default it comes back already carrying all three, which is the
+    state those tests are about.
     """
     bank_id = f"test-repair-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
@@ -171,20 +184,39 @@ async def _reconcile(conn, bank_id: str, *, dry_run: bool = False):
 async def _build_indexes_for(conn, bank_id: str) -> list[str]:
     """Give ``bank_id`` its three partial indexes directly, bypassing the policy.
 
-    Used to set up drop-side tests: the index has to exist before the reconcile
-    can be asked to remove it.
+    Used to set up tests that need coverage to already exist — drop-side cases,
+    and the pre-check cases that assert a converged bank queues nothing.
+
+    Drops before each build, inside the retry, for the same reason
+    ``apply_bank_index_plan`` does. A CONCURRENTLY build chosen as a deadlock
+    victim leaves an INVALID index behind; ``IF NOT EXISTS`` then *skips* it on
+    the retry, so the helper returns success having left the index unusable. The
+    reconcile correctly reports that index as missing, and the test fails
+    somewhere far away — which is exactly how this surfaced in CI, as a
+    ``KeyError: 'no_work'`` in a test that had nothing to do with index health.
+
+    The post-condition is asserted rather than assumed: a setup helper that
+    silently half-worked is worse than one that fails loudly, because every
+    assertion after it is then testing something other than what it says.
     """
     index_clause = _vector_index_clause()
     assert index_clause is not None
     names = await _expected_index_names(conn, bank_id)
     literal = await conn.fetchval("SELECT quote_literal($1::text)", bank_id)
     for ft, name in zip(_BANK_INDEX_FACT_TYPES, names, strict=True):
-        await retry_with_backoff(
-            lambda name=name, ft=ft: conn.execute(
+
+        async def _rebuild(name=name, ft=ft) -> None:
+            await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_TEST_SCHEMA}.{name}")
+            await conn.execute(
                 f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {_TEST_SCHEMA}.memory_units "
                 f"{index_clause} WHERE fact_type = '{ft}' AND bank_id = {literal}"
             )
-        )
+
+        await retry_with_backoff(_rebuild)
+
+    health = await vector_index_health._index_health(conn, _TEST_SCHEMA, names)
+    unhealthy = [name for name in names if health.get(name) is not True]
+    assert not unhealthy, f"setup: these indexes were not left valid and ready: {unhealthy}"
     return names
 
 
@@ -227,6 +259,36 @@ class _DeadlockOnceOnCreate:
             if self.create_calls == 1:
                 raise DeadlockDetectedError("deadlock detected")
         return await self._real.execute(query, *args, **kwargs)
+
+
+class _RecordingConn:
+    """Wrap a real asyncpg connection and record every query it is asked to run.
+
+    The planner's whole claim is about which queries it does *not* issue, so the
+    only way to assert it is to watch them. Delegates everything.
+    """
+
+    #: Substring unique to the capped row count (its derived table is aliased ``capped``).
+    COUNT_MARKER = "capped"
+
+    def __init__(self, real):
+        self._real = real
+        self.queries: list[str] = []
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    async def fetch(self, query, *args, **kwargs):
+        self.queries.append(query)
+        return await self._real.fetch(query, *args, **kwargs)
+
+    async def fetchval(self, query, *args, **kwargs):
+        self.queries.append(query)
+        return await self._real.fetchval(query, *args, **kwargs)
+
+    @property
+    def counted(self) -> bool:
+        return any(self.COUNT_MARKER in q for q in self.queries)
 
 
 class TestSizeThresholdPolicy:
@@ -449,51 +511,103 @@ class TestPlan:
 
 
 class TestDefaultThresholdIsBackwardsCompatible:
-    """Shipped default: 0 rows — every bank holding memories is indexed.
+    """Shipped default: the threshold is *off*, and coverage is exactly pre-#3561.
 
-    The threshold is opt-in, so an existing deployment that upgrades keeps the
-    coverage it had. These use ``default_threshold`` rather than
-    ``low_threshold``: the suite-wide setting in conftest puts the threshold out
-    of reach, so asserting the shipped default means restoring it explicitly.
+    Indexes come with the bank, not with its rows: created in the bank-create
+    transaction and dropped when the bank is deleted. No coverage decision
+    depends on a row count, so no write queues an operation and no write pays a
+    count. That is the behaviour a deployment upgrading into the threshold keeps
+    unless it opts in.
+
+    No fixture: the suite runs at the shipped default, so this class simply does
+    not reach for ``low_threshold``. That is deliberate — the configuration
+    almost every deployment runs is the one the suite should exercise by
+    default, and #3561 regressed precisely because the suite had raised the
+    threshold out of reach for itself.
     """
 
     @pytest.mark.asyncio
-    async def test_a_single_row_earns_an_index_at_the_default(
-        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
-    ):
-        bank_id = await _seed_bank(memory, request_context, 1)
+    async def test_bank_creation_builds_all_three_indexes(self, memory: MemoryEngine, request_context: RequestContext):
+        """The bank is entitled from the moment it exists, before any row lands."""
+        bank_id = f"test-repair-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
         backend = await memory._get_backend()
         try:
             async with acquire_with_retry(backend) as conn:
-                result = await _reconcile(conn, bank_id)
-
-                assert result.failed == 0, result.failed_indexes
-                assert result.created == len(_BANK_INDEX_FACT_TYPES)
                 for name in await _expected_index_names(conn, bank_id):
                     assert await _index_is_partial_vector(conn, name)
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_an_empty_bank_gets_nothing(
-        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
-    ):
-        """Zero rows is not "at least zero rows".
+    async def test_no_write_queues_an_operation(self, memory: MemoryEngine, request_context: RequestContext):
+        """The reason 0 means *off* rather than *no minimum*.
 
-        An index over no rows serves nothing, and bank creation no longer builds
-        one — so a bank that exists but has never been written to stays clean.
+        Read as "no minimum" the default still produced an operation per
+        (bank, fact_type) on first write, and charged every later write a count
+        to rediscover there was nothing to do. Off, the submit returns before
+        issuing a single query.
         """
-        bank_id = await _seed_bank(memory, request_context, 0)
+        bank_id = await _seed_bank(memory, request_context, 1)
+        try:
+            result = await memory.submit_async_vector_index_maintenance(
+                bank_id=bank_id,
+                request_context=request_context,
+                trigger=CoverageTrigger.GREW,
+            )
+
+            assert result["no_work"] is True
+            assert result["operation_id"] is None
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_an_emptied_bank_keeps_its_indexes(self, memory: MemoryEngine, request_context: RequestContext):
+        """Coverage does not track rows here, so emptying a bank changes nothing.
+
+        Under the threshold an emptied partition loses its index; with the
+        threshold off it keeps it, exactly as it did before #3561. The bank is
+        still entitled — it just happens to be empty right now, which is also the
+        state it was in when the index was built.
+        """
+        bank_id = await _seed_bank(memory, request_context, 1)
         backend = await memory._get_backend()
         try:
             async with acquire_with_retry(backend) as conn:
+                await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
+
                 plan = await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id)
+
+                assert plan.to_drop == []
+                for name in await _expected_index_names(conn, bank_id):
+                    assert await _index_exists(conn, name)
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_repair_bank_rebuilds_what_creation_missed(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The escape hatch still works with the threshold off.
+
+        A bank whose creation lost its DDL to a deadlock, or one restored around
+        that path, has no other way back — the write path does not look at
+        coverage in this mode. ``repair-bank`` builds what is missing, and drops
+        nothing.
+        """
+        bank_id = await _seed_bank(memory, request_context, 1)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                await _drop_bank_indexes(conn, bank_id)
+
                 result = await _reconcile(conn, bank_id)
 
-                assert plan.is_empty
-                assert result.created == 0
+                assert result.failed == 0, result.failed_indexes
+                assert result.created == len(_BANK_INDEX_FACT_TYPES)
+                assert result.dropped == 0
                 for name in await _expected_index_names(conn, bank_id):
-                    assert not await _index_exists(conn, name)
+                    assert await _index_is_partial_vector(conn, name)
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -668,11 +782,42 @@ class TestRestoredBankCoverage:
     branch for a bank row that already existed. It was then left permanently
     without coverage, silently falling back to a global index plus post-filter.
 
-    That whole class of bug is now structurally impossible: nothing creates
-    indexes at bank-creation time, so there is no gate left to bypass.
-    Entitlement is recomputed from live row counts whenever a write queues a
-    reconcile, and how the rows got there is not something it can observe.
+    Both modes answer it, differently. With a threshold set, nothing creates
+    indexes at bank-creation time at all, so there is no gate left to bypass:
+    entitlement is recomputed from live row counts whenever a write queues a
+    reconcile, and how the rows got there is not something it can observe. With
+    the threshold off, the gate is back — so import has to build the indexes
+    itself, which is the original #2645 fix.
     """
+
+    @pytest.mark.asyncio
+    async def test_import_builds_the_indexes_at_the_default(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The original #2645 fix, still needed while the threshold is off.
+
+        ``import_bank`` restores the ``banks`` row directly, so
+        ``get_or_create_bank_profile`` never sees a fresh INSERT and never builds
+        anything. Without an explicit build here the restored bank would fall
+        back to a global index plus post-filter — slower, and under-returning —
+        with nothing else in this mode ever noticing.
+        """
+        bank_id = f"test-import-{uuid.uuid4().hex[:8]}"
+        backend = await memory._get_backend()
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            async with acquire_with_retry(backend) as conn:
+                archive = await export_bank(conn, bank_id)
+
+            await memory.delete_bank(bank_id, request_context=request_context)
+            result = await memory.import_bank_async(archive, request_context)
+            assert result.bank_id == bank_id
+
+            async with acquire_with_retry(backend) as conn:
+                for name in await _expected_index_names(conn, bank_id):
+                    assert await _index_is_partial_vector(conn, name), f"import should have built {name}"
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
     async def test_import_builds_no_indexes_inline(
@@ -796,7 +941,7 @@ class TestMaintenanceSubmission:
                 await _build_indexes_for(conn, bank_id)
 
             result = await memory.submit_async_vector_index_maintenance(
-                bank_id=bank_id, request_context=request_context
+                bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.FULL
             )
 
             assert result["no_work"] is True
@@ -813,7 +958,7 @@ class TestMaintenanceSubmission:
         bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
         try:
             result = await memory.submit_async_vector_index_maintenance(
-                bank_id=bank_id, request_context=request_context
+                bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.FULL
             )
 
             assert result.get("no_work") is not True
@@ -833,7 +978,7 @@ class TestMaintenanceSubmission:
         bank_id = await _seed_bank(memory, request_context, 0)
         try:
             result = await memory.submit_async_vector_index_maintenance(
-                bank_id=bank_id, request_context=request_context
+                bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.FULL
             )
 
             assert result["no_work"] is True
@@ -861,18 +1006,324 @@ class TestMaintenanceSubmission:
         self, memory: MemoryEngine, request_context: RequestContext, low_threshold, monkeypatch
     ):
         """ScaNN keeps one global index; there is no per-bank coverage to maintain."""
-        from hindsight_api.engine.retain import bank_utils
-
         bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
         try:
             monkeypatch.setattr(bank_utils, "_vector_index_clause", lambda: None)
 
             result = await memory.submit_async_vector_index_maintenance(
-                bank_id=bank_id, request_context=request_context
+                bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.FULL
             )
 
             assert result["no_work"] is True
         finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestDirectionalPreCheck:
+    """What the pre-check refuses to look at, and why that is safe.
+
+    This runs on every retain, import, consolidation and delete, so its cost is
+    charged to ordinary writes forever. Counting the bank's rows to decide there
+    was nothing to do is what made it expensive (#3485 shipped an uncapped
+    COUNT(*) over the whole partition). Coverage can only go wrong in one
+    direction at a time, so most partitions are settled from the catalog alone.
+    """
+
+    @pytest.mark.asyncio
+    async def test_growth_does_not_count_a_partition_that_is_already_indexed(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
+    ):
+        """The steady state: a big, indexed, actively-written bank.
+
+        Adding rows cannot take a partition below the keep bound, so an index
+        that is present and healthy stays earned no matter what the count is.
+        This is the case that has to cost nothing, because it is every write to
+        every bank that has already converged.
+        """
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                await _build_indexes_for(conn, bank_id)
+
+                recorder = _RecordingConn(conn)
+                plan = await plan_bank_vector_indexes(recorder, _TEST_SCHEMA, bank_id, trigger=CoverageTrigger.GREW)
+
+                assert plan.is_empty
+                assert plan.already_present == len(_BANK_INDEX_FACT_TYPES)
+                assert not recorder.counted, "growth must not count an already-indexed partition"
+        finally:
+            async with acquire_with_retry(backend) as conn:
+                await _drop_bank_indexes(conn, bank_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_shrinking_does_not_count_a_partition_that_has_no_index(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
+    ):
+        """The other steady state: a small bank being written to and pruned.
+
+        Removing rows cannot take a partition above the build bound, so a
+        partition with no index cannot have earned one on this write.
+        """
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                recorder = _RecordingConn(conn)
+                plan = await plan_bank_vector_indexes(recorder, _TEST_SCHEMA, bank_id, trigger=CoverageTrigger.SHRANK)
+
+                assert plan.is_empty
+                assert not recorder.counted, "a delete must not count an unindexed partition"
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_growth_still_finds_a_partition_that_crossed_the_threshold(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
+    ):
+        """The short-circuit must not swallow the case it exists to serve."""
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                plan = await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id, trigger=CoverageTrigger.GREW)
+
+                assert set(plan.to_build) == set(_BANK_INDEX_FACT_TYPES)
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_shrinking_still_finds_a_partition_that_fell_below_the_floor(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
+    ):
+        """The short-circuit must not swallow the case it exists to serve."""
+        bank_id = await _seed_bank(memory, request_context, _DROP_BELOW - 1)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                names = await _build_indexes_for(conn, bank_id)
+
+                plan = await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id, trigger=CoverageTrigger.SHRANK)
+
+                assert set(plan.to_drop) == set(names)
+        finally:
+            async with acquire_with_retry(backend) as conn:
+                await _drop_bank_indexes(conn, bank_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_a_partition_far_above_the_threshold_is_not_counted_out(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
+    ):
+        """The cap must bound the scan without bounding the decision.
+
+        A capped count returns ``min(actual, build_bound)``, so a partition
+        holding many times the threshold reports exactly the bound. Comparing
+        with ``>=`` is what keeps that a build; a stricter comparison would leave
+        the largest banks — the ones the index is for — permanently unindexed.
+        """
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT * 3)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                plan = await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id, trigger=CoverageTrigger.FULL)
+
+                assert set(plan.to_build) == set(_BANK_INDEX_FACT_TYPES)
+                assert plan.to_drop == []
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestSubmissionCooldown:
+    """A bank cannot ask for index DDL again and again.
+
+    Two things make one bank re-submit indefinitely: a partition oscillating
+    across the threshold, and a build that keeps failing — the job logs rather
+    than raises, so the plan stays non-empty and the next write queues it again.
+    Both are damped by refusing to reconcile the same bank twice inside the
+    interval.
+
+    Each test has to leave the plan *non-empty* after the first operation, or it
+    would pass on the pre-check alone and prove nothing about the cooldown. The
+    suite's task backend is synchronous, so the first submit has already built
+    the indexes by the time it returns; dropping them again is what puts the bank
+    back in the state a real oscillation or a failed build leaves it in.
+    """
+
+    @staticmethod
+    async def _submitted_then_still_due(memory, request_context, bank_id) -> str:
+        """Run one operation to completion, then make the bank due again."""
+        first = await memory.submit_async_vector_index_maintenance(
+            bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.GREW
+        )
+        assert first["operation_id"] is not None, "setup: the first submit should queue work"
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await _drop_bank_indexes(conn, bank_id)
+            # Terminal, so the pending/processing dedupe cannot be what the tests
+            # below are actually observing.
+            await conn.execute(
+                "UPDATE async_operations SET status = 'completed' WHERE operation_id = $1",
+                first["operation_id"],
+            )
+        return first["operation_id"]
+
+    @pytest.mark.asyncio
+    async def test_second_submit_inside_the_interval_is_refused(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
+    ):
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        try:
+            await self._submitted_then_still_due(memory, request_context, bank_id)
+
+            second = await memory.submit_async_vector_index_maintenance(
+                bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.GREW
+            )
+
+            assert second["no_work"] is True
+            assert second["operation_id"] is None
+        finally:
+            async with acquire_with_retry(await memory._get_backend()) as conn:
+                await _drop_bank_indexes(conn, bank_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_the_jobs_own_hand_off_is_exempt(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
+    ):
+        """The hand-off exists to re-check immediately when the bank moved.
+
+        Applying the cooldown to it would defeat it entirely — it always runs
+        moments after the operation it succeeds. It is bounded instead by its own
+        pre-check, which stops the chain as soon as coverage matches.
+        """
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        try:
+            first_id = await self._submitted_then_still_due(memory, request_context, bank_id)
+
+            hand_off = await memory.submit_async_vector_index_maintenance(
+                bank_id=bank_id,
+                request_context=request_context,
+                trigger=CoverageTrigger.FULL,
+                dedupe_excludes_operation_id=first_id,
+            )
+
+            assert hand_off["operation_id"] is not None
+            assert hand_off["operation_id"] != first_id
+        finally:
+            async with acquire_with_retry(await memory._get_backend()) as conn:
+                await _drop_bank_indexes(conn, bank_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_a_zero_interval_turns_the_cooldown_off(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold, monkeypatch
+    ):
+        """The damper has to be defeatable, or a genuine backlog cannot drain."""
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        try:
+            await self._submitted_then_still_due(memory, request_context, bank_id)
+
+            _patch_cooldown(monkeypatch, 0)
+            second = await memory.submit_async_vector_index_maintenance(
+                bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.GREW
+            )
+
+            assert second["operation_id"] is not None
+        finally:
+            async with acquire_with_retry(await memory._get_backend()) as conn:
+                await _drop_bank_indexes(conn, bank_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestEnsureBankExistsCoverage:
+    """The second bank-create path has to build indexes too.
+
+    ``fact_storage.ensure_bank_exists`` is a lower-level create than
+    ``get_or_create_bank_profile`` and reaches the same ``banks`` row, so a bank
+    born through it must end up with the same coverage — otherwise which helper
+    happened to create the bank decides whether it is ever indexed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_bank_created_here_gets_its_indexes_at_the_default(self, memory: MemoryEngine):
+        bank_id = f"test-ensure-{uuid.uuid4().hex[:8]}"
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                await ensure_bank_exists(conn, bank_id, ops=backend.ops)
+
+                for name in await _expected_index_names(conn, bank_id):
+                    assert await _index_is_partial_vector(conn, name)
+        finally:
+            await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+class TestHandlerGuards:
+    """What the queued job refuses to do."""
+
+    @pytest.mark.asyncio
+    async def test_handler_does_nothing_once_the_threshold_is_switched_off(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """A job can outlive the configuration it was queued under.
+
+        Turning the threshold off means every bank is owed all three indexes, so
+        a job still reconciling against the old policy would drop indexes the
+        deployment now expects to keep. No fixture: the default *is* off, which
+        is the state a job queued under a threshold would land in.
+        """
+        bank_id = await _seed_bank(memory, request_context, 1)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                names = await _expected_index_names(conn, bank_id)
+                await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
+
+            await memory._handle_vector_index_maintenance({"bank_id": bank_id})
+
+            async with acquire_with_retry(backend) as conn:
+                for name in names:
+                    assert await _index_exists(conn, name), f"{name} must survive a job that no longer applies"
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestBackendGate:
+    """Only PostgreSQL has per-bank partial vector indexes to maintain."""
+
+    @pytest.mark.asyncio
+    async def test_a_non_postgresql_backend_never_queues(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold, monkeypatch
+    ):
+        """Oracle leaves the extension setting at its pgvector default.
+
+        So the index clause is not None there, and gating on it alone let the
+        planner run asyncpg-shaped SQL against Oracle on every write — after
+        which the job found no DSN to build with and re-queued itself on the next
+        one, forever. The backend itself is the honest gate.
+        """
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        try:
+
+            class _NotPostgres:
+                """Stands in for a backend the per-bank index layout does not apply to."""
+
+            async def _not_postgres():
+                return _NotPostgres()
+
+            monkeypatch.setattr(memory, "_get_backend", _not_postgres)
+
+            result = await memory.submit_async_vector_index_maintenance(
+                bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.GREW
+            )
+
+            assert result["no_work"] is True
+            assert result["operation_id"] is None
+        finally:
+            monkeypatch.undo()
             await memory.delete_bank(bank_id, request_context=request_context)
 
 
@@ -886,14 +1337,14 @@ class TestDeletionDropsCoverage:
     """
 
     @pytest.mark.asyncio
-    async def test_emptied_bank_drops_its_indexes_at_the_default_threshold(
-        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
+    async def test_emptied_bank_drops_its_indexes(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
     ):
-        """Regression: at threshold 0 the drop check read `0 < 0` and never fired.
+        """An emptied partition loses its index at every threshold.
 
-        An emptied bank kept three ANN indexes over nothing forever, because
-        nothing writes to an emptied bank — the exact accumulation the threshold
-        exists to prevent, in the configuration almost everyone runs.
+        The keep bound never falls to zero, whatever the drop ratio works out to.
+        Without that floor an emptied bank kept three ANN indexes over nothing
+        forever, because nothing writes to an emptied bank.
         """
         bank_id = await _seed_bank(memory, request_context, 3)
         backend = await memory._get_backend()
@@ -918,7 +1369,7 @@ class TestDeletionDropsCoverage:
 
     @pytest.mark.asyncio
     async def test_partially_emptied_bank_keeps_only_the_covered_fact_types(
-        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
     ):
         """Coverage is per (bank, fact_type), so a partial delete is a partial drop."""
         bank_id = await _seed_bank(memory, request_context, 3)
@@ -939,7 +1390,7 @@ class TestDeletionDropsCoverage:
 
     @pytest.mark.asyncio
     async def test_clearing_a_bank_drops_its_indexes(
-        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold
     ):
         """`DELETE /memories` keeps the bank, so nothing else can drop its indexes.
 

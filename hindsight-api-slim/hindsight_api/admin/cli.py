@@ -702,23 +702,27 @@ def repair_bank(
         help="Report what would be repaired without creating or dropping any index.",
     ),
 ):
-    """Reconcile per-(bank, fact_type) vector index coverage against the size threshold.
+    """Reconcile per-(bank, fact_type) vector index coverage.
 
-    A (bank, fact_type) earns a partial vector index once it holds
-    HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS rows; below that the planner answers the
-    same query exactly, and faster, from the (bank_id, fact_type) B-tree plus a
-    top-N sort. This command builds what qualifies and drops what no longer does
-    — including indexes orphaned by a deleted bank — detecting invalid coverage
-    too (an INVALID leftover, or an index whose access method drifted after a
-    backend switch, counts as missing). All DDL is CONCURRENTLY, so it never
-    blocks the live fleet.
+    With HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS at its default of 0 every bank is
+    owed all three indexes from the moment it exists, and this rebuilds whatever
+    is missing or invalid — a bank whose creation lost its DDL to a deadlock, one
+    restored around it, or one whose access method drifted after a backend
+    switch. Nothing is dropped in that mode.
 
-    Writes keep this converged on their own — every insert that could move a bank
-    across the threshold queues a vector_index_maintenance operation. Reach for
-    the command when you want convergence without waiting for a write: after a
-    restore or upgrade, after a backend switch, or to shed indexes in bulk on a
-    deployment recovering from lock-table exhaustion (#3485). Idempotent and safe
-    to re-run.
+    With a threshold set, a (bank, fact_type) earns its index once it holds that
+    many rows; below it the planner answers the same query exactly, and faster,
+    from the (bank_id, fact_type) B-tree plus a top-N sort. This command then
+    also drops what no longer qualifies. Either way it sheds indexes orphaned by
+    a deleted bank, and all DDL is CONCURRENTLY, so it never blocks the live
+    fleet.
+
+    With a threshold set, writes keep this converged on their own — every write
+    that could move a bank across it queues a vector_index_maintenance operation.
+    Reach for the command when you want convergence without waiting for a write:
+    after a restore or upgrade, after a backend switch, or to shed indexes in
+    bulk on a deployment recovering from lock-table exhaustion (#3485).
+    Idempotent and safe to re-run.
     """
     if bool(bank_id) == all_banks:
         typer.echo("Error: pass exactly one of --bank <id> or --all.", err=True)

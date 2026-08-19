@@ -187,78 +187,54 @@ def _with_threshold(monkeypatch, min_rows: int) -> None:
     monkeypatch.setattr("hindsight_api.config.get_config", lambda: _ThresholdConfig(min_rows))
 
 
-def test_qualifies_at_and_around_the_threshold(monkeypatch):
-    """The build side is a floor, inclusive: exactly the threshold qualifies."""
+def test_build_bound_is_the_threshold_itself(monkeypatch):
+    """The build side is a floor, inclusive: exactly the threshold earns an index."""
     _with_threshold(monkeypatch, 10_000)
 
-    assert not _vector_index.qualifies_for_per_bank_index(9_999)
-    assert _vector_index.qualifies_for_per_bank_index(10_000)
-    assert _vector_index.qualifies_for_per_bank_index(10_001)
+    assert _vector_index.per_bank_index_build_bound() == 10_000
 
 
-def test_zero_threshold_indexes_every_partition_that_holds_rows(monkeypatch):
-    """0 is the shipped default and means "no minimum" — the pre-threshold behaviour."""
-    _with_threshold(monkeypatch, 0)
+def test_zero_threshold_is_eager_not_a_zero_minimum(monkeypatch):
+    """0 turns the threshold off rather than setting it to nothing.
 
-    assert _vector_index.qualifies_for_per_bank_index(1)
-    assert _vector_index.qualifies_for_per_bank_index(10_000_000)
-
-
-def test_an_empty_partition_never_qualifies(monkeypatch):
-    """Zero rows is excluded at every threshold, including the default of 0.
-
-    By arithmetic alone `0 >= 0` holds, which would entitle every bank in the
-    deployment to three indexes over nothing the moment it was created — the
-    index explosion the threshold exists to prevent, reintroduced by its own
-    default. An index over no rows serves no query either way.
+    The distinction is the whole point of the default. Read as "no minimum", 0
+    still routed every bank through the lazy path: an index earned on first write
+    via a visible async operation, and every later write paying a coverage check
+    to rediscover there was nothing to do. Read as "off", the bank gets its
+    indexes when it is created and nothing looks at row counts ever again — which
+    is what the deployment had before the threshold existed.
     """
     _with_threshold(monkeypatch, 0)
-    assert not _vector_index.qualifies_for_per_bank_index(0)
+    assert _vector_index.per_bank_indexes_are_eager()
 
     _with_threshold(monkeypatch, 10_000)
-    assert not _vector_index.qualifies_for_per_bank_index(0)
+    assert not _vector_index.per_bank_indexes_are_eager()
 
 
-def test_emptied_partition_loses_its_index_at_every_threshold(monkeypatch):
-    """Zero rows never keeps an index — including at the shipped default of 0.
+def test_an_emptied_partition_loses_its_index_at_every_threshold(monkeypatch):
+    """The keep bound never falls to zero, whatever the ratio works out to.
 
-    Regression for a drop side that was dead in the default configuration. The
-    check was `row_count < per_bank_index_drop_rows()`, and at a threshold of 0
-    the drop floor is also 0, so it read `0 < 0` — never true. Every bank ever
-    written to and then cleared kept three ANN indexes over nothing, forever,
-    because nothing writes to an emptied bank. That is the exact accumulation
-    the threshold exists to prevent, reintroduced by its own default.
+    Without a floor of 1 a partition emptied of rows still clears the bound, so a
+    bank written to once and then cleared would hold three ANN indexes over
+    nothing — forever, because nothing writes to an emptied bank. That is the
+    accumulation the threshold exists to prevent.
     """
-    _with_threshold(monkeypatch, 0)
-    assert not _vector_index.should_keep_per_bank_index(0)
-
-    _with_threshold(monkeypatch, 10_000)
-    assert not _vector_index.should_keep_per_bank_index(0)
+    for threshold in (1, 10_000):
+        _with_threshold(monkeypatch, threshold)
+        assert _vector_index.per_bank_index_keep_bound() >= 1
 
 
-def test_keeping_starts_below_building(monkeypatch):
-    """The hysteresis band: a partition between the two bounds is left alone.
+def test_the_hysteresis_band_is_non_empty(monkeypatch):
+    """Keeping has to start strictly below building, with room in between.
 
-    Keeping has to start lower than building, or a bank hovering at the
-    threshold rebuilds and drops the same ANN index on alternating writes.
-    """
-    _with_threshold(monkeypatch, 10_000)
-    between = _vector_index.per_bank_index_drop_rows() + 1
-
-    assert not _vector_index.qualifies_for_per_bank_index(between), "not enough to earn a new index"
-    assert _vector_index.should_keep_per_bank_index(between), "but enough to keep one it already has"
-
-
-def test_drop_threshold_sits_strictly_below_the_build_threshold(monkeypatch):
-    """The hysteresis gap must be non-empty, or an index at the boundary flaps.
-
-    A partition between the two bounds is neither built nor dropped: if it has
-    an index it keeps it, and if it does not it stays without one.
+    With a single boundary a bank hovering at the threshold rebuilds and drops
+    the same ANN index on alternating writes. The band is what the planner leaves
+    alone: a partition inside it neither earns an index nor loses the one it has.
     """
     _with_threshold(monkeypatch, 10_000)
 
-    build = _vector_index.per_bank_index_min_rows()
-    drop = _vector_index.per_bank_index_drop_rows()
+    keep = _vector_index.per_bank_index_keep_bound()
+    build = _vector_index.per_bank_index_build_bound()
 
-    assert drop < build
-    assert not _vector_index.qualifies_for_per_bank_index(drop)
+    assert keep < build
+    assert build - keep > 1, "no row count sits strictly inside the band"

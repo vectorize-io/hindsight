@@ -1071,6 +1071,31 @@ class PostgreSQLOps(DataAccessOps):
             bank_prefix="",
         )
 
+    async def create_bank_vector_indexes(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        internal_id: str,
+        index_clause: str,
+        fact_types: dict[str, str],
+    ) -> None:
+        # Plain CREATE INDEX, not CONCURRENTLY: this runs inside the bank-create
+        # transaction, and CONCURRENTLY cannot. It is instant — the bank is empty
+        # — but it still takes a ShareLock on the shared memory_units table and
+        # so can deadlock with a concurrent writer. The caller retries the whole
+        # transaction for that reason; the body is idempotent.
+        escaped = bank_id.replace("'", "''")
+        async with self._index_ddl_lock(table):
+            for ft, suffix in fact_types.items():
+                uid = str(internal_id).replace("-", "")[:16]
+                idx = f"idx_mu_emb_{suffix}_{uid}"
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {idx} "
+                    f"ON {table} {index_clause} "
+                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
+                )
+
     async def drop_bank_vector_indexes(
         self,
         conn: DatabaseConnection,
@@ -1085,13 +1110,15 @@ class PostgreSQLOps(DataAccessOps):
         # (delete_bank) runs this on an autocommit connection after its delete
         # transaction has committed — CONCURRENTLY cannot run inside a tx.
         #
-        # The in-process lock serializes concurrent bank deletes against each
-        # other. It does not cover the maintenance sweep, which reconciles the
-        # same indexes over its own raw connection: an in-process lock could not
-        # help there anyway, since the sweep runs in every process and the real
-        # contention is cross-process. Both paths retry the transient deadlock
-        # (40P01) instead, which is the only lock-free option available — the
-        # project forbids advisory locks (unreliable behind poolers, #2817).
+        # The in-process lock serializes concurrent bank creates and deletes
+        # against each other; its key must match create_bank_vector_indexes',
+        # whose `table` is the fq name this reconstructs from `schema`. It does
+        # not cover the maintenance operation, which reconciles the same indexes
+        # over its own raw connection: an in-process lock could not help there
+        # anyway, since that runs in every process and the real contention is
+        # cross-process. Both paths retry the transient deadlock (40P01)
+        # instead, which is the only lock-free option available — the project
+        # forbids advisory locks (unreliable behind poolers, #2817).
         async with self._index_ddl_lock(f"{schema}.memory_units"):
             for ft, suffix in fact_types.items():
                 uid = str(internal_id).replace("-", "")[:16]

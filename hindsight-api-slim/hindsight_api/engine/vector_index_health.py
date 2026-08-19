@@ -1,20 +1,27 @@
 """Per-bank vector index coverage: what a bank should have, and making it so.
 
-A (bank, fact_type) partition gets its own partial vector index once it holds
-``HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS`` rows. At the default of 0 that is every
-partition holding any rows — the behaviour before the threshold existed — and a
-deployment with thousands of banks raises it, because these indexes live on the
-shared ``memory_units`` table: PostgreSQL locks and plans against every index on
-a relation, and opens every one for each DML statement, so one bank's index is
-charged to every other bank's queries. Three per bank exhausts the lock table at
-a few thousand banks (issue #3485). Below the threshold the planner answers the
-same query from the ``(bank_id, fact_type)`` B-tree plus a top-N sort, which is
-exact rather than approximate and faster.
+``HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS`` decides how coverage is reached, and its
+default of ``0`` means nothing in this module runs at all. At ``0`` the three
+partial indexes are built in the bank-create transaction and dropped when the
+bank is deleted — the behaviour that predates the threshold, and still the right
+one for a deployment whose bank count is not the problem.
 
-Nothing here runs on a request path. Index DDL is issued only by the
-``vector_index_maintenance`` async operation (submitted after a write that could
-have changed a bank's coverage) and by the ``repair-bank`` admin command, both
-of which reconcile a bank against the plan this module computes.
+A deployment holding thousands of banks sets a positive threshold, because these
+indexes live on the shared ``memory_units`` table: PostgreSQL locks and plans
+against every index on a relation, and opens every one for each DML statement, so
+one bank's index is charged to every other bank's queries. Three per bank
+exhausts the lock table at a few thousand banks (issue #3485). Above the
+threshold a partition earns its own index; below it the planner answers the same
+query from the ``(bank_id, fact_type)`` B-tree plus a top-N sort, which is exact
+rather than approximate and faster.
+
+With a threshold set, coverage is reconciled by the ``vector_index_maintenance``
+async operation (submitted after a write that could have changed it) and by the
+``repair-bank`` admin command. Neither runs on a request path. The write path
+pays only :func:`plan_bank_vector_indexes`, which is kept cheap two ways: the
+:class:`CoverageTrigger` direction settles most partitions from the catalog
+without counting anything, and what is left is counted no further than the
+threshold rather than exactly.
 
 All DDL is ``CREATE/DROP INDEX CONCURRENTLY`` on a raw autocommit connection, so
 it never takes ``ACCESS EXCLUSIVE`` on the shared table. That is also what keeps
@@ -27,9 +34,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
-from .._vector_index import qualifies_for_per_bank_index, should_keep_per_bank_index
+from .._vector_index import (
+    per_bank_index_build_bound,
+    per_bank_index_keep_bound,
+    per_bank_indexes_are_eager,
+)
 from .db_utils import retry_with_backoff
 from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
 
@@ -54,6 +66,33 @@ _SUPPORTED_INDEX_AM: tuple[str, ...] = (
     "diskann",
     "vchordrq",
 )
+
+
+class CoverageTrigger(Enum):
+    """Which way the write that queued this reconcile moved the bank's row count.
+
+    The direction is what makes the pre-check affordable on every write. Coverage
+    can only become wrong in one direction at a time, so most partitions can be
+    settled from the catalog alone and never counted at all:
+
+    * ``GREW`` — rows were added. A partition that already has a healthy index
+      keeps earning it, because growth cannot take it below the keep bound.
+      Only an *unindexed* partition needs counting, to see if it crossed the
+      build bound.
+    * ``SHRANK`` — rows were removed. A partition with no index cannot have
+      earned one, because shrinking cannot take it above the build bound. Only
+      an *indexed* partition needs counting, to see if it fell below the keep
+      bound.
+    * ``FULL`` — count every partition. Used by the maintenance job when it
+      re-plans at start and by ``repair-bank``, neither of which knows what
+      moved, and which are the paths that recover anything the directional
+      short-circuits deferred (a build that failed, an index left over a
+      partition that shrank while nothing indexed was written).
+    """
+
+    GREW = "grew"
+    SHRANK = "shrank"
+    FULL = "full"
 
 
 @dataclass
@@ -132,16 +171,74 @@ async def _index_health(conn: Any, schema: str, index_names: list[str]) -> dict[
     return {row["index_name"]: bool(row["healthy"]) for row in rows}
 
 
-async def plan_bank_vector_indexes(conn: Any, schema: str, bank_id: str) -> BankIndexPlan:
+async def _capped_row_counts(
+    conn: Any,
+    schema: str,
+    bank_id: str,
+    fact_types: list[str],
+    cap: int,
+) -> dict[str, int]:
+    """Rows each partition holds, counted no further than ``cap``.
+
+    ``min(actual, cap)`` is all the policy needs: with ``cap`` set to the build
+    bound, one value answers both "does this reach the build bound?" and "is it
+    still at the keep bound?", since the keep bound is the lower of the two.
+
+    Counting to a cap rather than exactly is the point. The honest ``COUNT(*)``
+    this replaces was an index-only scan of every row the bank owned, run on
+    every retain, import, consolidation and delete, forever — on a large bank
+    that is hundreds of thousands of index tuples to rediscover that nothing
+    changed. Capped, the scan stops at the threshold, so its cost is set by the
+    configured bound instead of by how big the bank got.
+
+    The cap is a query parameter rather than an outer-column reference on
+    purpose: PostgreSQL rejects a LIMIT/OFFSET expression containing a variable
+    from an outer query level, and the bounds are global anyway, not per-fact-type.
+    """
+    if not fact_types:
+        return {}
+    qschema = _quote_identifier(schema)
+    rows = await conn.fetch(
+        f"""
+        SELECT t.fact_type,
+               (
+                   SELECT count(*) FROM (
+                       SELECT 1 FROM {qschema}.memory_units
+                       WHERE bank_id = $1 AND fact_type = t.fact_type
+                       LIMIT $2
+                   ) capped
+               ) AS row_count
+        FROM unnest($3::text[]) AS t(fact_type)
+        """,  # noqa: S608 — schema is a quoted identifier
+        bank_id,
+        cap,
+        fact_types,
+    )
+    return {row["fact_type"]: int(row["row_count"]) for row in rows}
+
+
+async def plan_bank_vector_indexes(
+    conn: Any,
+    schema: str,
+    bank_id: str,
+    *,
+    trigger: CoverageTrigger = CoverageTrigger.FULL,
+) -> BankIndexPlan:
     """Work out what ``bank_id``'s vector-index coverage should become.
 
-    Two cheap, bank-scoped queries plus one catalog lookup, so the write path
-    can call this on every write to decide whether an operation is worth
-    queueing at all. The row count is an index-only scan of
-    ``idx_memory_units_bank_fact_type``; deliberately unfiltered by
-    ``embedding IS NOT NULL``, since that predicate is not in the index and
-    would turn the scan into a heap read without changing a threshold decision
-    by enough to matter.
+    One catalog lookup, plus a capped count for only the partitions ``trigger``
+    says could have changed — often none, in which case the write path pays a
+    single indexed SELECT and one catalog query to decide there is nothing to do.
+    See :class:`CoverageTrigger` for which partitions each direction can settle
+    without counting.
+
+    With the threshold off, entitlement does not depend on rows at all: every
+    partition is owed an index from the moment the bank exists, so this reports
+    whatever bank creation did not manage to leave healthy and never drops
+    anything. The write path does not reach here in that mode (it short-circuits
+    before querying), but ``repair-bank`` does, and it is the path that repairs a
+    bank whose creation lost its DDL to a deadlock, or that was restored around
+    it.
 
     A bank whose row is gone yields an empty plan: its indexes are dropped by
     ``delete_bank`` while the internal_id they are named after is still known,
@@ -157,35 +254,48 @@ async def plan_bank_vector_indexes(conn: Any, schema: str, bank_id: str) -> Bank
     if internal_id is None:
         return plan
 
-    counts = {
-        row["fact_type"]: int(row["row_count"])
-        for row in await conn.fetch(
-            f"""
-            SELECT fact_type, COUNT(*) AS row_count
-            FROM {qschema}.memory_units
-            WHERE bank_id = $1 AND fact_type = ANY($2::text[])
-            GROUP BY fact_type
-            """,  # noqa: S608 — schema is a quoted identifier
-            bank_id,
-            list(_BANK_INDEX_FACT_TYPES),
-        )
-    }
-
     names = {ft: _bank_index_name(ft, str(internal_id)) for ft in _BANK_INDEX_FACT_TYPES}
     health = await _index_health(conn, schema, list(names.values()))
 
+    if per_bank_indexes_are_eager():
+        for fact_type, index_name in names.items():
+            if health.get(index_name) is True:
+                plan.already_present += 1
+            else:
+                plan.to_build.append(fact_type)
+        return plan
+
+    # Settle what the catalog alone can, and collect the rest for one round trip.
+    to_count: list[str] = []
     for fact_type, index_name in names.items():
-        row_count = counts.get(fact_type, 0)
         healthy = health.get(index_name)
-        if qualifies_for_per_bank_index(row_count):
+        if trigger is CoverageTrigger.GREW and healthy is True:
+            plan.already_present += 1
+            continue
+        if trigger is CoverageTrigger.SHRANK and healthy is None:
+            continue
+        to_count.append(fact_type)
+
+    if not to_count:
+        return plan
+
+    build_bound = per_bank_index_build_bound()
+    keep_bound = per_bank_index_keep_bound()
+    counts = await _capped_row_counts(conn, schema, bank_id, to_count, build_bound)
+
+    for fact_type in to_count:
+        index_name = names[fact_type]
+        healthy = health.get(index_name)
+        row_count = counts.get(fact_type, 0)
+        if row_count >= build_bound:
             if healthy is True:
                 plan.already_present += 1
             else:
                 plan.to_build.append(fact_type)
-        elif healthy is not None and not should_keep_per_bank_index(row_count):
+        elif healthy is not None and row_count < keep_bound:
             # Present but no longer earned. Keeping has its own, lower bound than
-            # building (see should_keep_per_bank_index) so a partition hovering
-            # at the threshold does not rebuild and drop the same ANN index on
+            # building (see per_bank_index_keep_bound) so a partition hovering at
+            # the threshold does not rebuild and drop the same ANN index on
             # alternating writes.
             plan.to_drop.append(index_name)
 
@@ -304,8 +414,14 @@ async def reconcile_bank_vector_indexes(
     *,
     dry_run: bool = False,
 ) -> BankIndexResult:
-    """Plan and apply one bank's vector-index coverage."""
-    plan = await plan_bank_vector_indexes(conn, schema, bank_id)
+    """Plan and apply one bank's vector-index coverage.
+
+    Always plans with :attr:`CoverageTrigger.FULL`. Both callers — the
+    maintenance job re-planning at start and ``repair-bank`` — reconcile a bank
+    without knowing which way it last moved, and they are what recovers whatever
+    a directional pre-check deferred.
+    """
+    plan = await plan_bank_vector_indexes(conn, schema, bank_id, trigger=CoverageTrigger.FULL)
     return await apply_bank_index_plan(conn, schema, index_clause, plan, dry_run=dry_run)
 
 

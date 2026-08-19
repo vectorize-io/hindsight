@@ -3,14 +3,13 @@ Tests for per-bank vector index lifecycle and UNION ALL retrieval.
 
 Covers:
 - _bank_index_name deterministic naming
-- At the default threshold (0 = no minimum), a retained bank still ends up with
-  its three per-(bank, fact_type) indexes — the pre-#3485 outcome — but they are
-  built by the queued vector_index_maintenance operation rather than inline on
-  the request path
-- An untouched bank gets none: bank creation issues no index DDL, and an index
-  over an empty partition serves nothing
-- Per-bank vector indexes dropped on bank deletion, the one request path that
-  still issues vector-index DDL
+- At the shipped default (threshold off) a bank gets its three
+  per-(bank, fact_type) indexes when it is created, and a retain finds them
+  already there — the pre-#3485 outcome, reached the pre-#3485 way
+- With a threshold set, bank creation issues no index DDL: an unearned index
+  covers no rows while still being planned against by every other bank
+- Per-bank vector indexes dropped on bank deletion, which is where the
+  internal_id they are named after is still known
 - retrieve_semantic_bm25_combined_sql groups results correctly by fact_type and source
 """
 
@@ -19,25 +18,30 @@ from datetime import datetime, timezone
 
 import pytest
 
+from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine import vector_index_health
 from hindsight_api.engine.db_utils import retry_with_backoff
+from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.retain.bank_utils import (
     _BANK_INDEX_FACT_TYPES,
     _bank_index_name,
     _vector_index_clause,
 )
+from hindsight_api.engine.vector_index_health import CoverageTrigger
 
 
 @pytest.fixture
-def default_threshold(monkeypatch):
-    """Restore the shipped default (0 = no minimum) for this test.
+def threshold_set(monkeypatch):
+    """Turn the size threshold on for this test.
 
-    conftest raises the threshold out of reach suite-wide so thousands of
-    throwaway banks don't each queue an index build; asserting the default
-    behaviour means putting it back.
+    The suite runs at the shipped default, where the threshold is off and every
+    bank is given its indexes at creation. A test about what happens *with* a
+    threshold has to say so — and has to patch every module that imported the
+    helper by name, since a missed one silently leaves the default in place and
+    turns the test into a vacuous pass.
     """
-    monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows > 0)
-    monkeypatch.setattr(vector_index_health, "should_keep_per_bank_index", lambda rows: rows > 0)
+    for module in (vector_index_health, bank_utils, memory_engine_module):
+        monkeypatch.setattr(module, "per_bank_indexes_are_eager", lambda: False)
 
 
 # ---------------------------------------------------------------------------
@@ -132,16 +136,13 @@ async def _build_bank_vector_indexes(pool, bank_id: str) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_retain_still_ends_up_with_per_bank_indexes(memory, request_context, default_threshold):
-    """At the shipped default a retained bank has the same coverage it always had.
+async def test_retain_still_ends_up_with_per_bank_indexes(memory, request_context):
+    """At the shipped default a retained bank has the coverage it always had.
 
-    The threshold defaults to 0 — no minimum — so every partition holding rows is
-    indexed, exactly as before #3485. What changed is *who* builds them: the
-    index DDL used to run inside the retain transaction, taking a ShareLock on
-    the shared memory_units table that deadlocked against concurrent writers.
-    Now retain queues a vector_index_maintenance operation and returns; the tests
-    run a synchronous task backend, so the operation has completed by the time
-    retain_async does.
+    The threshold defaults to off, so the bank was given its three indexes when
+    it was created and retain adds rows to indexes that already exist. No
+    vector_index_maintenance operation is involved at all — which is the point:
+    the default deployment behaves exactly as it did before the threshold.
     """
     bank_id = f"test_hnsw_create_{uuid.uuid4().hex[:8]}"
     try:
@@ -159,12 +160,14 @@ async def test_retain_still_ends_up_with_per_bank_indexes(memory, request_contex
 
 
 @pytest.mark.asyncio
-async def test_bank_creation_alone_creates_no_vector_indexes(memory, request_context):
-    """Creating a bank must issue no index DDL — it is the request path that hurt.
+async def test_bank_creation_alone_creates_no_vector_indexes(memory, request_context, threshold_set):
+    """With a threshold set, creating a bank must issue no index DDL.
 
-    A fresh bank holds no rows, so its three indexes would cover nothing while
-    still being locked and planned against by every other bank's queries. This is
-    the difference that makes bank count stop being a ceiling (#3485).
+    A fresh bank has earned nothing, so its three indexes would cover no rows
+    while still being locked and planned against by every other bank's queries.
+    That is the difference that makes bank count stop being a ceiling (#3485),
+    and it is also what takes CREATE INDEX's ShareLock on the shared
+    memory_units table off the request path.
     """
     bank_id = f"test_hnsw_empty_{uuid.uuid4().hex[:8]}"
     try:
@@ -202,11 +205,11 @@ async def test_delete_bank_drops_vector_indexes(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_retain_idempotent_bank_creation(memory, request_context, default_threshold):
+async def test_retain_idempotent_bank_creation(memory, request_context):
     """Retaining twice must not error, and must not duplicate or rebuild indexes.
 
-    The second retain queues another maintenance operation; its plan has to come
-    back empty so a busy bank is not rebuilding ANN indexes on every write.
+    At the shipped default the second retain must not reach the coverage
+    machinery at all: no operation, and no query behind the submit either.
     """
     bank_id = f"test_hnsw_idem_{uuid.uuid4().hex[:8]}"
     try:
@@ -224,7 +227,9 @@ async def test_retain_idempotent_bank_creation(memory, request_context, default_
         )
 
         assert await _get_bank_vector_indexes(memory._pool, bank_id) == after_first
-        submitted = await memory.submit_async_vector_index_maintenance(bank_id=bank_id, request_context=request_context)
+        submitted = await memory.submit_async_vector_index_maintenance(
+            bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.GREW
+        )
         assert submitted["no_work"] is True, "a settled bank must stop queueing maintenance"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

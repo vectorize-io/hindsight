@@ -880,6 +880,7 @@ ENV_RETENTION_SWEEP_INTERVAL_SECONDS = "HINDSIGHT_API_RETENTION_SWEEP_INTERVAL_S
 ENV_OPERATION_CLEANUP_INTERVAL_SECONDS = "HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS"
 ENV_MAINTENANCE_START_JITTER_SECONDS = "HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS"
 ENV_VECTOR_INDEX_MIN_ROWS = "HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS"
+ENV_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS = "HINDSIGHT_API_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -1511,23 +1512,36 @@ DEFAULT_MAINTENANCE_START_JITTER_SECONDS = 60
 # paid by every other bank in the deployment. Three per bank exhausts the lock
 # table at a few thousand banks (issue #3485).
 #
-# 0 is the default and means "no minimum": every partition that holds rows gets
-# an index, which is the behaviour before the threshold existed. Deployments
-# holding thousands of banks raise it — above the threshold ANN wins, and below
-# it PostgreSQL answers the same query from the (bank_id, fact_type) B-tree plus
-# a top-N sort, which is exact rather than approximate *and* faster, because
-# sorting a few thousand rows by distance costs less than descending an ANN
-# graph. 10_000 is a reasonable starting point (it is also ScaNN's own build
-# floor, SCANN_MIN_ROWS_FOR_AUTO_INDEX).
+# 0 is the default and turns the threshold OFF: all three indexes are created in
+# the bank-create transaction (instant — the bank is empty) and dropped when the
+# bank is deleted, which is exactly the behaviour that predates the threshold. No
+# vector_index_maintenance operation is ever submitted and no write pays a
+# coverage check.
+#
+# Deployments holding thousands of banks set a positive value — above it ANN
+# wins, and below it PostgreSQL answers the same query from the
+# (bank_id, fact_type) B-tree plus a top-N sort, which is exact rather than
+# approximate *and* faster, because sorting a few thousand rows by distance costs
+# less than descending an ANN graph. 10_000 is a reasonable starting point (it is
+# also ScaNN's own build floor, SCANN_MIN_ROWS_FOR_AUTO_INDEX).
 DEFAULT_VECTOR_INDEX_MIN_ROWS = 0
 
 # A partition that falls back below MIN_ROWS * this ratio loses its index. The
 # gap between the build and drop thresholds is hysteresis: with a single
 # boundary, consolidation pruning a bank back and forth across it would rebuild
-# and drop the same ANN index on alternating writes. At the default threshold of
-# 0 there is no gap and nothing to flap — a partition either holds rows or does
-# not.
+# and drop the same ANN index on alternating writes. Unused at the default
+# threshold of 0, where coverage is not row-dependent at all.
 VECTOR_INDEX_DROP_RATIO = 0.5
+
+# Shortest gap between two vector_index_maintenance operations for one bank. Only
+# consulted once the pre-check has found real work, so a converged bank never
+# pays for it. Index DDL is the expensive thing this guards: a partition
+# oscillating across the threshold asks for an ANN build or drop on every
+# crossing, and a build that keeps failing leaves the plan non-empty so every
+# subsequent write re-queues it. Ignored by the job's own hand-off, whose purpose
+# is to re-check immediately when the bank moved under it. Unused at the default
+# threshold of 0, where the operation does not exist.
+DEFAULT_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS = 900
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -2703,8 +2717,12 @@ class HindsightConfig:
     # refresh (the per-model schedule lives in the mental model trigger). 0 = disabled.
     mental_model_refresh_tick_seconds: int
     # Rows a (bank, fact_type) needs before it gets its own partial vector index.
-    # 0 (default) = no minimum: every partition holding rows is indexed.
+    # 0 (default) = threshold off: indexes are created with the bank, as they were
+    # before the threshold existed, and no maintenance operation runs.
     vector_index_min_rows: int
+    # Shortest gap between two vector_index_maintenance operations for one bank.
+    # Unused while vector_index_min_rows is 0.
+    vector_index_maintenance_min_interval_seconds: int
 
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None  # Global webhook URL (None = disabled)
@@ -4081,6 +4099,11 @@ class HindsightConfig:
                 ENV_VECTOR_INDEX_MIN_ROWS,
                 os.getenv(ENV_VECTOR_INDEX_MIN_ROWS),
                 DEFAULT_VECTOR_INDEX_MIN_ROWS,
+            ),
+            vector_index_maintenance_min_interval_seconds=_parse_non_negative_int(
+                ENV_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS,
+                os.getenv(ENV_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS),
+                DEFAULT_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS,
             ),
             operation_cleanup_interval_seconds=_parse_non_negative_int(
                 ENV_OPERATION_CLEANUP_INTERVAL_SECONDS,

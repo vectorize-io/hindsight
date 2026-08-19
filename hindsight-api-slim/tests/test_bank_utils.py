@@ -8,7 +8,17 @@ from hindsight_api.engine.retain import bank_utils
 
 
 class _BankOps:
-    """Dialect ops stub. Bank creation issues no index DDL (#3485), so this is bare."""
+    """Dialect ops stub.
+
+    Bank creation issues the per-bank index DDL again at the default threshold
+    (0 = off), so the stub has to answer for it and record that it was asked.
+    """
+
+    def __init__(self) -> None:
+        self.create_calls: list[str] = []
+
+    async def create_bank_vector_indexes(self, conn, table, bank_id, internal_id, index_clause, fact_types) -> None:
+        self.create_calls.append(bank_id)
 
 
 class _FakeTransaction:
@@ -88,11 +98,12 @@ async def test_lazy_bank_create_rolls_back_on_failure(monkeypatch: pytest.Monkey
 async def test_get_or_create_bank_profile_retries_on_deadlock(monkeypatch: pytest.MonkeyPatch) -> None:
     """A deadlock inside the create transaction is retried on a fresh one.
 
-    The retry originally guarded the per-bank CREATE INDEX that ran inline here;
-    that DDL is gone (#3485), but the lazy create can still lose a deadlock to a
-    concurrent writer touching the same bank row, and the body is idempotent
-    (INSERT ... ON CONFLICT DO NOTHING), so it must still retry rather than
-    surface the deadlock to the caller.
+    The retry guards two things: the per-bank CREATE INDEX that runs inline here
+    at the default threshold, which takes a ShareLock on the shared memory_units
+    table, and the plain bank-row insert, which can lose a deadlock to a
+    concurrent writer touching the same row. The body is idempotent
+    (INSERT ... ON CONFLICT DO NOTHING + CREATE INDEX IF NOT EXISTS), so it must
+    retry rather than surface the deadlock to the caller.
     """
     conn = _FakeConnection(raise_on_insert=DeadlockDetectedError("deadlock detected"))
     pool = _FakePool(conn)
