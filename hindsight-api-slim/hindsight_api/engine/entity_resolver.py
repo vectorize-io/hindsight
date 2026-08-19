@@ -45,6 +45,9 @@ class _EntityToCreate:
     # Also stored on the row as entities.entity_kind so label rows stay out of the
     # partial trigram index (#3208).
     is_label: bool = False
+    # False when the caller wrote this name literally: it is created as spelled and never
+    # merged with a same-batch near-duplicate (#3479).
+    resolve: bool = True
 
 
 @dataclass
@@ -428,6 +431,18 @@ class EntityResolver:
             unit_event_date: When this unit was created
             conn: Optional connection to use (if None, acquires from pool)
 
+        Each mention may carry ``"resolve": False`` to opt out of resolution. The
+        default, True, treats a name as a *guess* at which entity is meant, so
+        similar existing entities are scored on name similarity + co-occurrence +
+        recency and the best above threshold is reused. False takes the name
+        literally: an existing entity is reused only when its canonical name
+        matches case-insensitively, any other name creates its own entity, and it
+        is never merged with a same-batch near-duplicate. Callers who authored the
+        names deliberately want False (#3479) — resolution would otherwise let
+        what the graph already believes outscore, and silently discard, their
+        correction. It is per mention because retain resolves caller-supplied and
+        extracted names in one batch, and only the caller's half is authoritative.
+
         Returns:
             Resolved entity identities (id + stored canonical name) in the same
             order as input.
@@ -457,6 +472,25 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
     ) -> list[ResolvedEntity]:
+        # `entities_data and` matters: an empty batch must fall through to the normal strategy
+        # dispatch (which the pg_trgm auto-detection hangs off), not take the shortcut vacuously.
+        if entities_data and not any(e.get("resolve", True) for e in entities_data):
+            # Nothing in this batch resolves, so the trigram/UTL_MATCH probe and the
+            # co-occurrence fetch would both be dead work. _resolve_from_candidates routes every
+            # mention straight to its find-or-create path, which matches on LOWER(canonical_name)
+            # equality. A *mixed* batch still probes — the per-mention check below skips the
+            # literal names when scoring, which costs a little wasted lookup but keeps the
+            # common all-resolving case on one code path.
+            return await self._resolve_from_candidates(
+                conn,
+                bank_id,
+                entities_data,
+                unit_event_date,
+                all_candidates={},
+                cooccurrence_map={},
+                taxonomy_lookup=taxonomy_lookup,
+                labels_cfg=labels_cfg,
+            )
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
             # Non-PG backends (Oracle) use UTL_MATCH instead of pg_trgm.
@@ -872,7 +906,7 @@ class EntityResolver:
         rep_by_lower: dict[str, str] = {}
         count_by_lower: dict[str, int] = {}
         for e in entities_to_create:
-            if e.is_label:
+            if e.is_label or not e.resolve:
                 continue
             name_lower = e.name.lower()
             rep_by_lower.setdefault(name_lower, e.name)
@@ -904,7 +938,12 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
     ) -> list[ResolvedEntity]:
-        """Shared scoring + upsert logic used by both lookup strategies."""
+        """Shared scoring + upsert logic used by every lookup strategy.
+
+        A mention carrying ``"resolve": False`` skips the scoring entirely and takes the
+        find-or-create path below, which matches an existing row on ``LOWER(canonical_name)``
+        equality and inserts one otherwise.
+        """
 
         # Resolve each entity using pre-fetched candidates. A slot stays None
         # only if find-or-create fails to produce a row for a mention (a DB
@@ -923,6 +962,9 @@ class EntityResolver:
             # Use per-entity date if available, otherwise fall back to batch-level date
             entity_event_date = entity_data.get("event_date", unit_event_date)
 
+            # Per mention, not per batch: retain resolves the caller's entities and the
+            # extractor's in one pass, and only the caller's are meant literally (#3479).
+            resolve = entity_data.get("resolve", True)
             candidates = all_candidates.get(entity_text, [])
 
             # Backstop truncation for candidate sets that were not capped at the
@@ -951,10 +993,14 @@ class EntityResolver:
             # classify by key prefix (see _label_texts).
             is_label = bool(labels_cfg and _is_label_entity(entity_text, labels_cfg, taxonomy_lookup or set()))
 
-            if not candidates:
-                # Will create new entity
+            if not resolve or not candidates:
+                # Nothing to score against — or the caller named the entity literally, so
+                # similarity must not get a vote. Either way the find-or-create pass below
+                # reuses an identically-named row and otherwise inserts this exact name.
                 entities_to_create.append(
-                    _EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date, is_label=is_label)
+                    _EntityToCreate(
+                        idx=idx, name=entity_text, event_date=entity_event_date, is_label=is_label, resolve=resolve
+                    )
                 )
                 continue
 
@@ -1057,7 +1103,9 @@ class EntityResolver:
             # variants (case/emoji/suffix/typo of one name) collapse to a single entity. Without
             # this, resolution only compares against already-persisted rows, so the first sighting
             # of each variant in a batch always creates a distinct entity (issue #3107). Labels are
-            # excluded and keep exact grouping.
+            # excluded and keep exact grouping, and so are names the caller wrote literally:
+            # "Alice" and "Alice Smith" listed side by side are two entities because they were
+            # written as two (#3479).
             canonical_by_member = self._intrabatch_canonical_map(entities_to_create)
 
             @dataclass
@@ -1246,6 +1294,7 @@ class EntityResolver:
         self,
         unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
         bank_id: str | None = None,
+        txn=None,
     ):
         """Store-owned variant of :meth:`link_units_to_entities_batch` that touches NO
         Postgres connection.
@@ -1257,6 +1306,10 @@ class EntityResolver:
         its connection-free store phase and never hold the data-plane connection across the
         object-store write. NOT for the Postgres store, whose posting is a real ``unit_entities``
         INSERT that requires the connection.
+
+        ``txn`` is the caller's write-group handle. For a store that keeps the posting on the
+        memory, this re-writes rows the same write-group just created, so it belongs to that
+        group — see :meth:`MemoriesExtension.record_unit_entities`.
         """
         if not unit_entity_pairs:
             return
@@ -1265,10 +1318,10 @@ class EntityResolver:
             (t[0], t[1], t[2] if len(t) >= 3 else None)  # type: ignore[misc]
             for t in unit_entity_pairs
         ]
-        return await self._link_units_to_entities_batch_impl(None, normalized, bank_id)
+        return await self._link_units_to_entities_batch_impl(None, normalized, bank_id, txn=txn)
 
     async def _link_units_to_entities_batch_impl(
-        self, conn, unit_entity_pairs: list[tuple[str, str, datetime | None]], bank_id: str | None = None
+        self, conn, unit_entity_pairs: list[tuple[str, str, datetime | None]], bank_id: str | None = None, txn=None
     ):
         # Sorted bulk insert to prevent deadlocks from inconsistent lock ordering
         # across concurrent transactions on the unit_entities unique index.
@@ -1289,6 +1342,7 @@ class EntityResolver:
             bank_id=bank_id,
             unit_ids=unit_ids,
             entity_ids=entity_ids,
+            txn=txn,
         )
 
         # Build maps keyed by unit_id:

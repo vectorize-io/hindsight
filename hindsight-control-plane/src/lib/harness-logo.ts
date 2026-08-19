@@ -73,6 +73,10 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
     src: "/img/harness/devin-cli.svg",
     invertOnDark: true,
   },
+  // The DeepSeek Harness mark, taken from that project's own favicon (MIT). Its
+  // upstream copy carries a prefers-color-scheme rule; that was dropped so the
+  // control plane's own theme decides, like every other monochrome mark here.
+  dsh: { id: "dsh", label: "DeepSeek Harness", src: "/img/harness/dsh.svg", invertOnDark: true },
   // Retired: the Gemini CLI harness was replaced by `antigravity-cli`, so nothing
   // emits this id any more. The entry stays because documents retained while it
   // did are still in people's banks, and they should keep their logo.

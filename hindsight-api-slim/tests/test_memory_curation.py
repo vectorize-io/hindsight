@@ -21,6 +21,13 @@ from hindsight_api.engine.retain import embedding_processing
 # ---------------------------------------------------------------------------
 
 
+# Most of this module seeds its fixtures by INSERTing memory_units / memory_links /
+# entities directly with the helpers below, then asserts on those rows (including the
+# embedding and search_vector columns). Those classes and tests carry
+# ``memory_backend_incompatible``; the handful that go through the engine end to end
+# — test_not_found_returns_none, test_recall_excludes_invalidated — deliberately do not.
+
+
 async def _insert_memory(
     conn,
     memory: MemoryEngine,
@@ -185,12 +192,11 @@ async def _entity_ids_for(conn, unit_id: uuid.UUID) -> list[uuid.UUID]:
     return [r["entity_id"] for r in rows]
 
 
-async def _obs_ids(conn, bank_id: str) -> list[str]:
-    rows = await conn.fetch(
-        "SELECT id FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
-        bank_id,
+async def _obs_ids(memory: MemoryEngine, bank_id: str, request_context: RequestContext) -> list[str]:
+    listing = await memory.list_memory_units(
+        bank_id, fact_type="observation", limit=1000, request_context=request_context
     )
-    return [str(r["id"]) for r in rows]
+    return [item["id"] for item in listing["items"]]
 
 
 async def _consolidated_at(conn, mem_id: uuid.UUID):
@@ -207,6 +213,8 @@ async def _ensure_bank(memory: MemoryEngine, bank_id: str, request_context: Requ
 
 
 class TestInvalidate:
+    pytestmark = pytest.mark.memory_backend_incompatible
+
     @pytest.mark.asyncio
     async def test_invalidate_moves_to_archive_and_prunes(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-inv-{uuid.uuid4().hex[:8]}"
@@ -250,7 +258,7 @@ class TestInvalidate:
                 "archive is cold storage with no index; the schema drops search_vector (#2503)"
             )
             assert await _link_count(conn, m1) == 0, "links cascade-pruned on move"
-            assert str(obs_id) not in await _obs_ids(conn, bank_id), "derived observation removed"
+            assert str(obs_id) not in await _obs_ids(memory, bank_id, request_context), "derived observation removed"
             assert await _consolidated_at(conn, m2) is None, "surviving source reset for re-consolidation"
 
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -334,6 +342,8 @@ class TestInvalidate:
 
 
 class TestEdit:
+    pytestmark = pytest.mark.memory_backend_incompatible
+
     @pytest.mark.asyncio
     async def test_edit_changes_text_and_rederives(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-edit-{uuid.uuid4().hex[:8]}"
@@ -385,7 +395,7 @@ class TestEdit:
             assert row["consolidated_at"] is None, "edited memory re-consolidates"
             assert "'assist'" not in row["search_vector"], "old text must not stay in native FTS search_vector"
             assert "'user'" in row["search_vector"], "new text must refresh native FTS search_vector"
-            assert str(obs_id) not in await _obs_ids(conn, bank_id), "stale observation re-derived"
+            assert str(obs_id) not in await _obs_ids(memory, bank_id, request_context), "stale observation re-derived"
             queued_ids = await conn.fetch("SELECT unit_id FROM graph_maintenance_queue WHERE bank_id = $1", bank_id)
             assert {row["unit_id"] for row in queued_ids} == {m1, m2}, "edited memory and incoming victim both queued"
 
@@ -469,6 +479,93 @@ class TestEdit:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def _near_duplicate_entity_bank(self, memory: MemoryEngine, request_context: RequestContext):
+        """A bank in the shape reported in #3479, returned as (bank_id, unit_id, typo_entity_id).
+
+        Extraction created a typo entity ("Dr Wall") that co-occurs with the other name in the
+        edit, so fuzzy scoring puts it above the 0.6 match threshold for the corrected spelling
+        "Dr. Waller" — name similarity 0.41 plus the full 0.3 co-occurrence bonus.
+        """
+        bank_id = f"test-curation-entmode-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            unit_id = await _insert_memory(conn, memory, bank_id, "Dr. Waller referred the patient to CareOrg.")
+            typo = await _insert_entity(conn, bank_id, "Dr Wall")
+            careorg = await _insert_entity(conn, bank_id, "CareOrg")
+            await _link_entity(conn, unit_id, typo)
+            await _link_entity(conn, unit_id, careorg)
+            # The co-occurrence edge is what lets the typo entity outscore the corrected name.
+            await conn.execute(
+                "INSERT INTO entity_cooccurrences (entity_id_1, entity_id_2, cooccurrence_count) VALUES ($1, $2, 5)",
+                *sorted([typo, careorg], key=str),
+            )
+        return bank_id, unit_id, typo
+
+    @pytest.mark.asyncio
+    async def test_edit_entities_unresolved_keeps_the_submitted_names(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """resolve_entities=False links the names the caller wrote (#3479)."""
+        bank_id, m1, typo = await self._near_duplicate_entity_bank(memory, request_context)
+        pool = await memory._get_pool()
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            result = await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                entities=["Dr. Waller", "CareOrg"],
+                resolve_entities=False,
+                request_context=request_context,
+            )
+
+        assert set(result["entities"]) == {"Dr. Waller", "CareOrg"}, "the submitted names are stored verbatim"
+        async with pool.acquire() as conn:
+            linked = await conn.fetch(
+                "SELECT e.canonical_name FROM unit_entities ue "
+                "JOIN entities e ON e.id = ue.entity_id WHERE ue.unit_id = $1",
+                m1,
+            )
+            assert {r["canonical_name"] for r in linked} == {"Dr. Waller", "CareOrg"}
+            assert typo not in await _entity_ids_for(conn, m1), "the typo entity is detached, not reused"
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", typo), (
+                "the typo entity itself survives for the graph-maintenance sweep to reclaim"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_edit_entities_default_still_resolves(self, memory: MemoryEngine, request_context: RequestContext):
+        """Omitting the flag keeps retain's resolution, so existing callers are unaffected.
+
+        This pins the backwards-compatible default rather than endorsing the outcome: the same
+        edit that resolve_entities=False gets right lands on the near-duplicate here.
+        """
+        bank_id, m1, typo = await self._near_duplicate_entity_bank(memory, request_context)
+        pool = await memory._get_pool()
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            result = await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                entities=["Dr. Waller", "CareOrg"],
+                request_context=request_context,
+            )
+
+        assert set(result["entities"]) == {"Dr Wall", "CareOrg"}, "the default still resolves fuzzily"
+        async with pool.acquire() as conn:
+            assert typo in await _entity_ids_for(conn, m1)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_edit_empty_entities_detaches_all(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-editent0-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -528,6 +625,8 @@ class TestCurationRelinking:
     tests below drain the queue inline: by the time ``update_memory_unit``
     returns, the links are already rebuilt.
     """
+
+    pytestmark = pytest.mark.memory_backend_incompatible
 
     @pytest.mark.asyncio
     async def test_edit_with_only_outgoing_links_queues_itself(
@@ -622,6 +721,7 @@ class TestCurationRelinking:
 
 class TestGuardsAndListing:
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_cannot_curate_observation(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-obs-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -647,6 +747,7 @@ class TestGuardsAndListing:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_list_filters_by_state(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-list-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -682,6 +783,7 @@ class TestGuardsAndListing:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_list_and_get_memory_units_include_metadata(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
@@ -723,6 +825,7 @@ class TestGuardsAndListing:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_list_filters_by_document(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-doc-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -762,6 +865,7 @@ class TestGuardsAndListing:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_list_filters_by_entity(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-entity-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -864,6 +968,8 @@ class TestCausalLinkPreservation:
     edge drops it for good. Edits must leave them alone, and the
     invalidate/revert round-trip must carry them through the archive.
     """
+
+    pytestmark = pytest.mark.memory_backend_incompatible
 
     @pytest.mark.asyncio
     async def test_edit_preserves_causal_links_and_drops_derived(

@@ -6,6 +6,7 @@ maintenance-routines migration and loop over every schema holding the relevant
 table in a single round-trip. These tests drive them directly against pg0.
 """
 
+import asyncio
 import importlib.util
 import uuid
 from types import SimpleNamespace
@@ -157,6 +158,58 @@ async def test_banks_needing_consolidation_skips_schema_with_vanished_table(memo
             # Must not raise; the bad schema is simply skipped.
             rows = await conn.fetch("SELECT schema_name, bank_id FROM public.banks_needing_consolidation()")
             assert schema not in {r["schema_name"] for r in rows}
+    finally:
+        async with memory._pool.acquire() as conn:
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+@pytest.mark.asyncio
+async def test_banks_needing_consolidation_skips_schema_locked_by_ddl(memory: MemoryEngine, request_context):
+    """A schema whose tables are held under AccessExclusiveLock by concurrent DDL is
+    skipped, and the rest of the scan still reports its work.
+
+    The other half of the same race as the vanished-table test: the schema is not
+    gone, it is being rewritten. Its DDL holds (or has queued) AccessExclusiveLock,
+    and a queued AccessExclusiveLock blocks the AccessShareLock this routine needs —
+    while the DDL waits on the locks the routine already holds from earlier schemas.
+    That is a cycle, and PostgreSQL breaks it by killing one side; when it picked the
+    routine, one tenant being dropped aborted an entire maintenance pass with
+    ``DeadlockDetectedError``. Migration c8b4e2a71f95 gives each per-schema query a
+    short lock_timeout and skips the schema instead of waiting.
+
+    ``asyncio.wait_for`` is the actual regression guard: before the fix the routine
+    blocks until the DDL transaction ends, so this times out rather than asserting.
+    """
+    bank_id = await _make_bank(memory, request_context, "locked")
+    schema = f"mtlocked{uuid.uuid4().hex[:8]}"
+    try:
+        async with memory._pool.acquire() as conn:
+            # Real, eligible work in the public schema — the scan must still find it.
+            await _insert_fact(conn, bank_id)
+            await conn.execute(f'CREATE SCHEMA "{schema}"')
+            await conn.execute(f'CREATE TABLE "{schema}".memory_units (LIKE public.memory_units INCLUDING DEFAULTS)')
+            await conn.execute(f'CREATE TABLE "{schema}".banks (LIKE public.banks INCLUDING DEFAULTS)')
+
+        # Hold the lock a DROP/ALTER would hold, from a separate connection, for the
+        # whole call — the routine must not wait on it.
+        async with memory._pool.acquire() as blocker:
+            blocker_tx = blocker.transaction()
+            await blocker_tx.start()
+            try:
+                await blocker.execute(f'LOCK TABLE "{schema}".banks IN ACCESS EXCLUSIVE MODE')
+
+                async with memory._pool.acquire() as conn:
+                    rows = await asyncio.wait_for(
+                        conn.fetch("SELECT schema_name, bank_id FROM public.banks_needing_consolidation()"),
+                        timeout=15,
+                    )
+            finally:
+                await blocker_tx.rollback()
+
+        reported = {r["schema_name"] for r in rows}
+        assert schema not in reported, "a schema under concurrent DDL must be skipped"
+        assert "public" in reported, "skipping the locked schema must not abort the rest of the scan"
+        assert bank_id in {r["bank_id"] for r in rows}
     finally:
         async with memory._pool.acquire() as conn:
             await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

@@ -293,6 +293,8 @@ async def delete_stale_observations(
     )
 
     if remaining_source_ids:
+        # Requeue: consolidation bookkeeping, so `updated_at` is deliberately not
+        # stamped (see META_UPDATED_AT in ..base) — nothing about these facts changed.
         await conn.execute(
             f"""
             UPDATE {fq_table("memory_units")}
@@ -420,7 +422,8 @@ async def invalidate_memory(*, conn, fq_table, bank_id: str, unit_id: str, reaso
 
 async def set_invalidation_reason(*, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> None:
     await conn.execute(
-        f"UPDATE {fq_table('invalidated_memory_units')} SET invalidation_reason = $3 WHERE id = $1 AND bank_id = $2",
+        f"UPDATE {fq_table('invalidated_memory_units')} SET invalidation_reason = $3, updated_at = now() "
+        f"WHERE id = $1 AND bank_id = $2",
         str(unit_id),
         bank_id,
         reason,
@@ -498,7 +501,8 @@ async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> Store
 
 async def set_memory_embedding(*, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
     await conn.execute(
-        f"UPDATE {fq_table('memory_units')} SET embedding = $3::vector WHERE id = $1 AND bank_id = $2",
+        f"UPDATE {fq_table('memory_units')} SET embedding = $3::vector, updated_at = now() "
+        f"WHERE id = $1 AND bank_id = $2",
         str(unit_id),
         bank_id,
         embedding,

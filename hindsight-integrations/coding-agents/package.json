@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-coding-agents",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/vectorize-io/hindsight.git",
@@ -27,10 +27,26 @@
     "hindsight-antigravity-statusline": "dist/antigravity-statusline.js",
     "hindsight-devin-hook": "dist/devin-hook.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./dsh": "./dist/dsh.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./dist/*": "./dist/*"
+  },
   "files": [
     "skill",
-    "dist"
+    "dist",
+    "cordis.patch.yml"
   ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "cline": {
     "plugins": [
       {

@@ -1211,19 +1211,30 @@ def _register_list_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
     """Register the list_banks tool."""
 
     @mcp.tool(annotations=_tool_annotations("list_banks"))
-    async def list_banks() -> str:
+    async def list_banks(query: str | None = None, limit: int = 100, offset: int = 0) -> str:
         """
-        List all available memory banks.
+        List available memory banks, most recently written first.
 
         Use this tool to discover what memory banks exist in the system.
         Each bank is an isolated memory store (like a separate "brain").
 
+        Args:
+            query: Optional case-insensitive substring to match against bank ID and name.
+            limit: Maximum number of banks to return (default 100).
+            offset: Number of banks to skip, for paging through `total`.
+
         Returns:
-            JSON list of banks with their IDs, names, dispositions, and missions.
+            JSON with the page of banks (IDs, names, dispositions, missions) plus
+            the total number of matching banks and the limit/offset used.
         """
         try:
-            banks = await memory.list_banks(request_context=_get_request_context(config))
-            return json.dumps({"banks": banks}, indent=2)
+            data = await memory.list_banks(
+                search_query=query,
+                limit=limit,
+                offset=offset,
+                request_context=_get_request_context(config),
+            )
+            return json.dumps(data, indent=2)
         except OperationValidationError as e:
             logger.warning(f"Operation rejected: {e}")
             return json.dumps({"error": str(e), "banks": []})
@@ -1307,6 +1318,8 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         async def list_mental_models(
             tags: list[str] | None = None,
             detail: str = "full",
+            limit: int = 100,
+            offset: int = 0,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -1319,6 +1332,8 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
                 detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
+                limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -1326,13 +1341,15 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 if target_bank is None:
                     return '{"error": "No bank_id configured", "items": []}'
 
-                models = await memory.list_mental_models(
+                page = await memory.list_mental_models(
                     bank_id=target_bank,
                     tags=tags,
                     detail=detail,
+                    limit=limit,
+                    offset=offset,
                     request_context=_get_request_context(config),
                 )
-                return json.dumps({"items": models}, indent=2, default=str)
+                return json.dumps({"items": page.items, "total": page.total}, indent=2, default=str)
             except OperationValidationError as e:
                 logger.warning(f"Operation rejected: {e}")
                 return json.dumps({"error": str(e)})
@@ -1346,6 +1363,8 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         async def list_mental_models(
             tags: list[str] | None = None,
             detail: str = "full",
+            limit: int = 100,
+            offset: int = 0,
         ) -> dict:
             """
             List mental models (pinned reflections) for this memory bank.
@@ -1357,19 +1376,23 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
                 detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
+                limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
             try:
                 target_bank = config.bank_id_resolver()
                 if target_bank is None:
                     return {"error": "No bank_id configured", "items": []}
 
-                models = await memory.list_mental_models(
+                page = await memory.list_mental_models(
                     bank_id=target_bank,
                     tags=tags,
                     detail=detail,
+                    limit=limit,
+                    offset=offset,
                     request_context=_get_request_context(config),
                 )
-                return {"items": models}
+                return {"items": page.items, "total": page.total}
             except OperationValidationError as e:
                 logger.warning(f"Operation rejected: {e}")
                 return {"error": str(e)}
@@ -2036,6 +2059,8 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         async def list_directives(
             tags: list[str] | None = None,
             active_only: bool = True,
+            limit: int = 100,
+            offset: int = 0,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -2047,6 +2072,8 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
             Args:
                 tags: Optional tags to filter by
                 active_only: If True, only return active directives (default: True)
+                limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -2054,13 +2081,15 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
                 if target_bank is None:
                     return '{"error": "No bank_id configured"}'
 
-                directives = await memory.list_directives(
+                page = await memory.list_directives(
                     target_bank,
                     tags=tags,
                     active_only=active_only,
+                    limit=limit,
+                    offset=offset,
                     request_context=_get_request_context(config),
                 )
-                return json.dumps({"items": directives}, indent=2, default=str)
+                return json.dumps({"items": page.items, "total": page.total}, indent=2, default=str)
             except OperationValidationError as e:
                 logger.warning(f"Operation rejected: {e}")
                 return json.dumps({"error": str(e)})
@@ -2074,6 +2103,8 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         async def list_directives(
             tags: list[str] | None = None,
             active_only: bool = True,
+            limit: int = 100,
+            offset: int = 0,
         ) -> dict:
             """
             List directives for this memory bank.
@@ -2084,19 +2115,23 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
             Args:
                 tags: Optional tags to filter by
                 active_only: If True, only return active directives (default: True)
+                limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
             try:
                 target_bank = config.bank_id_resolver()
                 if target_bank is None:
                     return {"error": "No bank_id configured", "items": []}
 
-                directives = await memory.list_directives(
+                page = await memory.list_directives(
                     target_bank,
                     tags=tags,
                     active_only=active_only,
+                    limit=limit,
+                    offset=offset,
                     request_context=_get_request_context(config),
                 )
-                return {"items": directives}
+                return {"items": page.items, "total": page.total}
             except OperationValidationError as e:
                 logger.warning(f"Operation rejected: {e}")
                 return {"error": str(e)}
@@ -2470,6 +2505,13 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             all). The memory is re-embedded and its derived observations, links, and
             graph are recomputed automatically.
 
+            resolve_entities controls how the names in entities are matched. The
+            default True behaves like retain and may resolve a name onto a similar
+            entity that already exists, which silently discards a correction when the
+            bank holds a near-duplicate name. Pass False whenever you are correcting a
+            fact deliberately: an existing entity is then reused only on a
+            case-insensitive name match, and any other name becomes its own entity.
+
             Only raw world/experience facts can be edited; observations are derived.
             To retire or restore a fact, use invalidate_memory instead.
     """
@@ -2485,6 +2527,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             occurred_end: str | None = None,
             fact_type: str | None = None,
             entities: list[str] | None = None,
+            resolve_entities: bool = True,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -2506,6 +2549,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     occurred_end=occurred_end,
                     new_fact_type=fact_type,
                     entities=entities,
+                    resolve_entities=resolve_entities,
                     request_context=_get_request_context(config),
                 )
                 if result is None:
@@ -2531,6 +2575,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             occurred_end: str | None = None,
             fact_type: str | None = None,
             entities: list[str] | None = None,
+            resolve_entities: bool = True,
         ) -> dict:
             """
             Args:
@@ -2550,6 +2595,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     occurred_end=occurred_end,
                     new_fact_type=fact_type,
                     entities=entities,
+                    resolve_entities=resolve_entities,
                     request_context=_get_request_context(config),
                 )
                 if result is None:

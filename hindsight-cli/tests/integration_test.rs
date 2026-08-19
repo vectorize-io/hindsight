@@ -107,6 +107,7 @@ fn test_memory_item_timestamp_serializes_as_plain_string() {
         timestamp: Some("2026-05-31T10:00:00Z".to_string()),
         document_id: Some("doc-1".to_string()),
         entities: None,
+        resolve_entities: true,
         tags: None,
         observation_scopes: None,
         strategy: None,

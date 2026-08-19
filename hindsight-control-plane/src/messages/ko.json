@@ -51,6 +51,7 @@
       "select": "메모리 뱅크 선택...",
       "search": "메모리 뱅크 검색...",
       "empty": "아직 메모리 뱅크가 없습니다.",
+      "noSearchResults": "검색과 일치하는 뱅크가 없습니다.",
       "create": "새 뱅크 만들기",
       "switchTitle": "메모리 뱅크 전환",
       "returnTo": "{bank}로 돌아가기",
@@ -504,6 +505,7 @@
       "fileConvertRetain": "파일 변환",
       "webhookDelivery": "Webhook 전달",
       "graphMaintenance": "그래프 유지관리",
+      "vectorIndexMaintenance": "벡터 인덱스 유지 관리",
       "exportDocuments": "문서 내보내기",
       "importDocuments": "문서 가져오기"
     },

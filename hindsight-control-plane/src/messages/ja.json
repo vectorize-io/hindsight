@@ -51,6 +51,7 @@
       "select": "メモリバンクを選択...",
       "search": "メモリバンクを検索...",
       "empty": "メモリバンクがありません。",
+      "noSearchResults": "検索に一致するバンクはありません。",
       "create": "新しいバンクを作成",
       "switchTitle": "メモリバンクを切り替え",
       "returnTo": "{bank}に戻る",
@@ -504,6 +505,7 @@
       "fileConvertRetain": "ファイル変換",
       "webhookDelivery": "Webhook 配信",
       "graphMaintenance": "グラフメンテナンス",
+      "vectorIndexMaintenance": "ベクトルインデックスのメンテナンス",
       "exportDocuments": "ドキュメントのエクスポート",
       "importDocuments": "ドキュメントのインポート"
     },

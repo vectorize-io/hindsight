@@ -42,7 +42,13 @@ OPENAI_PROMPT_CACHE_KEY_PARAM = "prompt_cache_key"
 # Hosts (exact or parent domain) whose backends implement the xAI header.
 _XAI_DOMAINS = ("x.ai", "grok.com")
 # Hosts (exact or parent domain) that accept OpenAI's prompt_cache_key field.
-_OPENAI_DOMAINS = ("openai.com", "openai.azure.com")
+# Deliberately excludes openai.azure.com: Azure OpenAI itself accepts the field
+# on GPT deployments, but the same *.openai.azure.com endpoint also fronts
+# non-OpenAI Foundry models (DeepSeek, Llama, Mistral) that reject it with
+# `unrecognized_request_argument` (#3518). The host says nothing about which
+# model family the deployment serves, so `auto` stays off there and an Azure
+# GPT operator opts in with openai_prompt_cache_key.
+_OPENAI_DOMAINS = ("openai.com",)
 
 
 class CacheAffinityMode(StrEnum):
@@ -87,7 +93,7 @@ def resolve_cache_affinity(mode: CacheAffinityMode, provider: str, base_url: str
 
     Non-``auto`` modes are returned unchanged. ``auto`` resolves to
     ``xai_conv_id`` for an x.ai / grok.com host, ``openai_prompt_cache_key`` for
-    native OpenAI (no base URL) or an openai.com / Azure OpenAI host, and
+    native OpenAI (no base URL) or an openai.com host, and
     ``none`` for everything else — an unknown backend gets no unfamiliar field.
 
     The xAI check is host-only and deliberately provider-independent: the

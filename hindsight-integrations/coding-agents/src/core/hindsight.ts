@@ -6,11 +6,12 @@
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
 import {
+  buildPageTrigger,
   CODING_BANK_STRUCTURE,
   CODING_BANK_TEMPLATE,
   PAGE_MAX_TOKENS,
-  PAGE_TRIGGER,
-  PAGES,
+  pagesFor,
+  type PageTrigger,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
@@ -25,13 +26,40 @@ export interface KnowledgeNode {
   children?: KnowledgeNode[];
 }
 
+/**
+ * How consolidation scopes the observations a retained memory feeds (`observation_scopes` on the
+ * retain API). The scalar modes are the server's; a `string[][]` declares the scopes explicitly.
+ */
+export type ObservationScopes = "shared" | "combined" | "per_tag" | "all_combinations" | string[][];
+
+/**
+ * One global scope for everything this plugin writes.
+ *
+ * The server default (`combined`) scopes an observation to the memory's WHOLE tag set, and every
+ * document we write carries provenance tags — `source:chat`, `harness:<id>`, `knowledge:<kind>`,
+ * anything from `retainTags`. That splits one repository's knowledge into a separate observation
+ * set per tag combination: work the same repo with two agents and the harness tag alone gives two
+ * parallel sets of beliefs that never merge, each blind to the other, at double the consolidation
+ * cost (#3564). Those tags are provenance — they say who wrote a memory, not which project the
+ * belief is about — so they belong on the facts (where they still filter recall) and not on the
+ * consolidation boundary. `shared` keeps them on the facts and consolidates into ONE untagged
+ * scope per bank, which is what a bank already is: one project's memory.
+ */
+export const DEFAULT_OBSERVATION_SCOPES: ObservationScopes = "shared";
+
 export interface ClientOpts {
   apiUrl: string;
   apiToken?: string;
   bank: string;
+  /** Repository this bank is about, named in every seeded page's query (`pageScopeRule`). Only
+   *  `seedPages()` reads it; it falls back to the bank id, which carries the repo name in the
+   *  default `coding-agent::{gitProject}` template. */
+  project?: string;
   log?: (msg: string) => void;
   /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
   maxParallelRetains?: number;
+  /** Observation scoping for every retain this client sends. Default `DEFAULT_OBSERVATION_SCOPES`. */
+  observationScopes?: ObservationScopes;
 }
 
 export interface RetainOpts {
@@ -113,6 +141,7 @@ export class HindsightClient {
   readonly apiUrl: string;
   readonly apiToken?: string;
   readonly bank: string;
+  readonly project?: string;
   readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
   /** Tri-state capability probe: unknown until the first page request, then cached. */
   knowledgePagesSupported: boolean | undefined;
@@ -120,13 +149,16 @@ export class HindsightClient {
   private idempotentRetain: boolean | undefined;
   private readonly log: (msg: string) => void;
   readonly maxParallelRetains: number;
+  readonly observationScopes: ObservationScopes;
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
     this.apiToken = o.apiToken;
     this.bank = o.bank;
+    this.project = o.project;
     this.log = o.log ?? (() => {});
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
+    this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
   }
 
   private headers(): Record<string, string> {
@@ -177,6 +209,10 @@ export class HindsightClient {
       document_id: documentId,
       tags,
       strategy,
+      // Sent on EVERY retain, including the server default `combined`, so the scoping a bank's
+      // observations were built under is a property of the write rather than of whichever server
+      // version happened to process it. Servers older than 0.4.15 ignore the field.
+      observation_scopes: this.observationScopes,
     };
     if (opts.timestamp) item.timestamp = opts.timestamp;
     if (opts.metadata) item.metadata = opts.metadata;
@@ -246,7 +282,7 @@ export class HindsightClient {
    *  strategies, entity labels), then seed knowledge pages when the server supports them. Both
    *  halves are idempotent, so the deepen engine can re-run this every pass. Creates the bank if
    *  missing; legacy servers continue with the template-only path. */
-  async configureBank(opts: { reset?: boolean } = {}): Promise<void> {
+  async configureBank(opts: { reset?: boolean; pageTrigger?: PageTrigger } = {}): Promise<void> {
     if (opts.reset) {
       await this.req("DELETE", this.bankUrl());
       this.log(`[bank] reset ${this.bank}`);
@@ -265,7 +301,7 @@ export class HindsightClient {
         : `[bank] template applied to ${this.bank}: missions, entity_labels {knowledge}, ` +
             `strategies {git, gitlog, conversation, document}`
     );
-    await this.seedPages();
+    await this.seedPages(opts.pageTrigger);
   }
 
   /**
@@ -469,16 +505,18 @@ export class HindsightClient {
   }
 
   /**
-   * Seed the fixed `PAGES` taxonomy as knowledge-base pages at the tree root, idempotently.
+   * Seed the fixed page taxonomy as knowledge-base pages at the tree root, idempotently.
    *
    * Matched by NAME, not id: `/knowledge-base/pages` mints its own `kp-…` id, so a stable
    * client-chosen id isn't available to match on (unlike the old mental-model path, which keyed
    * off a slug). Names are unique per folder server-side, which makes them a sound key.
    *
    * An existing page is PATCHed rather than recreated so a plugin upgrade that rewords a
-   * `source_query` re-syncs onto the live page instead of orphaning its synthesized content.
+   * `source_query` re-syncs onto the live page instead of orphaning its synthesized content —
+   * which is how `pageScopeRule`'s repo name reaches banks seeded by an earlier version.
    */
-  async seedPages(): Promise<void> {
+  async seedPages(pageTrigger: PageTrigger = buildPageTrigger()): Promise<void> {
+    const pages = pagesFor(this.project ?? this.bank);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
@@ -495,14 +533,14 @@ export class HindsightClient {
     }
     let created = 0;
     let updated = 0;
-    for (const page of PAGES) {
+    for (const page of pages) {
       const hit = existing.get(page.name.toLowerCase());
       const body = {
         name: page.name,
         source_query: page.source_query,
         tags: page.tags,
         max_tokens: PAGE_MAX_TOKENS,
-        trigger: PAGE_TRIGGER,
+        trigger: pageTrigger,
       };
       if (!hit) {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
@@ -535,7 +573,7 @@ export class HindsightClient {
     }
     this.log(
       `[bank] knowledge pages seeded on ${this.bank}: ${created} created, ${updated} re-synced, ` +
-        `${PAGES.length - created - updated} unchanged`
+        `${pages.length - created - updated} unchanged`
     );
   }
 
@@ -560,6 +598,9 @@ export class HindsightClient {
     summary: string;
     relatesToPageId?: string;
     stamp?: RetainStamp;
+    /** Same refresh policy as the seeded pages — an initiative page is one of them, and used to
+     *  carry its own hardcoded copy of this trigger. */
+    pageTrigger?: PageTrigger;
   }): Promise<{ page_id: string }> {
     // `/knowledge-base/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
     // we create the page first and adopt the server-assigned id — that id is what the return value
@@ -573,10 +614,7 @@ export class HindsightClient {
         source_query: `Summarize the "${args.title}" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`,
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
-        trigger: {
-          fact_types: ["world", "experience", "observation"],
-          refresh_after_consolidation: true,
-        },
+        trigger: args.pageTrigger ?? buildPageTrigger(),
       });
       try {
         const j = (await r.json()) as { page_id?: string; id?: string };

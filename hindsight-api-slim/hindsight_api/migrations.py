@@ -638,11 +638,15 @@ def ensure_vector_extension(
 
             if table_name == "memory_units" and uses_per_bank_vector_indexes(target_ext):
                 # Per-bank backends never use a GLOBAL memory_units vector index.
-                # Every vector search is bank + fact_type scoped and served by the
-                # per-(bank, fact_type) partial indexes created at bank-creation time
-                # (bank_utils.create_bank_vector_indexes); the planner never picks a
-                # global index when bank_id is in the WHERE clause, which is exactly
-                # why migration d5e6f7a8b9c0 drops it for these backends.
+                # Every vector search is bank + fact_type scoped, and is served
+                # either by the bank's own partial index or — for a bank below
+                # the size threshold, which is most of them — by an exact
+                # (bank_id, fact_type) B-tree scan plus a top-N sort. The planner
+                # never picks a global index when bank_id is in the WHERE clause,
+                # which is exactly why migration d5e6f7a8b9c0 drops it for these
+                # backends. The partial indexes themselves are owned by the
+                # maintenance sweep (engine/vector_index_health.py), not by this
+                # reconcile and not by bank creation.
                 #
                 # The reconcile is strictly hands-off here, in BOTH directions:
                 # never create the index (dead weight — an older version of this

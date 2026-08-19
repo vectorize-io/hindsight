@@ -178,6 +178,8 @@ hindsight memory retain my-bank "Alice got promoted" \
 
 Arbitrary key-value string pairs that provide context about this item. For example: `{"source": "slack", "channel": "engineering", "thread_id": "T123"}`. Metadata is included in the fact extraction prompt, so the LLM can use it as additional context when extracting facts — for instance, knowing the document title or source can improve accuracy. It is also stored on each memory unit and returned with every recalled memory, letting you do client-side filtering or static enrichment without extra lookups — for example, linking a memory back to its source URL, thread ID, or any application-specific identifier.
 
+Values are stored and returned as strings. A key whose value is `null` is dropped rather than stored, so it will not come back on the recalled memory — send an empty string if you need the key to survive.
+
 ### document_id
 
 A caller-supplied string that groups one or more items under a logical document. This field is the key to making retain **idempotent**.
@@ -216,6 +218,16 @@ Append mode requires a `document_id` — without one there is no existing docume
 A list of entities you want to guarantee are recognized, merged with any entities the LLM extracts automatically. Each entry has a `text` field (the entity name) and an optional `type` (e.g., `"PERSON"`, `"ORG"`, `"CONCEPT"` — defaults to `"CONCEPT"` if omitted).
 
 Use this when you know certain entities are important but the LLM might miss them or refer to them inconsistently across different parts of the content. Providing entities explicitly ensures they are always linked in the knowledge graph.
+
+### resolve_entities
+
+By default the names you pass in `entities` are **resolved** against the entities already in the bank: a name close to an existing one may be matched onto it rather than creating its own entity, based on name similarity plus how strongly it co-occurs with the other names in the same item. That is usually what you want — it is how `Dr. Waller` and `Dr Waller` end up as one entity instead of two.
+
+Set `resolve_entities: false` when the names you are passing are authoritative and must be stored exactly as written. An existing entity is then reused only when its name matches case-insensitively, any other name creates a new entity, and your names are never merged with each other (`Alice` and `Alice Smith` stay two entities).
+
+This applies **only to the entities you supply**. Auto-extracted entities are always resolved, because they are the extractor's guess at a name rather than yours — turning resolution off for them would fill the bank with near-duplicate entities.
+
+The same flag exists on [editing a memory](./memories#resolving-entity-names), where it matters most: a correction you type by hand is exactly the case where a similar existing entity should not win.
 
 ### tags and document_tags
 

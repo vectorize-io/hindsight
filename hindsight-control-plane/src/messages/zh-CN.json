@@ -51,6 +51,7 @@
       "select": "选择记忆库...",
       "search": "搜索记忆库...",
       "empty": "还没有记忆库。",
+      "noSearchResults": "没有与搜索匹配的记忆库。",
       "create": "创建新记忆库",
       "switchTitle": "切换记忆库",
       "returnTo": "返回 {bank}",
@@ -504,6 +505,7 @@
       "fileConvertRetain": "转换文件",
       "webhookDelivery": "Webhook 投递",
       "graphMaintenance": "图谱维护",
+      "vectorIndexMaintenance": "向量索引维护",
       "exportDocuments": "导出文档",
       "importDocuments": "导入文档"
     },

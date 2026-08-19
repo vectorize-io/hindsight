@@ -382,7 +382,15 @@ Clear a mental model's content while keeping its definition. After clearing, cal
 
 ### list_banks (multi-bank mode only)
 
-List all available memory banks.
+List available memory banks, most recently written first. The response carries the
+total number of matching banks alongside the page, so large deployments can be
+walked with `offset`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | No | Case-insensitive substring matched against bank ID and name |
+| `limit` | integer | No | Maximum number of banks to return (default: 100) |
+| `offset` | integer | No | Number of banks to skip (default: 0) |
 
 ---
 

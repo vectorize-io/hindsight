@@ -51,6 +51,7 @@
       "select": "Selecciona un banco de memoria...",
       "search": "Buscar bancos de memoria...",
       "empty": "Aún no hay bancos de memoria.",
+      "noSearchResults": "Ningún banco coincide con tu búsqueda.",
       "create": "Crear nuevo banco",
       "switchTitle": "Cambiar banco de memoria",
       "returnTo": "Volver a {bank}",
@@ -504,6 +505,7 @@
       "fileConvertRetain": "Convertir archivo",
       "webhookDelivery": "Entrega de webhook",
       "graphMaintenance": "Mantenimiento del grafo",
+      "vectorIndexMaintenance": "Mantenimiento del índice vectorial",
       "exportDocuments": "Exportar documentos",
       "importDocuments": "Importar documentos"
     },

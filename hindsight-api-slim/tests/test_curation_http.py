@@ -7,6 +7,7 @@ test_memory_curation.py.
 """
 
 import uuid
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -47,6 +48,7 @@ async def _insert_fact(memory: MemoryEngine, bank_id: str, text: str) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_patch_invalidate_and_revert_over_http(api_client, memory):
     bank_id = f"curation-http-{uuid.uuid4().hex[:8]}"
     mem_id = await _insert_fact(memory, bank_id, "srv-04 runs PostgreSQL 14.")
@@ -79,6 +81,7 @@ async def test_patch_invalidate_and_revert_over_http(api_client, memory):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_patch_clears_occurred_dates_with_explicit_null(api_client, memory):
     bank_id = f"curation-http-clear-dates-{uuid.uuid4().hex[:8]}"
     mem_id = await _insert_fact(memory, bank_id, "Release v1.2 happened on Monday.")
@@ -133,4 +136,42 @@ async def test_patch_empty_body_is_rejected(api_client, memory):
         json={},
     )
     assert resp.status_code == 422
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_patch_resolve_entities_reaches_the_engine(api_client, memory):
+    """resolve_entities must survive the HTTP boundary, and default to True when omitted (#3479)."""
+    bank_id = f"curation-http-resolve-{uuid.uuid4().hex[:8]}"
+    mem_id = await _insert_fact(memory, bank_id, "Dr. Waller referred the patient.")
+
+    seen: list[bool] = []
+    real_update = memory.update_memory_unit
+
+    async def _capture(*args, **kwargs):
+        seen.append(kwargs.get("resolve_entities"))
+        return await real_update(*args, **kwargs)
+
+    with patch.object(memory, "update_memory_unit", new=_capture):
+        resp = await api_client.patch(
+            f"/v1/default/banks/{bank_id}/memories/{mem_id}",
+            json={"entities": ["Dr. Waller"], "resolve_entities": False},
+        )
+        assert resp.status_code == 200, resp.text
+        resp = await api_client.patch(
+            f"/v1/default/banks/{bank_id}/memories/{mem_id}",
+            json={"entities": ["Dr. Waller"]},
+        )
+        assert resp.status_code == 200, resp.text
+
+    assert seen == [False, True], "an explicit flag is forwarded; omitting it defaults to resolving"
+
+    # A non-boolean is rejected by the request model, not silently coerced.
+    resp = await api_client.patch(
+        f"/v1/default/banks/{bank_id}/memories/{mem_id}",
+        json={"entities": ["Dr. Waller"], "resolve_entities": "exact"},
+    )
+    assert resp.status_code == 422
+
     await memory.delete_bank(bank_id, request_context=RequestContext())

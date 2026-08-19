@@ -175,6 +175,83 @@ def uses_per_bank_vector_indexes(ext: str) -> bool:
     return _normalize_resolved(ext) != "scann"
 
 
+def per_bank_index_min_rows() -> int:
+    """Rows a (bank, fact_type) needs before it earns its own partial vector index.
+
+    Distinct from :func:`minimum_rows_for_index`, which is ScaNN's *build*
+    requirement for its single global index (AlloyDB cannot construct one below
+    a floor). This is a cost policy for the per-bank backends: the indexes sit on
+    the shared ``memory_units`` table, so each one is enumerated and locked at
+    plan time by queries belonging to every *other* bank, and opened by every DML
+    statement against the table. A small bank's index cannot repay that — the
+    ``(bank_id, fact_type)`` B-tree plus a top-N sort answers the same query
+    exactly and faster. See issue #3485.
+
+    Read from config rather than passed in because the write path's pre-check,
+    the maintenance operation and the admin command must all apply the same
+    number; a threshold that differed between the one deciding to queue work and
+    the one deciding what to do would either oscillate or never converge.
+    """
+    from .config import get_config
+
+    return get_config().vector_index_min_rows
+
+
+def per_bank_index_drop_rows() -> int:
+    """Row count below which an existing per-bank vector index is dropped.
+
+    Strictly below :func:`per_bank_index_min_rows` so the build and drop
+    decisions cannot both be true at one row count. Without the gap, a bank
+    hovering at the threshold — consolidation prunes a few facts, retain adds
+    them back — would rebuild and drop the same ANN index on alternating sweeps.
+    """
+    from .config import VECTOR_INDEX_DROP_RATIO
+
+    return int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO)
+
+
+def should_keep_per_bank_index(row_count: int) -> bool:
+    """Whether an *existing* index on a partition of ``row_count`` rows is kept.
+
+    The counterpart to :func:`qualifies_for_per_bank_index`, and deliberately a
+    separate, lower bound: keeping starts below building, so a partition
+    hovering at the threshold does not rebuild and drop the same ANN index on
+    alternating writes.
+
+    The ``row_count > 0`` term is not redundant with the ratio. At the default
+    threshold of 0 the drop floor is also 0, so a bare ``row_count >= floor``
+    keeps an index over an *emptied* partition forever — every bank ever written
+    to and then cleared would hold three indexes over nothing, which is the
+    accumulation the threshold exists to prevent. An emptied partition loses its
+    index at every threshold.
+    """
+    return row_count > 0 and row_count >= per_bank_index_drop_rows()
+
+
+def qualifies_for_per_bank_index(row_count: int) -> bool:
+    """Whether a (bank, fact_type) holding ``row_count`` rows should have an index.
+
+    At the default threshold of 0 this is true for every partition that holds
+    any rows at all, which is the behaviour before the threshold existed.
+
+    An empty partition is excluded explicitly rather than by arithmetic: at a
+    threshold of 0, ``row_count >= minimum`` alone is true for zero rows, so
+    every bank in the deployment would be entitled to three indexes over nothing
+    the moment it was created — the exact index explosion the threshold exists
+    to prevent, reintroduced by its own default.
+
+    Only the build side: an existing index is kept until the count falls under
+    :func:`per_bank_index_drop_rows`, so callers reconciling live state must
+    consult both bounds rather than treating this as the full policy.
+
+    Takes no extension: the backend question is settled before any reconcile
+    runs (``uses_per_bank_vector_indexes`` gates the maintenance operation and
+    ``_vector_index_clause`` gates the admin command), so re-asking it here
+    would be a second, weaker copy of a decision already made.
+    """
+    return row_count > 0 and row_count >= per_bank_index_min_rows()
+
+
 def bootstrap_extension(conn: Connection, ext: str) -> None:
     """Install the configured vector extension and any prerequisites if possible."""
     normalized = validate_extension(ext)

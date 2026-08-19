@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import { daemonEnv, detectLlm, ensureDaemon, startDaemonDetached } from "./daemon";
@@ -62,6 +65,13 @@ describe("daemonEnv", () => {
     expect(daemonEnv(cfg, {} as NodeJS.ProcessEnv).HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT).toBe("42");
   });
 
+  // It used to send 300 whether or not anyone asked, quietly retiring a SHARED daemon out from
+  // under an idle session — while every other Hindsight integration ships 0 (never exits).
+  it("says nothing about the idle timeout when it is unset, leaving the daemon its own default", () => {
+    const env = daemonEnv(resolveConfig({ serverMode: "daemon" }), {} as NodeJS.ProcessEnv);
+    expect(env).not.toHaveProperty("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT");
+  });
+
   // Forwarding the whole HINDSIGHT_API_* namespace means a new server-side knob needs no change
   // here to reach the daemon.
   it("forwards arbitrary HINDSIGHT_API_* settings", () => {
@@ -92,6 +102,61 @@ describe("ensureDaemon", () => {
   it("resolves without reporting usability", async () => {
     const cfg = resolveConfig({ apiUrl: "https://cloud.example" });
     expect(await ensureDaemon(cfg, "claude-code", {})).toBeUndefined();
+  });
+});
+
+/**
+ * Daemon parity across harnesses (#3524).
+ *
+ * The ensure points were written for the fresh-process hook harnesses and lived in their hook
+ * wrappers, so every harness added since — the persistent-plugin hosts, which call the shared
+ * lifecycle directly — silently shipped without one. In daemon mode that means every request fails
+ * with ECONNREFUSED and nothing ever starts a daemon; dsh shipped that way in 0.3.4.
+ *
+ * A per-harness unit test can't catch this: the harness that forgets is by definition the one whose
+ * test nobody wrote. So this asserts the shape instead — a module that builds a client is a place a
+ * request originates, and every one of them either ensures a daemon itself or delegates to
+ * something that does. Adding a harness that does neither fails here, and an entrypoint that
+ * genuinely must not start one has to say why in EXEMPT.
+ */
+describe("every harness entrypoint reaches a daemon", () => {
+  const SRC = fileURLToPath(new URL("..", import.meta.url));
+
+  /** Entrypoints that build a client but deliberately do NOT ensure a daemon, and why. */
+  const EXEMPT: Record<string, string> = {
+    "status.ts": "diagnostic — reports what is running; starting one would falsify the report",
+    "deepen.ts": "spawned by the seed, which already ensured the daemon it inherits",
+    "mcp-server.ts": "child of a hook harness whose SessionStart ensured the daemon first",
+    "core/hook.ts":
+      "the prompt path, deliberately: a cold start outlives the hook budget and stalls the turn",
+  };
+
+  function sourceFiles(dir: string, prefix = ""): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory())
+        return entry.name === "e2e" ? [] : sourceFiles(join(dir, entry.name), rel);
+      return entry.name.endsWith(".ts") && !entry.name.includes(".test.") ? [rel] : [];
+    });
+  }
+
+  it("has no client-building module that neither ensures a daemon nor delegates to one", () => {
+    const unreached = sourceFiles(SRC).filter((rel) => {
+      if (rel in EXEMPT) return false;
+      const src = readFileSync(join(SRC, rel), "utf8");
+      if (!src.includes("new HindsightClient(")) return false;
+      // RuntimeCore is the persistent-plugin hosts' shared lifecycle; it ensures at both points.
+      return !src.includes("ensureDaemon") && !src.includes("RuntimeCore");
+    });
+    expect(unreached).toEqual([]);
+  });
+
+  // An exemption for a file that no longer builds a client is a stale claim about live code.
+  it("keeps no exemption for a module that stopped building a client", () => {
+    const stale = Object.keys(EXEMPT).filter(
+      (rel) => !readFileSync(join(SRC, rel), "utf8").includes("new HindsightClient(")
+    );
+    expect(stale).toEqual([]);
   });
 });
 

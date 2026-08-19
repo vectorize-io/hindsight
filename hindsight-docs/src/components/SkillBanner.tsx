@@ -1,5 +1,36 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import styles from './SkillBanner.module.css';
+
+const INSTALL_COMMAND =
+  'npx skills add https://github.com/vectorize-io/hindsight --skill hindsight-docs';
+
+// Brand marks only: one command installs the skill for any of them, so these
+// say "this works with your agent" rather than offering a choice.
+// `mono` marks a one-colour black mark that has to be flipped to stay visible
+// on the dark theme; the others carry their own brand colours.
+const AGENTS = [
+  { name: 'Claude Code', icon: 'img/icons/claude-code.png', mono: false },
+  { name: 'Codex', icon: 'img/icons/codex.svg', mono: true },
+  { name: 'Cursor', icon: 'img/icons/cursor.svg', mono: false },
+];
+
+function PromptIcon(): React.ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  );
+}
+
+function CheckIcon(): React.ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
 
 function extractMarkdown(element: Element): string {
   let text = '';
@@ -61,89 +92,152 @@ function extractMarkdown(element: Element): string {
   return text;
 }
 
-export default function SkillBanner(): JSX.Element {
+/** Serialises the rendered page back to markdown, title first. */
+function collectPageMarkdown(): { title: string; markdown: string } | null {
+  const contentElement = document.querySelector('.markdown');
+  if (!contentElement) return null;
+  const title = document.querySelector('h1')?.textContent ?? '';
+  const body = Array.from(contentElement.children)
+    .filter(child => !(child.tagName === 'H1' && child.textContent === title))
+    .map(child => extractMarkdown(child))
+    .join('');
+  const markdown = `${title ? `# ${title}\n\n` : ''}${body}`
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { title, markdown };
+}
+
+export default function SkillBanner(): React.ReactElement {
   const [commandCopied, setCommandCopied] = useState(false);
   const [pageCopied, setPageCopied] = useState(false);
-  const command = 'npx skills add https://github.com/vectorize-io/hindsight --skill hindsight-docs';
+  const [menuOpen, setMenuOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
 
-  const handleCopyCommand = async () => {
+  // Dismiss the menu the way any menu is expected to go away.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen]);
+
+  const handleCopyCommand = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(command);
+      await navigator.clipboard.writeText(INSTALL_COMMAND);
       setCommandCopied(true);
       setTimeout(() => setCommandCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
     }
-  };
+  }, []);
 
   const handleCopyPage = useCallback(async () => {
     try {
-      const contentElement = document.querySelector('.markdown');
-      if (!contentElement) return;
-      const title = document.querySelector('h1')?.textContent;
-      let markdown = title ? `# ${title}\n\n` : '';
-      const contentToCopy = Array.from(contentElement.children)
-        .filter(child => !(child.tagName === 'H1' && child.textContent === title))
-        .map(child => extractMarkdown(child))
-        .join('');
-      markdown += contentToCopy;
-      markdown = markdown.replace(/\n{3,}/g, '\n\n').trim();
-      await navigator.clipboard.writeText(markdown);
+      const page = collectPageMarkdown();
+      if (!page) return;
+      await navigator.clipboard.writeText(page.markdown);
       setPageCopied(true);
+      setMenuOpen(false);
       setTimeout(() => setPageCopied(false), 2000);
     } catch (error) {
       console.error('Failed to copy page content:', error);
     }
   }, []);
 
+  const handleDownloadPage = useCallback(() => {
+    const page = collectPageMarkdown();
+    if (!page) return;
+    const url = URL.createObjectURL(
+      new Blob([page.markdown], { type: 'text/markdown;charset=utf-8' }),
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${
+      page.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'page'
+    }.md`;
+    link.click();
+    // Revoked on the next tick, not inline: the download is only queued by the
+    // click, and pulling the URL out from under it in the same frame can cancel
+    // it before it starts.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setMenuOpen(false);
+  }, []);
+
+  const agentIconBase = useBaseUrl('/');
+
   return (
     <div className={styles.container}>
       <div className={styles.banner}>
-        <div className={styles.icon}>🤖</div>
-        <div className={styles.content}>
-          <div className={styles.titleRow}>
-            <div className={styles.title}>
-              Using a coding agent? Run this to install the Hindsight docs skill:
+        <span className={styles.prompt} aria-hidden="true">
+          <PromptIcon />
+        </span>
+        <span className={styles.title}>Building with a coding agent?</span>
+
+        <span className={styles.agents}>
+          {AGENTS.map(agent => (
+            <img
+              key={agent.name}
+              className={`${styles.agentLogo}${agent.mono ? ` ${styles.agentLogoMono}` : ''}`}
+              src={agentIconBase + agent.icon}
+              alt={agent.name}
+              title={`Works with ${agent.name}`}
+              loading="lazy"
+              width={18}
+              height={18}
+            />
+          ))}
+        </span>
+
+        <div className={styles.actions} ref={actionsRef}>
+          <button
+            type="button"
+            className={`${styles.installButton} ${commandCopied ? styles.copied : ''}`}
+            onClick={handleCopyCommand}
+            title={commandCopied ? 'Copied!' : `Copy: ${INSTALL_COMMAND}`}
+          >
+            {commandCopied ? <CheckIcon /> : <PromptIcon />}
+            <span>{commandCopied ? 'Copied!' : 'Install skill'}</span>
+          </button>
+          <button
+            type="button"
+            className={styles.menuButton}
+            onClick={() => setMenuOpen(open => !open)}
+            aria-label="More page actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {menuOpen && (
+            <div className={styles.menu} role="menu">
+              <button type="button" className={styles.menuItem} role="menuitem" onClick={handleCopyPage}>
+                <PromptIcon />
+                <span>{pageCopied ? 'Copied!' : 'Copy page'}</span>
+              </button>
+              <button type="button" className={styles.menuItem} role="menuitem" onClick={handleDownloadPage}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Download page (.md)</span>
+              </button>
             </div>
-            <button
-              className={`${styles.copyPageButton} ${pageCopied ? styles.copyPageCopied : ''}`}
-              onClick={handleCopyPage}
-              aria-label="Export page as markdown"
-              title={pageCopied ? 'Copied!' : 'Export page as markdown'}
-            >
-              {pageCopied ? (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              ) : (
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6z"/>
-                  <path d="M2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1H2z"/>
-                </svg>
-              )}
-              <span>{pageCopied ? 'Copied!' : 'export this page as .md'}</span>
-            </button>
-          </div>
-          <div className={styles.commandWrapper}>
-            <code className={styles.command}>{command}</code>
-            <button
-              className={styles.copyButton}
-              onClick={handleCopyCommand}
-              aria-label="Copy command"
-              title={commandCopied ? 'Copied!' : 'Copy to clipboard'}
-            >
-              {commandCopied ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-              )}
-            </button>
-          </div>
+          )}
         </div>
       </div>
     </div>

@@ -28,13 +28,14 @@ import { ingestChats } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { commitsSince, gitHeadSha, ingestGitLog, repoNameOf, retainCommit } from "./core/git";
 import { SURVEY_DOC_IDS } from "./core/survey";
+import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
 import { DEEPEN_DIFF_TARGET } from "./core/status";
 import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
 import { buildRetainStamp } from "./core/retain-stamp";
-import { log as plog, setLogLevel } from "./core/log";
+import { describeError, log as plog, setLogLevel } from "./core/log";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
 const LOCK_STALE_MS = 30 * 60 * 1000;
@@ -132,7 +133,12 @@ async function main() {
       apiUrl: API_URL,
       apiToken: API_TOKEN,
       bank: FINAL_BANK!,
+      // Names the repository in every seeded page's query, so page synthesis can tell this
+      // project's decisions from those of a dependency it merely discusses (#3476). Same
+      // worktree-aware name the gitlog document id uses, so all worktrees agree on it.
+      project: repoNameOf(REPO!),
       maxParallelRetains: cfg.maxParallelRetains,
+      observationScopes: cfg.observationScopes,
       log,
     });
     log(`deepen -> ${client.apiUrl} bank=${FINAL_BANK} harness=${harness.name}`);
@@ -144,7 +150,7 @@ async function main() {
         sessionId,
       });
 
-    await client.configureBank();
+    await client.configureBank({ pageTrigger: buildPageTrigger(cfg) });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
         bank: FINAL_BANK,
@@ -319,7 +325,7 @@ async function main() {
 main().catch((e) => {
   diag("deepen", "deepen_failed", {
     bank: FINAL_BANK,
-    error: String((e as Error)?.message || e).slice(0, 200),
+    error: describeError(e),
   });
   console.error("deepen failed:", (e as Error).message || e);
   try {

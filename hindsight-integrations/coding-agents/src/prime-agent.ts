@@ -153,6 +153,7 @@ function createRuntime(repoPath: string): RuntimeCore | undefined {
     apiUrl: cfg.apiUrl,
     apiToken: cfg.apiToken,
     bank: resolved.bankId,
+    observationScopes: cfg.observationScopes,
   });
   return new RuntimeCore(client, resolved.bankId, cfg, HARNESS, repoPath);
 }

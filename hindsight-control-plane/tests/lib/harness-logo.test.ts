@@ -46,6 +46,7 @@ describe("resolveHarnessLogo", () => {
     "copilot-cli",
     "cursor-cli",
     "devin-cli",
+    "dsh",
     "grok-build",
     "kilo",
     "opencode",

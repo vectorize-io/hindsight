@@ -150,7 +150,7 @@ async def tool_search_mental_models(
         f"""
         SELECT
             id, name, content,
-            tags, created_at, last_refreshed_at, trigger,
+            tags, created_at, last_refreshed_at, last_memory_seen_at, trigger,
             1 - (embedding <=> $2::vector) as relevance
         FROM {fq_table("mental_models")}
         WHERE bank_id = $1 AND embedding IS NOT NULL {filters}
@@ -167,6 +167,12 @@ async def tool_search_mental_models(
         if last_refreshed_at and last_refreshed_at.tzinfo is None:
             last_refreshed_at = last_refreshed_at.replace(tzinfo=timezone.utc)
 
+        # How far through the bank's memories this model is written — the cheap
+        # bank-wide check below compares against that, not against when it last ran.
+        last_memory_seen_at = row["last_memory_seen_at"] or last_refreshed_at
+        if last_memory_seen_at and last_memory_seen_at.tzinfo is None:
+            last_memory_seen_at = last_memory_seen_at.replace(tzinfo=timezone.utc)
+
         # Per-MM staleness: new in-scope memories since last refresh (includes pending).
         # The scoped query has no index to use and scans the bank's memories in full, so
         # skip it for a model the bank-wide watermark already proves current: nothing was
@@ -174,7 +180,7 @@ async def tool_search_mental_models(
         # model still gets the exact answer — the agent trusts a model without a verifying
         # recall() only on `is_stale is False`, so guessing conservatively here would buy
         # LLM turns to save a query. No watermark (absent, or an empty bank) → ask.
-        if last_memory_write_at is not None and not _may_need_refresh(last_refreshed_at, last_memory_write_at):
+        if last_memory_write_at is not None and not _may_need_refresh(last_memory_seen_at, last_memory_write_at):
             is_stale = False
         else:
             is_stale = await memory_engine.compute_mental_model_is_stale(conn, bank_id, row)

@@ -32,6 +32,7 @@ async def _seed(conn, bank_id: str, *, tags: list[str], consolidated: bool = Fal
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_count_dedupes_across_overlapping_scopes(memory: MemoryEngine, request_context: RequestContext):
     bank_id = f"test-count-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)

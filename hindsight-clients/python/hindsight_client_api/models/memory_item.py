@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.entity_input import EntityInput
 from hindsight_client_api.models.observation_scopes import ObservationScopes
@@ -35,11 +35,12 @@ class MemoryItem(BaseModel):
     metadata: Optional[Dict[str, StrictStr]] = None
     document_id: Optional[StrictStr] = None
     entities: Optional[List[EntityInput]] = None
+    resolve_entities: Optional[StrictBool] = Field(default=True, description="Whether the names in 'entities' are resolved against the entities already in the bank. True (default) matches each name to a similar existing entity when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes your names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and your names are never merged with each other. This applies only to the entities you supply here; auto-extracted entities are always resolved, since they are the extractor's guess at a name rather than yours. Ignored when 'entities' is omitted.")
     tags: Optional[List[StrictStr]] = None
     observation_scopes: Optional[ObservationScopes] = None
     strategy: Optional[StrictStr] = None
     update_mode: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities", "tags", "observation_scopes", "strategy", "update_mode"]
+    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities", "resolve_entities", "tags", "observation_scopes", "strategy", "update_mode"]
 
     @field_validator('update_mode')
     def update_mode_validate_enum(cls, value):
@@ -166,6 +167,7 @@ class MemoryItem(BaseModel):
             "metadata": obj.get("metadata"),
             "document_id": obj.get("document_id"),
             "entities": [EntityInput.from_dict(_item) for _item in obj["entities"]] if obj.get("entities") is not None else None,
+            "resolve_entities": obj.get("resolve_entities") if obj.get("resolve_entities") is not None else True,
             "tags": obj.get("tags"),
             "observation_scopes": ObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None,
             "strategy": obj.get("strategy"),

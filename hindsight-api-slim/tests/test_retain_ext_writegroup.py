@@ -109,10 +109,10 @@ class _EntityResolver:
         self.postings = []
         self.reasserts = []
 
-    async def record_unit_entity_postings(self, pairs, bank_id=None):
+    async def record_unit_entity_postings(self, pairs, bank_id=None, txn=None):
         # THE contract: the store re-posting runs with no connection held.
         assert self._t.open is False, "entity posting must run connection-free"
-        self.postings.append(pairs)
+        self.postings.append((pairs, txn))
 
     async def reassert_entities_batch(self, bank_id, resolved, conn):
         assert conn is not None
@@ -168,16 +168,18 @@ async def test_store_writes_are_connection_free_and_witness_is_in_txn(monkeypatc
     _make_common(monkeypatch, tracker, calls=calls)
     provider, er = _Provider(), _EntityResolver(tracker)
 
-    result = await orch._streaming_batch_write_ext(
-        **_kwargs(tracker, provider, er, doc_tracking_done=[False], existing_hash="__pending__", new_hash="h")
-    )
+    kw = _kwargs(tracker, provider, er, doc_tracking_done=[False], existing_hash="__pending__", new_hash="h")
+    result = await orch._streaming_batch_write_ext(**kw)
 
     assert result.aborted is False
     assert result.batch_result_ids == [["u1"]]
     # The fact write happened with no connection held.
     assert tracker.store_writes_saw_open == [False]
-    # Entity re-posting happened (also connection-free — asserted inside the fake).
-    assert er.postings == [[("u1", "e1", None)]]
+    # Entity re-posting happened (also connection-free — asserted inside the fake), and it rode
+    # the SAME write-group as the fact write. It re-writes the rows that write just created, so a
+    # store that records what its groups wrote must see it as part of the group — otherwise the
+    # posting lands outside the group's accounting and a later replay of the group loses it.
+    assert er.postings == [([("u1", "e1", None)], kw["ext_txn"])]
     # Witness written with a real connection, exactly once; commit published after release.
     assert len(provider.witnesses) == 1 and provider.witnesses[0][1] is not None
     assert provider.decisions == [True]
@@ -327,16 +329,16 @@ async def test_delta_store_writes_are_connection_free(monkeypatch):
     # _build_retain_params is a plain module function; keep it real but feed simple dicts.
     provider, er = _Provider(), _EntityResolver(tracker)
 
-    result = await orch._delta_batch_write_ext(
-        **_delta_kwargs(tracker, provider, er, doc_hash_at_load=None)  # None → hash check can't trip
-    )
+    kw = _delta_kwargs(tracker, provider, er, doc_hash_at_load=None)  # None → hash check can't trip
+    result = await orch._delta_batch_write_ext(**kw)
 
     assert result.fell_back is False
     assert result.result_unit_ids == [["u1"]]
     # Fact write + body store + entity re-posting all happened connection-free.
     assert tracker.store_writes_saw_open == [False]
     assert ("store_document_bodies", False) in calls
-    assert er.postings == [[("u1", "e1", None)]]
+    # ...and the posting rode the same write-group as the fact write (see the streaming test).
+    assert er.postings == [([("u1", "e1", None)], kw["ext_txn"])]
     # Witness inside the txn; publish after release.
     assert len(provider.witnesses) == 1 and provider.witnesses[0][1] is not None
     assert provider.decisions == [True]

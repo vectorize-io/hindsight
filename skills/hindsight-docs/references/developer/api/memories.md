@@ -170,7 +170,20 @@ await patchMemory(memoryId, { text: 'The user visited Paris in 2023.', reason: '
 # Section 'edit-memory' not found in api/memories.go
 ```
 
-You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set (names are resolved/find-or-created the same way retain does) and `[]` detaches them all; omitting it leaves them unchanged.
+You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set and `[]` detaches them all; omitting it leaves them unchanged.
+
+### Resolving entity names
+
+`resolve_entities` controls how the names in `entities` are matched to entities in the bank:
+
+| Value | Behaviour |
+| --- | --- |
+| `true` (default) | What retain does. Each name is resolved against the bank, so a name close to one already there may resolve to that existing entity instead, based on name similarity plus how strongly it co-occurs with the other names you sent. |
+| `false` | The names are taken literally. An existing entity is reused only when its name matches case-insensitively, any other name creates a new entity, and names in the same request are never merged with each other. |
+
+**Pass `false` when you are correcting a fact by hand.** With resolution on, a name that is close to one already in the bank can be matched onto that neighbour rather than the entity you named — `Dr. Waller` onto a `Dr Wall` typo, `Alice Smith` onto `Alice` — and because the edit succeeds normally the substitution is not obvious from the response. Resolution is right for names that came out of extraction, where spelling varies and the bank's existing entity is usually the one meant; it is wrong when you already know which entity you want. The default stays `true` so existing callers are unaffected.
+
+The same flag exists on [retain](./retain#resolve_entities) for the entities you supply there.
 
 ### Python
 
@@ -183,10 +196,13 @@ You can correct the dates, fact type, and entities the same way. For `context`, 
 ```javascript
 // Correct dates, fact type, and entities in one call. "" clears a field;
 // entities replaces the set ([] detaches all); omit to leave unchanged.
+// resolve_entities: false keeps the entity names you wrote from being matched
+// onto a similar entity that already exists.
 await patchMemory(memoryId, {
     occurred_start: '2023-06-01',
     fact_type: 'experience',
     entities: ['Alice', 'Paris'],
+    resolve_entities: false,
 });
 ```
 

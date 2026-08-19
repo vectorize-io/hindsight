@@ -282,6 +282,7 @@ from .types import (
     ResolvedEntity,
     RetainContent,
     RetainContentDict,
+    UserEntities,
 )
 
 logger = logging.getLogger(__name__)
@@ -403,7 +404,11 @@ async def _pre_resolve_phase1(
     set_stage("retain.phase1.resolve")
     from .link_utils import compute_semantic_links_ann
 
-    user_entities_per_content = {idx: content.entities for idx, content in enumerate(contents) if content.entities}
+    user_entities_per_content = {
+        idx: UserEntities(entities=content.entities, resolve=content.resolve_entities)
+        for idx, content in enumerate(contents)
+        if content.entities
+    }
 
     # Use placeholder unit_ids for grouping during resolution.  The actual
     # unit_ids are created later by insert_facts_batch inside the transaction,
@@ -686,7 +691,7 @@ async def _streaming_batch_write_ext(
             (unit_id, resolved_entity_ids[idx], fact_date)
             for idx, (unit_id, _local_idx, fact_date) in enumerate(remapped_entity_to_unit)
         ]
-        await entity_resolver.record_unit_entity_postings(unit_entity_pairs, bank_id=bank_id)
+        await entity_resolver.record_unit_entity_postings(unit_entity_pairs, bank_id=bank_id, txn=ext_txn)
 
     # ---- CONNECTION PHASE (short transaction: local metadata + commit witness) ----
     try:
@@ -864,7 +869,7 @@ async def _delta_batch_write_ext(
             (unit_id, resolved_entity_ids[idx], fact_date)
             for idx, (unit_id, _local_idx, fact_date) in enumerate(remapped_entity_to_unit)
         ]
-        await entity_resolver.record_unit_entity_postings(unit_entity_pairs, bank_id=bank_id)
+        await entity_resolver.record_unit_entity_postings(unit_entity_pairs, bank_id=bank_id, txn=ext_txn)
 
     # ---- CONNECTION PHASE (short transaction: local metadata + tombstones + witness) ----
     try:
@@ -1911,6 +1916,7 @@ async def _streaming_retain_batch(
                 event_date=source.event_date,
                 metadata=source.metadata,
                 entities=source.entities,
+                resolve_entities=source.resolve_entities,
                 tags=source.tags,
                 observation_scopes=source.observation_scopes,
             )
@@ -2152,6 +2158,10 @@ async def _streaming_retain_batch(
                                 store_document_text=getattr(config, "store_document_text", True),
                                 txn=_edge_txn,
                             )
+                            # Re-record the witness now that the group's writes have happened, so
+                            # the row carries what they actually wrote. `begin_txn` recorded it
+                            # before any write existed; the upsert widens rather than replaces.
+                            await _edge_provider.write_txn_witness(_edge_txn, conn=conn, fq_table=fq_table)
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted; release
                         # it now so the rest of the consumer loop doesn't pin
@@ -2416,6 +2426,11 @@ async def _streaming_retain_batch(
                         txn=_group_txn,
                     )
 
+                    # Last thing inside the transaction: re-record the witness now that this
+                    # batch's writes have happened, so the row carries what they actually wrote.
+                    # `begin_txn` above recorded it before any write existed; the upsert widens.
+                    await _provider.write_txn_witness(_group_txn, conn=conn, fq_table=fq_table)
+
                 # Postgres committed this batch: publish its write-group. If it had aborted,
                 # this is skipped and the recovery sweep resolves the undecided txn (spec §5).
                 await _provider.decide_txn(_group_txn, commit=True)
@@ -2594,6 +2609,10 @@ async def _streaming_retain_batch(
                             store_document_text=getattr(config, "store_document_text", True),
                             txn=_edge_txn,
                         )
+                        # Re-record the witness now that the group's writes have happened, so the
+                        # row carries what they actually wrote. `begin_txn` recorded it before any
+                        # write existed; the upsert widens rather than replaces.
+                        await _edge_provider.write_txn_witness(_edge_txn, conn=conn, fq_table=fq_table)
                     doc_tracking_done[0] = True
                     # Memory: combined_content has been persisted and won't be
                     # read again — release the per-document text now.
@@ -3230,6 +3249,12 @@ async def _try_delta_retain(
                     txn=_group_txn,
                 )
 
+                # Last thing inside the transaction: re-record the witness now that the group's
+                # writes have happened, so the row carries what they actually wrote. `begin_txn`
+                # above recorded it before any write existed; the upsert widens rather than
+                # replaces.
+                await _provider.write_txn_witness(_group_txn, conn=conn, fq_table=fq_table)
+
             # Postgres has committed: publish the write-group so its writes become visible.
             # If the transaction had aborted instead, this line is skipped and the recovery
             # sweep resolves the undecided txn against the (absent) witness row (spec §5).
@@ -3364,6 +3389,7 @@ def _build_contents(contents_dicts: list[RetainContentDict], document_tags: list
             event_date=event_date_value,
             metadata=item.get("metadata", {}),
             entities=item.get("entities", []),
+            resolve_entities=item.get("resolve_entities", True),
             tags=merged_tags,
             observation_scopes=item.get("observation_scopes"),
         )
@@ -3425,6 +3451,7 @@ def _build_delta_contents(
             event_date=template_content.event_date,
             metadata=template_content.metadata,
             entities=template_content.entities,
+            resolve_entities=template_content.resolve_entities,
             tags=template_content.tags,
             observation_scopes=template_content.observation_scopes,
         )

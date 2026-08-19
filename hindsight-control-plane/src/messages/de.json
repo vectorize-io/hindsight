@@ -51,6 +51,7 @@
       "select": "Speicherbank auswählen...",
       "search": "Speicherbänke durchsuchen...",
       "empty": "Noch keine Speicherbänke vorhanden.",
+      "noSearchResults": "Keine Banken entsprechen deiner Suche.",
       "create": "Neue Bank erstellen",
       "switchTitle": "Speicherbank wechseln",
       "returnTo": "Zurück zu {bank}",
@@ -504,6 +505,7 @@
       "fileConvertRetain": "Datei konvertieren",
       "webhookDelivery": "Webhook-Zustellung",
       "graphMaintenance": "Graph-Wartung",
+      "vectorIndexMaintenance": "Wartung des Vektorindex",
       "exportDocuments": "Dokumente exportieren",
       "importDocuments": "Dokumente importieren"
     },

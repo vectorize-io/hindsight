@@ -114,13 +114,11 @@ async def test_delta_detects_unchanged_after_first_retain(memory, request_contex
         )
         assert len(v1_units) > 0
 
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            v1_count = await conn.fetchval(
-                "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                bank_id,
-                document_id,
-            )
+        async def _unit_count() -> int:
+            listing = await memory.list_memory_units(bank_id, document_id=document_id, request_context=request_context)
+            return listing["total"]
+
+        v1_count = await _unit_count()
 
         # Second retain — same content, should be detected as unchanged by delta
         v2_units = await memory.retain_async(
@@ -135,12 +133,7 @@ async def test_delta_detects_unchanged_after_first_retain(memory, request_contex
         assert v2_units == [], f"Delta with unchanged content should return empty, got {len(v2_units)} units"
 
         # Memory unit count should not change
-        async with pool.acquire() as conn:
-            v2_count = await conn.fetchval(
-                "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                bank_id,
-                document_id,
-            )
+        v2_count = await _unit_count()
         assert v2_count == v1_count, f"Memory unit count changed on same-content upsert: {v1_count} -> {v2_count}"
 
         # Third retain — verify stability
@@ -153,12 +146,7 @@ async def test_delta_detects_unchanged_after_first_retain(memory, request_contex
         )
         assert v3_units == [], "Third retain should also detect unchanged"
 
-        async with pool.acquire() as conn:
-            v3_count = await conn.fetchval(
-                "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                bank_id,
-                document_id,
-            )
+        v3_count = await _unit_count()
         assert v3_count == v1_count, f"Memory unit count changed on third upsert: {v1_count} -> {v3_count}"
 
     finally:
@@ -189,18 +177,19 @@ async def test_stale_request_skipped_when_newer_retain_completed(memory, request
             request_context=request_context,
         )
 
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            after_newer_count = await conn.fetchval(
-                "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                bank_id,
-                document_id,
-            )
+        async def _unit_count() -> int:
+            listing = await memory.list_memory_units(bank_id, document_id=document_id, request_context=request_context)
+            return listing["total"]
+
+        after_newer_count = await _unit_count()
         assert after_newer_count > 0, "Should have facts from newer content"
 
         # Simulate the race condition by pushing the document's updated_at into
         # the future. This makes any new retain appear "stale" (its start_time
-        # is before updated_at), as if another request already completed.
+        # is before updated_at), as if another request already completed. This
+        # forces internal store state (a document's updated_at) that the public
+        # API has no way to set, so it stays a direct write on purpose.
+        pool = await memory._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE documents SET updated_at = NOW() + INTERVAL '10 seconds' WHERE id = $1 AND bank_id = $2",
@@ -223,12 +212,7 @@ async def test_stale_request_skipped_when_newer_retain_completed(memory, request
         assert result == [], f"Stale request should return empty, got {result}"
 
         # Memory units should be unchanged (newer content preserved)
-        async with pool.acquire() as conn:
-            final_count = await conn.fetchval(
-                "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                bank_id,
-                document_id,
-            )
+        final_count = await _unit_count()
         assert final_count == after_newer_count, (
             f"Stale request should not change memory units: {after_newer_count} -> {final_count}"
         )
@@ -271,6 +255,7 @@ async def memory_no_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer):
 
 @pytest.mark.asyncio
 @pytest.mark.flaky(reruns=2, reruns_delay=2)
+@pytest.mark.memory_backend_incompatible
 async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
     """
     Stress test: N concurrent retains of the same document with different content.
@@ -350,12 +335,10 @@ async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
         logger.info(f"Winning version: {winning_version} (out of {num_concurrent} concurrent retains)")
 
         # 2. All memory units should belong to the winning version
-        async with pool.acquire() as conn:
-            units = await conn.fetch(
-                "SELECT text, chunk_id, id::text as unit_id FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                bank_id,
-                document_id,
-            )
+        listing = await memory_no_llm.list_memory_units(
+            bank_id, document_id=document_id, limit=1000, request_context=request_context
+        )
+        units = listing["items"]
         unit_texts = [r["text"] for r in units]
         assert len(unit_texts) > 0, "Should have at least 1 memory unit"
 
@@ -364,9 +347,7 @@ async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
         # We check for "Person_N" rather than "VERSION_N" because the text
         # splitter may cut mid-text, so later chunks might not start with the prefix.
         winning_person = f"Person_{winning_version}"
-        wrong_version_units = [
-            (r["text"], r["chunk_id"], r["unit_id"]) for r in units if winning_person not in r["text"]
-        ]
+        wrong_version_units = [(r["text"], r["chunk_id"], r["id"]) for r in units if winning_person not in r["text"]]
         assert not wrong_version_units, (
             f"Found {len(wrong_version_units)} memory units NOT from winning version "
             f"{winning_version} (expected '{winning_person}' in every unit). "

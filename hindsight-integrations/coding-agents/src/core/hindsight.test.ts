@@ -1,5 +1,13 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_MAX_PARALLEL_RETAINS, HindsightClient, retryAfterMs } from "./hindsight";
+import {
+  DEFAULT_MAX_PARALLEL_RETAINS,
+  DEFAULT_OBSERVATION_SCOPES,
+  HindsightClient,
+  retryAfterMs,
+} from "./hindsight";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -166,5 +174,76 @@ describe("retryAfterMs", () => {
     expect(retryAfterMs(undefined)).toBe(0);
     expect(retryAfterMs("")).toBe(0);
     expect(retryAfterMs("soon")).toBe(0);
+  });
+});
+
+describe("HindsightClient.retain — observation scoping", () => {
+  async function retainItem(client: HindsightClient): Promise<Record<string, unknown>> {
+    let sent: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent = String(init.body);
+        return jsonResponse(200, { operation_id: "op-1" });
+      })
+    );
+    await client.retain(
+      "c",
+      "ctx",
+      "doc-1",
+      ["source:chat", "harness:claude-code"],
+      "conversation"
+    );
+    const body = JSON.parse(String(sent)) as { items: Record<string, unknown>[] };
+    return body.items[0];
+  }
+
+  it("defaults every retain to the single global scope, so two agents on one repo build ONE set of observations (#3564)", async () => {
+    expect(DEFAULT_OBSERVATION_SCOPES).toBe("shared");
+    const item = await retainItem(new HindsightClient({ apiUrl: "http://x", bank: "b" }));
+    expect(item.observation_scopes).toBe("shared");
+    // The harness tag still travels: it is what the documents list filters and draws its logo from.
+    expect(item.tags).toEqual(["source:chat", "harness:claude-code"]);
+  });
+
+  it("sends a configured scoping instead, including the server's own default", async () => {
+    const combined = await retainItem(
+      new HindsightClient({ apiUrl: "http://x", bank: "b", observationScopes: "combined" })
+    );
+    expect(combined.observation_scopes).toBe("combined");
+    const explicit = await retainItem(
+      new HindsightClient({ apiUrl: "http://x", bank: "b", observationScopes: [["project:demo"]] })
+    );
+    expect(explicit.observation_scopes).toEqual([["project:demo"]]);
+  });
+});
+
+/**
+ * The scoping default lives in the client, so an entrypoint that forgets to forward the config
+ * fails SOFTLY — it keeps writing correct memories and just ignores the user's `observationScopes`.
+ * Nothing would notice, and the next harness added would copy the site that forgot. So assert it
+ * over the whole family instead of per entrypoint, the way daemon.test.ts guards `ensureDaemon`.
+ */
+describe("every client-building entrypoint forwards observationScopes", () => {
+  const SRC = fileURLToPath(new URL("..", import.meta.url));
+
+  function sourceFiles(dir: string, prefix = ""): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory())
+        return entry.name === "e2e" ? [] : sourceFiles(join(dir, entry.name), rel);
+      return entry.name.endsWith(".ts") && !entry.name.includes(".test.") ? [rel] : [];
+    });
+  }
+
+  it("has no module that builds a client without passing cfg.observationScopes", () => {
+    const dropped = sourceFiles(SRC).filter((rel) => {
+      const src = readFileSync(join(SRC, rel), "utf8");
+      // `makeClient({` is the hook/session-start seam: the ClientOpts are built there even though
+      // the constructor call itself is the injected default further up the file.
+      const buildsClient = src.includes("new HindsightClient({") || src.includes("makeClient({");
+      return buildsClient && !src.includes("observationScopes:");
+    });
+    expect(dropped).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@ describe("HARNESS_NAMES", () => {
         "kilo",
         "cline-cli",
         "prime-agent",
+        "dsh",
         "claude-code",
         "cursor-cli",
         "codex",
@@ -18,7 +19,7 @@ describe("HARNESS_NAMES", () => {
         "grok-build",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(11);
+    expect(HARNESS_NAMES).toHaveLength(12);
   });
 });
 
@@ -47,6 +48,12 @@ describe("getHarness", () => {
     const adapter = await getHarness("cline-cli");
     expect(adapter.name).toBe("cline-cli");
     expect(() => adapter.createRuntime({} as never)).toThrow(/src\/cline\.ts/);
+  });
+
+  it("resolves DeepSeek Harness as a native Cordis-plugin harness", async () => {
+    const adapter = await getHarness("dsh");
+    expect(adapter.name).toBe("dsh");
+    expect(() => adapter.createRuntime({} as never)).toThrow(/src\/dsh\.ts/);
   });
 
   it("rejects unknown harness names", async () => {

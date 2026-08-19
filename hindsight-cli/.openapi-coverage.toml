@@ -145,6 +145,9 @@ items = "Constructed from the single positional content argument on `memory reta
 [fields.create_knowledge_page]
 trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the remaining nested trigger fields (tag_groups, refresh_cron, recall_* budgets) are page-level tuning best done via the API."
 
+[fields.update_knowledge_node]
+trigger = "Changing an existing page's refresh policy (cron vs after-consolidation) is page-level tuning done via the API, SDKs, or control plane; `knowledge-base update-node` leaves the page's current trigger alone."
+
 [fields.create_mental_model]
 trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
 

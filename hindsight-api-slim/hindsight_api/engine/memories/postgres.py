@@ -459,7 +459,7 @@ class PostgresMemories(MemoriesExtension):
         ops,
         fq_table,
         bank_id: str,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         consolidation_state: str | None = None,
         state: str | None = None,
@@ -620,9 +620,19 @@ class PostgresMemories(MemoriesExtension):
     # ------------------------------------------------------------------ maintenance
 
     async def record_unit_entities(
-        self, *, conn, ops, fq_table, bank_id: str | None = None, unit_ids: list[Any], entity_ids: list[Any]
+        self,
+        *,
+        conn,
+        ops,
+        fq_table,
+        bank_id: str | None = None,
+        unit_ids: list[Any],
+        entity_ids: list[Any],
+        txn=None,
     ) -> None:
-        # The join is keyed by global unit id, so bank_id is not needed here.
+        # The join is keyed by global unit id, so bank_id is not needed here. `txn` is inert: this
+        # posting is an ordinary INSERT in the caller's own transaction, which is already the unit
+        # of atomicity — there is no second store to coordinate with.
         await ops.bulk_insert_unit_entities(conn, fq_table("unit_entities"), unit_ids, entity_ids)
 
     async def enqueue_relink_victims(

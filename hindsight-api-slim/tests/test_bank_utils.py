@@ -7,21 +7,8 @@ from asyncpg.exceptions import DeadlockDetectedError
 from hindsight_api.engine.retain import bank_utils
 
 
-class _FailingIndexOps:
-    async def create_bank_vector_indexes(self, *args, **kwargs) -> None:
-        raise RuntimeError("simulated per-bank vector index DDL failure")
-
-
-class _DeadlockOnceIndexOps:
-    """Raises a deadlock on the first per-bank index DDL, then succeeds."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def create_bank_vector_indexes(self, *args, **kwargs) -> None:
-        self.calls += 1
-        if self.calls == 1:
-            raise DeadlockDetectedError("deadlock detected")
+class _BankOps:
+    """Dialect ops stub. Bank creation issues no index DDL (#3485), so this is bare."""
 
 
 class _FakeTransaction:
@@ -39,10 +26,13 @@ class _FakeTransaction:
 
 
 class _FakeConnection:
-    def __init__(self) -> None:
+    def __init__(self, raise_on_insert: BaseException | None = None) -> None:
         self.committed_bank: str | None = None
         self.pending_bank: str | None = None
         self.in_transaction = False
+        self.insert_calls = 0
+        # Raised by the first INSERT only, then cleared, so a retry succeeds.
+        self._raise_on_insert = raise_on_insert
 
     def transaction(self) -> _FakeTransaction:
         return _FakeTransaction(self)
@@ -58,6 +48,10 @@ class _FakeConnection:
         }
 
     async def fetchval(self, query: str, bank_id: str, *args):
+        self.insert_calls += 1
+        if self._raise_on_insert is not None:
+            error, self._raise_on_insert = self._raise_on_insert, None
+            raise error
         if self.in_transaction:
             self.pending_bank = bank_id
         else:
@@ -68,13 +62,13 @@ class _FakeConnection:
 class _FakePool:
     def __init__(self, conn: _FakeConnection, ops=None) -> None:
         self.conn = conn
-        self.ops = ops if ops is not None else _FailingIndexOps()
+        self.ops = ops if ops is not None else _BankOps()
 
 
 @pytest.mark.asyncio
-async def test_lazy_bank_create_rolls_back_on_vector_index_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failed per-bank index DDL must not leave an orphaned bank row."""
-    conn = _FakeConnection()
+async def test_lazy_bank_create_rolls_back_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure inside the bank-create transaction must not leave an orphaned bank row."""
+    conn = _FakeConnection(raise_on_insert=RuntimeError("simulated bank insert failure"))
     pool = _FakePool(conn)
 
     @asynccontextmanager
@@ -83,24 +77,25 @@ async def test_lazy_bank_create_rolls_back_on_vector_index_failure(monkeypatch: 
 
     monkeypatch.setattr(bank_utils, "acquire_with_retry", acquire_without_transaction)
 
-    with pytest.raises(RuntimeError, match="simulated per-bank vector index DDL failure"):
+    with pytest.raises(RuntimeError, match="simulated bank insert failure"):
         await bank_utils.get_or_create_bank_profile(pool, "atomicity-test-bank")
 
     profile = await bank_utils.get_bank_profile_if_exists(pool, "atomicity-test-bank")
-    assert profile is None, "bank row should roll back when per-bank vector index creation fails"
+    assert profile is None, "bank row should roll back when the create transaction fails"
 
 
 @pytest.mark.asyncio
 async def test_get_or_create_bank_profile_retries_on_deadlock(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A deadlock during per-bank index DDL is retried on a fresh transaction.
+    """A deadlock inside the create transaction is retried on a fresh one.
 
-    Concurrent bank creation issues CREATE INDEX against the shared memory_units
-    table, which can deadlock (asyncpg DeadlockDetectedError). The pool-owning
-    get_or_create_bank_profile must retry rather than surface the deadlock.
+    The retry originally guarded the per-bank CREATE INDEX that ran inline here;
+    that DDL is gone (#3485), but the lazy create can still lose a deadlock to a
+    concurrent writer touching the same bank row, and the body is idempotent
+    (INSERT ... ON CONFLICT DO NOTHING), so it must still retry rather than
+    surface the deadlock to the caller.
     """
-    conn = _FakeConnection()
-    ops = _DeadlockOnceIndexOps()
-    pool = _FakePool(conn, ops=ops)
+    conn = _FakeConnection(raise_on_insert=DeadlockDetectedError("deadlock detected"))
+    pool = _FakePool(conn)
 
     @asynccontextmanager
     async def acquire(*args, **kwargs):
@@ -117,6 +112,6 @@ async def test_get_or_create_bank_profile_retries_on_deadlock(monkeypatch: pytes
     result = await bank_utils.get_or_create_bank_profile(pool, "deadlock-retry-bank")
 
     assert result.created is True
-    assert ops.calls == 2, "index DDL should be attempted twice (deadlock, then success)"
+    assert conn.insert_calls == 2, "the insert should be attempted twice (deadlock, then success)"
     profile = await bank_utils.get_bank_profile_if_exists(pool, "deadlock-retry-bank")
     assert profile is not None, "bank must exist after the retry succeeds"

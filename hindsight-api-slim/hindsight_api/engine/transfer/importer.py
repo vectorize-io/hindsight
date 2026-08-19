@@ -22,7 +22,7 @@ from typing import Any, Literal
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
 from ..db.ops_postgresql import pg_search_vector_expr
 from ..db_utils import acquire_with_retry
-from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, link_utils, orchestrator
+from ..retain import chunk_storage, embedding_processing, fact_storage, link_utils, orchestrator
 from ..retain.types import (
     CausalRelation,
     ChunkMetadata,
@@ -559,16 +559,15 @@ async def import_bank(
             parsed.bank_rows.get("banks", []),
             bank_rows_json_encoding=bank_rows_json_encoding,
         )
-        # The restored banks row bypasses the fresh-INSERT gate that normally
-        # creates per-bank vector indexes, so create them explicitly here while
-        # the bank is still empty (facts are imported below, so the build is
-        # instant). get_or_create_bank_profile would NOT do this: the row now
-        # exists, so it takes the SELECT branch and skips index creation —
-        # leaving the restored bank falling back to the global index +
-        # post-filter (slower, under-returning recall). See #2645.
-        internal_id = await conn.fetchval(f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
-        if internal_id is not None:
-            await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+        # No vector-index DDL here. #2645 needed it because every bank was
+        # entitled to indexes and a restored bank bypassed the fresh-INSERT gate
+        # that created them; now entitlement is by size, and a restored bank's
+        # rows land through the normal import path where the maintenance sweep
+        # picks them up. Building inline would also be wrong twice over: the
+        # bank is empty at this point (the facts arrive below), and CREATE INDEX
+        # inside the import transaction takes a ShareLock on the shared
+        # memory_units table. An import large enough to deserve an index gets
+        # one on the next sweep. See #3485.
 
     # Only now does the bank row — and with it the archive's own config — exist, so
     # this is where the config the documents are replayed with has to come from.
@@ -865,6 +864,11 @@ async def _restore_fact_lifecycle(
     when present (mirroring the document-row handling); ``consolidated_at`` /
     ``consolidation_failed_at`` are set verbatim — a source-``NULL`` (unconsolidated)
     fact stays eligible, which is correct.
+
+    No ``updated_at`` stamp (see :data:`~..memories.base.META_UPDATED_AT`): this fixup
+    runs in the same transaction as the insert that created the row, so the column
+    already carries this transaction's timestamp. The same holds for the observation
+    fixups below.
     """
     rows: list[tuple[uuid.UUID, datetime | None, datetime | None, datetime | None]] = []
     for original_index, fact in enumerate(facts):

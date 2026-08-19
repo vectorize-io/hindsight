@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import UUID
 
+from ..metadata_utils import drop_null_values
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +26,8 @@ class RetainContentDict(TypedDict, total=False):
         metadata: Custom key-value metadata (optional)
         document_id: Document ID for this content item (optional)
         entities: User-provided entities to merge with extracted entities (optional)
+        resolve_entities: Whether the supplied `entities` are resolved against the bank's
+            existing entities (optional, default True). False takes them literally.
         tags: Visibility scope tags for this content item (optional)
         observation_scopes: How to scope observations for consolidation (optional).
             "per_tag" runs one pass per individual tag; "combined" (default) runs a
@@ -41,11 +45,24 @@ class RetainContentDict(TypedDict, total=False):
     metadata: dict[str, str]
     document_id: str
     entities: list[dict[str, str]]  # [{"text": "...", "type": "..."}]
+    resolve_entities: bool
     tags: list[str]  # Visibility scope tags
     observation_scopes: (
         Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
     )  # Observation scopes for consolidation
     update_mode: Literal["replace", "append"]
+
+
+@dataclass
+class UserEntities:
+    """The entities a caller supplied for one retain content item, and how to match them.
+
+    Kept together so the resolution choice travels with the names it applies to: retain merges
+    these with the extractor's own entities into one batch, and only these are authoritative.
+    """
+
+    entities: list[dict[str, str]]
+    resolve: bool = True
 
 
 @dataclass
@@ -61,10 +78,22 @@ class RetainContent:
     event_date: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     entities: list[dict[str, str]] = field(default_factory=list)  # User-provided entities
+    # Whether the supplied `entities` are matched against the bank's existing entities. False
+    # takes them literally; extracted entities are always resolved either way (#3479).
+    resolve_entities: bool = True
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
+
+    def __post_init__(self) -> None:
+        # Drop null-valued metadata keys (issue #3209): the retain API accepts
+        # arbitrary JSON metadata, and a null value stored verbatim poisons the
+        # read path, which validates MemoryFact.metadata as dict[str, str].
+        # Non-string values are preserved; the read path coerces them. An
+        # explicit ``"metadata": null`` in the request normalizes to {} so the
+        # field always matches its declared type.
+        self.metadata = drop_null_values(self.metadata)
 
 
 @dataclass

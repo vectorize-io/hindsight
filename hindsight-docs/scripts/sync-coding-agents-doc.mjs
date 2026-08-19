@@ -61,9 +61,12 @@ function build() {
     .join('\n')
     // Repo-relative links 404 on the docs site; keep the label, drop the link.
     .replace(/\[([^\]]+)\]\((?!https?:|\/)[^)]+\)/g, '$1')
-    // Our own absolute asset URLs -> site-relative, so the page uses THIS build's static files
-    // rather than whatever is live in production.
-    .replace(/https:\/\/hindsight\.vectorize\.io\/(img\/[^\s"')]+)/g, '/$1')
+    // Our own absolute URLs -> site-relative. Assets so the page uses THIS build's static
+    // files rather than whatever is live in production; doc links so they resolve within the
+    // site (and so the docs-skill generator can turn them into file-relative paths, which it
+    // cannot do with an absolute URL). The README keeps them absolute because it also renders
+    // on GitHub, where site-relative would 404.
+    .replace(/https:\/\/hindsight\.vectorize\.io\/([^\s"')]+)/g, '/$1')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return `${FRONTMATTER}\n${body}\n`;

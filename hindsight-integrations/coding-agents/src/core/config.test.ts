@@ -290,3 +290,50 @@ describe("HINDSIGHT_RETAIN_TAGS", () => {
     expect(readEnvConfig({ HINDSIGHT_RETAIN_METADATA: "repo=x" }).retainMetadata).toBeUndefined();
   });
 });
+
+describe("observationScopes", () => {
+  it("defaults to one global scope per bank, so two agents on one repo share its beliefs (#3564)", () => {
+    expect(loadConfig({ path: join(root, "nope.json") }).observationScopes).toBe("shared");
+  });
+
+  it("takes any of the server's scalar modes verbatim", () => {
+    for (const mode of ["shared", "combined", "per_tag", "all_combinations"] as const) {
+      writeJson(globalCfg, { observationScopes: mode });
+      expect(loadConfig({ path: globalCfg }).observationScopes).toBe(mode);
+    }
+  });
+
+  it("takes an explicit scope list, dropping non-string entries", () => {
+    expect(
+      resolveConfig({ observationScopes: [["project:demo"], ["team:eng", "x"]] }).observationScopes
+    ).toEqual([["project:demo"], ["team:eng", "x"]]);
+    expect(
+      resolveConfig({ observationScopes: [["a", 7, ""], "nope"] as never }).observationScopes
+    ).toEqual([["a"]]);
+  });
+
+  it("falls back to the default on an unusable value rather than sending it to the API", () => {
+    // `[]` in particular: the API reads zero scopes as no spec and silently applies `combined`,
+    // which is the opposite of what writing the field was meant to say.
+    expect(resolveConfig({ observationScopes: [] }).observationScopes).toBe("shared");
+    expect(resolveConfig({ observationScopes: "per-tag" as never }).observationScopes).toBe(
+      "shared"
+    );
+    expect(resolveConfig({ observationScopes: 3 as never }).observationScopes).toBe("shared");
+  });
+
+  it("is overridable per bank, since whether agents should share beliefs is a per-repo call", () => {
+    const cfg = resolveConfig({
+      banks: { "coding-agent::mono": { observationScopes: "combined" } },
+    });
+    expect(applyBankConfig(cfg, "coding-agent::mono").cfg.observationScopes).toBe("combined");
+    expect(applyBankConfig(cfg, "coding-agent::other").cfg.observationScopes).toBe("shared");
+  });
+
+  it("reads HINDSIGHT_OBSERVATION_SCOPES for the scalar modes; a scope LIST stays file-only", () => {
+    expect(readEnvConfig({ HINDSIGHT_OBSERVATION_SCOPES: "per_tag" }).observationScopes).toBe(
+      "per_tag"
+    );
+    expect(readEnvConfig({}).observationScopes).toBeUndefined();
+  });
+});

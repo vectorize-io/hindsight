@@ -17,12 +17,12 @@ import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
-import { log, setLogLevel } from "./log";
+import { describeError, log, setLogLevel } from "./log";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import type { RetainCursorStore } from "./retain-cursor";
 import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
-import { fileCursorStore } from "./session-cache";
+import { fileCursorStore, sessionRootDir } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
 
 /** Headroom left before the host's kill: the response still has to come back after the last wait. */
@@ -96,11 +96,11 @@ export async function buildRetain(args: {
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
     log.warn(harness, "session write-back failed", {
-      error: String((e as Error)?.message || e).slice(0, 200),
+      error: describeError(e),
     });
     diag(harness, "retain_failed", {
       ms: Date.now() - t0,
-      error: String((e as Error)?.message || e).slice(0, 200),
+      error: describeError(e),
       session: sessionId,
     });
   }
@@ -133,7 +133,8 @@ export async function runRetainHook(
 
   if (!transcriptPath) return;
 
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness), cwd);
+  const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
+  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) return;
@@ -148,6 +149,7 @@ export async function runRetainHook(
     apiToken: cfg.apiToken,
     bank: bankId,
     maxParallelRetains: cfg.maxParallelRetains,
+    observationScopes: cfg.observationScopes,
   });
 
   await buildRetain({
@@ -159,6 +161,7 @@ export async function runRetainHook(
     retryUntil: hostDeadline,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,
+      sessionRoot,
       harness: spec.harness,
       bankId,
       sessionId: sessionId || "no-session",

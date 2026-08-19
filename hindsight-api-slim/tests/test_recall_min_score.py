@@ -94,6 +94,7 @@ async def _recall(engine, bank_id, *, query="animals and nature", **kwargs):
 
 
 class TestRecallScores:
+    @pytest.mark.memory_backend_incompatible
     async def test_every_result_has_scores(self, seeded_memory):
         engine, bank_id = seeded_memory
         result = await _recall(engine, bank_id)
@@ -119,6 +120,7 @@ class TestPostQueryFilters:
         explicit = await _recall(engine, bank_id, min_scores=None)
         assert _ids(baseline) == _ids(explicit)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_final_floor_filters_and_is_a_subset(self, seeded_memory):
         engine, bank_id = seeded_memory
         baseline = await _recall(engine, bank_id)
@@ -132,6 +134,7 @@ class TestPostQueryFilters:
         for r in filtered.results:
             assert r.scores.final >= threshold
 
+    @pytest.mark.memory_backend_incompatible
     async def test_final_floor_above_all_returns_empty(self, seeded_memory):
         engine, bank_id = seeded_memory
         baseline = await _recall(engine, bank_id)
@@ -153,6 +156,7 @@ class TestPostQueryFilters:
 
 
 class TestRetrievalLevelFilters:
+    @pytest.mark.memory_backend_incompatible
     async def test_semantic_floor_prunes_in_retrieval(self, seeded_memory):
         """min_scores.semantic is a SQL-arm cutoff: every returned result has a
         semantic score >= the floor, and a high floor returns nothing."""

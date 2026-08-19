@@ -130,6 +130,7 @@ async def test_reassert_locks_existing_parent_until_child_insert(pg0_db_url):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
     """End-to-end: a prune between the two retain phases must not become data loss.
 

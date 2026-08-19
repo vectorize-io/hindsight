@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from hindsight_api import _vector_index
 from hindsight_api._vector_index import (
     SCANN_MIN_ROWS_FOR_AUTO_INDEX,
     ann_search_tuning_settings,
@@ -161,22 +162,99 @@ def test_alembic_vector_migrations_freeze_vector_sql_locally():
         assert "hindsight_api._vector_index" not in text
 
 
-class RecordingOps:
-    def __init__(self):
-        self.called = False
-
-    async def create_bank_vector_indexes(self, *args, **kwargs):
-        self.called = True
-
-
 class ScannConfig:
     vector_extension = "scann"
 
 
-async def test_create_bank_vector_indexes_skips_scann(monkeypatch):
+def test_vector_index_clause_is_none_for_scann(monkeypatch):
+    """ScaNN has no per-bank index layout, so callers get no USING clause to build with."""
     monkeypatch.setattr(bank_utils, "get_config", lambda: ScannConfig())
-    ops = RecordingOps()
 
-    await bank_utils.create_bank_vector_indexes(None, "bank", "00000000-0000-0000-0000-000000000000", ops=ops)
+    assert bank_utils._vector_index_clause() is None
 
-    assert not ops.called
+
+class _ThresholdConfig:
+    def __init__(self, min_rows: int):
+        self.vector_index_min_rows = min_rows
+
+
+def _with_threshold(monkeypatch, min_rows: int) -> None:
+    monkeypatch.setattr(_vector_index, "get_config", lambda: _ThresholdConfig(min_rows), raising=False)
+    monkeypatch.setattr("hindsight_api.config.get_config", lambda: _ThresholdConfig(min_rows))
+
+
+def test_qualifies_at_and_around_the_threshold(monkeypatch):
+    """The build side is a floor, inclusive: exactly the threshold qualifies."""
+    _with_threshold(monkeypatch, 10_000)
+
+    assert not _vector_index.qualifies_for_per_bank_index(9_999)
+    assert _vector_index.qualifies_for_per_bank_index(10_000)
+    assert _vector_index.qualifies_for_per_bank_index(10_001)
+
+
+def test_zero_threshold_indexes_every_partition_that_holds_rows(monkeypatch):
+    """0 is the shipped default and means "no minimum" — the pre-threshold behaviour."""
+    _with_threshold(monkeypatch, 0)
+
+    assert _vector_index.qualifies_for_per_bank_index(1)
+    assert _vector_index.qualifies_for_per_bank_index(10_000_000)
+
+
+def test_an_empty_partition_never_qualifies(monkeypatch):
+    """Zero rows is excluded at every threshold, including the default of 0.
+
+    By arithmetic alone `0 >= 0` holds, which would entitle every bank in the
+    deployment to three indexes over nothing the moment it was created — the
+    index explosion the threshold exists to prevent, reintroduced by its own
+    default. An index over no rows serves no query either way.
+    """
+    _with_threshold(monkeypatch, 0)
+    assert not _vector_index.qualifies_for_per_bank_index(0)
+
+    _with_threshold(monkeypatch, 10_000)
+    assert not _vector_index.qualifies_for_per_bank_index(0)
+
+
+def test_emptied_partition_loses_its_index_at_every_threshold(monkeypatch):
+    """Zero rows never keeps an index — including at the shipped default of 0.
+
+    Regression for a drop side that was dead in the default configuration. The
+    check was `row_count < per_bank_index_drop_rows()`, and at a threshold of 0
+    the drop floor is also 0, so it read `0 < 0` — never true. Every bank ever
+    written to and then cleared kept three ANN indexes over nothing, forever,
+    because nothing writes to an emptied bank. That is the exact accumulation
+    the threshold exists to prevent, reintroduced by its own default.
+    """
+    _with_threshold(monkeypatch, 0)
+    assert not _vector_index.should_keep_per_bank_index(0)
+
+    _with_threshold(monkeypatch, 10_000)
+    assert not _vector_index.should_keep_per_bank_index(0)
+
+
+def test_keeping_starts_below_building(monkeypatch):
+    """The hysteresis band: a partition between the two bounds is left alone.
+
+    Keeping has to start lower than building, or a bank hovering at the
+    threshold rebuilds and drops the same ANN index on alternating writes.
+    """
+    _with_threshold(monkeypatch, 10_000)
+    between = _vector_index.per_bank_index_drop_rows() + 1
+
+    assert not _vector_index.qualifies_for_per_bank_index(between), "not enough to earn a new index"
+    assert _vector_index.should_keep_per_bank_index(between), "but enough to keep one it already has"
+
+
+def test_drop_threshold_sits_strictly_below_the_build_threshold(monkeypatch):
+    """The hysteresis gap must be non-empty, or an index at the boundary flaps.
+
+    A partition between the two bounds is neither built nor dropped: if it has
+    an index it keeps it, and if it does not it stays without one.
+    """
+    _with_threshold(monkeypatch, 10_000)
+
+    build = _vector_index.per_bank_index_min_rows()
+    drop = _vector_index.per_bank_index_drop_rows()
+
+    assert drop < build
+    assert not _vector_index.qualifies_for_per_bank_index(drop)

@@ -147,6 +147,16 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
             # (the full-replace path enqueues in ``handle_document_tracking``).
             await enqueue_entity_prune_candidates(conn, bank_id, outgoing_unit_ids)
 
+            # Capture surviving units whose temporal/semantic links point at
+            # the outgoing facts before the link/chunk cascade below removes
+            # the evidence needed to find them. Full document replacement does
+            # the same in ``handle_document_tracking``; without it, a delta
+            # edit leaves survivors permanently below their configured link
+            # caps even though retain submits graph maintenance afterwards.
+            from ..graph_maintenance import enqueue_relink_victims
+
+            await enqueue_relink_victims(conn, bank_id, outgoing_unit_ids)
+
     # The chunks->memory_units FK cascade below does not reach a store that keeps memories
     # outside SQL (its memory_units is empty), so drop the memories carrying each deleted
     # chunk_id through the store — otherwise a delta re-ingest leaves the old ones as duplicates.

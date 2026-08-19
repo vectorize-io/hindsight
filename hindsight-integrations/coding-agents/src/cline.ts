@@ -132,7 +132,11 @@ export function createClineHooks(
         // `seedIfCold` sets the shared new-bank marker before the first prompt. Awaiting it here,
         // rather than racing plugin setup, preserves the invariant that a brand-new bank skips its
         // first auto-reflect instead of spending that one synthesis before it has any knowledge.
-        await sessionStart;
+        // Bounded by the same budget as onPrompt below: seedIfCold now also waits for a cold local
+        // daemon (up to DAEMON_WAIT_SESSION_START_MS), and this is the one host that awaits it
+        // inside an RPC the sandbox aborts at 3s. It stays running either way, so a start that
+        // outlasts the budget just lands for a later turn.
+        await settleWithinHookBudget(sessionStart ?? Promise.resolve());
       }
       const user = latestUserMessage(snapshot.messages);
       if (!user) return undefined;
@@ -197,6 +201,7 @@ function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefin
     apiToken: cfg.apiToken,
     bank: resolved.bankId,
     maxParallelRetains: cfg.maxParallelRetains,
+    observationScopes: cfg.observationScopes,
   });
   return new RuntimeCore(client, resolved.bankId, cfg, HARNESS, workspaceRoot || process.cwd());
 }

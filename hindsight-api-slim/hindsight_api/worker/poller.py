@@ -311,7 +311,7 @@ class WorkerPoller:
         # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
         return [self._normalize_poll_schema(t.schema) for t in tenants]
 
-    async def _scan_active_schemas(self, schemas: list[str | None]) -> set[str | None]:
+    async def _scan_active_schemas(self, conn: "DatabaseConnection", schemas: list[str | None]) -> set[str | None]:
         """Find which schemas have pending work.
 
         Prefers a server-side PL/pgSQL routine (single DB round-trip,
@@ -325,28 +325,29 @@ class WorkerPoller:
         non-PostgreSQL backends or when the routine isn't installed. See
         ``hindsight_api.engine.db.optional_routines`` for the canonical
         install SQL.
-        """
-        async with self._backend.acquire() as conn:
-            if await self._optional_routines.is_installed(conn, "schemas_with_pending_work"):
-                # The routine IS the authority on where work exists: every schema
-                # it returns is claimable, and every schema it does NOT return is
-                # treated as having nothing to do this cycle. That is the entire
-                # point of installing it — one round-trip replaces N per-schema
-                # EXISTS probes. We deliberately do NOT re-verify the omitted
-                # schemas with a per-schema scan: that re-runs the exact queries
-                # the routine exists to avoid, on every idle poll, silently
-                # negating the optimisation.
-                #
-                # Because the result is trusted wholesale, the routine is only
-                # appropriate for multi-tenant deployments. A single-schema
-                # (default/public only) install should NOT create it and instead
-                # falls through to the per-schema path below — a single cheap
-                # EXISTS check that cannot starve. See
-                # ``hindsight_api.engine.db.optional_routines``.
-                rows = await conn.fetch("SELECT * FROM public.schemas_with_pending_work()")
-                return {self._normalize_poll_schema(r[0]) for r in rows}
 
-            return await self._scan_active_schemas_by_exists(conn, schemas)
+        Runs on the poll cycle's connection — see ``claim_batch``.
+        """
+        if await self._optional_routines.is_installed(conn, "schemas_with_pending_work"):
+            # The routine IS the authority on where work exists: every schema
+            # it returns is claimable, and every schema it does NOT return is
+            # treated as having nothing to do this cycle. That is the entire
+            # point of installing it — one round-trip replaces N per-schema
+            # EXISTS probes. We deliberately do NOT re-verify the omitted
+            # schemas with a per-schema scan: that re-runs the exact queries
+            # the routine exists to avoid, on every idle poll, silently
+            # negating the optimisation.
+            #
+            # Because the result is trusted wholesale, the routine is only
+            # appropriate for multi-tenant deployments. A single-schema
+            # (default/public only) install should NOT create it and instead
+            # falls through to the per-schema path below — a single cheap
+            # EXISTS check that cannot starve. See
+            # ``hindsight_api.engine.db.optional_routines``.
+            rows = await conn.fetch("SELECT * FROM public.schemas_with_pending_work()")
+            return {self._normalize_poll_schema(r[0]) for r in rows}
+
+        return await self._scan_active_schemas_by_exists(conn, schemas)
 
     async def _scan_active_schemas_by_exists(
         self, conn: "DatabaseConnection", schemas: list[str | None]
@@ -453,10 +454,30 @@ class WorkerPoller:
         if not schemas:
             return []
 
+        # One pooled connection for the whole cycle — the scan *and* every
+        # per-schema claim. Each acquire pays the pool's setup callback (the
+        # session GUCs) and each release pays asyncpg's RESET ALL / UNLISTEN /
+        # CLOSE ALL; behind a transaction-mode pooler every one of those is its
+        # own server-side transaction. Acquiring per schema multiplied that
+        # ceremony by the number of active schemas — ~12 statements per
+        # schema-visit for 2 useful queries (#3499). The per-schema claims stay
+        # sequential and each still runs in its own transaction, so
+        # FOR UPDATE SKIP LOCKED semantics are unchanged by sharing the
+        # connection.
+        async with self._backend.acquire() as conn:
+            return await self._claim_batch_on_conn(conn, availability, schemas)
+
+    async def _claim_batch_on_conn(
+        self,
+        conn: "DatabaseConnection",
+        availability: SlotAvailability,
+        schemas: list[str | None],
+    ) -> list[ClaimedTask]:
+        """Run one full claim cycle (scan + per-schema claims) on a single connection."""
         # Scan: find which schemas have pending work using a lightweight
         # EXISTS check (no locks). Then only claim from those schemas
         # using the expensive FOR UPDATE SKIP LOCKED query.
-        active_schemas = await self._scan_active_schemas(schemas)
+        active_schemas = await self._scan_active_schemas(conn, schemas)
 
         if not active_schemas:
             self._next_schema_idx = (self._next_schema_idx + 1) % len(schemas)
@@ -497,7 +518,7 @@ class WorkerPoller:
 
             fair_reserved = {t: min(1, v) for t, v in remaining_reserved.items() if v > 0}
             fair_shared = min(1, remaining_shared) if remaining_shared > 0 else 0
-            tasks = await self._claim_batch_for_schema(schema, fair_reserved, fair_shared)
+            tasks = await self._claim_batch_for_schema(conn, schema, fair_reserved, fair_shared)
 
             _account_tasks(tasks)
 
@@ -515,7 +536,7 @@ class WorkerPoller:
                     break
 
                 tasks = await self._claim_batch_for_schema(
-                    schema, {t: v for t, v in remaining_reserved.items() if v > 0}, remaining_shared
+                    conn, schema, {t: v for t, v in remaining_reserved.items() if v > 0}, remaining_shared
                 )
 
                 _account_tasks(tasks)
@@ -535,11 +556,15 @@ class WorkerPoller:
         return all_tasks
 
     async def _claim_batch_for_schema(
-        self, schema: str | None, reserved_limits: dict[str, int], shared_limit: int
+        self,
+        conn: "DatabaseConnection",
+        schema: str | None,
+        reserved_limits: dict[str, int],
+        shared_limit: int,
     ) -> list[ClaimedTask]:
         """Claim tasks from a specific schema respecting per-type and shared slot limits."""
         try:
-            return await self._claim_batch_for_schema_inner(schema, reserved_limits, shared_limit)
+            return await self._claim_batch_for_schema_inner(conn, schema, reserved_limits, shared_limit)
         except Exception as e:
             # Format schema for logging: custom schemas in quotes, None as-is
             schema_display = f'"{schema}"' if schema else str(schema)
@@ -547,51 +572,58 @@ class WorkerPoller:
             return []
 
     async def _claim_batch_for_schema_inner(
-        self, schema: str | None, reserved_limits: dict[str, int], shared_limit: int
+        self,
+        conn: "DatabaseConnection",
+        schema: str | None,
+        reserved_limits: dict[str, int],
+        shared_limit: int,
     ) -> list[ClaimedTask]:
         """Inner implementation for claiming tasks from a specific schema.
 
         Delegates the SQL claiming logic to backend.ops.claim_tasks() which
         handles backend-specific differences (e.g. Oracle's ORA-02014 workaround).
+
+        Runs on the caller's connection (one per poll cycle) but opens its own
+        transaction: the claim's row locks are held only until this schema's
+        claim commits, not for the whole cycle.
         """
         table = fq_table("async_operations", schema)
 
-        async with self._backend.acquire() as conn:
-            async with conn.transaction():
-                all_rows = await self._backend.ops.claim_tasks(
-                    conn,
-                    table,
-                    self._worker_id,
-                    reserved_limits,
-                    shared_limit,
-                    consolidation_bank_priority=self._consolidation_bank_priority,
-                )
+        async with conn.transaction():
+            all_rows = await self._backend.ops.claim_tasks(
+                conn,
+                table,
+                self._worker_id,
+                reserved_limits,
+                shared_limit,
+                consolidation_bank_priority=self._consolidation_bank_priority,
+            )
 
-                if not all_rows:
-                    return []
+            if not all_rows:
+                return []
 
-                result = []
-                for row in all_rows:
-                    payload = row["task_payload"]
-                    # Oracle may return JSON columns as dict directly
-                    task_dict = json.loads(payload) if isinstance(payload, str) else payload
-                    task_dict["_retry_count"] = row["retry_count"]
-                    task_dict["_operation_id"] = str(row["operation_id"])
-                    # The DB column is authoritative for operation_type — inject it
-                    # into task_dict so in-flight tracking and slot accounting work.
-                    db_op_type = row["operation_type"]
-                    if db_op_type:
-                        task_dict["operation_type"] = db_op_type
-                    folded = await self._fold_retain_peers(conn, table, row, task_dict)
-                    result.append(
-                        ClaimedTask(
-                            operation_id=str(row["operation_id"]),
-                            task_dict=task_dict,
-                            schema=schema,
-                            folded_operation_ids=folded,
-                        )
+            result = []
+            for row in all_rows:
+                payload = row["task_payload"]
+                # Oracle may return JSON columns as dict directly
+                task_dict = json.loads(payload) if isinstance(payload, str) else payload
+                task_dict["_retry_count"] = row["retry_count"]
+                task_dict["_operation_id"] = str(row["operation_id"])
+                # The DB column is authoritative for operation_type — inject it
+                # into task_dict so in-flight tracking and slot accounting work.
+                db_op_type = row["operation_type"]
+                if db_op_type:
+                    task_dict["operation_type"] = db_op_type
+                folded = await self._fold_retain_peers(conn, table, row, task_dict)
+                result.append(
+                    ClaimedTask(
+                        operation_id=str(row["operation_id"]),
+                        task_dict=task_dict,
+                        schema=schema,
+                        folded_operation_ids=folded,
                     )
-                return result
+                )
+            return result
 
     async def _fold_retain_peers(self, conn, table: str, row, task_dict: dict[str, Any]) -> list[str]:
         """Coalesce the retains queued behind ``row`` into its execution.
@@ -1586,21 +1618,22 @@ class WorkerPoller:
             schemas = await self._get_schemas()
             total_schema_count = len(schemas)
 
-            # Schemas with pending async_operations (uses server-side
-            # routine when installed, falls back to per-schema EXISTS).
-            schemas_with_pending = await self._scan_active_schemas(schemas)
-
-            # Also include schemas that have in-flight tasks on this worker
-            # so the "processing" worker_id GROUP BY still reports correctly.
-            schemas_with_active_tasks = {info.schema for info in active_tasks.values()}
-            schemas_to_query = schemas_with_pending | schemas_with_active_tasks
-
             global_pending = 0
             all_worker_counts: dict[str, int] = {}
             # operation_type -> aggregated bucket counts across schemas
             pending_breakdown: dict[str, dict[str, int]] = {}
+            schemas_to_query: set[str | None] = set()
 
             async with self._backend.acquire() as conn:
+                # Schemas with pending async_operations (uses server-side
+                # routine when installed, falls back to per-schema EXISTS).
+                schemas_with_pending = await self._scan_active_schemas(conn, schemas)
+
+                # Also include schemas that have in-flight tasks on this worker
+                # so the "processing" worker_id GROUP BY still reports correctly.
+                schemas_with_active_tasks = {info.schema for info in active_tasks.values()}
+                schemas_to_query = schemas_with_pending | schemas_with_active_tasks
+
                 for schema in schemas_to_query:
                     table = fq_table("async_operations", schema)
 

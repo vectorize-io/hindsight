@@ -29,6 +29,7 @@ const CODING_AGENT_LOGOS: {id: string; name: string; file: string}[] = [
   {id: 'antigravity-cli', name: 'Antigravity CLI', file: 'antigravity-cli.png'},
   {id: 'devin-cli', name: 'Devin CLI', file: 'devin-cli.svg'},
   {id: 'cline-cli', name: 'Cline CLI', file: 'cline-cli.svg'},
+  {id: 'dsh', name: 'DeepSeek Harness', file: 'dsh.svg'},
 ];
 
 const INTEGRATIONS_JSON_URL =

@@ -23,7 +23,7 @@ var _ MappedNullable = &MentalModelRefreshWindow{}
 // MentalModelRefreshWindow The time window a refresh read memories from.
 type MentalModelRefreshWindow struct {
 	CreatedAfter NullableTime `json:"created_after,omitempty"`
-	// Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.
+	// Database-time snapshot bounding the refresh. Memories written or edited after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.
 	CreatedBefore time.Time `json:"created_before"`
 	Watermark NullableTime `json:"watermark,omitempty"`
 }

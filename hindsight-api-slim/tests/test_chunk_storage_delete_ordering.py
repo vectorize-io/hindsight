@@ -164,9 +164,16 @@ async def test_delete_chunks_by_ids_sweeps_links_on_both_endpoints(
             "SELECT from_unit_id, to_unit_id FROM memory_links WHERE bank_id = $1",
             bank_id,
         )
+        queued = await conn.fetch(
+            "SELECT unit_id FROM graph_maintenance_queue WHERE bank_id = $1",
+            bank_id,
+        )
 
     assert {(str(r["from_unit_id"]), str(r["to_unit_id"])) for r in rows} == {(str(kept), str(unrelated))}, (
         "links on both endpoints of the deleted chunk's unit must go; the survivors' link must stay"
+    )
+    assert {str(r["unit_id"]) for r in queued} == {str(unrelated)}, (
+        "a surviving unit whose outgoing link targeted the deleted chunk must be queued for relinking"
     )
 
     await memory.delete_bank(bank_id, request_context=request_context)

@@ -1,0 +1,13 @@
+FROM hindsight-coding-agents-e2e-base
+ARG VERSION=latest
+# dsh depends on node-pty, which ships no linux/arm64 prebuild — on an Apple Silicon developer
+# machine npm falls back to node-gyp, which needs a toolchain the slim base deliberately omits.
+# It stays in THIS image rather than the shared base so only the harness that needs it pays for it
+# (x64 CI installs from the prebuild and never invokes the compiler).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install --global "@deepseek-ai/dsh@${VERSION}"
+# The model route (see the file's own header): baked into the image because dsh chooses its provider
+# through composition rather than environment variables.
+COPY dsh-stub-model.cordis.yml /dsh/stub-model.cordis.yml

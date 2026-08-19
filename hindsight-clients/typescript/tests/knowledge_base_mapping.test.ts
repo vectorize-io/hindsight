@@ -119,6 +119,22 @@ describe("updateKnowledgeNode mapping", () => {
     expect(body.tags).toEqual([]);
     expect(body.max_tokens).toBe(2048);
   });
+
+  // The trigger is a PATCH server-side: what isn't sent keeps the page's current value,
+  // so a wrapper that dropped the field would leave callers unable to change a refresh
+  // policy at all — the endpoint carried no trigger before this.
+  test("passes a partial trigger through untouched", async () => {
+    await client.updateKnowledgeNode("bank", "kp-1", { trigger: { refresh_cron: "0 3 * * *" } });
+
+    const body = mockedUpdateNode.mock.calls[0][0].body as any;
+    expect(body.trigger).toEqual({ refresh_cron: "0 3 * * *" });
+  });
+
+  test("omits the trigger entirely when unset", async () => {
+    await client.updateKnowledgeNode("bank", "kp-1", { maxTokens: 2048 });
+
+    expect("trigger" in (mockedUpdateNode.mock.calls[0][0].body as any)).toBe(false);
+  });
 });
 
 describe("searchKnowledgeBase mapping", () => {
