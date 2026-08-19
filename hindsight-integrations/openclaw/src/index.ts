@@ -296,15 +296,24 @@ export async function flushRetainQueue(
   let failed = 0;
 
   try {
-    // Re-probe even while the queue is empty so an in-place server upgrade or
-    // downgrade cannot leave subsequent retains on stale startup capability.
+    // Nothing queued means nothing to be idempotent about, so don't spend a
+    // /version round trip: this runs on a timer *and* after every successful
+    // retain, and probing an empty queue put a request behind every turn. The
+    // capability is re-read here whenever there is actually work to replay,
+    // which is the only moment it changes the outcome.
+    const pending = activeQueue.size();
+    if (pending === 0) return;
     const capability =
       capabilityOverride ?? (await refreshQueueOperationIdCapability(expectedGeneration, signal));
     if (expectedGeneration !== serviceGeneration || signal?.aborted) return;
-    const pending = activeQueue.size();
-    if (pending === 0) return;
     if (capability === "unknown") {
-      debug(`[Hindsight] Queue flush deferred: operation-id capability is unknown`);
+      // Held back on purpose: a replay without operation_id is the one path that
+      // can duplicate durable memories. Warn rather than debug — if /version
+      // stays unreachable the queue grows without ever draining, and that must
+      // not be silent.
+      log.warn(
+        `retain queue flush deferred (${pending} queued): server operation-id capability unknown`
+      );
       return;
     }
     if (!activeClient) return; // no client yet — can't flush
@@ -1961,8 +1970,12 @@ export default function (api: MoltbotPluginAPI) {
               retainQueueFlushTimer.unref?.();
             }
           } catch (error) {
+            // Degrade, don't refuse to start: without the queue a failed retain
+            // is dropped exactly as it was before the queue existed, which is
+            // worth far less than taking the whole plugin down over an
+            // unwritable state directory.
             retainQueue = null;
-            throw new Error(`could not initialize retain queue: ${error}`, { cause: error });
+            log.warn(`could not initialize retain queue, continuing without it: ${error}`);
           }
 
           if (externalApi.apiToken) {
@@ -2795,9 +2808,14 @@ ${memoriesFormatted}
           return;
         }
 
-        const retainOperationIdCapability = usingExternalApi
-          ? await refreshQueueOperationIdCapability(retainGeneration, retainSignal)
-          : asyncRetainOperationIdCapability;
+        // Use the cached capability, and only pay for a /version round trip while
+        // it is still unknown. Probing on every retain would put an extra
+        // request in front of every turn, and the answer changes at most once
+        // per server restart — the queue flush re-probes on its own timer.
+        const retainOperationIdCapability =
+          usingExternalApi && asyncRetainOperationIdCapability === "unknown"
+            ? await refreshQueueOperationIdCapability(retainGeneration, retainSignal)
+            : asyncRetainOperationIdCapability;
         if (!retainLifecycleIsCurrent()) return;
         const retainNow = Date.now();
         const retainRequest = buildRetainRequest(
@@ -2826,13 +2844,11 @@ ${memoriesFormatted}
         let retainElapsedMs = 0;
         let retainOutcome: "ok" | "queued" | "error" = "error";
         try {
-          if (usingExternalApi && retainOperationIdCapability === "unknown") {
-            if (!retainQueue) {
-              log.error("retain queue unavailable; refusing non-idempotent external retain");
-              return;
-            }
-            throw new Error("operation-id capability unavailable; deferring retain");
-          }
+          // An unknown capability does not hold up the first send: there is
+          // nothing on the server yet for it to duplicate, so omitting the wire
+          // field is exactly today's behaviour. The id is still allocated and
+          // persisted with the request, so a *replay* can be idempotent once the
+          // capability is known — that is where duplicates actually come from.
           await client.retain(retainRequest, retainOperationIdCapability, retainSignal);
           if (!retainLifecycleIsCurrent()) return;
           retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
