@@ -13,6 +13,27 @@ fn test_cli_help() {
 }
 
 #[test]
+fn test_help_emits_no_ansi_when_piped() {
+    // `Command::output()` captures stdout through a pipe, which is exactly the
+    // case this guards: coding agents and shell redirection read piped output,
+    // and the logo/gradients would otherwise land there as escape codes. The
+    // ui.rs unit tests inject the enabled flag, so only an end-to-end run of
+    // the real binary proves the helpers are actually wired to the predicate.
+    let output = Command::new("cargo")
+        .args(["run", "--", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "piped --help must not emit ANSI escapes, got: {:?}",
+        stdout.chars().take(200).collect::<String>()
+    );
+}
+
+#[test]
 fn test_cli_version() {
     let output = Command::new("cargo")
         .args(["run", "--", "--version"])
