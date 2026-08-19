@@ -742,6 +742,140 @@ fn test_mental_model_update() {
 }
 
 #[test]
+fn test_mental_model_update_trigger_mode() {
+    skip_if_no_server!();
+
+    let bank_id = test_bank_id("mm-trigger-mode");
+
+    // Create the bank first
+    let output = run_hindsight(&["bank", "create", &bank_id, "--name", "Test Bank"]);
+    assert!(
+        output.status.success(),
+        "bank create failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Create a mental model
+    let output = run_hindsight(&[
+        "mental-model",
+        "create",
+        &bank_id,
+        "Test Trigger Mode Model",
+        "What are the key facts?",
+    ]);
+    assert!(
+        output.status.success(),
+        "mental-model create failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // List to get the ID
+    let output = run_hindsight(&["mental-model", "list", &bank_id, "-o", "json"]);
+    assert!(
+        output.status.success(),
+        "mental-model list failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+        .expect("list output is valid JSON");
+    let id = result
+        .get("items")
+        .and_then(|v| v.as_array())
+        .expect("list response has items")
+        .iter()
+        .find(|item| item.get("name").and_then(|v| v.as_str()) == Some("Test Trigger Mode Model"))
+        .expect("created mental model appears in list")
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("mental model has an id")
+        .to_string();
+
+    // Assert the mode currently stored on the server via `get -o json`.
+    let assert_stored_mode = |expected: &str| {
+        let output = run_hindsight(&["mental-model", "get", &bank_id, &id, "-o", "json"]);
+        assert!(
+            output.status.success(),
+            "mental-model get failed: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value =
+            serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+                .expect("get output is valid JSON");
+        assert_eq!(
+            result
+                .get("trigger")
+                .and_then(|t| t.get("mode"))
+                .and_then(|v| v.as_str()),
+            Some(expected),
+            "stored trigger mode should be {expected}: {result}"
+        );
+    };
+
+    // Switch the trigger to delta and verify it round-trips.
+    let output = run_hindsight(&[
+        "mental-model",
+        "update",
+        &bank_id,
+        &id,
+        "--trigger-mode",
+        "delta",
+    ]);
+    assert!(
+        output.status.success(),
+        "update --trigger-mode delta failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_stored_mode("delta");
+
+    // And back to full.
+    let output = run_hindsight(&[
+        "mental-model",
+        "update",
+        &bank_id,
+        &id,
+        "--trigger-mode",
+        "full",
+    ]);
+    assert!(
+        output.status.success(),
+        "update --trigger-mode full failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_stored_mode("full");
+
+    // Unknown modes must fail loudly.
+    let output = run_hindsight(&[
+        "mental-model",
+        "update",
+        &bank_id,
+        &id,
+        "--trigger-mode",
+        "incremental",
+    ]);
+    assert!(
+        !output.status.success(),
+        "update --trigger-mode incremental should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid --trigger-mode 'incremental'"),
+        "unexpected stderr: {}",
+        stderr
+    );
+
+    // Clean up
+    let output = run_hindsight(&["bank", "delete", &bank_id, "-y"]);
+    assert!(
+        output.status.success(),
+        "bank delete failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn test_mental_model_refresh() {
     skip_if_no_server!();
 
