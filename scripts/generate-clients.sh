@@ -372,6 +372,10 @@ npm run generate
 # Deno's Request constructor rejects a 'client' field in RequestInit because
 # 'client' is a reserved Deno.HttpClient option name, causing a TypeError.
 # We destructure it out before spreading opts into RequestInit.
+# OLD below must match @hey-api/openapi-ts's emitted text verbatim, indentation
+# included — 0.97.x nests this block two levels deeper than 0.88.x did, so the
+# anchor has to be re-checked on every generator bump. A stale anchor only warns
+# here, but verify-generated-files then fails on the unpatched client.gen.ts.
 echo "Patching client.gen.ts for Deno compatibility..."
 cd "$PROJECT_ROOT"
 python3 << PATCH_SCRIPT
