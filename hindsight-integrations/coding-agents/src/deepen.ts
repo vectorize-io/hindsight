@@ -31,6 +31,7 @@ import { SURVEY_DOC_IDS } from "./core/survey";
 import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
 import { DEEPEN_DIFF_TARGET } from "./core/status";
+import type { ChatSession } from "./core/types";
 import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
@@ -162,11 +163,23 @@ async function main() {
 
     // chats FIRST: few, and they carry the decisions that make memory necessary — never starved
     // behind the git flood. Dedup against what's already in the bank (chat:<id>).
-    const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
-    const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
-    const sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
-    if (all.length !== sessions.length)
-      log(`[chat] ${all.length - sessions.length} conversations already ingested — skipping those`);
+    //
+    // `retainSessions: false` covers THIS door too, not just the live write-back (#3596): history
+    // import puts the very same conversations in the bank, one session later, so honoring the flag
+    // in only one of the two places would leave the opt-out cosmetic. Git ingest, knowledge pages
+    // and bank configuration below are untouched by it.
+    let sessions: ChatSession[] = [];
+    if (!cfg.retainSessions) {
+      log("[chat] retainSessions: false — skipping conversation import");
+    } else {
+      const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
+      const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
+      sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
+      if (all.length !== sessions.length)
+        log(
+          `[chat] ${all.length - sessions.length} conversations already ingested — skipping those`
+        );
+    }
     const chatFails = await ingestChats(client, sessions, {
       concurrency: cfg.maxParallelRetains,
       log,

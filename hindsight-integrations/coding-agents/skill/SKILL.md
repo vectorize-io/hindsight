@@ -77,11 +77,12 @@ Layering, later wins: defaults → file → `harnesses.<name>` → `banks.<resol
 ```
 
 Key behavioral fields (any of them valid per-harness or per-bank): `disabled`,
-`retainSessions` (write-back opt-out), `gitIngest`, `reflectTimeoutMs` (AUTOMATIC session reflect,
-default 120000; hooks cap at 25s), `reflectToolTimeoutMs`/`reflectBudget` (the agent-invoked
-`hindsight_reflect` tool: default 330000 — above the server's 300s reflect wall timeout — and
-"high"), `autoReflect` (true; false = no injected first-prompt synthesis — the agent is instead
-told to call `hindsight_reflect` on new goals), `pageRefreshEveryTurns` (10),
+`retainSessions` (transcript write-back opt-out, history import included — recall and git ingest keep working), `gitIngest`,
+`reflectTimeoutMs` (AUTOMATIC session reflect, default 120000; hooks cap at 25s),
+`reflectToolTimeoutMs`/`reflectBudget` (the agent-invoked `hindsight_reflect` tool: default 330000 —
+above the server's 300s reflect wall timeout — and "high"), `autoReflect` (true; false = no injected
+first-prompt synthesis — the agent is instead told to call `hindsight_reflect` on new goals),
+`pageRefreshEveryTurns` (10),
 `pageTriggerType`/`pageTriggerCron` (when NEW knowledge pages refresh: `auto-refresh` (default) after
 each consolidation, `cron` on a schedule, `manual` never — existing pages keep the trigger they were
 created with), `autoSeed`/`seedLimit` (true/300),
