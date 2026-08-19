@@ -1741,7 +1741,7 @@ async def _extract_facts_with_auto_split(
             agent_name=agent_name,
             metadata=metadata,
         )
-    except OutputTooLongError:
+    except OutputTooLongError as exc:
         # Output exceeded token limits - split the chunk and retry. Conversation
         # chunks are JSON arrays, so preserve array/turn boundaries when possible.
         logger.warning(
@@ -1759,7 +1759,7 @@ async def _extract_facts_with_auto_split(
                 f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
                 f"({len(chunk)} chars); failing retain instead of dropping this sub-chunk."
             )
-            raise RuntimeError(error_message)
+            raise RuntimeError(error_message) from exc
 
         first_half, second_half = split_chunks
 
