@@ -1,5 +1,13 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_MAX_PARALLEL_RETAINS, HindsightClient, retryAfterMs } from "./hindsight";
+import {
+  DEFAULT_MAX_PARALLEL_RETAINS,
+  DEFAULT_OBSERVATION_SCOPES,
+  HindsightClient,
+  retryAfterMs,
+} from "./hindsight";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -166,5 +174,199 @@ describe("retryAfterMs", () => {
     expect(retryAfterMs(undefined)).toBe(0);
     expect(retryAfterMs("")).toBe(0);
     expect(retryAfterMs("soon")).toBe(0);
+  });
+});
+
+describe("HindsightClient.retain — observation scoping", () => {
+  async function retainItem(client: HindsightClient): Promise<Record<string, unknown>> {
+    let sent: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent = String(init.body);
+        return jsonResponse(200, { operation_id: "op-1" });
+      })
+    );
+    await client.retain(
+      "c",
+      "ctx",
+      "doc-1",
+      ["source:chat", "harness:claude-code"],
+      "conversation"
+    );
+    const body = JSON.parse(String(sent)) as { items: Record<string, unknown>[] };
+    return body.items[0];
+  }
+
+  it("defaults every retain to the single global scope, so two agents on one repo build ONE set of observations (#3564)", async () => {
+    expect(DEFAULT_OBSERVATION_SCOPES).toBe("shared");
+    const item = await retainItem(new HindsightClient({ apiUrl: "http://x", bank: "b" }));
+    expect(item.observation_scopes).toBe("shared");
+    // The harness tag still travels: it is what the documents list filters and draws its logo from.
+    expect(item.tags).toEqual(["source:chat", "harness:claude-code"]);
+  });
+
+  it("sends a configured scoping instead, including the server's own default", async () => {
+    const combined = await retainItem(
+      new HindsightClient({ apiUrl: "http://x", bank: "b", observationScopes: "combined" })
+    );
+    expect(combined.observation_scopes).toBe("combined");
+    const explicit = await retainItem(
+      new HindsightClient({ apiUrl: "http://x", bank: "b", observationScopes: [["project:demo"]] })
+    );
+    expect(explicit.observation_scopes).toEqual([["project:demo"]]);
+  });
+});
+
+/**
+ * The scoping default lives in the client, so an entrypoint that forgets to forward the config
+ * fails SOFTLY — it keeps writing correct memories and just ignores the user's `observationScopes`.
+ * Nothing would notice, and the next harness added would copy the site that forgot. So assert it
+ * over the whole family instead of per entrypoint, the way daemon.test.ts guards `ensureDaemon`.
+ */
+/**
+ * #3600: the client captured `apiToken` at construction, so a long-lived host (dsh, Cline, Kilo,
+ * Prime Agent, the MCP server) kept signing with a credential the operator had already replaced —
+ * every call 401'd until the whole host restarted, while `hindsight_diagnose` read the file and
+ * called it healthy.
+ */
+describe("HindsightClient credential refresh", () => {
+  /** Stub fetch that only accepts one bearer token, and records what it was asked. */
+  function server(accepted: () => string | undefined) {
+    const calls: { auth: string | null; body: string | null }[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const auth = new Headers(init.headers).get("Authorization");
+      calls.push({ auth, body: (init.body as string) ?? null });
+      const want = accepted();
+      if (auth !== (want ? `Bearer ${want}` : null))
+        return jsonResponse(401, { detail: "Authentication failed: Invalid API key" });
+      return jsonResponse(200, { ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { calls, fetchMock };
+  }
+
+  it("recovers from a rotated credential without restarting the host", async () => {
+    const { calls } = server(() => "new-key");
+    let onDisk = "old-key";
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: onDisk,
+      tokenProvider: () => onDisk,
+    });
+
+    onDisk = "new-key"; // the operator rotates the key while the host keeps running
+    await client.req("GET", "http://x/thing");
+
+    expect(calls.map((c) => c.auth)).toEqual(["Bearer old-key", "Bearer new-key"]);
+    expect(client.apiToken).toBe("new-key");
+  });
+
+  it("does not retry when the credential is unchanged — a wrong key stays one 401, not two", async () => {
+    const { calls } = server(() => "right-key");
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: "wrong-key",
+      tokenProvider: () => "wrong-key",
+    });
+
+    await expect(client.req("GET", "http://x/thing")).rejects.toThrow(/401/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the last credential that worked when the provider throws", async () => {
+    const { calls } = server(() => "any");
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: "good-key",
+      // A half-written config file must not leave the client with no credential at all.
+      tokenProvider: () => {
+        throw new Error("unparseable config");
+      },
+    });
+
+    await expect(client.req("GET", "http://x/thing")).rejects.toThrow(/401/);
+    expect(calls).toHaveLength(1);
+    expect(client.apiToken).toBe("good-key");
+  });
+
+  it("leaves a provider-less client exactly as it was", async () => {
+    const { calls } = server(() => "any");
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b", apiToken: "stale" });
+
+    await expect(client.req("GET", "http://x/thing")).rejects.toThrow(/401/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("replays the body of a retried POST", async () => {
+    const { calls } = server(() => "new-key");
+    let onDisk = "old-key";
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: onDisk,
+      tokenProvider: () => onDisk,
+    });
+
+    onDisk = "new-key";
+    await client.req("POST", "http://x/thing", { hello: "world" });
+
+    expect(calls.map((c) => c.body)).toEqual([
+      JSON.stringify({ hello: "world" }),
+      JSON.stringify({ hello: "world" }),
+    ]);
+  });
+
+  // reflect() and the drain poll used to fetch directly, so a recovery wired only into req() would
+  // have left them failing forever — which is how the bug read: hooks worked, tools did not.
+  it("recovers on the reflect path too, not just the generic request path", async () => {
+    const { calls } = server(() => "new-key");
+    let onDisk = "old-key";
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: onDisk,
+      tokenProvider: () => onDisk,
+    });
+
+    onDisk = "new-key";
+    await client.reflect("why?", { timeoutMs: 5_000 });
+    expect(calls.map((c) => c.auth)).toEqual(["Bearer old-key", "Bearer new-key"]);
+  });
+
+  it("says whether a credential was even sent, which the server's 401 cannot", async () => {
+    server(() => "needed");
+    const none = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    await expect(none.req("GET", "http://x/thing")).rejects.toThrow(/no apiToken is configured/);
+
+    const wrong = new HindsightClient({ apiUrl: "http://x", bank: "b", apiToken: "nope" });
+    await expect(wrong.req("GET", "http://x/thing")).rejects.toThrow(/was rejected/);
+  });
+});
+
+describe("every client-building entrypoint forwards observationScopes", () => {
+  const SRC = fileURLToPath(new URL("..", import.meta.url));
+
+  function sourceFiles(dir: string, prefix = ""): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory())
+        return entry.name === "e2e" ? [] : sourceFiles(join(dir, entry.name), rel);
+      return entry.name.endsWith(".ts") && !entry.name.includes(".test.") ? [rel] : [];
+    });
+  }
+
+  it("has no module that builds a client without passing cfg.observationScopes", () => {
+    const dropped = sourceFiles(SRC).filter((rel) => {
+      const src = readFileSync(join(SRC, rel), "utf8");
+      // `makeClient({` is the hook/session-start seam: the ClientOpts are built there even though
+      // the constructor call itself is the injected default further up the file.
+      const buildsClient = src.includes("new HindsightClient({") || src.includes("makeClient({");
+      return buildsClient && !src.includes("observationScopes:");
+    });
+    expect(dropped).toEqual([]);
   });
 });

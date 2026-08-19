@@ -53,6 +53,7 @@ def _ids(result: dict) -> set[str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_created_before_filter(memory: MemoryEngine, request_context: RequestContext):
     bank_id = f"test-lmu-created-{uuid.uuid4().hex[:8]}"
     await _ensure_bank(memory, bank_id, request_context)

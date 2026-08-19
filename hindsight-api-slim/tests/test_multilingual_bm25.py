@@ -233,7 +233,17 @@ def test_postgresql_extension_bm25_keeps_raw_query_text():
 
 
 @pytest.mark.asyncio
-async def test_combined_retrieval_uses_default_bm25_cap_for_legacy_config(monkeypatch):
+async def test_combined_retrieval_rejects_config_missing_bm25_cap(monkeypatch):
+    """A config object lacking the BM25 cap fields fails loudly instead of defaulting.
+
+    This used to read ``getattr(config, "bm25_max_query_terms", DEFAULT_...)`` and
+    silently fall back, on the theory that a config could predate the field. It
+    cannot: ``HindsightConfig`` is a dataclass that always defines both fields, so
+    only a stub like the one below can produce that state — and when one does reach
+    here it is a wrong-config bug, not a legacy config. Silently substituting a
+    global default for a resolved value is exactly what made #3584 undiagnosable.
+    """
+
     class FakeDialect:
         max_query_terms: int | None = None
 
@@ -263,18 +273,18 @@ async def test_combined_retrieval_uses_default_bm25_cap_for_legacy_config(monkey
     monkeypatch.setattr(retrieval_mod, "get_config", lambda: legacy_config)
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: fake_dialect)
 
-    result = await retrieval_mod.retrieve_semantic_bm25_combined_sql(
-        FakeConn(),
-        "[0.0]",
-        "alpha beta",
-        "bank-1",
-        ["observation"],
-        5,
-    )
+    with pytest.raises(AttributeError, match="bm25_max_query_terms"):
+        await retrieval_mod.retrieve_semantic_bm25_combined_sql(
+            FakeConn(),
+            "[0.0]",
+            "alpha beta",
+            "bank-1",
+            ["observation"],
+            5,
+        )
 
-    assert result == {"observation": retrieval_mod.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
-    # A config predating the field falls back to the current default cap.
-    assert fake_dialect.max_query_terms == retrieval_mod.DEFAULT_BM25_MAX_QUERY_TERMS
+    # It raised while resolving the cap, so the dialect was never handed a bogus one.
+    assert fake_dialect.max_query_terms is None
 
 
 @pytest.mark.parametrize("selective", [True, False])

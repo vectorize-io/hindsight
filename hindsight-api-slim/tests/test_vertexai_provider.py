@@ -145,6 +145,40 @@ def test_llm_wrapper_vertexai_no_prefix_model():
         assert provider.model == "gemini-2.0-flash-001"
 
 
+@pytest.mark.parametrize(
+    "region,expected_base_url",
+    [
+        # Multi-region codes resolve to the "rep" hosts. The single-region host
+        # pattern ("eu-aiplatform.googleapis.com") does not exist for these, so
+        # an SDK without multi-region handling 404s every call (issue #3567).
+        ("eu", "https://aiplatform.eu.rep.googleapis.com/"),
+        ("us", "https://aiplatform.us.rep.googleapis.com/"),
+        ("europe-west1", "https://europe-west1-aiplatform.googleapis.com/"),
+        ("global", "https://aiplatform.googleapis.com/"),
+    ],
+)
+def test_llm_wrapper_vertexai_region_endpoint(region, expected_base_url):
+    """Regression guard on the resolved Vertex AI endpoint per region kind.
+
+    Uses a real genai.Client (no network: passing an explicit project skips ADC
+    and the base URL is computed at construction) so a google-genai downgrade
+    below the multi-region fix fails here instead of in production.
+    """
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+
+    provider = LLMProvider(
+        provider="vertexai",
+        api_key="",
+        base_url="",
+        model="gemini-2.5-flash",
+        vertexai_project_id="test-project",
+        vertexai_region=region,
+    )
+
+    api_client = provider._gemini_client._api_client
+    assert api_client._http_options.base_url == expected_base_url
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not os.getenv("HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"),

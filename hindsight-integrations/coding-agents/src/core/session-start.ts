@@ -35,7 +35,7 @@ import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge
 import type { ClientOpts, RetainOpts } from "./hindsight";
 import { buildRetainStamp } from "./retain-stamp";
 import { HindsightClient } from "./hindsight";
-import { sessionCacheFile, writeSessionCache } from "./session-cache";
+import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-cache";
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
@@ -133,6 +133,9 @@ export interface SessionStartHookSpec {
  */
 export async function buildSessionStartContext(args: {
   cwd: string;
+  /** Where the session started — see `sessionRootDir`. Same as `cwd` on a fresh session; they
+   *  differ on a resume, where the bank was resolved from the ORIGINAL root. */
+  sessionRoot?: string;
   bankId: string;
   cfg: Config;
   client: SeedContextClient;
@@ -157,7 +160,9 @@ export async function buildSessionStartContext(args: {
   const startSurvey = args.startSurvey ?? startCodebaseSurvey;
   const resolveHeadSha = args.headSha ?? gitHeadSha;
   const countCommitsSince = args.commitsSince ?? commitsSince;
-  const retainStamp = () => buildRetainStamp(cfg, { directory: cwd, harness, bankId });
+  // sessionRoot as well as cwd, so a stamped {gitProject} names the project the bank id does.
+  const retainStamp = () =>
+    buildRetainStamp(cfg, { directory: cwd, sessionRoot: args.sessionRoot, harness, bankId });
 
   // Codebase-survey baseline (Option A): the bank is the only state, so the HEAD at the last survey
   // is recorded IN the bank as a tiny `survey-baseline:<sha>` marker doc (tag source:survey-baseline;
@@ -345,7 +350,10 @@ export async function runSessionStartHook(
     syncCompanionSkill(harness); // keep the installed skill current with the package version
     if (cfg.disabled) return;
 
-    const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, harness), cwd);
+    // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
+    // same bank however far the agent navigates (#3563).
+    const sessionRoot = sessionRootDir(harness, sessionId, cwd);
+    const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, harness, sessionRoot), cwd);
     cfg = resolved.cfg;
     const bankId = resolved.bankId;
     if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
@@ -358,9 +366,10 @@ export async function runSessionStartHook(
       apiToken: cfg.apiToken,
       bank: bankId,
       maxParallelRetains: cfg.maxParallelRetains,
+      observationScopes: cfg.observationScopes,
     });
 
-    const out = await buildSessionStartContext({ cwd, bankId, cfg, client, harness });
+    const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
     if (out.deferInitialReflect && sessionId) {
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
     }

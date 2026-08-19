@@ -66,10 +66,20 @@ def redact_document_body(body: str, config: Any) -> str:
     oversized item carries the identical body, so re-screening would rescan the
     whole document once per sub-batch (issue #3282).
     """
-    try:
-        policy = parse_policy(getattr(config, "memory_defense", None))
-    except Exception:
-        return body
+    # No try/except around the parse. A malformed policy must fail the retain, not
+    # quietly skip screening: this is a security control, so fail-open is the wrong
+    # default even for an unreachable state (the HTTP layer 422s a bad policy on
+    # write, so one can only reach the store by a direct DB edit).
+    #
+    # The blanket ``except Exception: return body`` this replaces could not buy a
+    # successful retain anyway — ``retain_batch`` parses the very same
+    # ``config.memory_defense`` unguarded before extracting, so anything raising here
+    # raises there moments later and the retain fails with nothing persisted. All the
+    # catch did was swallow the traceback that says *why* the policy did not parse,
+    # and hide that screening had been skipped first. It also made the large-batch
+    # path (the only caller) diverge from the small-batch path, which has always let
+    # the same error propagate.
+    policy = parse_policy(config.memory_defense)
     if not policy.enabled:
         return body
     if not any(r.on == "sensitive_data" for r in policy.rules):
@@ -282,6 +292,7 @@ from .types import (
     ResolvedEntity,
     RetainContent,
     RetainContentDict,
+    UserEntities,
 )
 
 logger = logging.getLogger(__name__)
@@ -403,7 +414,11 @@ async def _pre_resolve_phase1(
     set_stage("retain.phase1.resolve")
     from .link_utils import compute_semantic_links_ann
 
-    user_entities_per_content = {idx: content.entities for idx, content in enumerate(contents) if content.entities}
+    user_entities_per_content = {
+        idx: UserEntities(entities=content.entities, resolve=content.resolve_entities)
+        for idx, content in enumerate(contents)
+        if content.entities
+    }
 
     # Use placeholder unit_ids for grouping during resolution.  The actual
     # unit_ids are created later by insert_facts_batch inside the transaction,
@@ -420,7 +435,7 @@ async def _pre_resolve_phase1(
             processed_facts,
             log_buffer,
             user_entities_per_content=user_entities_per_content,
-            entity_labels=getattr(config, "entity_labels", None),
+            entity_labels=config.entity_labels,
         )
 
         # Semantic ANN search on the same connection (autocommit, no transaction).
@@ -709,7 +724,7 @@ async def _streaming_batch_write_ext(
                             combined_content,
                             retain_params,
                             merged_tags,
-                            store_document_text=getattr(config, "store_document_text", True),
+                            store_document_text=config.store_document_text,
                         )
                         log_buffer.append(
                             f"[streaming] Document {effective_doc_id} updated (recovery, preserving existing chunks)"
@@ -724,7 +739,7 @@ async def _streaming_batch_write_ext(
                             retain_params,
                             merged_tags,
                             ops=pool.ops,
-                            store_document_text=getattr(config, "store_document_text", True),
+                            store_document_text=config.store_document_text,
                             txn=ext_txn,
                         )
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
@@ -756,7 +771,7 @@ async def _streaming_batch_write_ext(
                         effective_doc_id,
                         batch_chunk_meta,
                         ops=pool.ops,
-                        store_document_text=getattr(config, "store_document_text", True),
+                        store_document_text=config.store_document_text,
                     )
 
                 # Entity registry reassert (Postgres `entities`): re-create the resolved parents
@@ -921,7 +936,7 @@ async def _delta_batch_write_ext(
                         effective_doc_id,
                         remapped_chunks,
                         ops=pool.ops,
-                        store_document_text=getattr(config, "store_document_text", True),
+                        store_document_text=config.store_document_text,
                     )
 
                 # Entity registry reassert (Postgres `entities`) — see the streaming path (#2662).
@@ -1213,7 +1228,7 @@ async def retain_batch(
     # object at this point (see _retain_batch_async_internal). On a non-allow
     # decision we redact in place or drop the item, and fire a
     # memory_defense.triggered webhook when one is configured.
-    _policy = parse_policy(getattr(config, "memory_defense", None))
+    _policy = parse_policy(config.memory_defense)
     _blocked_violations: list[BlockedViolation] = []
 
     if memory_defense_extension is not None and _policy.enabled:
@@ -1487,9 +1502,15 @@ async def retain_batch(
     # Even small documents go through the same path — they just end up as a
     # single batch. This eliminates the maintenance burden of two separate
     # retain code paths.
-    chunk_batch_size = getattr(config, "retain_chunk_batch_size", 100)
-    chunk_size = getattr(config, "retain_chunk_size", 3000)
-    structured_chunk_size = getattr(config, "retain_structured_chunk_size", None)
+    chunk_batch_size = config.retain_chunk_batch_size
+    # Direct attribute access, never getattr-with-default: these two decide chunk
+    # boundaries, and the delta path must derive them from the very same resolved
+    # config object. A getattr default silently substitutes the global value when
+    # handed the wrong config (StaticConfigProxy raises ConfigFieldAccessError,
+    # an AttributeError subclass, for bank-configurable fields) — which re-chunks
+    # at different boundaries and makes every stored chunk look changed. Fail loud.
+    chunk_size = config.retain_chunk_size
+    structured_chunk_size = config.retain_structured_chunk_size
     all_pre_chunks: list[str] = []
     chunk_to_content: list[int] = []  # maps chunk index -> index into contents
     for content_idx, content in enumerate(contents):
@@ -1698,7 +1719,7 @@ async def _store_document_bodies(
         content_hash=content_hash,
         # Honour store_document_text: when a deployment opts out of keeping the full text, only the
         # chunk texts (needed for citation) go to the store, not the whole document body.
-        original_text=combined_content if getattr(config, "store_document_text", True) else None,
+        original_text=combined_content if config.store_document_text else None,
         chunk_texts=list(chunk_texts),
         tags=list(merged_tags or []),
         metadata={},
@@ -1911,6 +1932,7 @@ async def _streaming_retain_batch(
                 event_date=source.event_date,
                 metadata=source.metadata,
                 entities=source.entities,
+                resolve_entities=source.resolve_entities,
                 tags=source.tags,
                 observation_scopes=source.observation_scopes,
             )
@@ -2132,7 +2154,7 @@ async def _streaming_retain_batch(
                                 combined_content,
                                 retain_params,
                                 merged_tags,
-                                store_document_text=getattr(config, "store_document_text", True),
+                                store_document_text=config.store_document_text,
                             )
                         else:
                             # A 0-fact re-ingest still deletes the outgoing memories — tag that
@@ -2149,7 +2171,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 ops=pool.ops,
-                                store_document_text=getattr(config, "store_document_text", True),
+                                store_document_text=config.store_document_text,
                                 txn=_edge_txn,
                             )
                             # Re-record the witness now that the group's writes have happened, so
@@ -2323,7 +2345,7 @@ async def _streaming_retain_batch(
                                 combined_content,
                                 retain_params,
                                 merged_tags,
-                                store_document_text=getattr(config, "store_document_text", True),
+                                store_document_text=config.store_document_text,
                             )
                             log_buffer.append(
                                 f"[streaming] Document {effective_doc_id} updated "
@@ -2339,7 +2361,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 ops=pool.ops,
-                                store_document_text=getattr(config, "store_document_text", True),
+                                store_document_text=config.store_document_text,
                                 txn=_group_txn,
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
@@ -2385,7 +2407,7 @@ async def _streaming_retain_batch(
                             effective_doc_id,
                             batch_chunk_meta,
                             ops=pool.ops,
-                            store_document_text=getattr(config, "store_document_text", True),
+                            store_document_text=config.store_document_text,
                         )
                         log_buffer.append(
                             f"  Store chunks: {len(batch_chunk_meta)} chunks in {time.time() - step_start:.3f}s"
@@ -2583,7 +2605,7 @@ async def _streaming_retain_batch(
                             combined_content,
                             retain_params,
                             merged_tags,
-                            store_document_text=getattr(config, "store_document_text", True),
+                            store_document_text=config.store_document_text,
                         )
                     else:
                         # A no-facts re-ingest still deletes the outgoing memories — tag that
@@ -2600,7 +2622,7 @@ async def _streaming_retain_batch(
                             retain_params,
                             merged_tags,
                             ops=pool.ops,
-                            store_document_text=getattr(config, "store_document_text", True),
+                            store_document_text=config.store_document_text,
                             txn=_edge_txn,
                         )
                         # Re-record the witness now that the group's writes have happened, so the
@@ -3205,7 +3227,7 @@ async def _try_delta_retain(
                         effective_doc_id,
                         remapped_chunks,
                         ops=pool.ops,
-                        store_document_text=getattr(config, "store_document_text", True),
+                        store_document_text=config.store_document_text,
                     )
                     for chunk_idx, chunk_id in chunk_id_map.items():
                         chunk_id_map_by_doc[(effective_doc_id, chunk_idx)] = chunk_id
@@ -3383,6 +3405,7 @@ def _build_contents(contents_dicts: list[RetainContentDict], document_tags: list
             event_date=event_date_value,
             metadata=item.get("metadata", {}),
             entities=item.get("entities", []),
+            resolve_entities=item.get("resolve_entities", True),
             tags=merged_tags,
             observation_scopes=item.get("observation_scopes"),
         )
@@ -3395,14 +3418,17 @@ def _chunk_contents_for_delta(contents: list[RetainContent], config) -> dict[int
     Chunk contents the same way the streaming path does, returning a map of
     global_chunk_index -> chunk_text.
 
-    Must use the same chunk_size as the streaming path (default 3000) so that
-    chunk boundaries match and delta can detect unchanged chunks.
-    Previously defaulted to 120000, causing all chunks to appear changed on retry.
+    Must read chunk_size/structured_chunk_size off the same resolved ``config``
+    the streaming path uses, so chunk boundaries match and delta can detect
+    unchanged chunks. Two earlier incidents came from this drifting: a 120000
+    default made all chunks appear changed on retry, and a getattr default
+    silently swapped a bank's resolved size for the global one.
     """
     result = {}
     global_chunk_idx = 0
-    chunk_size = getattr(config, "retain_chunk_size", 3000)
-    structured_chunk_size = getattr(config, "retain_structured_chunk_size", None)
+    # Same resolved-config invariant as the streaming path — see the note there.
+    chunk_size = config.retain_chunk_size
+    structured_chunk_size = config.retain_structured_chunk_size
     for content in contents:
         chunks = fact_extraction.chunk_text(
             content.content,
@@ -3444,6 +3470,7 @@ def _build_delta_contents(
             event_date=template_content.event_date,
             metadata=template_content.metadata,
             entities=template_content.entities,
+            resolve_entities=template_content.resolve_entities,
             tags=template_content.tags,
             observation_scopes=template_content.observation_scopes,
         )

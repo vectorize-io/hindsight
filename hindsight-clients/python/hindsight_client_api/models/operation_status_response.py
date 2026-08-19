@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, field_validato
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.child_operation_status import ChildOperationStatus
 from hindsight_client_api.models.operation_progress import OperationProgress
+from hindsight_client_api.models.refresh_mental_model_operation_details import RefreshMentalModelOperationDetails
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -39,9 +40,10 @@ class OperationStatusResponse(BaseModel):
     next_retry_at: Optional[StrictStr] = None
     progress: Optional[OperationProgress] = None
     result_metadata: Optional[Dict[str, Any]] = None
+    details: Optional[RefreshMentalModelOperationDetails] = None
     child_operations: Optional[List[ChildOperationStatus]] = None
     task_payload: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message", "retry_count", "next_retry_at", "progress", "result_metadata", "child_operations", "task_payload"]
+    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message", "retry_count", "next_retry_at", "progress", "result_metadata", "details", "child_operations", "task_payload"]
 
     @field_validator('status')
     def status_validate_enum(cls, value):
@@ -92,6 +94,9 @@ class OperationStatusResponse(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of progress
         if self.progress:
             _dict['progress'] = self.progress.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of details
+        if self.details:
+            _dict['details'] = self.details.to_dict()
         # override the default output from pydantic by calling `to_dict()` of each item in child_operations (list)
         _items = []
         if self.child_operations:
@@ -144,6 +149,11 @@ class OperationStatusResponse(BaseModel):
         if self.result_metadata is None and "result_metadata" in self.model_fields_set:
             _dict['result_metadata'] = None
 
+        # set to None if details (nullable) is None
+        # and model_fields_set contains the field
+        if self.details is None and "details" in self.model_fields_set:
+            _dict['details'] = None
+
         # set to None if child_operations (nullable) is None
         # and model_fields_set contains the field
         if self.child_operations is None and "child_operations" in self.model_fields_set:
@@ -177,6 +187,7 @@ class OperationStatusResponse(BaseModel):
             "next_retry_at": obj.get("next_retry_at"),
             "progress": OperationProgress.from_dict(obj["progress"]) if obj.get("progress") is not None else None,
             "result_metadata": obj.get("result_metadata"),
+            "details": RefreshMentalModelOperationDetails.from_dict(obj["details"]) if obj.get("details") is not None else None,
             "child_operations": [ChildOperationStatus.from_dict(_item) for _item in obj["child_operations"]] if obj.get("child_operations") is not None else None,
             "task_payload": obj.get("task_payload")
         })

@@ -627,6 +627,7 @@ async def _append(memory, request_context, bank_id: str, document_id: str, body:
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_concurrent_appends_keep_every_turn(memory_stub_emb, request_context):
     """Regression: parallel appends used to drop all but one turn.
 
@@ -653,13 +654,10 @@ async def test_concurrent_appends_keep_every_turn(memory_stub_emb, request_conte
 
     # The turns must also survive as memories, not just as document text: the
     # losing writers used to cascade-delete the winner's units.
-    async with memory_stub_emb._pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT text FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-            bank_id,
-            document_id,
-        )
-    stored = " ".join(r["text"] for r in rows)
+    listing = await memory_stub_emb.list_memory_units(
+        bank_id, document_id=document_id, limit=1000, request_context=request_context
+    )
+    stored = " ".join(item["text"] for item in listing["items"])
     assert "TURN_ONE" in stored and "TURN_FOUR" in stored
 
 

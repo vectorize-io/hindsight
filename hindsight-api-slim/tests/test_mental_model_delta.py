@@ -116,6 +116,48 @@ def patch_llm_call(monkeypatch):
     return _install
 
 
+async def _seed_fact_row(memory: MemoryEngine, bank_id: str, text: str) -> str:
+    """Insert one real memory and return its id.
+
+    Canned ``based_on`` entries have to name rows that actually exist: a refresh now
+    checks its stored grounding against the live memories and treats a document whose
+    citations resolve to nothing as a restored/copied bank rather than as evidence
+    about this one (see ``reflect.retractions``). Synthetic ids would trip that.
+    """
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.memories import get_memories
+
+    store = get_memories()
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        unit_ids = await store.insert_facts(
+            conn=conn,
+            ops=memory._backend.ops,
+            bank_id=bank_id,
+            facts=[
+                SimpleNamespace(
+                    fact_text=text,
+                    embedding=memory.embeddings.encode([text])[0],
+                    fact_type="observation",
+                    tags=[],
+                    context=None,
+                    document_id=None,
+                    chunk_id=None,
+                    metadata=None,
+                    observation_scopes=None,
+                    entities=[],
+                    causal_relations=[],
+                    occurred_start=None,
+                    occurred_end=None,
+                    mentioned_at=None,
+                )
+            ],
+            document_id=None,
+        )
+    return unit_ids[0]
+
+
 class TestDeltaRefreshPlumbing:
     """Deterministic tests that verify the branching/plumbing of delta-mode refresh."""
 
@@ -275,6 +317,7 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_delta_no_new_facts_advances_watermark_to_newest_processed(
         self,
         memory: MemoryEngine,
@@ -283,15 +326,15 @@ class TestDeltaRefreshPlumbing:
         patch_llm_call,
         monkeypatch,
     ):
-        """A successful no-op refresh advances ``last_refreshed_at`` to the newest
-        in-scope memory it actually saw — not ``now()``.
+        """A successful no-op refresh advances ``last_memory_seen_at`` to the newest
+        in-scope memory it actually saw — not ``now()`` — and records that it ran by
+        stamping ``last_refreshed_at``.
 
-        The scheduled-refresh gate uses ``last_refreshed_at`` as its watermark. If a
-        no-op refresh left it unchanged, one unrelated memory would make every
-        maintenance tick submit another LLM refresh forever. Anchoring the watermark to
-        the newest processed memory stops that storm without jumping ahead of the real
-        data, so a row that commits later stays newer than the watermark (see
-        ``test_delta_refresh_watermark_survives_straddling_commit``).
+        The scheduled-refresh gate keys off the watermark. If a no-op refresh left it
+        unchanged, one unrelated memory would make every maintenance tick submit another
+        LLM refresh forever. Anchoring it to the newest processed memory stops that storm
+        without jumping ahead of the real data, so a row that commits later stays newer
+        than the watermark (see ``test_delta_refresh_watermark_survives_straddling_commit``).
         """
         bank_id = f"test-delta-watermark-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -333,7 +376,8 @@ class TestDeltaRefreshPlumbing:
                 bank_id,
             )
             stale_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                "SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                "FROM mental_models WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm["id"],
             )
@@ -361,12 +405,14 @@ class TestDeltaRefreshPlumbing:
 
         async with memory._pool.acquire() as conn:
             mm_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                "SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                "FROM mental_models WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm["id"],
             )
             assert mm_row is not None
-            after = mm_row["last_refreshed_at"]
+            after = mm_row["last_memory_seen_at"]
+            refreshed_at = mm_row["last_refreshed_at"]
             is_stale = await memory.compute_mental_model_is_stale(conn, bank_id, mm_row)
             history_count = await conn.fetchval(
                 "SELECT COUNT(*) FROM mental_model_history WHERE bank_id = $1 AND mental_model_id = $2",
@@ -377,6 +423,8 @@ class TestDeltaRefreshPlumbing:
         # updated_at, not now() — so the settled window no longer re-triggers.
         assert after == fact_updated_at
         assert after > before
+        # The refresh ran, so the wall clock says so even though nothing was written.
+        assert refreshed_at > before
         assert is_stale is False
         assert history_count == 0
 
@@ -388,6 +436,7 @@ class TestDeltaRefreshPlumbing:
             mental_model_id: str,
             request_context: RequestContext,
             skip_if_in_flight: bool = False,
+            automatic: bool = False,
         ) -> dict[str, str]:
             submitted.append(mental_model_id)
             return {"operation_id": str(uuid.uuid4())}
@@ -398,6 +447,7 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_delta_refresh_watermark_survives_straddling_commit(
         self,
         memory: MemoryEngine,
@@ -507,7 +557,8 @@ class TestDeltaRefreshPlumbing:
 
         async with memory._pool.acquire() as conn:
             mm_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                "SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                "FROM mental_models WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm["id"],
             )
@@ -517,7 +568,7 @@ class TestDeltaRefreshPlumbing:
                 straddle_fact_id,
             )
             assert mm_row is not None
-            after = mm_row["last_refreshed_at"]
+            after = mm_row["last_memory_seen_at"]
             # Watermark advanced only to the committed baseline the refresh actually saw.
             assert after == baseline_updated_at
             # The straddler was stamped before the cutoff (an exact-cutoff/now() watermark
@@ -720,13 +771,16 @@ class TestDeltaRefreshPlumbing:
             request_context=request_context,
         )
 
+        old_id = await _seed_fact_row(memory, bank_id, "Alice has been the team lead since 2019")
+        new_id = await _seed_fact_row(memory, bank_id, "Bob joined the team as junior engineer")
+
         # First refresh seeds prior based_on with an OLD fact (zero ops applied).
         patch_reflect(
             memory,
             text="ignored — delta keeps existing",
             facts=[
                 {
-                    "id": "obs-old-alice",
+                    "id": old_id,
                     "text": "Alice has been the team lead since 2019",
                     "type": "observation",
                     "context": None,
@@ -738,7 +792,7 @@ class TestDeltaRefreshPlumbing:
             bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
         )
         first_based_on = (first.get("reflect_response") or {}).get("based_on") or {}
-        assert "obs-old-alice" in {f.get("id") for f in first_based_on.get("observation", [])}
+        assert old_id in {f.get("id") for f in first_based_on.get("observation", [])}
 
         # Second refresh brings only a NEW fact.
         patch_reflect(
@@ -746,7 +800,7 @@ class TestDeltaRefreshPlumbing:
             text="# Team\n\nAlice is the lead. Bob joined.",
             facts=[
                 {
-                    "id": "obs-new-bob",
+                    "id": new_id,
                     "text": "Bob joined the team as junior engineer",
                     "type": "observation",
                     "context": None,
@@ -769,16 +823,16 @@ class TestDeltaRefreshPlumbing:
         assert len(llm_calls) == 1
         user_msg = llm_calls[0]["messages"][1]["content"]
         # The NEW fact is sent to the delta call...
-        assert "obs-new-bob" in user_msg
+        assert new_id in user_msg
         assert "Bob joined the team" in user_msg
         # ...but the accumulated OLD fact must NOT be re-sent (the regression).
-        assert "obs-old-alice" not in user_msg
+        assert old_id not in user_msg
         assert "Alice has been the team lead since 2019" not in user_msg
 
         # based_on still ACCUMULATES both facts for grounding/audit.
         based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
         obs_ids = {f.get("id") for f in based_on.get("observation", [])}
-        assert obs_ids == {"obs-new-bob", "obs-old-alice"}
+        assert obs_ids == {new_id, old_id}
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -876,6 +930,7 @@ class TestDeltaRefreshPlumbing:
         )
         seeded_content = seeded["content"]
         seeded_refreshed_at = seeded["last_refreshed_at"]
+        seeded_memory_seen_at = seeded["last_memory_seen_at"]
 
         # Second refresh: the delta LLM call raises. The candidate is deliberately
         # a plausible-looking document — the danger is that it *is* non-empty, so
@@ -905,8 +960,9 @@ class TestDeltaRefreshPlumbing:
         assert preserved["content"] == seeded_content, (
             "Delta failure overwrote the document with the narrow-window candidate (#3112)"
         )
-        # The watermark must not move: the new fact has to stay inside the window
-        # the retry reads, or it is lost for good.
+        # Neither timestamp moves: the new fact has to stay inside the window the retry
+        # reads, or it is lost for good, and no refresh finished to record.
+        assert preserved["last_memory_seen_at"] == seeded_memory_seen_at
         assert preserved["last_refreshed_at"] == seeded_refreshed_at
         rr = preserved.get("reflect_response") or {}
         assert rr.get("refresh_skipped") == "delta_ops_failed"

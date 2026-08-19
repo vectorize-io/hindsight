@@ -513,9 +513,12 @@ paths:
       description: |-
         Recall memory using semantic similarity and spreading activation.
 
-        The type parameter is optional and must be one of:
+        The `types` parameter is optional and may contain any of:
         - `world`: General knowledge about people, places, events, and things that happen
         - `experience`: Memories about experience, conversations, actions taken, and tasks performed
+        - `observation`: Consolidated knowledge synthesized from facts
+
+        If `types` is omitted, all fact types are recalled.
       operationId: recall_memories
       parameters:
       - explode: false
@@ -609,9 +612,44 @@ paths:
       - Memory
   /v1/default/banks:
     get:
-      description: Get a list of all agents with their profiles
+      description: "List banks with their profiles and summary stats, most recently\
+        \ written first (`last_write_at` descending), with pagination and optional\
+        \ search."
       operationId: list_banks
       parameters:
+      - description: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+        explode: true
+        in: query
+        name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Maximum number of banks to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of banks to return
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -633,7 +671,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: List all memory banks
+      summary: List memory banks
       tags:
       - Banks
   /v1/default/banks/{bank_id}/stats:
@@ -1817,8 +1855,10 @@ paths:
     patch:
       description: "Rename a node (set `name`), move it under another folder (set\
         \ `parent_id`, null for the root), and/or update a page's options (`source_query`,\
-        \ `tags`, `max_tokens`). Changing `source_query` schedules an async refresh\
-        \ so the page rebuilds against the new question."
+        \ `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async\
+        \ refresh so the page rebuilds against the new question. `trigger` is applied\
+        \ as a patch: the fields you send are updated and the rest keep the page's\
+        \ current values."
       operationId: update_knowledge_node
       parameters:
       - explode: false
@@ -4936,7 +4976,7 @@ components:
       - disposition
       title: BankListItem
     BankListResponse:
-      description: Response model for listing all banks.
+      description: "Response model for listing banks, one page at a time."
       example:
         banks:
         - bank_id: user123
@@ -4951,13 +4991,29 @@ components:
           mission: I am a software engineer helping my team ship quality code
           name: Alice
           updated_at: 2024-01-16T14:20:00Z
+        limit: 100
+        offset: 0
+        total: 50
       properties:
         banks:
           items:
             $ref: '#/components/schemas/BankListItem'
           type: array
+        total:
+          description: "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
       required:
       - banks
+      - limit
+      - offset
+      - total
       title: BankListResponse
     BankLlmHealthResponse:
       description: |-
@@ -5232,6 +5288,10 @@ components:
           nullable: true
           type: array
         reflect_source_facts_max_tokens:
+          nullable: true
+          type: integer
+        mental_model_min_refresh_interval_seconds:
+          minimum: 0.0
           nullable: true
           type: integer
         llm_gemini_safety_settings:
@@ -5878,7 +5938,7 @@ components:
         parent_id: parent_id
         name: name
         trigger:
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -5902,8 +5962,9 @@ components:
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
+          min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 6
+          recall_max_tokens: 1
         tags:
         - tags
         - tags
@@ -6042,6 +6103,9 @@ components:
     DirectiveListResponse:
       description: Response model for listing directives.
       example:
+        total: 6
+        offset: 5
+        limit: 1
         items:
         - is_active: true
           updated_at: updated_at
@@ -6070,8 +6134,24 @@ components:
           items:
             $ref: '#/components/schemas/DirectiveResponse'
           type: array
+        total:
+          description: Total number of directives matching the filter (not just this
+            page)
+          title: Total
+          type: integer
+        limit:
+          description: Page size that was applied
+          title: Limit
+          type: integer
+        offset:
+          description: Offset that was applied
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: DirectiveListResponse
     DirectiveResponse:
       description: Response model for a directive.
@@ -6837,6 +6917,34 @@ components:
         description: description
         id: id
         is_stale: true
+        trigger:
+          recall_chunks_max_tokens: 5
+          refresh_cron: refresh_cron
+          tag_groups:
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
+          fact_types:
+          - world
+          - world
+          response_schema:
+            key: ""
+          exclude_mental_model_ids:
+          - exclude_mental_model_ids
+          - exclude_mental_model_ids
+          include_chunks: true
+          tags_match: any
+          min_refresh_interval_seconds: 0
+          keep_trace: false
+          recall_max_tokens: 1
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -6880,6 +6988,8 @@ components:
         is_stale:
           nullable: true
           type: boolean
+        trigger:
+          $ref: '#/components/schemas/MentalModelTrigger-Output'
         children:
           default: []
           items:
@@ -7049,6 +7159,34 @@ components:
           description: description
           id: id
           is_stale: true
+          trigger:
+            recall_chunks_max_tokens: 5
+            refresh_cron: refresh_cron
+            tag_groups:
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            tags_match: any
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            recall_max_tokens: 1
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -7064,6 +7202,34 @@ components:
           description: description
           id: id
           is_stale: true
+          trigger:
+            recall_chunks_max_tokens: 5
+            refresh_cron: refresh_cron
+            tag_groups:
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            tags_match: any
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            recall_max_tokens: 1
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -7867,6 +8033,20 @@ components:
             $ref: '#/components/schemas/EntityInput'
           nullable: true
           type: array
+        resolve_entities:
+          default: true
+          description: "Whether the names in 'entities' are resolved against the entities\
+            \ already in the bank. True (default) matches each name to a similar existing\
+            \ entity when it scores above the match threshold, so a name close to\
+            \ one already in the bank may resolve to that one instead of the one you\
+            \ wrote. False takes your names literally — an existing entity is reused\
+            \ only on a case-insensitive name match, any other name creates a new\
+            \ entity, and your names are never merged with each other. This applies\
+            \ only to the entities you supply here; auto-extracted entities are always\
+            \ resolved, since they are the extractor's guess at a name rather than\
+            \ yours. Ignored when 'entities' is omitted."
+          title: Resolve Entities
+          type: boolean
         tags:
           items:
             type: string
@@ -7990,6 +8170,7 @@ components:
           description: What a real refresh would do with the document.
           enum:
           - content_written
+          - content_unchanged
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
           - refresh_failed_delta_not_applied
@@ -8034,6 +8215,8 @@ components:
           type: string
         delta_operations:
           $ref: '#/components/schemas/MentalModelDeltaOperations'
+        retraction:
+          $ref: '#/components/schemas/MentalModelRetraction'
         trace:
           $ref: '#/components/schemas/MentalModelRefreshTrace'
         usage:
@@ -8087,17 +8270,14 @@ components:
     MentalModelListResponse:
       description: Response model for listing mental models.
       example:
+        total: 5
+        offset: 7
+        limit: 2
         items:
-        - source_query: source_query
-          max_tokens: 0
-          bank_id: bank_id
-          reflect_response:
-            key: ""
-          name: name
+        - max_tokens: 0
           created_at: created_at
-          id: id
           trigger:
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -8121,24 +8301,26 @@ components:
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
+            min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 6
+            recall_max_tokens: 1
           last_refreshed_at: last_refreshed_at
           is_stale: true
+          last_memory_seen_at: last_memory_seen_at
           content: content
           tags:
           - tags
           - tags
-        - source_query: source_query
-          max_tokens: 0
+          source_query: source_query
           bank_id: bank_id
           reflect_response:
             key: ""
           name: name
-          created_at: created_at
           id: id
+        - max_tokens: 0
+          created_at: created_at
           trigger:
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -8162,21 +8344,45 @@ components:
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
+            min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 6
+            recall_max_tokens: 1
           last_refreshed_at: last_refreshed_at
           is_stale: true
+          last_memory_seen_at: last_memory_seen_at
           content: content
           tags:
           - tags
           - tags
+          source_query: source_query
+          bank_id: bank_id
+          reflect_response:
+            key: ""
+          name: name
+          id: id
       properties:
         items:
           items:
             $ref: '#/components/schemas/MentalModelResponse'
           type: array
+        total:
+          description: Total number of mental models matching the filter (not just
+            this page)
+          title: Total
+          type: integer
+        limit:
+          description: Page size that was applied
+          title: Limit
+          type: integer
+        offset:
+          description: Offset that was applied
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: MentalModelListResponse
     MentalModelRefreshScope:
       description: |-
@@ -8260,6 +8466,7 @@ components:
           description: What the refresh did with the document.
           enum:
           - content_written
+          - content_unchanged
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
           - refresh_failed_delta_not_applied
@@ -8277,6 +8484,8 @@ components:
           type: array
         delta_operations:
           $ref: '#/components/schemas/MentalModelDeltaOperations'
+        retraction:
+          $ref: '#/components/schemas/MentalModelRetraction'
         usage:
           $ref: '#/components/schemas/TokenUsage'
         duration_ms:
@@ -8301,9 +8510,9 @@ components:
           nullable: true
           type: string
         created_before:
-          description: "Database-time snapshot bounding the refresh. Memories committed\
-            \ after this are not read, so they stay newer than the persisted watermark\
-            \ and are caught by the next refresh."
+          description: "Database-time snapshot bounding the refresh. Memories written\
+            \ or edited after this are not read, so they stay newer than the persisted\
+            \ watermark and are caught by the next refresh."
           format: date-time
           title: Created Before
           type: string
@@ -8317,16 +8526,10 @@ components:
     MentalModelResponse:
       description: Response model for a mental model (stored reflect response).
       example:
-        source_query: source_query
         max_tokens: 0
-        bank_id: bank_id
-        reflect_response:
-          key: ""
-        name: name
         created_at: created_at
-        id: id
         trigger:
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -8350,14 +8553,22 @@ components:
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
+          min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 6
+          recall_max_tokens: 1
         last_refreshed_at: last_refreshed_at
         is_stale: true
+        last_memory_seen_at: last_memory_seen_at
         content: content
         tags:
         - tags
         - tags
+        source_query: source_query
+        bank_id: bank_id
+        reflect_response:
+          key: ""
+        name: name
+        id: id
       properties:
         id:
           title: Id
@@ -8387,6 +8598,9 @@ components:
         last_refreshed_at:
           nullable: true
           type: string
+        last_memory_seen_at:
+          nullable: true
+          type: string
         created_at:
           nullable: true
           type: string
@@ -8401,6 +8615,39 @@ components:
       - id
       - name
       title: MentalModelResponse
+    MentalModelRetraction:
+      description: |-
+        Facts the document cited that no longer exist, and what was done about them.
+
+        A retraction is the one refresh input that is *invisible* in every other
+        report: the fact is gone from the bank, so it appears in no recall, no tool
+        call, and no supporting-fact list. Without this, a refresh that quietly
+        deleted a paragraph — or quietly declined to — leaves no evidence of why.
+      properties:
+        fact_ids:
+          description: Ids the document's based_on cites that no longer exist in the
+            bank.
+          items:
+            type: string
+          type: array
+        fact_texts:
+          description: "What those facts said, as the document recorded them. The\
+            \ rows themselves are gone — an observation swept away with its source\
+            \ keeps no history — so this copy is the only surviving record."
+          items:
+            type: string
+          type: array
+        applied:
+          description: Whether the pass that removes them ran to completion (zero
+            edits still counts).
+          title: Applied
+          type: boolean
+        deferred_reason:
+          nullable: true
+          type: string
+      required:
+      - applied
+      title: MentalModelRetraction
     MentalModelTraceToolCall:
       description: |-
         One reflect tool call made during a refresh.
@@ -8449,7 +8696,7 @@ components:
     MentalModelTrigger-Input:
       description: Trigger settings for a mental model.
       example:
-        recall_chunks_max_tokens: 1
+        recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
@@ -8473,8 +8720,9 @@ components:
         - exclude_mental_model_ids
         include_chunks: true
         tags_match: any
+        min_refresh_interval_seconds: 0
         keep_trace: false
-        recall_max_tokens: 6
+        recall_max_tokens: 1
       properties:
         mode:
           default: full
@@ -8498,6 +8746,10 @@ components:
         refresh_cron:
           nullable: true
           type: string
+        min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         fact_types:
           items:
             enum:
@@ -8561,7 +8813,7 @@ components:
     MentalModelTrigger-Output:
       description: Trigger settings for a mental model.
       example:
-        recall_chunks_max_tokens: 1
+        recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
@@ -8585,8 +8837,9 @@ components:
         - exclude_mental_model_ids
         include_chunks: true
         tags_match: any
+        min_refresh_interval_seconds: 0
         keep_trace: false
-        recall_max_tokens: 6
+        recall_max_tokens: 1
       properties:
         mode:
           default: full
@@ -8610,6 +8863,10 @@ components:
         refresh_cron:
           nullable: true
           type: string
+        min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         fact_types:
           items:
             enum:
@@ -8791,6 +9048,11 @@ components:
         filename:
           nullable: true
           type: string
+        mental_model_id:
+          nullable: true
+          type: string
+        details:
+          $ref: '#/components/schemas/RefreshMentalModelOperationDetails'
         created_at:
           title: Created At
           type: string
@@ -8868,6 +9130,8 @@ components:
         result_metadata:
           additionalProperties: {}
           nullable: true
+        details:
+          $ref: '#/components/schemas/RefreshMentalModelOperationDetails'
         child_operations:
           items:
             $ref: '#/components/schemas/ChildOperationStatus'
@@ -9487,6 +9751,53 @@ components:
             $ref: '#/components/schemas/ReflectLLMCall'
           type: array
       title: ReflectTrace
+    RefreshMentalModelOperationDetails:
+      description: |-
+        What a refresh_mental_model operation did, on the operation record itself.
+
+        Reported under an async operation's ``details``, which is keyed by
+        ``operation_type``: each type that has a typed outcome to report contributes
+        its own shape there, rather than every type's fields being flattened onto the
+        operation. Today refresh is the only one.
+
+        This exists because ``result_metadata`` — the only per-refresh record kept
+        indefinitely — could not say what a refresh did (#3274), and is documented as
+        debug-only and unstable, so it is not something a caller can build on.
+      properties:
+        operation_type:
+          default: refresh_mental_model
+          description: "Discriminator: which operation type this detail describes."
+          enum:
+          - refresh_mental_model
+          title: Operation Type
+          type: string
+        outcome:
+          description: "What the refresh did with the document: rewrote it (`content_written`),\
+            \ produced a document identical to the stored one (`content_unchanged`),\
+            \ had no new facts to read at all (`content_preserved_no_new_facts`),\
+            \ or refused to write (the `refresh_failed_*` values)."
+          enum:
+          - content_written
+          - content_unchanged
+          - content_preserved_no_new_facts
+          - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
+          - refresh_failed_structured_output
+          title: Outcome
+          type: string
+        failure_reason:
+          enum:
+          - empty_candidate
+          - structured_doc_unreadable
+          - delta_ops_failed
+          - delta_ops_all_skipped
+          - delta_not_applied
+          - structured_output_failed
+          nullable: true
+          type: string
+      required:
+      - outcome
+      title: RefreshMentalModelOperationDetails
     ReprocessDocumentResponse:
       description: Response model for reprocess document endpoint.
       example:
@@ -9861,6 +10172,19 @@ components:
             type: string
           nullable: true
           type: array
+        resolve_entities:
+          default: true
+          description: "Whether the names in 'entities' are resolved against the entities\
+            \ already in the bank. True (default) is what retain does: a similar existing\
+            \ entity is reused when it scores above the match threshold, so a name\
+            \ close to one already in the bank may resolve to that one instead of\
+            \ the one you wrote. False takes the names literally — an existing entity\
+            \ is reused only on a case-insensitive name match, any other name creates\
+            \ a new entity, and names in the same request are never merged with each\
+            \ other. Use False for hand-authored corrections, where the name you sent\
+            \ is the answer rather than a guess. Ignored when 'entities' is omitted."
+          title: Resolve Entities
+          type: boolean
         state:
           nullable: true
           type: string
@@ -9908,6 +10232,34 @@ components:
         max_tokens: 0
         parent_id: parent_id
         name: name
+        trigger:
+          recall_chunks_max_tokens: 5
+          refresh_cron: refresh_cron
+          tag_groups:
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
+          fact_types:
+          - world
+          - world
+          response_schema:
+            key: ""
+          exclude_mental_model_ids:
+          - exclude_mental_model_ids
+          - exclude_mental_model_ids
+          include_chunks: true
+          tags_match: any
+          min_refresh_interval_seconds: 0
+          keep_trace: false
+          recall_max_tokens: 1
         tags:
         - tags
         - tags
@@ -9929,6 +10281,8 @@ components:
         max_tokens:
           nullable: true
           type: integer
+        trigger:
+          $ref: '#/components/schemas/MentalModelTrigger-Input'
       title: UpdateNodeRequest
     UpdateWebhookRequest:
       description: Request model for updating a webhook. Only provided fields are

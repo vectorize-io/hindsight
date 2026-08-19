@@ -2393,6 +2393,9 @@ class BanksApi:
     @validate_call
     async def list_banks(
         self,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on bank ID or name (e.g. 'alice')")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2407,10 +2410,16 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> BankListResponse:
-        """List all memory banks
+        """List memory banks
 
-        Get a list of all agents with their profiles
+        List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.
 
+        :param q: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+        :type q: str
+        :param limit: Maximum number of banks to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2436,6 +2445,9 @@ class BanksApi:
         """ # noqa: E501
 
         _param = self._list_banks_serialize(
+            q=q,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2461,6 +2473,9 @@ class BanksApi:
     @validate_call
     async def list_banks_with_http_info(
         self,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on bank ID or name (e.g. 'alice')")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2475,10 +2490,16 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[BankListResponse]:
-        """List all memory banks
+        """List memory banks
 
-        Get a list of all agents with their profiles
+        List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.
 
+        :param q: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+        :type q: str
+        :param limit: Maximum number of banks to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2504,6 +2525,9 @@ class BanksApi:
         """ # noqa: E501
 
         _param = self._list_banks_serialize(
+            q=q,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2529,6 +2553,9 @@ class BanksApi:
     @validate_call
     async def list_banks_without_preload_content(
         self,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on bank ID or name (e.g. 'alice')")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2543,10 +2570,16 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """List all memory banks
+        """List memory banks
 
-        Get a list of all agents with their profiles
+        List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.
 
+        :param q: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+        :type q: str
+        :param limit: Maximum number of banks to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2572,6 +2605,9 @@ class BanksApi:
         """ # noqa: E501
 
         _param = self._list_banks_serialize(
+            q=q,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2592,6 +2628,9 @@ class BanksApi:
 
     def _list_banks_serialize(
         self,
+        q,
+        limit,
+        offset,
         authorization,
         _request_auth,
         _content_type,
@@ -2615,6 +2654,18 @@ class BanksApi:
 
         # process the path parameters
         # process the query parameters
+        if q is not None:
+            
+            _query_params.append(('q', q))
+            
+        if limit is not None:
+            
+            _query_params.append(('limit', limit))
+            
+        if offset is not None:
+            
+            _query_params.append(('offset', offset))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization

@@ -374,7 +374,7 @@ This recall budget flows through the pipeline as follows:
 
 | Pipeline stage | How the recall budget is used |
 |----------------|-------------------------------|
-| **Semantic search** | Over-fetches max(recall_budget × 5, 100) from HNSW, trims to recall_budget |
+| **Semantic search** | `LIMIT recall_budget` in SQL, with the ANN candidate list sized to match for the query (on pgvector, `hnsw.ef_search`, capped at that setting's maximum of 1000) |
 | **BM25 search** | `LIMIT recall_budget` in SQL |
 | **Graph traversal** | Explores up to recall_budget nodes |
 | **Temporal spreading** | Activates up to recall_budget nodes via links |

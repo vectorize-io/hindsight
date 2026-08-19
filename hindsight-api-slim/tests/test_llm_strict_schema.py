@@ -23,6 +23,7 @@ reads the same retain-scoped field rather than the global flag, keeping the batc
 and streaming paths in agreement.
 """
 
+import dataclasses
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -45,18 +46,16 @@ class _Resp(BaseModel):
 
 
 def _config_with(strict: bool) -> object:
-    """A config proxy that overrides only llm_strict_schema (avoids recursion)."""
-    from hindsight_api.config import get_config
+    """A real config overriding only llm_strict_schema.
 
-    real = get_config()
+    Delegating to ``get_config()`` used to work by accident: the retain path read
+    bank-configurable fields through getattr defaults, so the StaticConfigProxy
+    guard was swallowed. It now reads them directly, so the test needs the raw
+    resolved config rather than the global proxy.
+    """
+    from hindsight_api.config import _get_raw_config
 
-    class _Cfg:
-        llm_strict_schema = strict
-
-        def __getattr__(self, name):
-            return getattr(real, name)
-
-    return _Cfg()
+    return dataclasses.replace(_get_raw_config(), llm_strict_schema=strict)
 
 
 # --------------------------------------------------------------------------- #
@@ -298,22 +297,23 @@ def _retain_config(strict_retain: bool):
     A bank-resolved config, not the global one -- retain_extraction_mode and friends
     are bank-configurable and raise if read off global config.
     """
-    from hindsight_api.config import HindsightConfig
+    from hindsight_api.config import _get_raw_config
 
-    cfg = MagicMock(spec=HindsightConfig)
-    cfg.retain_llm_max_retries = 1
-    cfg.llm_max_retries = 1
-    cfg.retain_llm_initial_backoff = 0.0
-    cfg.llm_initial_backoff = 0.0
-    cfg.retain_llm_max_backoff = 0.0
-    cfg.llm_max_backoff = 0.0
-    cfg.retain_max_completion_tokens = 8192
-    cfg.retain_extraction_mode = "concise"
-    cfg.retain_extract_causal_links = False
-    cfg.retain_mission = None
-    cfg.llm_temperature_retain = 0.1
-    cfg.llm_strict_schema_retain = strict_retain
-    return cfg
+    return dataclasses.replace(
+        _get_raw_config(),
+        retain_llm_max_retries=1,
+        llm_max_retries=1,
+        retain_llm_initial_backoff=0.0,
+        llm_initial_backoff=0.0,
+        retain_llm_max_backoff=0.0,
+        llm_max_backoff=0.0,
+        retain_max_completion_tokens=8192,
+        retain_extraction_mode="concise",
+        retain_extract_causal_links=False,
+        retain_mission=None,
+        llm_temperature_retain=0.1,
+        llm_strict_schema_retain=strict_retain,
+    )
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,10 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
+# Drives alembic and asserts on the search_vector column itself — an internal FTS
+# index column, not part of the public read model.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 _SCRIPT_LOCATION = str(Path(__file__).parent.parent / "hindsight_api" / "alembic")
 
 # Revision immediately before the backfill migration.

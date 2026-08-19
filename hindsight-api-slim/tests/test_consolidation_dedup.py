@@ -10,6 +10,7 @@ import types
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from unittest.mock import DEFAULT, AsyncMock, patch
 
 import pytest
@@ -23,9 +24,18 @@ from hindsight_api.engine.consolidation.consolidator import (
     _DedupDecision,
     _duplicate_create_target,
     _norm_obs_text,
+    _TemporalBounds,
 )
 from hindsight_api.engine.memories import RecallArms
 from hindsight_api.engine.search.types import RetrievalResult
+
+#: Dates the skipped CREATE would have been stamped with; the fold must carry them onto the twin.
+_SOURCE_BOUNDS = _TemporalBounds(
+    event_date=datetime(2024, 1, 2, tzinfo=timezone.utc),
+    occurred_start=datetime(2023, 1, 2, tzinfo=timezone.utc),
+    occurred_end=datetime(2024, 1, 3, tzinfo=timezone.utc),
+    mentioned_at=datetime(2024, 1, 4, tzinfo=timezone.utc),
+)
 
 
 @dataclass
@@ -196,6 +206,7 @@ def _ctx(threshold: float = 0.97):
         create_text="YouTube content in Uzbek is very rich.",
         create_source_ids=[uuid.uuid4()],
         tags=["t1"],
+        source_bounds=_SOURCE_BOUNDS,
     )
     return kwargs, conn, llm
 
@@ -337,6 +348,15 @@ async def test_dedup_llm_merge_folds_into_twin() -> None:
     assert args[1] == "Uzbek content on YouTube is very rich."  # merged text persisted
     assert args[2] == kwargs["create_source_ids"]  # new (live) source facts folded in
     assert args[3] == uuid.UUID(_TWIN_ID)  # onto the twin row
+    # ...along with the dates the skipped CREATE carried, so the twin's interval widens (#3477).
+    # What the SQL *does* with them is covered against a real database in
+    # test_consolidation_temporal_merge.py — a mocked connection cannot check that.
+    assert args[5:] == (
+        _SOURCE_BOUNDS.event_date,
+        _SOURCE_BOUNDS.occurred_start,
+        _SOURCE_BOUNDS.occurred_end,
+        _SOURCE_BOUNDS.mentioned_at,
+    )
 
 
 async def test_dedup_llm_merge_sanitizes_text_before_write() -> None:
@@ -404,6 +424,7 @@ def _update_ctx(threshold: float = 0.97):
     return kwargs, conn, llm
 
 
+@pytest.mark.memory_backend_incompatible
 async def test_dedup_update_merge_folds_into_twin_and_deletes_updated() -> None:
     kwargs, conn, llm = _update_ctx()
     llm.call.return_value = _DedupDecision(action="merge", text="Uzbek YouTube content is very rich and growing.")

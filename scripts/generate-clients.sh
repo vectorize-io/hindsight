@@ -372,24 +372,28 @@ npm run generate
 # Deno's Request constructor rejects a 'client' field in RequestInit because
 # 'client' is a reserved Deno.HttpClient option name, causing a TypeError.
 # We destructure it out before spreading opts into RequestInit.
+# OLD below must match @hey-api/openapi-ts's emitted text verbatim, indentation
+# included — 0.97.x nests this block two levels deeper than 0.88.x did, so the
+# anchor has to be re-checked on every generator bump. A stale anchor only warns
+# here, but verify-generated-files then fails on the unpatched client.gen.ts.
 echo "Patching client.gen.ts for Deno compatibility..."
 cd "$PROJECT_ROOT"
 python3 << PATCH_SCRIPT
 CLIENT_GEN = "$TYPESCRIPT_CLIENT_DIR/generated/client/client.gen.ts"
 with open(CLIENT_GEN) as f:
     content = f.read()
-OLD = '''    const requestInit: ReqInit = {
-      redirect: "follow",
-      ...opts,
-      body: getValidRequestBody(opts),
-    };'''
-NEW = '''    // Exclude hey-api internal fields that conflict with Deno's RequestInit.client
-    const { client: _client, ...optsForRequest } = opts as typeof opts & { client?: unknown };
-    const requestInit: ReqInit = {
-      redirect: "follow",
-      ...optsForRequest,
-      body: getValidRequestBody(opts),
-    };'''
+OLD = '''      const requestInit: ReqInit = {
+        redirect: "follow",
+        ...opts,
+        body: getValidRequestBody(opts),
+      };'''
+NEW = '''      // Exclude hey-api internal fields that conflict with Deno's RequestInit.client
+      const { client: _client, ...optsForRequest } = opts as typeof opts & { client?: unknown };
+      const requestInit: ReqInit = {
+        redirect: "follow",
+        ...optsForRequest,
+        body: getValidRequestBody(opts),
+      };'''
 if OLD in content:
     content = content.replace(OLD, NEW)
     with open(CLIENT_GEN, "w") as f:
@@ -424,12 +428,19 @@ else
     [ -f "null_test.go" ] && cp null_test.go "$TEMP_DIR/"
     [ -f "trace_test.go" ] && cp trace_test.go "$TEMP_DIR/"
     [ -f "hindsight_client.go" ] && cp hindsight_client.go "$TEMP_DIR/"
+    # go.mod/go.sum are maintained, not regenerated: a fresh `go mod tidy`
+    # resolves unpinned deps (e.g. testify, pulled in by the maintained tests)
+    # to whatever upstream's latest release is, so regeneration output would
+    # change whenever a dependency publishes a new version and break the
+    # verify-generated-files CI check. Preserving them keeps regeneration
+    # deterministic; upgrade deps explicitly with `go get` + `go mod tidy`.
+    [ -f "go.mod" ] && cp go.mod "$TEMP_DIR/"
+    [ -f "go.sum" ] && cp go.sum "$TEMP_DIR/"
 
     # Remove old generated files
     echo "Removing old generated code..."
     rm -f api_*.go model_*.go client.go configuration.go response.go utils.go
     rm -rf docs/ .openapi-generator/
-    rm -f go.mod go.sum
 
     # Generate new client via Docker (--platform linux/amd64 ensures identical output on macOS and Linux CI)
     echo "Generating client from OpenAPI spec..."
@@ -458,6 +469,9 @@ else
     [ -f "$TEMP_DIR/null_test.go" ] && mv "$TEMP_DIR/null_test.go" .
     [ -f "$TEMP_DIR/trace_test.go" ] && mv "$TEMP_DIR/trace_test.go" .
     [ -f "$TEMP_DIR/hindsight_client.go" ] && mv "$TEMP_DIR/hindsight_client.go" .
+    # Overwrites the generator-emitted go.mod/go.sum with the maintained ones.
+    [ -f "$TEMP_DIR/go.mod" ] && mv "$TEMP_DIR/go.mod" .
+    [ -f "$TEMP_DIR/go.sum" ] && mv "$TEMP_DIR/go.sum" .
     rm -rf "$TEMP_DIR"
 
     # Fix known generator issue: api_files.go uses os.File but generator omits "os" import

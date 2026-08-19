@@ -774,7 +774,7 @@
           "Memory"
         ],
         "summary": "Recall memory",
-        "description": "Recall memory using semantic similarity and spreading activation.\n\nThe type parameter is optional and must be one of:\n- `world`: General knowledge about people, places, events, and things that happen\n- `experience`: Memories about experience, conversations, actions taken, and tasks performed",
+        "description": "Recall memory using semantic similarity and spreading activation.\n\nThe `types` parameter is optional and may contain any of:\n- `world`: General knowledge about people, places, events, and things that happen\n- `experience`: Memories about experience, conversations, actions taken, and tasks performed\n- `observation`: Consolidated knowledge synthesized from facts\n\nIf `types` is omitted, all fact types are recalled.",
         "operationId": "recall_memories",
         "parameters": [
           {
@@ -911,10 +911,54 @@
         "tags": [
           "Banks"
         ],
-        "summary": "List all memory banks",
-        "description": "Get a list of all agents with their profiles",
+        "summary": "List memory banks",
+        "description": "List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.",
         "operationId": "list_banks",
         "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')",
+              "title": "Q"
+            },
+            "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum number of banks to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of banks to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -2587,7 +2631,7 @@
           "Knowledge Base"
         ],
         "summary": "Rename/move a knowledge-base node or update a page's options",
-        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question.",
+        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.",
         "operationId": "update_knowledge_node",
         "parameters": [
           {
@@ -7194,14 +7238,30 @@
             },
             "type": "array",
             "title": "Banks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
           }
         },
         "type": "object",
         "required": [
-          "banks"
+          "banks",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "BankListResponse",
-        "description": "Response model for listing all banks.",
+        "description": "Response model for listing banks, one page at a time.",
         "example": {
           "banks": [
             {
@@ -7219,7 +7279,10 @@
               "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"
             }
-          ]
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 50
         }
       },
       "BankLlmHealthResponse": {
@@ -7406,7 +7469,7 @@
               }
             ],
             "title": "Last Memory Write At",
-            "description": "When a memory was last written in this bank \u2014 stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_refreshed_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm."
+            "description": "When a memory was last written in this bank \u2014 stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_memory_seen_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm."
           },
           "pending_consolidation": {
             "type": "integer",
@@ -7808,6 +7871,19 @@
             ],
             "title": "Reflect Source Facts Max Tokens",
             "description": "Max tokens of source facts per reflect call"
+          },
+          "mental_model_min_refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Min Refresh Interval Seconds",
+            "description": "Minimum seconds between two automatic refreshes of the same mental model in this bank. 0 (the default) means no floor. Overridable per model via the trigger's min_refresh_interval_seconds."
           },
           "llm_gemini_safety_settings": {
             "anyOf": [
@@ -9221,11 +9297,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of directives matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "DirectiveListResponse",
         "description": "Response model for listing directives."
@@ -10427,7 +10521,18 @@
               }
             ],
             "title": "Is Stale",
-            "description": "Pages only, populated by the tree endpoint. False means the page is up to date \u2014 nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute."
+            "description": "Pages only, populated by the tree endpoint. True when a memory in *this page's* scope \u2014 its tags and fact types \u2014 has been written since the page last read the memories. That is the same check a scheduled refresh runs before spending an LLM call, so a flagged page is one a refresh would actually rewrite. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pages only: the page's refresh settings \u2014 when it rebuilds itself (`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. This is the EFFECTIVE policy: a setting the page never stored is reported at its default, so compare the fields you care about rather than the whole object against a patch you sent. Absent on folders, which have no backing mental model, and on a page with no trigger stored."
           },
           "children": {
             "items": {
@@ -11627,6 +11732,12 @@
             "title": "Entities",
             "description": "Optional entities to combine with auto-extracted entities."
           },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) matches each name to a similar existing entity when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes your names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and your names are never merged with each other. This applies only to the entities you supply here; auto-extracted entities are always resolved, since they are the extractor's guess at a name rather than yours. Ignored when 'entities' is omitted.",
+            "default": true
+          },
           "tags": {
             "anyOf": [
               {
@@ -11839,6 +11950,7 @@
             "type": "string",
             "enum": [
               "content_written",
+              "content_unchanged",
               "content_preserved_no_new_facts",
               "refresh_failed_empty_candidate",
               "refresh_failed_delta_not_applied"
@@ -11905,6 +12017,17 @@
               }
             ],
             "description": "Structured operations emitted, in delta mode."
+          },
+          "retraction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelRetraction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Facts the document cites that no longer exist, and what a real refresh would do about them."
           },
           "trace": {
             "$ref": "#/components/schemas/MentalModelRefreshTrace",
@@ -11998,11 +12121,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of mental models matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "MentalModelListResponse",
         "description": "Response model for listing mental models."
@@ -12148,6 +12289,7 @@
             "type": "string",
             "enum": [
               "content_written",
+              "content_unchanged",
               "content_preserved_no_new_facts",
               "refresh_failed_empty_candidate",
               "refresh_failed_delta_not_applied"
@@ -12181,6 +12323,17 @@
               }
             ],
             "description": "Structured operations emitted, in delta mode."
+          },
+          "retraction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelRetraction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Facts the document cited that no longer exist, when the refresh found any."
           },
           "usage": {
             "anyOf": [
@@ -12229,13 +12382,13 @@
               }
             ],
             "title": "Created After",
-            "description": "Lower bound on memory creation time. Set only in delta mode, where it is the model's last_refreshed_at \u2014 so a delta refresh only sees memories newer than the last one."
+            "description": "Lower bound on when a memory last changed. Set only in delta mode, where it is the model's last_memory_seen_at \u2014 so a delta refresh only sees memories written or edited since the newest one the previous refresh saw."
           },
           "created_before": {
             "type": "string",
             "format": "date-time",
             "title": "Created Before",
-            "description": "Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh."
+            "description": "Database-time snapshot bounding the refresh. Memories written or edited after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh."
           },
           "watermark": {
             "anyOf": [
@@ -12248,7 +12401,7 @@
               }
             ],
             "title": "Watermark",
-            "description": "The last_refreshed_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible."
+            "description": "The last_memory_seen_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible."
           }
         },
         "type": "object",
@@ -12333,7 +12486,20 @@
                 "type": "null"
               }
             ],
-            "title": "Last Refreshed At"
+            "title": "Last Refreshed At",
+            "description": "When a refresh last finished for this model \u2014 wall-clock, in ISO format. Advances on every refresh that completes, including one that found nothing new and preserved the content, and on a direct edit of `content`. A refresh that failed leaves it alone. This is the field to answer 'have I already refreshed this?'; it says nothing about whether the model is behind the data, which is `last_memory_seen_at` / `is_stale`."
+          },
+          "last_memory_seen_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Memory Seen At",
+            "description": "How far through the bank's memories this model is written \u2014 the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. At or after the bank's `last_memory_write_at` (GET /stats) the model is provably up to date; when it is older, `is_stale` settles it against the model's own scope. Null for a model no refresh has stamped yet."
           },
           "created_at": {
             "anyOf": [
@@ -12369,7 +12535,7 @@
               }
             ],
             "title": "Is Stale",
-            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_refreshed_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full \u2014 never when listing. For a whole list, compare each `last_refreshed_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh."
+            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at \u2014 the same check that decides whether a scheduled refresh does any work, so a model flagged here is one a refresh would actually rewrite. Populated on both the single read and the list. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
           }
         },
         "type": "object",
@@ -12380,6 +12546,49 @@
         ],
         "title": "MentalModelResponse",
         "description": "Response model for a mental model (stored reflect response)."
+      },
+      "MentalModelRetraction": {
+        "properties": {
+          "fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Fact Ids",
+            "description": "Ids the document's based_on cites that no longer exist in the bank."
+          },
+          "fact_texts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Fact Texts",
+            "description": "What those facts said, as the document recorded them. The rows themselves are gone \u2014 an observation swept away with its source keeps no history \u2014 so this copy is the only surviving record."
+          },
+          "applied": {
+            "type": "boolean",
+            "title": "Applied",
+            "description": "Whether the pass that removes them ran to completion (zero edits still counts)."
+          },
+          "deferred_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deferred Reason",
+            "description": "Why removal was postponed, when it was. Re-ingested facts return under new ids once consolidation catches up, so a retraction seen while facts are still pending is not acted on \u2014 removing content before the replacements land would delete claims that are still true."
+          }
+        },
+        "type": "object",
+        "required": [
+          "applied"
+        ],
+        "title": "MentalModelRetraction",
+        "description": "Facts the document cited that no longer exist, and what was done about them.\n\nA retraction is the one refresh input that is *invisible* in every other\nreport: the fact is gone from the bank, so it appears in no recall, no tool\ncall, and no supporting-fact list. Without this, a refresh that quietly\ndeleted a paragraph \u2014 or quietly declined to \u2014 leaves no evidence of why."
       },
       "MentalModelTraceToolCall": {
         "properties": {
@@ -12493,6 +12702,19 @@
             ],
             "title": "Refresh Cron",
             "description": "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation \u2014 a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule."
+          },
+          "min_refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Refresh Interval Seconds",
+            "description": "Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor)."
           },
           "fact_types": {
             "anyOf": [
@@ -12671,6 +12893,19 @@
             ],
             "title": "Refresh Cron",
             "description": "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation \u2014 a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule."
+          },
+          "min_refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Refresh Interval Seconds",
+            "description": "Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor)."
           },
           "fact_types": {
             "anyOf": [
@@ -13035,6 +13270,29 @@
             "title": "Filename",
             "description": "Original filename for file-conversion operations (file_convert_retain); null for other task types."
           },
+          "mental_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Id",
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed \u2014 `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`."
+          },
+          "details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshMentalModelOperationDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field \u2014 new operation types add their own shape here rather than flattening fields onto the operation."
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -13088,7 +13346,7 @@
               }
             ],
             "title": "Next Retry At",
-            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup \u2014 for example, an extension may have raised DeferOperation to park the task until some backpressure window opens. Always null for completed tasks."
+            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup \u2014 a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation until some backpressure window opens. It is not cleared when the task finally runs, so on a terminal operation it is a record of the last wait rather than a pending one: read it together with status."
           },
           "progress": {
             "anyOf": [
@@ -13217,7 +13475,7 @@
               }
             ],
             "title": "Next Retry At",
-            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked (e.g. by an extension raising DeferOperation) rather than awaiting immediate pickup."
+            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked \u2014 a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation \u2014 rather than awaiting immediate pickup."
           },
           "progress": {
             "anyOf": [
@@ -13242,6 +13500,17 @@
             ],
             "title": "Result Metadata",
             "description": "Internal metadata for debugging. Structure may change without notice. Not for production use."
+          },
+          "details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshMentalModelOperationDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field \u2014 new operation types add their own shape here rather than flattening fields onto the operation."
           },
           "child_operations": {
             "anyOf": [
@@ -13359,7 +13628,7 @@
               }
             ],
             "title": "Types",
-            "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified."
+            "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to all fact types if not specified."
           },
           "prefer_observations": {
             "type": "boolean",
@@ -14468,6 +14737,56 @@
         "title": "ReflectTrace",
         "description": "Execution trace of LLM and tool calls during reflection."
       },
+      "RefreshMentalModelOperationDetails": {
+        "properties": {
+          "operation_type": {
+            "type": "string",
+            "const": "refresh_mental_model",
+            "title": "Operation Type",
+            "description": "Discriminator: which operation type this detail describes.",
+            "default": "refresh_mental_model"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "content_written",
+              "content_unchanged",
+              "content_preserved_no_new_facts",
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied",
+              "refresh_failed_structured_output"
+            ],
+            "title": "Outcome",
+            "description": "What the refresh did with the document: rewrote it (`content_written`), produced a document identical to the stored one (`content_unchanged`), had no new facts to read at all (`content_preserved_no_new_facts`), or refused to write (the `refresh_failed_*` values)."
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "empty_candidate",
+                  "structured_doc_unreadable",
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped",
+                  "delta_not_applied",
+                  "structured_output_failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason",
+            "description": "Why the refresh refused to write, finer-grained than the outcome \u2014 it distinguishes an op call that failed from one whose operations were all rejected, and from a baseline document that could not be read. Null unless `outcome` is one of the `refresh_failed_*` values."
+          }
+        },
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "title": "RefreshMentalModelOperationDetails",
+        "description": "What a refresh_mental_model operation did, on the operation record itself.\n\nReported under an async operation's ``details``, which is keyed by\n``operation_type``: each type that has a typed outcome to report contributes\nits own shape there, rather than every type's fields being flattened onto the\noperation. Today refresh is the only one.\n\nThis exists because ``result_metadata`` \u2014 the only per-refresh record kept\nindefinitely \u2014 could not say what a refresh did (#3274), and is documented as\ndebug-only and unstable, so it is not something a caller can build on."
+      },
       "ReprocessDocumentResponse": {
         "properties": {
           "success": {
@@ -15162,7 +15481,13 @@
               }
             ],
             "title": "Entities",
-            "description": "Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged."
+            "description": "Replace the fact's entities. How each name is matched to an entity is governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged."
+          },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.",
+            "default": true
           },
           "state": {
             "anyOf": [
@@ -15339,6 +15664,17 @@
               }
             ],
             "title": "Max Tokens"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Refresh settings to change. Applied as a patch: only the fields present in this object are updated, and the rest keep the page's current values \u2014 so moving a page onto a schedule does not reset how it refreshes. Setting refresh_cron clears refresh_after_consolidation and vice versa, since a page refreshes on one or the other, never both."
           }
         },
         "type": "object",

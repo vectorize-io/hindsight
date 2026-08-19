@@ -10,6 +10,7 @@ assert on the generated SQL, the way ``test_multilingual_bm25`` does.
 """
 
 from types import SimpleNamespace
+from typing import Any
 
 from hindsight_api._text_search import mental_models_text_document
 from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
@@ -118,3 +119,66 @@ def test_memory_units_default_expr_is_unchanged():
         "'llmlingua2')::bm25_catalog.bm25vector"
     )
     assert pg_search_vector_expr(_cfg("pg_search")) is None
+
+
+# --- write side: the name bind must be cast --------------------------------
+
+
+class _RecordingConn:
+    """Captures the SQL of the one fetchrow the pinned-model insert issues."""
+
+    def __init__(self) -> None:
+        self.sql = ""
+
+    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any]:
+        self.sql = sql
+        return {}
+
+
+async def _pinned_insert_sql(ext: str, monkeypatch) -> str:
+    """The INSERT that ``_insert_pinned_mental_model`` builds for ``ext``.
+
+    The method reads no attribute off ``self``, so an uninitialised instance is
+    enough to reach the SQL without a database, an embedder, or an LLM.
+    """
+    from hindsight_api.engine import memory_engine as me
+
+    cfg = _cfg(ext)
+    cfg.database_schema = "public"  # fq_table() reads it off the same config
+    monkeypatch.setattr(me, "get_config", lambda: cfg)
+    conn = _RecordingConn()
+    await me.MemoryEngine._insert_pinned_mental_model(
+        object.__new__(me.MemoryEngine),
+        conn,
+        mental_model_id="mm-1",
+        bank_id="b",
+        name="page name",
+        source_query="q",
+        content="c",
+        embedding=None,
+        tags=[],
+        max_tokens=None,
+        trigger=None,
+    )
+    return conn.sql
+
+
+async def test_pinned_insert_casts_the_name_bind(monkeypatch):
+    """$3 lands in a VARCHAR column and in tokenize(), which takes TEXT.
+
+    PostgreSQL infers one type per parameter, so without the cast the statement
+    never reaches execution: prepare fails with "inconsistent types deduced for
+    parameter $3: text versus character varying" and every knowledge-page and
+    pinned mental-model create 500s on vchord.
+    """
+    sql = await _pinned_insert_sql("vchord", monkeypatch)
+    assert "'pinned', $3::text," in sql
+    assert "tokenize(COALESCE($3, '')" in sql
+
+
+async def test_pinned_insert_keeps_the_cast_without_inline_tokenization(monkeypatch):
+    # Backends that leave search_vector alone bind $3 once, so the cast is inert
+    # there — it stays for one statement shape across backends.
+    sql = await _pinned_insert_sql("native", monkeypatch)
+    assert "'pinned', $3::text," in sql
+    assert "search_vector" not in sql

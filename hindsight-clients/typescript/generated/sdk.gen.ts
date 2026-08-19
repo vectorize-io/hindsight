@@ -274,7 +274,8 @@ import type {
 export type Options<
   TData extends TDataShape = TDataShape,
   ThrowOnError extends boolean = boolean,
-> = Options2<TData, ThrowOnError> & {
+  TResponse = unknown,
+> = Options2<TData, ThrowOnError, TResponse> & {
   /**
    * You can provide a client instance returned by `createClient()` instead of
    * individual options. This might be also useful if you want to implement a
@@ -449,9 +450,12 @@ export const getObservationHistory = <ThrowOnError extends boolean = false>(
  *
  * Recall memory using semantic similarity and spreading activation.
  *
- * The type parameter is optional and must be one of:
+ * The `types` parameter is optional and may contain any of:
  * - `world`: General knowledge about people, places, events, and things that happen
  * - `experience`: Memories about experience, conversations, actions taken, and tasks performed
+ * - `observation`: Consolidated knowledge synthesized from facts
+ *
+ * If `types` is omitted, all fact types are recalled.
  */
 export const recallMemories = <ThrowOnError extends boolean = false>(
   options: Options<RecallMemoriesData, ThrowOnError>
@@ -490,9 +494,9 @@ export const reflect = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * List all memory banks
+ * List memory banks
  *
- * Get a list of all agents with their profiles
+ * List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.
  */
 export const listBanks = <ThrowOnError extends boolean = false>(
   options?: Options<ListBanksData, ThrowOnError>
@@ -855,7 +859,7 @@ export const deleteKnowledgeNode = <ThrowOnError extends boolean = false>(
 /**
  * Rename/move a knowledge-base node or update a page's options
  *
- * Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question.
+ * Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
  */
 export const updateKnowledgeNode = <ThrowOnError extends boolean = false>(
   options: Options<UpdateKnowledgeNodeData, ThrowOnError>

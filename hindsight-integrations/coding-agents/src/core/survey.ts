@@ -205,7 +205,11 @@ function buildSurveyPlan(
           hindsight: {
             command: "node",
             args: [opts.mcpServerPath],
-            env: { HINDSIGHT_MCP_PROJECT_CWD: repoDir },
+            // HINDSIGHT_MCP_HARNESS names the agent whose CLI this recipe drives — the survey's
+            // ingests are its writes. mcp-server.js REQUIRES it (it used to default to
+            // "claude-code", which is how the codex recipe below silently stamped its findings
+            // harness:claude-code and wrote them to Claude Code's bank — #3603).
+            env: { HINDSIGHT_MCP_PROJECT_CWD: repoDir, HINDSIGHT_MCP_HARNESS: "claude-code" },
           },
         },
       });
@@ -250,6 +254,8 @@ function buildSurveyPlan(
           `mcp_servers.hindsight.args=["${opts.mcpServerPath}"]`,
           "-c",
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
+          "-c",
+          `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
           SURVEY_PROMPT,
         ],
         env,

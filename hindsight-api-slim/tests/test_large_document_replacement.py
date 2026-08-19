@@ -151,6 +151,7 @@ async def test_repeated_large_same_id_replacement_is_idempotent(memory, request_
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_append_after_zero_fact_header_slice_skips_unchanged_history(
     memory,
     request_context,

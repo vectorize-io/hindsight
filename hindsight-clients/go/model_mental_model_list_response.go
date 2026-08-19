@@ -22,6 +22,12 @@ var _ MappedNullable = &MentalModelListResponse{}
 // MentalModelListResponse Response model for listing mental models.
 type MentalModelListResponse struct {
 	Items []MentalModelResponse `json:"items"`
+	// Total number of mental models matching the filter (not just this page)
+	Total int32 `json:"total"`
+	// Page size that was applied
+	Limit int32 `json:"limit"`
+	// Offset that was applied
+	Offset int32 `json:"offset"`
 }
 
 type _MentalModelListResponse MentalModelListResponse
@@ -30,9 +36,12 @@ type _MentalModelListResponse MentalModelListResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewMentalModelListResponse(items []MentalModelResponse) *MentalModelListResponse {
+func NewMentalModelListResponse(items []MentalModelResponse, total int32, limit int32, offset int32) *MentalModelListResponse {
 	this := MentalModelListResponse{}
 	this.Items = items
+	this.Total = total
+	this.Limit = limit
+	this.Offset = offset
 	return &this
 }
 
@@ -68,6 +77,78 @@ func (o *MentalModelListResponse) SetItems(v []MentalModelResponse) {
 	o.Items = v
 }
 
+// GetTotal returns the Total field value
+func (o *MentalModelListResponse) GetTotal() int32 {
+	if o == nil {
+		var ret int32
+		return ret
+	}
+
+	return o.Total
+}
+
+// GetTotalOk returns a tuple with the Total field value
+// and a boolean to check if the value has been set.
+func (o *MentalModelListResponse) GetTotalOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Total, true
+}
+
+// SetTotal sets field value
+func (o *MentalModelListResponse) SetTotal(v int32) {
+	o.Total = v
+}
+
+// GetLimit returns the Limit field value
+func (o *MentalModelListResponse) GetLimit() int32 {
+	if o == nil {
+		var ret int32
+		return ret
+	}
+
+	return o.Limit
+}
+
+// GetLimitOk returns a tuple with the Limit field value
+// and a boolean to check if the value has been set.
+func (o *MentalModelListResponse) GetLimitOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Limit, true
+}
+
+// SetLimit sets field value
+func (o *MentalModelListResponse) SetLimit(v int32) {
+	o.Limit = v
+}
+
+// GetOffset returns the Offset field value
+func (o *MentalModelListResponse) GetOffset() int32 {
+	if o == nil {
+		var ret int32
+		return ret
+	}
+
+	return o.Offset
+}
+
+// GetOffsetOk returns a tuple with the Offset field value
+// and a boolean to check if the value has been set.
+func (o *MentalModelListResponse) GetOffsetOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Offset, true
+}
+
+// SetOffset sets field value
+func (o *MentalModelListResponse) SetOffset(v int32) {
+	o.Offset = v
+}
+
 func (o MentalModelListResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -79,6 +160,9 @@ func (o MentalModelListResponse) MarshalJSON() ([]byte, error) {
 func (o MentalModelListResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["items"] = o.Items
+	toSerialize["total"] = o.Total
+	toSerialize["limit"] = o.Limit
+	toSerialize["offset"] = o.Offset
 	return toSerialize, nil
 }
 
@@ -88,6 +172,9 @@ func (o *MentalModelListResponse) UnmarshalJSON(data []byte) (err error) {
 	// that every required field exists as a key in the generic map.
 	requiredProperties := []string{
 		"items",
+		"total",
+		"limit",
+		"offset",
 	}
 
 	allProperties := make(map[string]interface{})

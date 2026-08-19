@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -119,6 +127,10 @@ describe("claude-code installer", () => {
       "--scope",
       "user",
       "hindsight",
+      // Every host launches the same mcp-server.js, so the registration has to name its harness —
+      // otherwise the server falls back to claude-code and mis-attributes the other hosts' writes.
+      "--env",
+      "HINDSIGHT_MCP_HARNESS=claude-code",
       "--",
       "node",
       join(ctx.dist, "mcp-server.js"),
@@ -179,6 +191,7 @@ describe("codex installer", () => {
     expect(toml).toContain("[features]\nhooks = true");
     expect(toml).toContain("[mcp_servers.hindsight]");
     expect(toml).toContain(join(ctx.dist, "mcp-server.js"));
+    expect(toml).toContain('env = { HINDSIGHT_MCP_HARNESS = "codex" }');
   });
 
   it("does NOT duplicate an existing [features] section (only appends mcp) and backs up the toml", () => {
@@ -203,6 +216,25 @@ describe("codex installer", () => {
     expect(toml.match(/hooks/g)).toHaveLength(1);
     expect(toml.match(/^\[features\]/gm)).toHaveLength(1);
     expect(toml).toContain("[mcp_servers.hindsight]");
+  });
+
+  // Regression: Codex sessions ingested documents tagged `harness:claude-code`. Its registration
+  // carried no HINDSIGHT_MCP_HARNESS, and install skipped whenever a block already existed — so
+  // the stale, harness-less block survived every re-install and the shared mcp-server.js kept
+  // falling back to claude-code for the bank AND the retain stamp.
+  it("re-install REPLACES a harness-less mcp block instead of leaving it stale", () => {
+    const ctx = makeCtx();
+    mkdirSync(join(ctx.home, ".codex"), { recursive: true });
+    writeFileSync(
+      tomlPath(ctx),
+      '[features]\nhooks = true\n\n[mcp_servers.hindsight]\ncommand = "node"\n' +
+        `args = ["${join(ctx.dist, "mcp-server.js")}"]\n\n[ui]\ntheme = "dark"\n`
+    );
+    run(["install", "codex"], ctx);
+    const toml = readFileSync(tomlPath(ctx), "utf8");
+    expect(toml.match(/^\[mcp_servers\.hindsight\]/gm)).toHaveLength(1);
+    expect(toml).toContain('env = { HINDSIGHT_MCP_HARNESS = "codex" }');
+    expect(toml).toContain('[ui]\ntheme = "dark"'); // foreign sections survive the rewrite
   });
 
   it("uninstall removes the mcp_servers.hindsight block and leaves the rest of the toml", () => {
@@ -543,6 +575,7 @@ describe("cursor-cli installer", () => {
     expect(mcp.mcpServers.hindsight).toEqual({
       command: "node",
       args: [join(ctx.dist, "mcp-server.js")],
+      env: { HINDSIGHT_MCP_HARNESS: "cursor-cli" },
     });
   });
 
@@ -585,6 +618,7 @@ describe("grok-build installer", () => {
     expect(config).toContain(join(ctx.dist, "grok-stop-hook.js"));
     expect(config).toContain("[mcp_servers.hindsight]");
     expect(config).toContain(join(ctx.dist, "mcp-server.js"));
+    expect(config).toContain('env = { HINDSIGHT_MCP_HARNESS = "grok-build" }');
     expect(existsSync(join(ctx.home, ".claude"))).toBe(false);
   });
 
@@ -680,6 +714,47 @@ describe("run() CLI behavior", () => {
       "cline-cli",
       "dsh",
     ]);
+  });
+});
+
+/**
+ * Every host launches the SAME `dist/mcp-server.js`, so the command line cannot say who is calling
+ * — only `HINDSIGHT_MCP_HARNESS` can. A registration that omits it silently inherits the server's
+ * claude-code fallback, which is how a Codex `hindsight_ingest_document` was stored tagged
+ * `harness:claude-code` on a machine running both (#3603).
+ *
+ * Swept over INSTALLERS rather than a hand-written list of config paths: the harness that gets this
+ * wrong is by construction the one nobody wrote a test for, so the guard has to find the
+ * registration itself — any file the install wrote that names mcp-server.js, wherever it landed.
+ */
+describe("MCP registrations name the calling harness", () => {
+  /** Every file under `dir`, recursively. */
+  function filesUnder(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? filesUnder(join(dir, e.name)) : [join(dir, e.name)]
+    );
+  }
+
+  // These hosts have no MCP registration at all: they load our plugin/extension in-process
+  // (src/kilo.ts, src/dsh.ts, src/prime-agent.ts, dist/index.js for opencode), and that entry
+  // hands its own harness name straight to RuntimeCore.
+  const IN_PROCESS = new Set(["opencode", "kilo", "prime-agent", "dsh"]);
+  const MCP_HOSTS = INSTALLERS.map((i) => i.name).filter((n) => !IN_PROCESS.has(n));
+
+  it.each(MCP_HOSTS)("%s", (harness) => {
+    const ctx = makeCtx();
+    expect(run(["install", harness], ctx)).toBe(0);
+    const registrations = [
+      ...filesUnder(ctx.home)
+        .map((f) => readFileSync(f, "utf8"))
+        // claude-code registers through the `claude` CLI instead of a file we write, so its
+        // registration is the argv we handed the mock.
+        .concat(ctx.claudeMcp.mock.calls.map((c) => c[0].join(" ")))
+        .filter((text) => text.includes("mcp-server.js")),
+    ];
+    expect(registrations.length).toBeGreaterThan(0);
+    for (const text of registrations) expect(text).toContain(`HINDSIGHT_MCP_HARNESS`);
+    for (const text of registrations) expect(text).toContain(harness);
   });
 });
 

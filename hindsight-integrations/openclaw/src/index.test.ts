@@ -297,6 +297,120 @@ describe("formatMemories", () => {
     );
   });
 
+  it("appends a [doc:...] marker when document_id is present", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "ComfyUI flux tip",
+        type: "world",
+        mentioned_at: "2026-07-04T00:00:00Z",
+        document_id: "openclaw:agent:main:tg:-1003825475854",
+      }),
+    ];
+    expect(formatMemories(memories)).toBe(
+      "- ComfyUI flux tip [world] (2026-07-04T00:00:00Z) [doc:openclaw:agent:main:tg:-1003825475854]"
+    );
+  });
+
+  it("omits the [doc:...] marker when document_id is missing (e.g. observations)", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "User prefers dark mode",
+        type: "observation",
+        mentioned_at: "2026-01-01T00:00:00Z",
+        document_id: null,
+      }),
+    ];
+    const output = formatMemories(memories);
+    expect(output).toBe("- User prefers dark mode [observation] (2026-01-01T00:00:00Z)");
+    expect(output).not.toContain("[doc:");
+  });
+
+  it("omits the [doc:...] marker when document_id is an empty string", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "User likes tea",
+        type: "experience",
+        document_id: "",
+      }),
+    ];
+    const output = formatMemories(memories);
+    expect(output).toBe("- User likes tea [experience]");
+    expect(output).not.toContain("[doc:");
+  });
+
+  it("renders a collapsed occurred window when start and end match", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "Deployed the new indexer",
+        type: "experience",
+        mentioned_at: "2026-01-20T00:00:00Z",
+        occurred_start: "2026-01-15T10:30:00Z",
+        occurred_end: "2026-01-15T10:30:00Z",
+      }),
+    ];
+    expect(formatMemories(memories)).toBe(
+      "- Deployed the new indexer [experience] (2026-01-20T00:00:00Z) [occurred: 2026-01-15T10:30:00Z]"
+    );
+  });
+
+  it("renders a range when start and end differ", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "Visited Paris",
+        type: "experience",
+        occurred_start: "2026-03-01T00:00:00Z",
+        occurred_end: "2026-03-08T00:00:00Z",
+      }),
+    ];
+    expect(formatMemories(memories)).toBe(
+      "- Visited Paris [experience] [occurred: 2026-03-01T00:00:00Z → 2026-03-08T00:00:00Z]"
+    );
+  });
+
+  it("renders an open-ended window when only one bound is present", () => {
+    const startOnly = formatMemories([
+      makeMemoryResult({ text: "Started at Vectorize", occurred_start: "2026-02-01T00:00:00Z" }),
+    ]);
+    expect(startOnly).toBe("- Started at Vectorize [world] [occurred from: 2026-02-01T00:00:00Z]");
+
+    const endOnly = formatMemories([
+      makeMemoryResult({ text: "Left the old team", occurred_end: "2026-02-01T00:00:00Z" }),
+    ]);
+    expect(endOnly).toBe("- Left the old team [world] [occurred until: 2026-02-01T00:00:00Z]");
+  });
+
+  it("orders the occurred window before the [doc:...] marker", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "Fixed the LiteLLM port issue",
+        type: "experience",
+        mentioned_at: "2026-01-15T00:00:00Z",
+        occurred_start: "2026-01-14T09:00:00Z",
+        occurred_end: "2026-01-14T11:00:00Z",
+        document_id: "openclaw:agent:main:tg:-1003825475854",
+      }),
+    ];
+    expect(formatMemories(memories)).toBe(
+      "- Fixed the LiteLLM port issue [experience] (2026-01-15T00:00:00Z) " +
+        "[occurred: 2026-01-14T09:00:00Z → 2026-01-14T11:00:00Z] " +
+        "[doc:openclaw:agent:main:tg:-1003825475854]"
+    );
+  });
+
+  it("omits the occurred window when neither bound is present", () => {
+    const output = formatMemories([
+      makeMemoryResult({ text: "User likes tea", occurred_start: null, occurred_end: null }),
+    ]);
+    expect(output).toBe("- User likes tea [world]");
+    expect(output).not.toContain("[occurred");
+  });
+
   it("returns empty string for empty memories", () => {
     expect(formatMemories([])).toBe("");
   });

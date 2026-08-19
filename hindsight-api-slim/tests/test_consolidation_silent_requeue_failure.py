@@ -58,16 +58,16 @@ def enable_observations():
     config.enable_observations = original
 
 
-async def _count_unconsolidated(memory, bank_id: str) -> int:
-    async with memory._pool.acquire() as conn:
-        return await conn.fetchval(
-            """
-            SELECT COUNT(*) FROM memory_units
-            WHERE bank_id = $1 AND consolidated_at IS NULL
-              AND consolidation_failed_at IS NULL AND fact_type IN ('experience', 'world')
-            """,
-            bank_id,
-        )
+async def _count_unconsolidated(memory, bank_id: str, request_context) -> int:
+    # consolidation_state='pending' is the read API's name for exactly this predicate:
+    # not consolidated, not failed, and a source fact type.
+    page = await memory.list_memory_units(
+        bank_id=bank_id,
+        consolidation_state="pending",
+        limit=1,
+        request_context=request_context,
+    )
+    return page["total"]
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_requeue_failure_propagates_to_worker_retry(memory: MemoryEngine, 
                 request_context=request_context,
             )
 
-    unconsolidated_before = await _count_unconsolidated(memory, bank_id)
+    unconsolidated_before = await _count_unconsolidated(memory, bank_id, request_context)
     assert unconsolidated_before >= backlog_size
 
     op_id = uuid.uuid4()
@@ -147,7 +147,7 @@ async def test_requeue_failure_propagates_to_worker_retry(memory: MemoryEngine, 
     # consolidated stay consolidated; the consolidator's per-batch
     # `UPDATE ... SET consolidated_at = NOW()` commits in its own
     # transaction (consolidator.py:524-534), not inside the op-level state.
-    unconsolidated_after = await _count_unconsolidated(memory, bank_id)
+    unconsolidated_after = await _count_unconsolidated(memory, bank_id, request_context)
     assert unconsolidated_after < unconsolidated_before, (
         f"completed-round work must be durable across the re-queue failure; "
         f"before={unconsolidated_before}, after={unconsolidated_after}"

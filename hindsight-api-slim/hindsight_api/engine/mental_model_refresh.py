@@ -34,12 +34,82 @@ ModeFallbackReason = Literal[
     "delta_ops_all_skipped",
 ]
 
+# What a refresh did with the document, as the shared executor reports it — so
+# exactly what ``_execute_mental_model_refresh`` can return, and therefore what a
+# dry run can predict.
 RefreshOutcome = Literal[
     "content_written",
+    "content_unchanged",
     "content_preserved_no_new_facts",
     "refresh_failed_empty_candidate",
     "refresh_failed_delta_not_applied",
 ]
+
+# What a refresh did, as recorded on the operation. A superset of RefreshOutcome:
+# the persist path can still refuse a document the executor accepted, when
+# structured-output extraction fails against a configured response_schema. Kept
+# separate rather than widening RefreshOutcome, so the dry run does not advertise
+# an outcome it can never return — it never extracts structured output. Spelled
+# out rather than unioned because a union of Literals renders as an ``anyOf`` of
+# two enums in the OpenAPI schema, which the generated clients carry through.
+# ``test_operation_outcome_is_a_superset_of_executor_outcome`` pins the relationship.
+RefreshOperationOutcome = Literal[
+    "content_written",
+    "content_unchanged",
+    "content_preserved_no_new_facts",
+    "refresh_failed_empty_candidate",
+    "refresh_failed_delta_not_applied",
+    "refresh_failed_structured_output",
+]
+
+# Why a refresh refused to write, matching the ``reflect_response.refresh_skipped``
+# value persisted alongside the preserved document. Finer-grained than the outcome:
+# ``refresh_failed_delta_not_applied`` alone does not say whether the op call failed,
+# every op was rejected, or the baseline document could not be read.
+RefreshFailureReason = Literal[
+    "empty_candidate",
+    "structured_doc_unreadable",
+    "delta_ops_failed",
+    "delta_ops_all_skipped",
+    "delta_not_applied",
+    "structured_output_failed",
+]
+
+
+class RefreshMentalModelOperationDetails(BaseModel):
+    """What a refresh_mental_model operation did, on the operation record itself.
+
+    Reported under an async operation's ``details``, which is keyed by
+    ``operation_type``: each type that has a typed outcome to report contributes
+    its own shape there, rather than every type's fields being flattened onto the
+    operation. Today refresh is the only one.
+
+    This exists because ``result_metadata`` — the only per-refresh record kept
+    indefinitely — could not say what a refresh did (#3274), and is documented as
+    debug-only and unstable, so it is not something a caller can build on.
+    """
+
+    operation_type: Literal["refresh_mental_model"] = Field(
+        default="refresh_mental_model",
+        description="Discriminator: which operation type this detail describes.",
+    )
+    outcome: RefreshOperationOutcome = Field(
+        description=(
+            "What the refresh did with the document: rewrote it (`content_written`), produced a "
+            "document identical to the stored one (`content_unchanged`), had no new facts to read "
+            "at all (`content_preserved_no_new_facts`), or refused to write (the `refresh_failed_*` "
+            "values)."
+        )
+    )
+    failure_reason: RefreshFailureReason | None = Field(
+        default=None,
+        description=(
+            "Why the refresh refused to write, finer-grained than the outcome — it distinguishes an "
+            "op call that failed from one whose operations were all rejected, and from a baseline "
+            "document that could not be read. Null unless `outcome` is one of the `refresh_failed_*` "
+            "values."
+        ),
+    )
 
 
 class MentalModelRefreshScope(BaseModel):
@@ -68,20 +138,22 @@ class MentalModelRefreshWindow(BaseModel):
     created_after: datetime | None = Field(
         default=None,
         description=(
-            "Lower bound on memory creation time. Set only in delta mode, where it is the model's "
-            "last_refreshed_at — so a delta refresh only sees memories newer than the last one."
+            "Lower bound on when a memory last changed. Set only in delta mode, where it is the "
+            "model's last_memory_seen_at — so a delta refresh only sees memories written or edited "
+            "since the newest one the previous refresh saw."
         ),
     )
     created_before: datetime = Field(
         description=(
-            "Database-time snapshot bounding the refresh. Memories committed after this are not read, "
-            "so they stay newer than the persisted watermark and are caught by the next refresh."
+            "Database-time snapshot bounding the refresh. Memories written or edited after this are "
+            "not read, so they stay newer than the persisted watermark and are caught by the next "
+            "refresh."
         )
     )
     watermark: datetime | None = Field(
         default=None,
         description=(
-            "The last_refreshed_at a real refresh would persist: the newest in-scope memory visible at "
+            "The last_memory_seen_at a real refresh would persist: the newest in-scope memory visible at "
             "the snapshot, not now(). Null means no in-scope memory was visible."
         ),
     )
@@ -111,6 +183,39 @@ class MentalModelDeltaOperations(BaseModel):
     )
     skipped: list[dict[str, Any]] = Field(
         default_factory=list, description="Operations dropped as invalid, each with a reason."
+    )
+
+
+class MentalModelRetraction(BaseModel):
+    """Facts the document cited that no longer exist, and what was done about them.
+
+    A retraction is the one refresh input that is *invisible* in every other
+    report: the fact is gone from the bank, so it appears in no recall, no tool
+    call, and no supporting-fact list. Without this, a refresh that quietly
+    deleted a paragraph — or quietly declined to — leaves no evidence of why.
+    """
+
+    fact_ids: list[str] = Field(
+        default_factory=list,
+        description="Ids the document's based_on cites that no longer exist in the bank.",
+    )
+    fact_texts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What those facts said, as the document recorded them. The rows themselves are "
+            "gone — an observation swept away with its source keeps no history — so this copy "
+            "is the only surviving record."
+        ),
+    )
+    applied: bool = Field(description="Whether the pass that removes them ran to completion (zero edits still counts).")
+    deferred_reason: str | None = Field(
+        default=None,
+        description=(
+            "Why removal was postponed, when it was. Re-ingested facts return under new ids once "
+            "consolidation catches up, so a retraction seen while facts are still pending is not "
+            "acted on — removing content before the replacements land would delete claims that "
+            "are still true."
+        ),
     )
 
 
@@ -171,6 +276,10 @@ class MentalModelRefreshTrace(BaseModel):
     llm_calls: list[LLMCallTrace] = Field(default_factory=list, description="LLM calls made during the refresh.")
     delta_operations: MentalModelDeltaOperations | None = Field(
         default=None, description="Structured operations emitted, in delta mode."
+    )
+    retraction: MentalModelRetraction | None = Field(
+        default=None,
+        description="Facts the document cited that no longer exist, when the refresh found any.",
     )
     usage: TokenUsage | None = Field(default=None, description="Token usage across the refresh's LLM calls.")
     duration_ms: int = Field(default=0, description="Wall-clock duration of the refresh.")
@@ -233,6 +342,10 @@ class MentalModelDryRunRefreshResult(BaseModel):
     diff: str = Field(description="Unified diff from current_content to preview_content. Empty when identical.")
     delta_operations: MentalModelDeltaOperations | None = Field(
         default=None, description="Structured operations emitted, in delta mode."
+    )
+    retraction: MentalModelRetraction | None = Field(
+        default=None,
+        description="Facts the document cites that no longer exist, and what a real refresh would do about them.",
     )
     trace: MentalModelRefreshTrace = Field(description="Execution trace of the run, always included for a dry run.")
     usage: TokenUsage = Field(default_factory=TokenUsage, description="Token usage across the run's LLM calls.")

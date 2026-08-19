@@ -374,7 +374,8 @@ class SQLDialect(ABC):
             fact_type: Fact type literal (inlined, not parameterized).
             embedding_param: Parameter placeholder for query embedding.
             bank_id_param: Parameter placeholder for bank_id.
-            fetch_limit: Max rows to fetch (over-fetched for HNSW approximation).
+            fetch_limit: Max rows the arm returns. Its ANN candidate list must be at
+                least this wide or the scan cannot fill it — see PostgresMemories.search.
             min_similarity: Minimum cosine similarity to include.
             tags_clause: Optional WHERE clause fragment for tag filtering.
             groups_clause: Optional WHERE clause fragment for tag group filtering.

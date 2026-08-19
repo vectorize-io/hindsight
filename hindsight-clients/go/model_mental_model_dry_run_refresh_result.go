@@ -51,6 +51,7 @@ type MentalModelDryRunRefreshResult struct {
 	// Unified diff from current_content to preview_content. Empty when identical.
 	Diff string `json:"diff"`
 	DeltaOperations NullableMentalModelDeltaOperations `json:"delta_operations,omitempty"`
+	Retraction NullableMentalModelRetraction `json:"retraction,omitempty"`
 	// Execution trace of the run, always included for a dry run.
 	Trace MentalModelRefreshTrace `json:"trace"`
 	// Token usage across the run's LLM calls.
@@ -526,6 +527,48 @@ func (o *MentalModelDryRunRefreshResult) UnsetDeltaOperations() {
 	o.DeltaOperations.Unset()
 }
 
+// GetRetraction returns the Retraction field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelDryRunRefreshResult) GetRetraction() MentalModelRetraction {
+	if o == nil || IsNil(o.Retraction.Get()) {
+		var ret MentalModelRetraction
+		return ret
+	}
+	return *o.Retraction.Get()
+}
+
+// GetRetractionOk returns a tuple with the Retraction field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelDryRunRefreshResult) GetRetractionOk() (*MentalModelRetraction, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Retraction.Get(), o.Retraction.IsSet()
+}
+
+// HasRetraction returns a boolean if a field has been set.
+func (o *MentalModelDryRunRefreshResult) HasRetraction() bool {
+	if o != nil && o.Retraction.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetraction gets a reference to the given NullableMentalModelRetraction and assigns it to the Retraction field.
+func (o *MentalModelDryRunRefreshResult) SetRetraction(v MentalModelRetraction) {
+	o.Retraction.Set(&v)
+}
+// SetRetractionNil sets the value for Retraction to be an explicit nil
+func (o *MentalModelDryRunRefreshResult) SetRetractionNil() {
+	o.Retraction.Set(nil)
+}
+
+// UnsetRetraction ensures that no value is present for Retraction, not even an explicit nil
+func (o *MentalModelDryRunRefreshResult) UnsetRetraction() {
+	o.Retraction.Unset()
+}
+
 // GetTrace returns the Trace field value
 func (o *MentalModelDryRunRefreshResult) GetTrace() MentalModelRefreshTrace {
 	if o == nil {
@@ -677,6 +720,9 @@ func (o MentalModelDryRunRefreshResult) ToMap() (map[string]interface{}, error) 
 	toSerialize["diff"] = o.Diff
 	if o.DeltaOperations.IsSet() {
 		toSerialize["delta_operations"] = o.DeltaOperations.Get()
+	}
+	if o.Retraction.IsSet() {
+		toSerialize["retraction"] = o.Retraction.Get()
 	}
 	toSerialize["trace"] = o.Trace
 	if !IsNil(o.Usage) {

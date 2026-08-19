@@ -23,7 +23,12 @@ from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
-from ..engine.vector_index_health import SchemaVectorIndexResult, repair_vector_indexes
+from ..engine.vector_index_health import (
+    BankIndexResult,
+    drop_orphaned_bank_indexes,
+    list_bank_ids,
+    reconcile_bank_vector_indexes,
+)
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -618,11 +623,14 @@ async def _run_repair_bank(
     schema: str | None,
     bank_id: str | None,
     dry_run: bool,
-) -> list[SchemaVectorIndexResult]:
+) -> list[BankIndexResult]:
     """Reconcile per-(bank, fact_type) vector index coverage over a raw connection.
 
     A single autocommit connection is used because ``CREATE INDEX CONCURRENTLY``
-    (used by ``repair_vector_indexes``) cannot run inside a transaction block.
+    cannot run inside a transaction block.
+
+    Deliberately unbudgeted, unlike the background operation: this is an operator
+    asking for convergence now, across as many banks as they named.
     """
     schemas = [schema] if schema else await _resolve_schemas(base_schema)
     index_clause = _vector_index_clause()
@@ -631,13 +639,38 @@ async def _run_repair_bank(
     assert index_clause is not None
 
     conn = await _admin_connect(db_url)
+    results: list[BankIndexResult] = []
     try:
-        results = await repair_vector_indexes(conn, schemas, index_clause, dry_run=dry_run, bank_id=bank_id)
-        for result in results:
+        for target_schema in schemas:
+            try:
+                bank_ids = [bank_id] if bank_id else await list_bank_ids(conn, target_schema)
+            except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
+                typer.echo(f"  schema '{target_schema}': skipped ({exc})", err=True)
+                continue
+            schema_results = [
+                await reconcile_bank_vector_indexes(conn, target_schema, bid, index_clause, dry_run=dry_run)
+                for bid in bank_ids
+            ]
+            results.extend(schema_results)
+            # Only in --all mode: an index whose bank row is gone is unreachable
+            # from every bank-scoped path, so this is the one place that can
+            # collect it. Normally finds nothing — delete_bank drops a bank's
+            # indexes while it still knows their names — but a deployment that
+            # hit the #3485 wall could not run delete_bank at all.
+            orphans = [] if bank_id else await drop_orphaned_bank_indexes(conn, target_schema, dry_run=dry_run)
+            if orphans:
+                typer.echo(
+                    f"  schema '{target_schema}': {len(orphans)} orphaned index(es) "
+                    f"{'to drop (dry-run)' if dry_run else 'dropped'} (no matching bank)"
+                )
             typer.echo(
-                f"  schema '{result.schema}': {result.banks_scanned} bank(s) scanned, "
-                f"{result.already_present} present, {result.created} created, "
-                f"{result.skipped} to-create (dry-run), {result.failed} failed"
+                f"  schema '{target_schema}': {len(bank_ids)} bank(s) scanned, "
+                f"{sum(r.already_present for r in schema_results)} present, "
+                f"{sum(r.created for r in schema_results)} created, "
+                f"{sum(r.dropped for r in schema_results)} dropped, "
+                f"{sum(r.skipped for r in schema_results)} to-create (dry-run), "
+                f"{sum(r.would_drop for r in schema_results)} to-drop (dry-run), "
+                f"{sum(r.failed for r in schema_results)} failed"
             )
         return results
     finally:
@@ -669,17 +702,23 @@ def repair_bank(
         help="Report what would be repaired without creating or dropping any index.",
     ),
 ):
-    """Verify and repair a bank's per-(bank, fact_type) vector index coverage.
+    """Reconcile per-(bank, fact_type) vector index coverage against the size threshold.
 
-    Per-bank partial vector indexes are created when a bank is first created
-    (instant on an empty bank). Banks that arrive populated — via logical
-    restore, a cross-version upgrade, or a vector-extension switch — never hit
-    that path, so their recall silently falls back to a global index +
-    post-filter (slower, under-returning). This command detects missing OR
-    invalid coverage (an INVALID leftover or an index whose access method
-    drifted counts as missing) and rebuilds it with CREATE INDEX CONCURRENTLY,
-    so it never blocks the live fleet. Idempotent and safe to re-run — the
-    escape hatch after a restore, upgrade, or backend switch.
+    A (bank, fact_type) earns a partial vector index once it holds
+    HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS rows; below that the planner answers the
+    same query exactly, and faster, from the (bank_id, fact_type) B-tree plus a
+    top-N sort. This command builds what qualifies and drops what no longer does
+    — including indexes orphaned by a deleted bank — detecting invalid coverage
+    too (an INVALID leftover, or an index whose access method drifted after a
+    backend switch, counts as missing). All DDL is CONCURRENTLY, so it never
+    blocks the live fleet.
+
+    Writes keep this converged on their own — every insert that could move a bank
+    across the threshold queues a vector_index_maintenance operation. Reach for
+    the command when you want convergence without waiting for a write: after a
+    restore or upgrade, after a backend switch, or to shed indexes in bulk on a
+    deployment recovering from lock-table exhaustion (#3485). Idempotent and safe
+    to re-run.
     """
     if bool(bank_id) == all_banks:
         typer.echo("Error: pass exactly one of --bank <id> or --all.", err=True)
@@ -713,15 +752,18 @@ def repair_bank(
         )
     )
 
-    total_banks = sum(r.banks_scanned for r in results)
+    total_banks = len(results)
     total_present = sum(r.already_present for r in results)
     total_created = sum(r.created for r in results)
+    total_dropped = sum(r.dropped for r in results)
     total_skipped = sum(r.skipped for r in results)
+    total_would_drop = sum(r.would_drop for r in results)
     total_failed = sum(r.failed for r in results)
     typer.echo(
         f"Done: {len(results)} schema(s), {total_banks} bank(s) scanned, "
-        f"{total_present} already present, {total_created} created, "
-        f"{total_skipped} to-create (dry-run), {total_failed} failed"
+        f"{total_present} already present, {total_created} created, {total_dropped} dropped, "
+        f"{total_skipped} to-create (dry-run), {total_would_drop} to-drop (dry-run), "
+        f"{total_failed} failed"
     )
     if total_failed:
         failed_names = [name for r in results for name in r.failed_indexes]

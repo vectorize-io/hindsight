@@ -173,3 +173,26 @@ def test_intake_attaches_fact_dates_after_dropping():
     # candidate must not shift it.
     assert _texts(all_entities_flat) == ["Alice"]
     assert all_entities_flat[0]["event_date"] == when
+
+
+def test_intake_keeps_the_stricter_resolve_flag_when_normalization_collapses_names():
+    """A caller's literal name must not become resolvable via a normalization collision (#3479).
+
+    entity_processing dedups caller-supplied against extracted names on the RAW text, so
+    "Acme Corp" and "Acme\nCorp" both arrive here and only collapse after normalization.
+    Keeping the first entry verbatim would drop the caller's resolve=False with it.
+    """
+    all_entities_flat, _all, _map = _prepare(
+        [
+            {"text": "Acme\nCorp", "type": "ORG"},  # extracted: resolvable
+            {"text": "Acme Corp", "type": "ORG", "resolve": False},  # caller: literal
+        ]
+    )
+
+    assert _texts(all_entities_flat) == ["Acme Corp"], "still one mention after normalization"
+    assert all_entities_flat[0]["resolve"] is False, "the caller's literal intent survives the merge"
+
+
+def test_intake_defaults_resolve_to_true():
+    all_entities_flat, _all, _map = _prepare([{"text": "Alice", "type": "PERSON"}, _FakeEntity("Bob")])
+    assert [e["resolve"] for e in all_entities_flat] == [True, True]

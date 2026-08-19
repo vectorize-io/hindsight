@@ -33,6 +33,7 @@ import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
 import {
   readSessionCache,
   sessionCacheFile,
+  sessionRootDir,
   writeSessionCache,
   type SessionCache,
 } from "./session-cache";
@@ -58,7 +59,7 @@ export interface HookSpec {
 
 /** Minimal client shape `buildHookOutput` needs — `HindsightClient` satisfies it structurally. */
 interface HookClient {
-  reflect(query: string, opts: { budget?: string; timeoutMs?: number }): Promise<string>;
+  reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
 }
@@ -239,7 +240,8 @@ export async function runHook(
   const out = (context: string | undefined, notice?: string) =>
     process.stdout.write(JSON.stringify(spec.emit(context ?? "", notice, ev)));
 
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness), cwd);
+  const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
+  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) {
@@ -251,6 +253,7 @@ export async function runHook(
     apiToken: cfg.apiToken,
     bank: bankId,
     maxParallelRetains: cfg.maxParallelRetains,
+    observationScopes: cfg.observationScopes,
   });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 

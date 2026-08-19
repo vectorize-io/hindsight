@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HindsightClient } from "./hindsight";
-import { PAGE_MAX_TOKENS, PAGES } from "./missions";
+import { buildPageTrigger, PAGE_MAX_TOKENS, pagesFor } from "./missions";
+import { resolveConfig } from "./config";
+
+/** What a client built with `bank: "repo-a"` and no `project` seeds — the bank id is the fallback. */
+const PAGES = pagesFor("repo-a");
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -182,6 +186,29 @@ describe("HindsightClient.seedPages", () => {
     expect(calls.some((k) => k.url.includes("/mental-models"))).toBe(false);
   });
 
+  // The trigger decides what these pages cost to keep current (#3506); it used to be hardcoded.
+  it("stamps the configured refresh policy on every page it seeds", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.configureBank({
+      pageTrigger: buildPageTrigger(
+        resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "0 3 * * *" })
+      ),
+    });
+
+    const posts = calls.filter(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(posts).toHaveLength(PAGES.length);
+    for (const post of posts) {
+      expect(post.body.trigger.refresh_cron).toBe("0 3 * * *");
+      expect(post.body.trigger.refresh_after_consolidation).toBeUndefined();
+    }
+  });
+
   it("is idempotent: an already-seeded bank issues no writes at all", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
@@ -254,6 +281,78 @@ describe("HindsightClient.seedPages", () => {
       source_query: drifted.source_query,
       tags: drifted.tags,
     });
+  });
+
+  it("names the repository in every seeded query, so synthesis can exclude a dependency's facts", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "coding-agent::dotfiles",
+      project: "dotfiles",
+    });
+    await c.seedPages();
+
+    const posts = calls.filter(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(posts).toHaveLength(PAGES.length);
+    for (const post of posts) {
+      // The repo is NAMED (not "this project"), and the exclusion is stated — the bank holds
+      // facts about dependencies the repo merely discusses, and they are not its own (#3476).
+      expect(post.body.source_query).toContain("dotfiles");
+      expect(post.body.source_query).toMatch(/external tools, libraries and services/);
+      expect(post.body.source_query).toMatch(/dependency/);
+    }
+  });
+
+  it("falls back to the bank id when no project is supplied, never an unscoped query", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "coding-agent::dotfiles" });
+    await c.seedPages();
+
+    for (const post of calls.filter((k) => k.method === "POST")) {
+      expect(post.body.source_query).toContain("coding-agent::dotfiles");
+    }
+  });
+});
+
+describe("pagesFor", () => {
+  it("scopes every page in the taxonomy to the named repository", () => {
+    const pages = pagesFor("dotfiles");
+    expect(pages).toHaveLength(5);
+    for (const page of pages) {
+      expect(page.source_query).toContain("Scope this page to dotfiles ITSELF");
+    }
+  });
+
+  it("is a pure function of the project, so a re-seed does not PATCH the same query back", () => {
+    // seedPages() compares the live description against this text on every deepen run; anything
+    // varying per call (a timestamp, a set iteration order) would re-PATCH all five pages forever.
+    expect(pagesFor("dotfiles")).toEqual(pagesFor("dotfiles"));
+    expect(pagesFor("dotfiles")).not.toEqual(pagesFor("other-repo"));
+  });
+
+  it("keeps the taxonomy's names and tier tags untouched", () => {
+    expect(pagesFor("dotfiles").map((p) => p.name)).toEqual([
+      "Component map",
+      "Core concepts",
+      "Conventions and patterns",
+      "Key decisions and rationale",
+      "Initiatives and enhancements",
+    ]);
+    expect(pagesFor("dotfiles").flatMap((p) => p.tags)).toEqual([
+      "knowledge:component",
+      "knowledge:concept",
+      "knowledge:convention",
+      "knowledge:decision",
+      "knowledge:feature-work",
+    ]);
   });
 });
 
@@ -396,7 +495,7 @@ describe("HindsightClient.captureInitiative", () => {
     expect(memPost).toBeDefined();
     const item = memPost.body.items[0];
     expect(item.tags).toEqual(["knowledge:feature-work", "relatedPageId:initiative-x"]);
-    expect(item.content).toContain("Enhancement to an existing initiative");
+    expect(item.content).toContain("Update to an existing initiative");
   });
 
   it("applies retain attribution to initiative markers", async () => {

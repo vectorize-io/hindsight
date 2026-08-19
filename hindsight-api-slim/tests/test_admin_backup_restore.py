@@ -233,6 +233,7 @@ async def test_backup_restore_roundtrip(backup_test_schema):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_backup_restore_preserves_all_column_types(backup_test_schema):
     """Test that all column types are preserved: vectors, UUIDs, timestamps, JSONB."""
     db_url, schema_name, _fq, embeddings = backup_test_schema

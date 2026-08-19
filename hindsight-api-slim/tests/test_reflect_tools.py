@@ -107,7 +107,9 @@ async def test_tool_search_mental_models_exact_empty_scope_selects_global_models
     conn.fetch = AsyncMock(return_value=[])
 
     result = await tool_search_mental_models(
-        memory_engine=MagicMock(),
+        # AsyncMock, not MagicMock: the tool awaits the engine's batched staleness
+        # check for whatever rows come back, including none.
+        memory_engine=AsyncMock(),
         conn=conn,
         bank_id="test-global-mental-model-scope",
         query="global summary",

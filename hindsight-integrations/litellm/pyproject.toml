@@ -47,7 +47,7 @@ dependencies = [
     # on darwin at all.
     "litellm>=1.91.3,<1.92; sys_platform == 'darwin'",
     # Transitive dependency security fixes
-    "aiohttp>=3.13.3",  # Multiple DoS vulnerabilities
+    "aiohttp>=3.14.3",  # GHSA-cq5v-8q36-5273: OOB heap read in the C response parser, plus earlier DoS fixes
     "filelock>=3.20.3",  # TOCTOU race condition
     "urllib3>=2.6.3",  # Decompression-bomb safeguards bypass
     "requests>=2.33.0",  # Insecure temp file reuse in extract_zipped_paths()

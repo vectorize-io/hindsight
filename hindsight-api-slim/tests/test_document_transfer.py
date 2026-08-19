@@ -115,6 +115,7 @@ async def _export_async(memory, bank_id, request_context, **kwargs):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(memory, request_context):
     """A rejected archive fact must not shift chunks, causal links, or observation sources."""
     dst = _unique_bank("transfer_degenerate_alignment")
@@ -392,6 +393,37 @@ async def test_export_bank_contents(memory, request_context):
         await memory.delete_bank(bank, request_context=request_context)
 
 
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_export_tolerates_legacy_null_and_numeric_fact_metadata(memory, request_context):
+    """A bank holding legacy metadata must still be exportable (issue #3209).
+
+    Rows written before retain normalized its input can hold a JSON null or a
+    raw integer in memory_units.metadata. TransferFact.metadata is dict[str, str],
+    so exporting such a bank used to fail validation — locking an operator out of
+    the one operation (backup / move) that gets them off the bad data. Export
+    applies the same read contract as recall: nulls dropped, the rest stringified.
+    """
+    bank = _unique_bank("export_legacy_metadata")
+    try:
+        await _retain(memory, bank, "Carol lives in Paris.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            updated = await conn.execute(
+                f"UPDATE {fq_table('memory_units')} SET metadata = $2::jsonb WHERE bank_id = $1",
+                bank,
+                json.dumps({"ocr_engine": None, "original_id": 348}),
+            )
+        assert updated != "UPDATE 0"
+
+        parsed = parse_archive(await memory.export_documents_async(bank, request_context))
+        exported = [fact.metadata for doc in parsed.documents for fact in doc.facts]
+        assert exported
+        assert all(metadata == {"original_id": "348"} for metadata in exported)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
 def _as_json(value):
     """Normalize a jsonb column value (str or already-decoded) to a Python object."""
     return json.loads(value) if isinstance(value, str) else value
@@ -492,6 +524,7 @@ async def _observation_count(memory, bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_import_preserves_consolidation_lifecycle(memory, request_context):
     """Whole-bank import restores each fact's consolidation lifecycle verbatim, so
     previously-consolidated and previously-failed facts are never re-consolidated
@@ -592,6 +625,7 @@ async def test_bank_import_preserves_consolidation_lifecycle(memory, request_con
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_export_import_exact_roundtrip(memory, request_context):
     """A whole-bank archive restores EXACT bank content (config, docs, facts,
     observations, entities, links, webhooks, directives, mental models) with facts
@@ -763,6 +797,7 @@ async def test_bank_roundtrip_carries_mental_model_history(memory, request_conte
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_roundtrip_carries_knowledge_pages(memory, request_context):
     """A whole-bank archive restores the Knowledge Pages tree — nested folders +
     pages, parent_id / mental_model_id / managed / sort_order preserved — and
@@ -866,6 +901,7 @@ async def test_import_bank_refuses_existing_bank(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_export_import_roundtrip_without_llm(memory, request_context, monkeypatch):
     """Export from one bank and import into another without re-running the LLM."""
     src = _unique_bank("transfer_src")
@@ -989,6 +1025,7 @@ async def _bank_snapshot(memory, bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_full_roundtrip_integrity(memory, request_context):
     """Full export → import must reproduce every persisted artifact (counts + sizes)."""
     src = _unique_bank("transfer_integ_src")
@@ -1042,6 +1079,7 @@ async def test_full_roundtrip_integrity(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_transfer_preserves_legacy_causal_links(memory, request_context):
     """Legacy causal edges survive export/import without becoming retain inputs."""
     src = _unique_bank("transfer_legacy_causal_src")
@@ -1093,6 +1131,7 @@ async def test_transfer_preserves_legacy_causal_links(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_export_import_observations(memory, request_context):
     """With include_observations, observations transfer and their sources re-link."""
     src = _unique_bank("transfer_obs_src")
@@ -1173,6 +1212,7 @@ async def test_export_import_observations(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_import_triggers_consolidation(memory, request_context):
     """Importing (without observations) triggers consolidation in the target bank,
     so observations get generated there — same as a normal retain."""
@@ -1336,6 +1376,7 @@ async def test_import_on_conflict_modes(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_http_export_import_endpoints(api_client, memory, request_context):
     """Round trip through the async HTTP export (POST + poll + download) and import endpoints."""
     src = _unique_bank("transfer_http_src")
@@ -1517,6 +1558,7 @@ async def test_import_rejects_invalid_on_conflict(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_import_classifies_label_entities(memory, request_context):
     """An imported bank's label entities are stored with entity_kind='label'.
 
@@ -1594,6 +1636,7 @@ async def test_bank_import_classifies_label_entities(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_async_export_roundtrip(memory, request_context):
     """The async export operation stashes a real archive that re-imports cleanly.
 
@@ -1639,6 +1682,7 @@ async def test_async_export_include_observations_subset_rejected(memory, request
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_export_attach_batching_preserves_entities_and_causal_links(memory, request_context, monkeypatch):
     """Batched attach queries carry every fact's entities and cross-batch causal edges.
 
@@ -1738,10 +1782,56 @@ async def test_purge_expired_export_archives(memory, request_context):
                 old,
                 uuid.UUID(op_id),
             )
-            purged = await memory.purge_expired_export_archives(conn, fq_table("async_operations"), cutoff)
+            purged = await memory.purge_expired_export_archives(
+                conn, fq_table("async_operations"), cutoff, batch_size=100
+            )
         assert purged >= 1
         with pytest.raises(FileNotFoundError):
             await memory._file_storage.retrieve(storage_key)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_export_archives_honours_the_batch_bound(memory, request_context):
+    """The purge deletes at most ``batch_size`` archives per call.
+
+    Unbounded, it re-selected every expired export on every cleanup cycle and
+    re-issued a blob delete for each — ``storage_key`` stays in the row until the
+    row itself is pruned, so nothing marks an archive as already handled. The
+    prune next to it is batched, so the purge shares that bound and the two walk
+    the same ``ORDER BY updated_at, operation_id`` window together.
+    """
+    from datetime import timedelta
+
+    bank = _unique_bank("export_purge_bound")
+    try:
+        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        backend = await memory._get_backend()
+        # Fabricated rows rather than real exports: the purge counts rows carrying a
+        # storage_key and swallows the blob delete, so no archive needs to exist for
+        # the bound to be observable. Backdated far past any other test's rows so the
+        # ORDER BY puts these first on the shared pg0 database.
+        old = datetime.now(timezone.utc) - timedelta(days=500)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+        async with acquire_with_retry(backend) as conn:
+            for i in range(2):
+                await conn.execute(
+                    f"""INSERT INTO {fq_table("async_operations")}
+                        (operation_id, bank_id, operation_type, status, task_payload,
+                         result_metadata, updated_at)
+                        VALUES ($1, $2, 'export_documents', 'completed', '{{}}'::jsonb, $3::jsonb, $4)""",
+                    uuid.uuid4(),
+                    bank,
+                    json.dumps({"storage_key": f"banks/{bank}/exports/absent-{i}.zip"}),
+                    old,
+                )
+            # LIMIT 1 caps the result at one row regardless of which expired export
+            # sorts first, so this holds even with other tests' rows in the schema.
+            purged = await memory.purge_expired_export_archives(
+                conn, fq_table("async_operations"), cutoff, batch_size=1
+            )
+        assert purged == 1
     finally:
         await memory.delete_bank(bank, request_context=request_context)
 

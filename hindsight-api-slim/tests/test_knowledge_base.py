@@ -185,46 +185,168 @@ class TestTree:
         # Pages always do.
         assert isinstance(roots["Loose"]["is_stale"], bool)
 
-    async def test_tree_staleness_follows_the_bank_watermark(self, api_client, memory, kb_bank):
-        """The tree answers from one bank-wide watermark, not a scan per page.
+    async def test_tree_exposes_a_page_refresh_policy(self, api_client, kb_bank):
+        """A page's trigger is readable where the page is.
 
-        The page-level answer is therefore conservative: an untagged memory flips
-        even the tagged pages to "may need refresh", though a scoped check would
-        call them current. That is the trade — the exact answer costs a full scan
-        of the bank's memories per page, on a view that polls.
+        It decides when a page rebuilds itself and what that costs, so a client that only speaks
+        the knowledge base — the control plane's tree, the coding-agents plugin — could neither
+        show it nor tell whether its own settings still applied. The alternative was walking to
+        the mental-models API once per page.
         """
         bank_id, ids = kb_bank
-        scoped_checks = 0
-        original = memory.compute_mental_model_is_stale
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        roots = {r["name"]: r for r in resp.json()["roots"]}
+        # The EFFECTIVE policy, not the stored keys: it serializes as MentalModelTrigger, so a
+        # field nobody set comes back at that model's default (keep_trace=False here). Asserting
+        # the whole dict would pin every future field of that model into this test.
+        trigger = roots["Loose"]["trigger"]
+        assert trigger["mode"] == "delta"
+        assert trigger["fact_types"] == ["observation"]
+        assert trigger["exclude_mental_models"] is True
+        assert trigger["refresh_after_consolidation"] is True
+        # A folder has no backing mental model, so it has no refresh policy either —
+        # and a null is dropped from the response entirely (ExcludeNoneRoute), the same
+        # way is_stale is absent on folders rather than null.
+        assert roots["Runbooks"].get("trigger") is None
 
-        async def counting_check(*args, **kwargs):
-            nonlocal scoped_checks
-            scoped_checks += 1
-            return await original(*args, **kwargs)
+    async def test_tree_reflects_a_changed_refresh_policy(self, api_client, memory, kb_bank, request_context):
+        """Read-back closes the loop: a client can compare and skip a no-op write.
 
-        memory.compute_mental_model_is_stale = counting_check
+        The page was created auto-refreshing; after moving it onto a schedule the tree shows the
+        schedule and auto-refresh off. (That the engine *stores* no ``refresh_after_consolidation``
+        key at all is asserted in TestPageDefaults — through this model it serializes as False,
+        which is the same policy stated a different way.)
+        """
+        bank_id, ids = kb_bank
+        await memory.update_knowledge_page(
+            bank_id, ids.loose, trigger={"refresh_cron": "0 3 * * *"}, request_context=request_context
+        )
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        loose = next(r for r in resp.json()["roots"] if r["name"] == "Loose")
+        assert loose["trigger"]["refresh_cron"] == "0 3 * * *"
+        assert loose["trigger"]["refresh_after_consolidation"] is False
+        assert loose["trigger"]["mode"] == "delta"  # untouched by the patch
+
+    @staticmethod
+    async def _insert_memory(memory: MemoryEngine, bank_id: str, tags: list[str]) -> None:
+        """One memory straight into the table — no LLM, no consolidation.
+
+        An observation, because that is what knowledge pages are built from:
+        ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER`` scopes them to ``fact_types:
+        ["observation"]``, so a raw experience is out of scope for every page
+        however its tags line up.
+        """
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at) "
+                "VALUES (gen_random_uuid(), $1, $2, 'observation', $3::varchar[], now())",
+                bank_id,
+                "An observation written after the pages were built.",
+                tags,
+            )
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_staleness_ignores_writes_outside_a_page_scope(self, api_client, memory, kb_bank):
+        """A write nowhere near a page's tags does not flag that page.
+
+        The tree used to answer from one bank-wide watermark, so *any* write
+        flagged *every* page that had not read it — and since only an in-scope
+        write can move a page's own watermark, a page whose scope stayed quiet
+        stayed flagged forever while the refresh gate correctly refused to
+        refresh it (#3291). Each page is now asked about its own scope.
+        """
+        bank_id, ids = kb_bank
+        # Untagged: in scope for the untagged page (which defaults to tags_match
+        # "any" and so matches everything), out of scope for every tagged page
+        # (which default to all_strict).
+        await self._insert_memory(memory, bank_id, [])
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        assert resp.status_code == 200, resp.text
+        roots = {r["name"]: r for r in resp.json()["roots"]}
+        orders = next(c for c in roots["Runbooks"]["children"] if c["name"] == "Orders")
+        billing = next(c for c in roots["Policies"]["children"] if c["name"] == "Billing")
+
+        assert roots["Loose"]["is_stale"] is True, "an untagged page sees every memory in the bank"
+        assert orders["is_stale"] is False, "the write carried none of Orders' tags"
+        assert billing["is_stale"] is False, "the write carried none of Billing's tags"
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_flags_the_page_whose_own_scope_changed(self, api_client, memory, kb_bank):
+        """Only the page the write actually belongs to is flagged."""
+        bank_id, ids = kb_bank
+        # Carries all of Orders' tags (all_strict is a superset test) and only one
+        # of Billing's, so it is in scope for Orders and not for Billing.
+        await self._insert_memory(memory, bank_id, ["type:runbook", "sales", "revenue"])
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        roots = {r["name"]: r for r in resp.json()["roots"]}
+        orders = next(c for c in roots["Runbooks"]["children"] if c["name"] == "Orders")
+        billing = next(c for c in roots["Policies"]["children"] if c["name"] == "Billing")
+
+        assert orders["is_stale"] is True
+        assert billing["is_stale"] is False, "Billing's type:policy tag is not on the write"
+        assert roots["Loose"]["is_stale"] is True
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_agrees_with_the_exact_per_model_check(self, api_client, memory, kb_bank, request_context):
+        """The tree and the single-model read answer the same question.
+
+        This is the property #3291 lost: the tree reported almost everything as
+        needing a refresh while the per-model check reported nothing did.
+        """
+        bank_id, ids = kb_bank
+        await self._insert_memory(memory, bank_id, ["type:runbook", "sales", "revenue"])
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+
+        def _pages(nodes):
+            for node in nodes:
+                if node["kind"] == "page":
+                    yield node
+                yield from _pages(node.get("children") or [])
+
+        pages = list(_pages(resp.json()["roots"]))
+        assert pages, "fixture seeds pages"
+        for page in pages:
+            model = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+            assert page["is_stale"] == model["is_stale"], page["name"]
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_asks_once_for_the_whole_tree(self, api_client, memory, kb_bank):
+        """Per-page answers, but not a query per page — the tree view polls."""
+        bank_id, ids = kb_bank
+        await self._insert_memory(memory, bank_id, [])
+
+        from hindsight_api.engine.memories import get_memories
+
+        store = get_memories()
+        single_calls = 0
+        batch_calls = 0
+        original_single = store.any_memory_updated_since
+        original_batch = store.any_memory_updated_since_batch
+
+        async def counting_single(*args, **kwargs):
+            nonlocal single_calls
+            single_calls += 1
+            return await original_single(*args, **kwargs)
+
+        async def counting_batch(*args, **kwargs):
+            nonlocal batch_calls
+            batch_calls += 1
+            return await original_batch(*args, **kwargs)
+
+        store.any_memory_updated_since = counting_single
+        store.any_memory_updated_since_batch = counting_batch
         try:
-            async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO memory_units (id, bank_id, text, fact_type, created_at) "
-                    "VALUES (gen_random_uuid(), $1, $2, 'experience', now())",
-                    bank_id,
-                    "An untagged memory, outside every page's tags.",
-                )
-            # The watermark is served from the stats cache, so a write inside the
-            # TTL only shows up once that entry expires or is dropped.
-            await memory._bank_stats_cache.clear()
-
             resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
             assert resp.status_code == 200, resp.text
-            roots = {r["name"]: r for r in resp.json()["roots"]}
-            orders = next(c for c in roots["Runbooks"]["children"] if c["name"] == "Orders")
-            assert roots["Loose"]["is_stale"] is True
-            assert orders["is_stale"] is True, "tagged pages are flagged too — the watermark is bank-wide"
-            assert scoped_checks == 0, "the tree must not run a scoped staleness query per page"
         finally:
-            memory.compute_mental_model_is_stale = original
-            await memory._bank_stats_cache.clear()
+            store.any_memory_updated_since = original_single
+            store.any_memory_updated_since_batch = original_batch
+
+        assert batch_calls == 1, "one batched question for every page in the tree"
+        assert single_calls == 0, "no per-page fallback for plain flat-tag scopes"
 
 
 class TestWatermarkRule:
@@ -331,6 +453,160 @@ class TestPageDefaults:
         assert mm["max_tokens"] == 1024
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_partial_trigger_merges_over_the_page_defaults(self, memory: MemoryEngine, request_context):
+        """Overriding one field must not silently give up the rest of the page contract.
+
+        A supplied trigger used to REPLACE the defaults outright, so a client that only
+        wanted different fact types also lost ``mode: "delta"`` and
+        ``exclude_mental_models`` — its page rebuilt itself from scratch on every refresh
+        and reflected over its sibling pages while doing it (#3506).
+        """
+        bank_id = f"test-kb-merge-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id,
+            "P",
+            "What is P?",
+            "seed",
+            trigger={"fact_types": ["world", "experience", "observation"]},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"] == {
+            "mode": "delta",
+            "fact_types": ["world", "experience", "observation"],
+            "exclude_mental_models": True,
+            "refresh_after_consolidation": True,
+        }
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_cron_trigger_drops_the_default_auto_refresh(self, memory: MemoryEngine, request_context):
+        """The merge must not synthesize a pair no request could have expressed.
+
+        ``MentalModelTrigger`` rejects a body carrying both refresh triggers, so inheriting
+        the default's ``refresh_after_consolidation`` alongside a client's ``refresh_cron``
+        would store a combination the API itself would have refused.
+        """
+        bank_id = f"test-kb-cron-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id,
+            "P",
+            "What is P?",
+            "seed",
+            trigger={"refresh_cron": "0 3 * * *"},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
+        assert "refresh_after_consolidation" not in mm["trigger"]
+        assert mm["trigger"]["mode"] == "delta"  # still a knowledge page
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_update_patches_the_trigger_instead_of_replacing_it(self, memory: MemoryEngine, request_context):
+        """Changing when a page refreshes must not reset how it refreshes.
+
+        ``update_mental_model`` overwrites the whole trigger column, so forwarding a
+        partial one straight through would strip every field the client didn't mention
+        — the create-path defect (#3506) one endpoint over.
+        """
+        bank_id = f"test-kb-upd-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(bank_id, "P", "What is P?", "seed", request_context=request_context)
+        await memory.update_knowledge_page(
+            bank_id,
+            page["id"],
+            trigger={"refresh_cron": "0 3 * * *"},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
+        assert mm["trigger"]["mode"] == "delta"
+        assert mm["trigger"]["fact_types"] == ["observation"]
+        assert mm["trigger"]["exclude_mental_models"] is True
+        # Moving onto a schedule clears the auto-refresh it was created with, in the
+        # direction the create path never had to handle.
+        assert "refresh_after_consolidation" not in mm["trigger"]
+
+        # ...and back again: the stated auto-refresh clears the stored cron.
+        await memory.update_knowledge_page(
+            bank_id,
+            page["id"],
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"]["refresh_after_consolidation"] is True
+        assert "refresh_cron" not in mm["trigger"]
+        assert mm["trigger"]["mode"] == "delta"
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_update_without_a_trigger_leaves_it_alone(self, memory: MemoryEngine, request_context):
+        bank_id = f"test-kb-keep-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id,
+            "P",
+            "What is P?",
+            "seed",
+            trigger={"refresh_cron": "0 3 * * *"},
+            request_context=request_context,
+        )
+        await memory.update_knowledge_page(bank_id, page["id"], max_tokens=2048, request_context=request_context)
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["max_tokens"] == 2048
+        assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_update_endpoint_accepts_and_forwards_a_partial_trigger(
+        self, api_client, kb_bank, memory, monkeypatch
+    ):
+        """The PATCH body carries `trigger` at all, and only the fields the client set.
+
+        Both halves are load-bearing: the field was missing from ``UpdateNodeRequest``
+        entirely, so a page's refresh policy could not be changed through the
+        knowledge-base API — and a full dump would carry this model's defaults into
+        every update.
+        """
+        bank_id, ids = kb_bank
+        captured: dict[str, Any] = {}
+
+        async def fake_update(**kwargs):
+            captured.update(kwargs)
+            return {"id": ids.orders, "kind": "page", "name": "Orders", "mental_model_id": ids.orders_mm}
+
+        monkeypatch.setattr(memory, "update_knowledge_page", fake_update)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"trigger": {"refresh_cron": "0 4 * * *"}},
+        )
+        assert resp.status_code == 200, resp.text
+        assert captured["trigger"] == {"refresh_cron": "0 4 * * *"}
+
+    async def test_create_endpoint_forwards_only_the_fields_the_client_set(
+        self, api_client, kb_bank, memory, monkeypatch
+    ):
+        """The merge is only meaningful if the HTTP layer stops filling in model defaults.
+
+        ``model_dump()`` on the request model yields every field — mode="full",
+        exclude_mental_models=False — which would override the page defaults on every
+        create that carries a trigger at all.
+        """
+        bank_id, _ = kb_bank
+        captured: dict[str, Any] = {}
+
+        async def fake_create(**kwargs):
+            captured.update(kwargs)
+            return {"id": "kp-fake", "mental_model_id": "mm-fake"}
+
+        async def fake_submit(**kwargs):
+            return {"operation_id": "op-fake"}
+
+        monkeypatch.setattr(memory, "create_knowledge_page", fake_create)
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_submit)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={"name": "P", "source_query": "what is P?", "trigger": {"refresh_cron": "0 3 * * *"}},
+        )
+        assert resp.status_code == 201, resp.text
+        assert captured["trigger"] == {"refresh_cron": "0 3 * * *"}
+
 
 class TestGetPage:
     async def test_okf_document(self, api_client, kb_bank):
@@ -385,7 +661,7 @@ class TestCreate:
             )
 
         after = await memory.list_mental_models(bank_id, request_context=request_context)
-        assert {mm["id"] for mm in after} == {mm["id"] for mm in before}
+        assert {mm["id"] for mm in after.items} == {mm["id"] for mm in before.items}
         await memory.delete_bank(bank_id, request_context=request_context)
 
     async def test_create_page_under_page_rolls_back_mental_model(self, memory: MemoryEngine, request_context):
@@ -406,7 +682,7 @@ class TestCreate:
             )
 
         after = await memory.list_mental_models(bank_id, request_context=request_context)
-        assert {mm["id"] for mm in after} == {mm["id"] for mm in before}
+        assert {mm["id"] for mm in after.items} == {mm["id"] for mm in before.items}
         await memory.delete_bank(bank_id, request_context=request_context)
 
     async def test_duplicate_page_rolls_back_mental_model(self, memory: MemoryEngine, request_context):

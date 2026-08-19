@@ -32,6 +32,7 @@ type KnowledgeNode struct {
 	Tags []string `json:"tags,omitempty"`
 	Timestamp NullableString `json:"timestamp,omitempty"`
 	IsStale NullableBool `json:"is_stale,omitempty"`
+	Trigger NullableMentalModelTriggerOutput `json:"trigger,omitempty"`
 	Children []KnowledgeNode `json:"children,omitempty"`
 }
 
@@ -407,6 +408,48 @@ func (o *KnowledgeNode) UnsetIsStale() {
 	o.IsStale.Unset()
 }
 
+// GetTrigger returns the Trigger field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *KnowledgeNode) GetTrigger() MentalModelTriggerOutput {
+	if o == nil || IsNil(o.Trigger.Get()) {
+		var ret MentalModelTriggerOutput
+		return ret
+	}
+	return *o.Trigger.Get()
+}
+
+// GetTriggerOk returns a tuple with the Trigger field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *KnowledgeNode) GetTriggerOk() (*MentalModelTriggerOutput, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Trigger.Get(), o.Trigger.IsSet()
+}
+
+// HasTrigger returns a boolean if a field has been set.
+func (o *KnowledgeNode) HasTrigger() bool {
+	if o != nil && o.Trigger.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetTrigger gets a reference to the given NullableMentalModelTriggerOutput and assigns it to the Trigger field.
+func (o *KnowledgeNode) SetTrigger(v MentalModelTriggerOutput) {
+	o.Trigger.Set(&v)
+}
+// SetTriggerNil sets the value for Trigger to be an explicit nil
+func (o *KnowledgeNode) SetTriggerNil() {
+	o.Trigger.Set(nil)
+}
+
+// UnsetTrigger ensures that no value is present for Trigger, not even an explicit nil
+func (o *KnowledgeNode) UnsetTrigger() {
+	o.Trigger.Unset()
+}
+
 // GetChildren returns the Children field value if set, zero value otherwise.
 func (o *KnowledgeNode) GetChildren() []KnowledgeNode {
 	if o == nil || IsNil(o.Children) {
@@ -472,6 +515,9 @@ func (o KnowledgeNode) ToMap() (map[string]interface{}, error) {
 	}
 	if o.IsStale.IsSet() {
 		toSerialize["is_stale"] = o.IsStale.Get()
+	}
+	if o.Trigger.IsSet() {
+		toSerialize["trigger"] = o.Trigger.Get()
 	}
 	if !IsNil(o.Children) {
 		toSerialize["children"] = o.Children

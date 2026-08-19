@@ -74,8 +74,9 @@ export interface BankStats {
   total_observations: number;
 }
 
-/** What the mental-models card reads — everything a `detail=metadata` list returns. */
-type MentalModelSummary = Pick<MentalModel, "id" | "name" | "last_refreshed_at">;
+/** What the mental-models card reads: the per-model staleness answer, nothing else.
+ * It also took the two refresh timestamps back when it derived staleness itself. */
+type MentalModelSummary = Pick<MentalModel, "is_stale">;
 
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
 const PERIODS: Period[] = ["1h", "12h", "1d", "7d", "30d", "90d"];
@@ -706,27 +707,21 @@ function FailedConsolidationsDialog({
   );
 }
 
-function MentalModelsCard({
-  models,
-  lastMemoryWriteAt,
-}: {
-  models: MentalModelSummary[];
-  lastMemoryWriteAt: string | null;
-}) {
+function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
   const t = useTranslations("bankStats");
+  // The counts use the shared staleness vocabulary so the tile, the tree and the
+  // model dialog all say the same word for the same boolean.
+  const ts = useTranslations("staleness");
   const total = models.length;
-  // Freshness against the bank's last memory write, not the last consolidation:
-  // a model refreshed at or after it is provably current, whatever its tags.
-  // The other direction is only "may need refresh" — the write could have landed
-  // outside the model's scope, and confirming that costs a scan of the bank's
-  // memories per model, so the exact answer lives on the model's own dialog.
-  const lastWriteTime = lastMemoryWriteAt ? new Date(lastMemoryWriteAt).getTime() : 0;
-  const upToDate = models.filter((m) => {
-    if (!lastWriteTime) return true;
-    if (!m.last_refreshed_at) return false;
-    return new Date(m.last_refreshed_at).getTime() >= lastWriteTime;
-  }).length;
-  const mayNeedRefresh = total - upToDate;
+  // `is_stale` is the API's per-model answer, evaluated against that model's own
+  // tags and fact types — the same check that decides whether a scheduled refresh
+  // does any work. This card used to derive it here by comparing each model's
+  // last_memory_seen_at against the bank-wide last write, which flagged every model
+  // that had not read the newest memory in the bank even when that memory was
+  // nowhere near its scope, and stayed that way for as long as the model's own
+  // scope was quiet.
+  const stale = models.filter((m) => m.is_stale).length;
+  const inSync = total - stale;
 
   return (
     <Card>
@@ -741,28 +736,28 @@ function MentalModelsCard({
           <div className="text-sm text-muted-foreground py-4">{t("noMentalModels")}</div>
         ) : (
           <>
-            <ProgressRow done={upToDate} total={total} doneColor={CHART_COLORS.success} />
+            <ProgressRow done={inSync} total={total} doneColor={CHART_COLORS.success} />
             <div className="grid grid-cols-3 gap-3 pt-1">
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("upToDate")}
+                    {ts("inSync")}
                   </span>
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {upToDate}
+                  {inSync}
                 </span>
               </div>
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="w-3 h-3 text-amber-500" />
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("mayNeedRefresh")}
+                    {ts("stale")}
                   </span>
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {mayNeedRefresh}
+                  {stale}
                 </span>
               </div>
               <div className="space-y-0.5">
@@ -1084,12 +1079,13 @@ export function BankStatsView() {
     try {
       const [statsData, mentalModelsData] = await Promise.all([
         client.getBankStats(currentBank),
-        // The card needs names and refresh times only, and this reloads every few
-        // seconds — metadata keeps the stored reflect payloads off the wire.
-        client.listMentalModels(currentBank, { detail: "metadata" }),
+        // The card counts every model's freshness, so it needs the whole set, not
+        // the first page. It reloads every few seconds — metadata keeps the stored
+        // reflect payloads off the wire.
+        client.listAllMentalModels(currentBank, { detail: "metadata" }),
       ]);
       setStats(statsData as BankStats);
-      setMentalModels(mentalModelsData.items || []);
+      setMentalModels(mentalModelsData);
     } catch (error) {
       console.error("Error loading bank stats:", error);
     } finally {
@@ -1142,7 +1138,7 @@ export function BankStatsView() {
             total={stats.total_nodes}
             lastConsolidatedAt={stats.last_consolidated_at}
           />
-          <MentalModelsCard models={mentalModels} lastMemoryWriteAt={stats.last_memory_write_at} />
+          <MentalModelsCard models={mentalModels} />
         </div>
       </section>
 

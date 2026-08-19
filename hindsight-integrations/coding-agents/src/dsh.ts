@@ -23,10 +23,8 @@
  * and no version to keep in step — any dsh whose event names still match can load this file.
  */
 import { randomUUID } from "node:crypto";
-import { deriveBankId } from "./core/bank";
-import { applyBankConfig, loadConfig } from "./core/config";
+import { resolveHostMemory } from "./core/host-client";
 import { diag } from "./core/diag";
-import { HindsightClient } from "./core/hindsight";
 import type { ToolSpec } from "./core/knowledge-tools";
 import { log } from "./core/log";
 import { RuntimeCore } from "./core/runtime";
@@ -143,26 +141,17 @@ function workspaceFor(root: string): Workspace | undefined {
   const cached = workspaces.get(root);
   if (cached !== undefined) return cached ?? undefined;
 
-  let cfg = loadConfig({ harness: HARNESS });
+  // One shared builder for every long-lived host (core/host-client.ts): the global switch, the
+  // per-bank opt-out and `optInOnly` all land in `cfg.disabled`.
+  const { cfg, bankId, client } = resolveHostMemory(HARNESS, root);
   if (cfg.disabled) {
     workspaces.set(root, null); // inert: same agent, no memory (baseline parity)
     return undefined;
   }
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, root, HARNESS));
-  cfg = resolved.cfg;
-  if (cfg.disabled) {
-    workspaces.set(root, null); // per-bank opt-out (banks.<id> override)
-    return undefined;
-  }
-  const client = new HindsightClient({
-    apiUrl: cfg.apiUrl,
-    apiToken: cfg.apiToken,
-    bank: resolved.bankId,
-  });
   // The 5th argument is this host's whole reason for existing here: RuntimeCore binds the
   // knowledge tools (and retain stamps) to the workspace it is given, and dsh's process cwd is the
   // launch directory, routinely a different repository from the session's.
-  const core = new RuntimeCore(client, resolved.bankId, cfg, HARNESS, root);
+  const core = new RuntimeCore(client, bankId, cfg, HARNESS, root);
   // The write-back path reads the log back off the live agent — dsh keeps the whole session in
   // memory, so unlike opencode there is nothing to refetch over HTTP.
   core.setTranscriptSource(async (sessionId) => {

@@ -92,6 +92,30 @@ META_METADATA_JSON = "metadata_json"
 META_OBSERVATION_SCOPES = "observation_scopes"
 META_TEXT_SIGNALS = "text_signals"
 META_CREATED_AT = "created_at"
+#: When the memory last changed, and the contract every write path owes it (#3490):
+#: a write that changes what the memory *is* — text, context, dates, fact_type, tags,
+#: metadata, embedding, an observation's sources — stamps ``updated_at``, so a consumer
+#: chasing ``WHERE updated_at > watermark`` sees the change. Those consumers are
+#: incremental export, cache invalidation, the mental-model staleness check
+#: (:meth:`any_memory_updated_since`) and its delta refresh — and recall's own
+#: ``created_after`` / ``created_before`` window, which despite the name filters on this
+#: column, so what stamps it also decides what a date-bounded recall returns.
+#:
+#: The consolidation *scheduler* is the one deliberate exception: when a pass records
+#: that it folded a fact (or requeues one whose observation went away) it writes only
+#: ``consolidated_at`` / ``consolidation_failed_at``, which are scheduler state rather
+#: than the memory. Stamping there would make every pass look like an edit to every fact
+#: it folded — re-flagging mental models stale and re-feeding unchanged facts to a delta
+#: refresh. :meth:`MemoriesExtension.mark_consolidated` and the requeue sites that clear
+#: the markers inline therefore leave the column alone.
+#:
+#: The exemption is that *situation*, not the two columns: a write that clears the markers
+#: as part of a real change to the memory still stamps — :meth:`restore_memory` brings an
+#: archived memory back and resets it for re-consolidation in one statement, and that is an
+#: edit. A store that owns memories itself is expected to keep the same contract.
+#:
+#: No timestamp can report a hard delete; a consumer that must catch those needs a
+#: content fingerprint, not a watermark.
 META_UPDATED_AT = "updated_at"
 # Observation bookkeeping. `source_memory_ids` is a JSON list: an implementation
 # with no edge relation carries an observation's sources denormalised.
@@ -372,6 +396,24 @@ def build_fact_records(
             )
         )
     return records
+
+
+@dataclass(frozen=True)
+class MemoryScopeWatermark:
+    """One "has this scope changed?" question, for the batched staleness check.
+
+    ``key`` is opaque to the store — it is whatever the caller wants the answer
+    reported under (a mental-model id, a knowledge-page id) — and the scope
+    fields are the same ones :meth:`MemoriesExtension.any_memory_updated_since`
+    takes for a single model, so the two surfaces cannot drift apart.
+    """
+
+    key: str
+    since: datetime
+    fact_types: list[str] | None = None
+    tags: list[str] | None = None
+    tags_match: str = "any"
+    tag_groups: list | None = None
 
 
 @dataclass
@@ -882,6 +924,9 @@ class MemoriesExtension(Extension, ABC):
 
         ``failed`` stamps the failure marker instead, so a memory the LLM could
         not consolidate is not retried forever.
+
+        This is scheduler state, not an edit: it must leave the memory's
+        ``updated_at`` alone (see :data:`META_UPDATED_AT`).
         """
 
     @abstractmethod
@@ -943,6 +988,54 @@ class MemoriesExtension(Extension, ABC):
         so the same scope that gates a refresh decides whether one is due.
         """
 
+    async def any_memory_updated_since_batch(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        scopes: list[MemoryScopeWatermark],
+    ) -> dict[str, bool]:
+        """:meth:`any_memory_updated_since` for many scopes at once, keyed by ``scope.key``.
+
+        The knowledge tree and the mental-model list both need the answer for
+        every model in a bank on one read, and asking one at a time makes the
+        round-trips, not the scans, the cost. A store that can answer them
+        together should override this; the default is the honest loop, so a
+        store only has to implement the single-scope method to work correctly.
+
+        Duplicate keys are not meaningful — the caller owns the keyspace, and a
+        repeat simply overwrites. An empty ``scopes`` list returns ``{}`` without
+        touching the connection.
+        """
+        return {
+            scope.key: await self.any_memory_updated_since(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                since=scope.since,
+                fact_types=scope.fact_types,
+                tags=scope.tags,
+                tags_match=scope.tags_match,
+                tag_groups=scope.tag_groups,
+            )
+            for scope in scopes
+        }
+
+    async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
+        """Which of ``unit_ids`` still exist among the bank's live memories.
+
+        Backs the retraction check behind the mental-model refresh: a document's
+        grounding is a set of ids on ``reflect_response.based_on``, and one that no
+        longer answers here has been retracted. Invalidated, deleted, and swept-as-
+        stale are deliberately not distinguished — from the document's point of view
+        all three mean the same thing, so this asks only whether the row is live.
+
+        Ids that are not memory ids (or do not parse) read as absent rather than
+        raising, so callers may pass a mixed set.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ count surfaces
     #
     # The stats/admin views that aggregate memories by a key: consolidation
@@ -962,7 +1055,7 @@ class MemoriesExtension(Extension, ABC):
         ``last_memory_write_at`` is the newest write time (``updated_at``) across
         the bank's memories, or None for an empty bank. It is the bank-wide
         counterpart of :meth:`any_memory_updated_since`: a mental model whose
-        ``last_refreshed_at`` is at or after it cannot be stale, whatever its
+        ``last_memory_seen_at`` is at or after it cannot be stale, whatever its
         scope — which is how the stats and knowledge-tree surfaces answer "is
         this up to date" for many models without a scoped scan each.
         """
@@ -1016,7 +1109,7 @@ class MemoriesExtension(Extension, ABC):
         ops,
         fq_table,
         bank_id: str,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         consolidation_state: str | None = None,
         state: str | None = None,
@@ -1078,6 +1171,9 @@ class MemoriesExtension(Extension, ABC):
 
         Returns the restored memory (so the caller can recompute its embedding —
         the archive need not keep one), or ``None`` if it was not archived.
+
+        Bringing a memory back is an edit, so this stamps ``updated_at`` even though
+        it also resets the consolidation markers (see :data:`META_UPDATED_AT`).
         """
 
     @abstractmethod
@@ -1088,6 +1184,10 @@ class MemoriesExtension(Extension, ABC):
         the store whose write is the row itself — reverting or editing a memory has
         to put a freshly computed vector back on it, so this is a real write for
         both. ``embedding`` is a float list or the pgvector literal.
+
+        The vector is part of the memory, so this stamps ``updated_at`` itself rather
+        than leaning on the edit statement its in-tree callers happen to pair it with
+        (see :data:`META_UPDATED_AT`).
         """
 
     async def clear_unit_entities(self, *, conn, fq_table, bank_id: str, unit_id: str) -> None:

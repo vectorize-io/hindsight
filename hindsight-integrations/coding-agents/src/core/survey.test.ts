@@ -76,6 +76,9 @@ describe("startCodebaseSurvey", () => {
     const parsed = JSON.parse(mcpConfigJson);
     expect(parsed.mcpServers.hindsight.args).toEqual(["/x/mcp-server.js"]);
     expect(parsed.mcpServers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD).toBe("/repo");
+    // #3603: mcp-server.js requires the harness — an inline recipe that omits it used to be served
+    // as claude-code by default, and now refuses to start at all.
+    expect(parsed.mcpServers.hindsight.env.HINDSIGHT_MCP_HARNESS).toBe("claude-code");
 
     expect(options.cwd).toBe("/repo");
     expect(options.detached).toBe(true);
@@ -110,6 +113,9 @@ describe("startCodebaseSurvey", () => {
     expect(argv).toContain(SURVEY_PROMPT);
     expect(argv).toContain(`mcp_servers.hindsight.command="node"`);
     expect(argv).toContain(`mcp_servers.hindsight.args=["/x/mcp-server.js"]`);
+    // Without this the survey's findings were stamped harness:claude-code and landed in Claude
+    // Code's bank even though Codex ran the survey (#3603).
+    expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`);
     expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="/repo"`);
     // No Claude-only flags leak into the codex recipe.
     expect(argv).not.toContain("--model");

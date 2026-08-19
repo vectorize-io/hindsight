@@ -67,7 +67,7 @@ fn get_after_help() -> String {
 }
 
 fn get_before_help() -> &'static str {
-    ui::get_logo()
+    ui::before_help_logo()
 }
 
 #[derive(Subcommand)]

@@ -55,6 +55,7 @@ from benchmarks.perf.recall_perf import (
     _make_fact_callback,
     _RRFReranker,
     _wait_for_operation,
+    configure_entity_vocabulary,
 )
 
 console = Console()
@@ -68,7 +69,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 20,
         "recall_bank_size": 20,
         "recall_iterations": 5,
-        "recall_obs_sources_per_observation": 4,
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 1,
         "consolidation_items": 20,
         "graph_maintenance_bank_size": 20,
@@ -83,7 +84,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 200,
         "recall_bank_size": 200,
         "recall_iterations": 20,
-        "recall_obs_sources_per_observation": 8,
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 4,
         "consolidation_items": 200,
         "graph_maintenance_bank_size": 200,
@@ -98,7 +99,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 1_000,
         "recall_bank_size": 1_000,
         "recall_iterations": 50,
-        "recall_obs_sources_per_observation": 32,
+        "recall_obs_sources_per_observation": 3,
         "recall_concurrency": 8,
         "consolidation_items": 1_000,
         "graph_maintenance_bank_size": 1_000,
@@ -113,12 +114,19 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 5_000,
         "recall_bank_size": 5_000,
         "recall_iterations": 100,
-        # Source facts per synthetic observation. The observation graph arm's cost
-        # scales with the length of source_memory_ids, which consolidation grows
-        # without bound (#1725) — 113 is the average measured on the bank reported
-        # in #3085. At the fixture's original value of 1 the arm never leaves its
-        # cheapest regime, which is why a 39x blowup went unseen here.
-        "recall_obs_sources_per_observation": 113,
+        # *Mean* source facts per synthetic observation; the counts are drawn
+        # long-tailed around it (see _insert_synthetic_observations). Real banks
+        # sit low with a thin wide tail — the bank in #3510 ran mean 1.7, p95 4 —
+        # and at this mean the fixture still produces observations carrying
+        # several hundred sources, so the array-length cost path from #3085 stays
+        # exercised without pinning every observation to it.
+        #
+        # This was a constant 113 (the mean of the aged bank in #3085). Pinning
+        # every observation to that mean made a handful of seeds reach almost the
+        # whole entity graph, so the observation graph arm sat permanently in a
+        # regime real banks are never in: the suite measured 0.45s here where a
+        # realistically-shaped bank measures 15s, and #3510 went unseen.
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 16,
         "consolidation_items": 5_000,
         # Past the seqscan→HNSW crossover (~10k units) so this suite exercises
@@ -150,7 +158,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 5_000,
         "recall_bank_size": 5_000,
         "recall_iterations": 10,
-        "recall_obs_sources_per_observation": 113,
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 4,
         "consolidation_items": 5_000,
         "graph_maintenance_bank_size": 15_000,
@@ -402,7 +410,10 @@ async def _populate_bank(engine: Any, bank_id: str, size: int, event_date: str |
 
     _attach_mock_callback(engine)
 
-    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(size)]
+    # Size the entity vocabulary to this corpus so the entity graph keeps a real
+    # bank's long tail instead of turning every entity into a hub (#3510).
+    configure_entity_vocabulary(size)
+    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)]).text} for i in range(size)]
     if event_date:
         for item in contents:
             item["event_date"] = event_date
@@ -693,7 +704,8 @@ async def run_retain_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     await engine.initialize()
     _attach_mock_callback(engine)
 
-    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(total_items)]
+    configure_entity_vocabulary(total_items)
+    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)]).text} for i in range(total_items)]
     request_context = RequestContext()
 
     t0 = time.perf_counter()
@@ -876,7 +888,8 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
     engine._cross_encoder_reranker = _RRFReranker()
 
     # Populate bank with facts then insert synthetic observations (1 per fact,
-    # each carrying `sources_per_obs` source facts — see the scale config)
+    # each carrying a long-tailed draw averaging `sources_per_obs` source
+    # facts — see the scale config)
     await _populate_bank(engine, bank_id, bank_size)
 
     pool = await engine._get_pool()
@@ -888,7 +901,7 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
     ) as progress:
         progress.add_task("Inserting synthetic observations…")
         n_obs = await _insert_synthetic_observations(pool, bank_id, sources_per_obs)
-    console.print(f"  Inserted {n_obs:,} observations ({sources_per_obs} source facts each)")
+    console.print(f"  Inserted {n_obs:,} observations (mean {sources_per_obs} source facts each)")
 
     request_context = RequestContext()
     durations: list[float] = []
@@ -1202,7 +1215,8 @@ async def run_consolidation_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     # This queues consolidation tasks (since observations are enabled) but
     # no worker is running so they just sit in the queue — we run consolidation
     # explicitly below.
-    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(total_items)]
+    configure_entity_vocabulary(total_items)
+    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)]).text} for i in range(total_items)]
     request_context = RequestContext()
 
     with Progress(

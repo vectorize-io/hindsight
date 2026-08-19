@@ -1,4 +1,4 @@
-"""Per-bank vector-index DDL is serialized per table within a process.
+"""Per-bank vector-index drop DDL is serialized per table within a process.
 
 Concurrent index DDL on the shared ``memory_units`` table deadlocks by design:
 DROP INDEX CONCURRENTLY holds ShareUpdateExclusive while waiting out every
@@ -10,11 +10,15 @@ test-api 3/3). Advisory locks are banned in this codebase (poolers), so the
 fix is an in-process asyncio lock on ``PostgreSQLOps`` plus a much larger
 jittered retry budget for the cross-process residue.
 
+Bank deletion is now the only request path that issues vector-index DDL —
+indexes are earned by size and built by the maintenance sweep (#3485) — but the
+teardown storm this guards against is unchanged, because a bank large enough to
+have indexes still drops three of them when it goes.
+
 Two layers are proven here:
 
-* unit (fake conn): create and drop DDL for one table never interleave, the
-  create and drop sides contend on the same lock, and the lock is released
-  when a statement raises;
+* unit (fake conn): concurrent drops for one table never interleave, different
+  tables do not contend, and the lock is released when a statement raises;
 * integration: a many-bank concurrent ``delete_bank`` storm — the CI failure
   shape — completes without ``DeadlockDetectedError``.
 """
@@ -25,7 +29,13 @@ import uuid
 import pytest
 
 from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+from hindsight_api.engine.db_utils import retry_with_backoff
 from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name, _vector_index_clause
+
+# Shares the reconcile suite's xdist worker: both do heavy CREATE/DROP INDEX
+# CONCURRENTLY against the single shared public.memory_units, and concurrent
+# index DDL on one relation deadlocks by design.
+pytestmark = pytest.mark.xdist_group("vector_index_reconcile")
 
 _SCHEMA = "public"
 _INDEX_CLAUSE = "USING hnsw (embedding vector_cosine_ops)"
@@ -57,7 +67,7 @@ class _OverlapTrackingConn:
         return "OK"
 
 
-async def test_concurrent_create_and_drop_on_one_table_serialize():
+async def test_concurrent_drops_on_one_table_serialize():
     ops = PostgreSQLOps()
     conn = _OverlapTrackingConn()
     table = f"{_SCHEMA}.memory_units"
@@ -65,10 +75,9 @@ async def test_concurrent_create_and_drop_on_one_table_serialize():
     await asyncio.gather(
         ops.drop_bank_vector_indexes(conn, _SCHEMA, uuid.uuid4().hex, _BANK_INDEX_FACT_TYPES),
         ops.drop_bank_vector_indexes(conn, _SCHEMA, uuid.uuid4().hex, _BANK_INDEX_FACT_TYPES),
-        # The drop side reconstructs the create side's fq-table key from
-        # `schema`, so a create must queue behind the drops too.
-        ops.create_bank_vector_indexes(conn, table, "bank-1", uuid.uuid4().hex, _INDEX_CLAUSE, _BANK_INDEX_FACT_TYPES),
+        ops.drop_bank_vector_indexes(conn, _SCHEMA, uuid.uuid4().hex, _BANK_INDEX_FACT_TYPES),
     )
+    assert ops._index_ddl_lock(table) is ops._index_ddl_lock(f"{_SCHEMA}.memory_units")
 
     assert len(conn.calls) == 3 * len(_BANK_INDEX_FACT_TYPES)
     assert conn.max_in_flight == 1, "vector-index DDL statements overlapped despite the per-table lock"
@@ -86,11 +95,10 @@ async def test_lock_released_when_ddl_raises():
     with pytest.raises(RuntimeError):
         await ops.drop_bank_vector_indexes(conn, _SCHEMA, uuid.uuid4().hex, _BANK_INDEX_FACT_TYPES)
 
-    # A subsequent create must not hang on a lock the failed drop never released.
+    # A subsequent drop must not hang on a lock the failed one never released.
+    ok = _OverlapTrackingConn()
     await asyncio.wait_for(
-        ops.create_bank_vector_indexes(
-            conn, f"{_SCHEMA}.memory_units", "bank-1", uuid.uuid4().hex, _INDEX_CLAUSE, _BANK_INDEX_FACT_TYPES
-        ),
+        ops.drop_bank_vector_indexes(ok, _SCHEMA, uuid.uuid4().hex, _BANK_INDEX_FACT_TYPES),
         timeout=2.0,
     )
 
@@ -115,6 +123,25 @@ async def test_concurrent_bank_delete_storm_does_not_deadlock(memory, request_co
             bank_id: str(await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id))
             for bank_id in bank_ids
         }
+        # Bank creation no longer builds these, so the storm has to be staged:
+        # give every bank its three indexes up front, as a bank past the size
+        # threshold would have.
+        for bank_id, internal_id in internal_ids.items():
+            literal = await conn.fetchval("SELECT quote_literal($1::text)", bank_id)
+            for ft in _BANK_INDEX_FACT_TYPES:
+                name = _bank_index_name(ft, internal_id)
+                # CONCURRENTLY, and retried: a plain CREATE INDEX takes ShareLock
+                # on the shared memory_units table, which closes a deadlock cycle
+                # with another xdist worker's DROP INDEX CONCURRENTLY
+                # (ShareUpdateExclusive). Staging the storm must not itself be the
+                # storm.
+                await retry_with_backoff(
+                    lambda name=name, ft=ft: conn.execute(
+                        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} "
+                        f"ON {_SCHEMA}.memory_units {_INDEX_CLAUSE} "
+                        f"WHERE fact_type = '{ft}' AND bank_id = {literal}"
+                    )
+                )
 
     await asyncio.gather(*(memory.delete_bank(bank_id, request_context=request_context) for bank_id in bank_ids))
 

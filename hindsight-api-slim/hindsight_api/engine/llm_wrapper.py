@@ -264,6 +264,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "llamacpp",
         "openai-codex",
         "claude-code",
+        "github-copilot",
         "mock",
         "none",
         "vertexai",
@@ -374,6 +375,7 @@ def create_llm_provider(
         CodexLLM,
         FireworksLLM,
         GeminiLLM,
+        GitHubCopilotLLM,
         LiteLLMLLM,
         LiteLLMRouterLLM,
         LlamaCppLLM,
@@ -408,6 +410,16 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+        )
+
+    elif provider_lower == "github-copilot":
+        return GitHubCopilotLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            timeout=timeout,
         )
 
     elif provider_lower == "mock":
@@ -774,6 +786,7 @@ class LLMProvider:
             "vertexai",
             "openai-codex",
             "claude-code",
+            "github-copilot",
             "mock",
             "none",
             "minimax",
@@ -1476,9 +1489,7 @@ class LLMProvider:
         if not api_key and not requires_api_key(provider):
             pass  # Provider handles its own auth
         elif not api_key:
-            raise ValueError(
-                f"{ENV_LLM_API_KEY} environment variable is required (unless using openai-codex, claude-code, or litellm)"
-            )
+            raise ValueError(f"{ENV_LLM_API_KEY} environment variable is required for provider '{provider}'")
 
         base_url = os.getenv(ENV_LLM_BASE_URL, "")
         model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(provider)

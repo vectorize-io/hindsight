@@ -8,15 +8,19 @@ Sections:
   * bank config validation (DB)
   * retain: allow / redact / block / webhook (DB)
   * document-body scrubbing (DB)
+  * redact_document_body in isolation (unit)
 """
 
 import json
 
 import pytest
 
+from hindsight_api.config import HindsightConfig
 from hindsight_api.extensions.builtin.memory_defense_regex import MemoryDefenseRegexExtension
 from hindsight_api.extensions.loader import ExtensionLoadError, load_extension
 from hindsight_api.extensions.memory_defense import (
+    _ASCII_TOKEN_START,
+    _REDACTION_PATTERNS,
     DefenseAction,
     MemoryDefenseExtension,
     _fingerprint_value,
@@ -24,6 +28,59 @@ from hindsight_api.extensions.memory_defense import (
     parse_policy,
 )
 from tests.conftest import enable_audit_default
+
+_BOUNDARY_REDACTION_SAMPLES = {
+    "anthropic_key": "sk-ant-" + "A" * 20,
+    "openai_project_key": "sk-proj-" + "A" * 48,
+    "openai_admin_key": "sk-admin-" + "A" * 40,
+    "openai_key": "sk-" + "A" * 20,
+    "google_api_key": "AIza" + "A" * 35,
+    "google_oauth_token": "ya29." + "A" * 20,
+    "xai_key": "xai-" + "A" * 40,
+    "groq_key": "gsk_" + "A" * 20,
+    "huggingface_token": "hf_" + "A" * 30,
+    "replicate_token": "r8_" + "A" * 30,
+    "perplexity_key": "pplx-" + "A" * 40,
+    "databricks_token": "dapi" + "A" * 32,
+    "aws_access_key": "AKIA" + "A" * 16,
+    "aws_session_token": "ASIA" + "A" * 16,
+    "digitalocean_token": "dop_v1_" + "a" * 64,
+    "github_fg_pat": "github_pat_" + "A" * 60,
+    "github_token": "ghp_" + "A" * 36,
+    "github_app_token": "ghs_" + "A" * 36,
+    "github_user_token": "ghu_" + "A" * 36,
+    "github_refresh": "ghr_" + "A" * 36,
+    "github_oauth": "gho_" + "A" * 36,
+    "gitlab_pat": "glpat-" + "A" * 20,
+    "npm_token": "npm_" + "A" * 30,
+    "pypi_token": "pypi-AgEIcHlwaS5vcmc" + "A" * 20,
+    "stripe_secret": "sk_test_" + "A" * 20,
+    "stripe_restricted": "rk_test_" + "A" * 20,
+    "square_token": "sq0abc-" + "A" * 22,
+    "braintree_token": "access_token$production$" + "a" * 16 + "$" + "a" * 32,
+    "slack_token": "xoxb-" + "A" * 10,
+    "twilio_api_key": "SK" + "a" * 32,
+    "twilio_account_sid": "AC" + "a" * 32,
+    "sendgrid_key": "SG." + "A" * 22 + "." + "A" * 43,
+    "mailgun_key": "key-" + "A" * 32,
+    "discord_bot": "M" + "A" * 23 + "." + "A" * 6 + "." + "A" * 27,
+    "telegram_bot": "12345678:" + "A" * 35,
+    "shopify_token": "shpat_" + "a" * 32,
+    "jwt": "eyJ" + "A" * 10 + ".eyJ" + "A" * 10 + "." + "A" * 10,
+    "credit_card": "4111 1111 1111 1111",
+    "ssn_us": "123-45-6789",
+}
+
+_NON_BOUNDARY_REDACTION_SAMPLES = {
+    "aws_secret_key": "aws_secret_access_key=" + "A" * 40,
+    "slack_webhook": "https://hooks.slack.com/services/T" + "A" * 8 + "/B" + "A" * 8 + "/" + "A" * 20,
+    "db_url_postgres": "postgresql://user:password@localhost/db",
+    "db_url_mysql": "mysql://user:password@localhost/db",
+    "db_url_mongodb": "mongodb://user:password@localhost/db",
+    "private_key_pem": "-----BEGIN PRIVATE KEY-----",
+}
+
+_ALL_REDACTION_SAMPLES = _BOUNDARY_REDACTION_SAMPLES | _NON_BOUNDARY_REDACTION_SAMPLES
 
 # ---------------------------------------------------------------------------
 # Policy parsing (unit)
@@ -167,6 +224,37 @@ def test_apply_redaction_multiple_hits_per_pattern() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_redaction_samples_cover_every_pattern() -> None:
+    """Every built-in detector must have data, including its boundary class."""
+    pattern_labels = {label for label, _ in _REDACTION_PATTERNS}
+    boundary_labels = {label for label, pattern in _REDACTION_PATTERNS if pattern.startswith(_ASCII_TOKEN_START)}
+
+    assert len(pattern_labels) == len(_REDACTION_PATTERNS), "detector labels must be unique"
+    assert pattern_labels == set(_ALL_REDACTION_SAMPLES)
+    assert boundary_labels == set(_BOUNDARY_REDACTION_SAMPLES)
+
+
+@pytest.mark.parametrize("escape", [r"\b", r"\B", r"\w", r"\W"])
+def test_redaction_patterns_do_not_use_unicode_word_classes(escape: str) -> None:
+    """No built-in pattern may lean on Unicode-aware word semantics.
+
+    ``re`` treats CJK characters as word characters, so ``\\b``/``\\w`` skip a
+    secret butted up against Chinese text (#3566). Boundaries must be spelled
+    with ``_ascii_token_pattern`` instead.
+    """
+    offenders = [label for label, pattern in _REDACTION_PATTERNS if escape in pattern]
+
+    assert offenders == [], f"{escape} is Unicode-aware; use _ascii_token_pattern instead"
+
+
+@pytest.mark.parametrize(("label", "secret"), _ALL_REDACTION_SAMPLES.items())
+def test_each_redaction_pattern_matches_valid_sample(label: str, secret: str) -> None:
+    result = apply_redaction(secret)
+
+    assert result.content == f"[REDACTED:{label}]"
+    assert result.matched_types == [label]
+
+
 @pytest.fixture
 def regex_defense() -> MemoryDefenseRegexExtension:
     return MemoryDefenseRegexExtension({})
@@ -212,6 +300,27 @@ async def test_screen_redacts_secret(regex_defense, redact_policy) -> None:
     assert hit["detector"] == "github_token"
     assert hit["preview"] == "ghp_...AAAA"
     assert secret not in hit["preview"]
+
+
+@pytest.mark.parametrize(("label", "secret"), _BOUNDARY_REDACTION_SAMPLES.items())
+@pytest.mark.parametrize("template", ["测试{secret}", "{secret}配置", "测试{secret}配置"])
+def test_apply_redaction_matches_secret_adjacent_to_cjk(label: str, secret: str, template: str) -> None:
+    """Every ASCII token detector must match when CJK characters touch it."""
+    content = template.format(secret=secret)
+    result = apply_redaction(content)
+
+    assert result.content.count(f"[REDACTED:{label}]") == 1
+    assert label in result.matched_types
+
+
+@pytest.mark.parametrize(("label", "secret"), _BOUNDARY_REDACTION_SAMPLES.items())
+def test_apply_redaction_does_not_match_partial_ascii_token(label: str, secret: str) -> None:
+    """No ASCII token detector may match inside a larger ASCII token."""
+    content = "X" + secret
+    result = apply_redaction(content)
+
+    assert result.content == content
+    assert result.matched_types == []
 
 
 @pytest.mark.asyncio
@@ -462,7 +571,7 @@ async def test_retain_allows_clean_content(api_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_retain_stores_redacted_text(api_client, memory) -> None:
+async def test_retain_stores_redacted_text(api_client, memory, request_context) -> None:
     await api_client.put("/v1/default/banks/md-retain-2", json={})
     await _set_policy(api_client, "md-retain-2", _REDACT_POLICY)
     secret = "ghp_" + "A" * 36
@@ -471,8 +580,8 @@ async def test_retain_stores_redacted_text(api_client, memory) -> None:
         json={"items": [{"content": f"my token is {secret}"}]},
     )
     assert r.status_code == 200, r.text
-    async with memory._pool.acquire() as conn:
-        texts = [row["text"] for row in await conn.fetch("SELECT text FROM memory_units WHERE bank_id = 'md-retain-2'")]
+    listing = await memory.list_memory_units("md-retain-2", limit=1000, request_context=request_context)
+    texts = [item["text"] for item in listing["items"]]
     assert all(secret not in t for t in texts), texts
 
 
@@ -773,3 +882,82 @@ async def test_scrubs_secrets_from_oversized_chunked_input(api_client) -> None:
     original_text = r3.json()["original_text"]
     assert secret not in original_text, "oversized document.original_text leaked github token"
     assert ssn not in original_text, "oversized document.original_text leaked SSN"
+
+
+# ---------------------------------------------------------------------------
+# redact_document_body: the oversized-item scrubber, in isolation
+# ---------------------------------------------------------------------------
+
+
+def _defense_config(memory_defense: dict | None) -> HindsightConfig:
+    """A real resolved config carrying the given raw memory_defense policy.
+
+    Not a stub: ``redact_document_body`` reads ``config.memory_defense`` directly,
+    and a partial stand-in would raise AttributeError rather than exercise the parse.
+    """
+    import dataclasses
+
+    from hindsight_api.config import _get_raw_config
+
+    return dataclasses.replace(_get_raw_config(), memory_defense=memory_defense)
+
+
+def test_redact_document_body_scrubs_when_the_policy_redacts():
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    secret = "ghp_" + "Q" * 36
+    out = redact_document_body(
+        f"deploy key: {secret}",
+        _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}),
+    )
+
+    assert secret not in out
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        None,
+        {"enabled": False, "rules": [{"on": "sensitive_data", "action": "redact"}]},
+        # Enabled, but no rule names the detector this OSS path screens for.
+        {"enabled": True, "rules": [{"on": "something_else", "action": "redact"}]},
+    ],
+    ids=["absent", "disabled", "no_sensitive_data_rule"],
+)
+def test_redact_document_body_passes_the_body_through_when_not_screening(policy):
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    body = "deploy key: ghp_" + "Q" * 36
+    assert redact_document_body(body, _defense_config(policy)) == body
+
+
+def test_redact_document_body_raises_on_a_malformed_policy():
+    """A policy that will not parse fails the retain instead of skipping screening.
+
+    This used to be wrapped in ``except Exception: return body``, which returned the
+    body unscrubbed. Fail-open is the wrong default for a security control, and the
+    catch bought nothing: ``retain_batch`` parses the same ``config.memory_defense``
+    unguarded, so the retain died moments later anyway — only without the traceback
+    saying why, and without any sign that screening had been skipped first.
+    """
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    body = "deploy key: ghp_" + "Q" * 36
+    malformed = {"enabled": True, "rules": [{"on": "sensitive_data", "action": "obliterate"}]}
+
+    with pytest.raises(ValueError, match="invalid action"):
+        redact_document_body(body, _defense_config(malformed))
+
+
+def test_redact_document_body_rejects_global_config():
+    """Handed global config, it raises rather than silently skipping screening.
+
+    ``memory_defense`` is bank-configurable, so ``StaticConfigProxy`` refuses it with
+    ConfigFieldAccessError — an AttributeError subclass the old blanket catch also
+    swallowed, turning a wrong-config bug into a silently unscrubbed document body.
+    """
+    from hindsight_api.config import ConfigFieldAccessError, StaticConfigProxy, _get_raw_config
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    with pytest.raises(ConfigFieldAccessError, match="memory_defense"):
+        redact_document_body("deploy key: ghp_" + "Q" * 36, StaticConfigProxy(_get_raw_config()))

@@ -149,7 +149,8 @@ class TestMentalModelsCRUD:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(all_mental_models) == 2
+        assert len(all_mental_models.items) == 2
+        assert all_mental_models.total == 2
 
         # List with tag filter
         tag1_mental_models = await memory.list_mental_models(
@@ -157,7 +158,8 @@ class TestMentalModelsCRUD:
             tags=["tag1"],
             request_context=request_context,
         )
-        assert len(tag1_mental_models) == 1
+        assert len(tag1_mental_models.items) == 1
+        assert tag1_mental_models.total == 1
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -308,7 +310,7 @@ class TestMentalModelsAPI:
         assert response.status_code == 200, response.text
         assert response.json()["mental_model_id"]
 
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = {bank["bank_id"] for bank in response.json()["banks"]}
         assert test_bank_id in bank_ids

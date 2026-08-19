@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { buildKnowledgeTools } from "./knowledge-tools";
+import { DEFAULT_REFLECT_TOOL_TIMEOUT_MS } from "./config";
 import type { HindsightClient } from "./hindsight";
 
 /** Minimal stub of the HindsightClient surface the tools call — no SDK, no network. */
@@ -128,6 +130,23 @@ describe("buildKnowledgeTools", () => {
     expect(client.getPage).not.toHaveBeenCalled();
   });
 
+  // #3600: diagnose read the config FILE and called a host healthy while its live client was
+  // signing with a credential that no longer existed — misdirecting the one investigation this
+  // tool exists to guide.
+  it("hindsight_diagnose reports the credential in USE, not only the one on disk", async () => {
+    const client = stubClient();
+    (client as unknown as { apiToken: string }).apiToken = "credential-the-host-started-with";
+    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_diagnose");
+
+    const report = JSON.parse((await tool.handler({})).content[0].text);
+    expect(report.credential).toEqual({
+      api_token_in_use: true,
+      api_token_matches_config: false,
+    });
+    // Booleans only — the value itself must never leave the process.
+    expect(JSON.stringify(report)).not.toContain("credential-the-host-started-with");
+  });
+
   it("hindsight_search_knowledge_pages calls the server hybrid search and returns ranked hits", async () => {
     const client = stubClient({
       searchKnowledgePages: vi.fn(async () => [
@@ -191,8 +210,31 @@ describe("buildKnowledgeTools", () => {
     const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_reflect");
     const result = await tool.handler({ query: "why is X 3?" });
     expect(result.isError).toBeFalsy();
-    expect(client.reflect).toHaveBeenCalledWith("why is X 3?", { budget: "high" });
+    expect(client.reflect).toHaveBeenCalledWith("why is X 3?", {
+      budget: "high",
+      timeoutMs: DEFAULT_REFLECT_TOOL_TIMEOUT_MS,
+    });
     expect(JSON.parse(result.content[0].text)).toBe("the decided rule is X=3");
+  });
+
+  // #3590: the handler used to pass NO timeout, so the client fell back to a hardcoded 120s and
+  // aborted every high-budget synthesis on a populated bank — with the configured value dead.
+  it("hindsight_reflect passes the configured timeout and budget through to the client", async () => {
+    const client = stubClient({ reflect: vi.fn(async () => "answer") });
+    const tool = findTool(
+      buildKnowledgeTools(client, "repo-a", { reflectTimeoutMs: 660_000, reflectBudget: "mid" }),
+      "hindsight_reflect"
+    );
+    await tool.handler({ query: "why?" });
+    expect(client.reflect).toHaveBeenCalledWith("why?", { budget: "mid", timeoutMs: 660_000 });
+  });
+
+  it("hindsight_reflect never leaves the timeout unset (the client default would abort at 120s)", async () => {
+    const client = stubClient({ reflect: vi.fn(async () => "answer") });
+    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_reflect");
+    await tool.handler({ query: "why?" });
+    const opts = (client.reflect as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(opts.timeoutMs).toBeGreaterThan(300_000); // above the server's own reflect wall timeout
   });
 
   it("hindsight_capture_initiative calls client.captureInitiative({title, summary, relatesToPageId}) and returns the page id", async () => {
@@ -212,6 +254,37 @@ describe("buildKnowledgeTools", () => {
       relatesToPageId: "initiative-uploader",
     });
     expect(JSON.parse(result.content[0].text)).toEqual({ page_id: "initiative-retry-backoff" });
+  });
+
+  // Regression guard for the "ONCE, EARLY" contract that told agents to capture the opening plan
+  // and never recapture, so mid-work pivots never reached the initiative page.
+  it("hindsight_capture_initiative's description tells the agent to recapture when the plan changes", () => {
+    const tools = buildKnowledgeTools(stubClient(), "repo-a");
+    const desc = findTool(tools, "hindsight_capture_initiative").description;
+    expect(desc).not.toMatch(/ONCE, EARLY/i);
+    expect(desc).toMatch(/call it AGAIN/i);
+    expect(desc).toMatch(/goal, scope, or rationale/i);
+    expect(desc).toMatch(/mid-implementation/i);
+    // The recapture must reuse the existing page, not create a parallel one.
+    expect(desc).toMatch(/relates_to_page_id = that/i);
+    expect(desc).toMatch(/[Nn]ever mint a second page/);
+    // Summary guidance must ask for the current intent, not the originally approved plan.
+    expect(desc).toMatch(/CURRENT intent/);
+    // Trivial course-corrections are still out of scope.
+    expect(desc).toMatch(/trivial course-corrections/i);
+  });
+
+  // The recapture-on-plan-change contract lives in three places an agent can read it from: this
+  // tool description, TOOL_GUIDE (knowledge-injection.ts), and the installed skill. SKILL.md is
+  // copied verbatim by skill-sync, so nothing else would catch it drifting back to "once".
+  it("SKILL.md documents the same recapture-on-plan-change trigger", () => {
+    const md = readFileSync(
+      fileURLToPath(new URL("../../skill/SKILL.md", import.meta.url)),
+      "utf8"
+    );
+    expect(md).toMatch(/plan that materially changed/i);
+    expect(md).toMatch(/`relates_to_page_id`/);
+    expect(md).toMatch(/never a second page/i);
   });
 
   it("hindsight_capture_initiative passes relatesToPageId: undefined for a brand-new initiative", async () => {

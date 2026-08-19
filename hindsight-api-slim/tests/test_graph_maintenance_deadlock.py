@@ -196,6 +196,7 @@ async def test_unordered_concurrent_sweep_and_upsert_deadlocks(memory: MemoryEng
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_graph_maintenance_sweep_retries_on_deadlock(memory: MemoryEngine, request_context: RequestContext):
     """The entity-prune batch must survive a deadlock.
 

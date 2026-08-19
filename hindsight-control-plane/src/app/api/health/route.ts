@@ -33,7 +33,9 @@ export async function GET() {
     );
 
     try {
-      await sdk.listBanks({ client: healthClient });
+      // A reachability probe, not a listing: ask for the smallest page the
+      // endpoint will serve instead of pulling the default 100 banks.
+      await sdk.listBanks({ client: healthClient, query: { limit: 1 } });
       status.dataplane = {
         status: "connected",
         url: dataplaneUrl,

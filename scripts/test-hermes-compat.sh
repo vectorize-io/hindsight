@@ -147,10 +147,36 @@ echo ""
 # `plugins/` tree on sys.path, which is where the Hindsight memory plugin lives.
 echo "--- [1/5] Resolving hermes-agent@$HERMES_REF + local Hindsight stack ---"
 HERMES_SRC="$WORKDIR/hermes-agent"
+# Use the runner token when available to avoid the low unauthenticated limit on
+# shared CI runner IPs. Environment-based Git config is ephemeral: it is not
+# visible in the command line and is not persisted in the cloned repository.
 # stdout is silenced but stderr is not: a clone that fails on a network blip
 # should say why rather than surface as an opaque failure in the next command.
-git clone --depth 1 --branch "$HERMES_REF" \
-    https://github.com/NousResearch/hermes-agent.git "$HERMES_SRC" >/dev/null
+clone_ok=0
+for attempt in 1 2 3; do
+    if [ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ]; then
+        token="${GITHUB_TOKEN:-${GH_TOKEN}}"
+        GIT_CONFIG_COUNT=1 \
+        GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+        GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')" \
+        git clone --depth 1 --branch "$HERMES_REF" \
+            https://github.com/NousResearch/hermes-agent.git "$HERMES_SRC" >/dev/null && clone_ok=1
+    else
+        git clone --depth 1 --branch "$HERMES_REF" \
+            https://github.com/NousResearch/hermes-agent.git "$HERMES_SRC" >/dev/null && clone_ok=1
+    fi
+    [ "$clone_ok" -eq 1 ] && break
+    rm -rf "$HERMES_SRC"
+    if [ "$attempt" -lt 3 ]; then
+        delay=$((5 * 3 ** (attempt - 1)))
+        echo "    clone failed (attempt $attempt/3); retrying in ${delay}s..." >&2
+        sleep "$delay"
+    fi
+done
+if [ "$clone_ok" -ne 1 ]; then
+    echo "ERROR: could not clone hermes-agent after 3 attempts." >&2
+    exit 1
+fi
 echo "    hermes-agent @ $(git -C "$HERMES_SRC" rev-parse --short HEAD)"
 
 # Pinned rather than taken from .python-version: Hermes caps itself at

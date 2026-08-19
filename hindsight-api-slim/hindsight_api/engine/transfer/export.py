@@ -24,6 +24,7 @@ import anyio.to_thread
 
 from ..causal_links import CAUSAL_LINK_TYPES
 from ..db_utils import acquire_with_retry
+from ..metadata_utils import as_string_metadata
 from ..schema import fq_table
 from .schema import (
     CARRIED_HISTORY_TABLES,
@@ -595,7 +596,10 @@ async def _load_facts(conn: Any, bank_id: str, doc_ids: list[str], include_lifec
             occurred_start=row["occurred_start"],
             occurred_end=row["occurred_end"],
             mentioned_at=row["mentioned_at"],
-            metadata=_as_jsonb(row["metadata"]) or {},
+            # Same dict[str, str] contract as the recall path: a legacy row
+            # holding a JSON null or a raw integer must not fail the export
+            # that would let an operator move the bank (issue #3209).
+            metadata=as_string_metadata(_as_jsonb(row["metadata"])),
             tags=list(row["tags"] or []),
             observation_scopes=_as_jsonb(row["observation_scopes"]),
             chunk_index=_chunk_index_from_chunk_id(row["chunk_id"]),

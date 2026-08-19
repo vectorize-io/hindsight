@@ -96,6 +96,7 @@ async def seeded_combo(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_recall_all_enrichments_together_on_default_store(memory, request_context, seeded_combo):
     """All three enrichment flags at once on PostgresMemories, with prefer_observations."""
     bank_id = seeded_combo["bank_id"]

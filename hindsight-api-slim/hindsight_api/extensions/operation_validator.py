@@ -390,6 +390,7 @@ class BankWriteOperation(StrEnum):
     SET_BANK_MISSION = "set_bank_mission"
     SUBMIT_ASYNC_CONSOLIDATION = "submit_async_consolidation"
     SUBMIT_ASYNC_GRAPH_MAINTENANCE = "submit_async_graph_maintenance"
+    SUBMIT_ASYNC_VECTOR_INDEX_MAINTENANCE = "submit_async_vector_index_maintenance"
     UPDATE_BANK = "update_bank"
     UPDATE_BANK_CONFIG = "update_bank_config"
     UPDATE_BANK_DISPOSITION = "update_bank_disposition"

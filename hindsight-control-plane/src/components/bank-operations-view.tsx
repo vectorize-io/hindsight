@@ -53,6 +53,7 @@ interface Operation {
   updated_at?: string | null;
   status: string;
   error_message: string | null;
+  next_retry_at?: string | null;
   progress?: OperationProgress | null;
 }
 
@@ -64,6 +65,14 @@ interface ChildOperationStatus {
   error_message: string | null;
 }
 
+/** Per-operation-type outcome payload the API reports under `details`.
+ *  Discriminated by its own `operation_type`; refresh is the only type today. */
+interface RefreshOperationDetail {
+  operation_type: "refresh_mental_model";
+  outcome: string;
+  failure_reason?: string | null;
+}
+
 type OperationDetails =
   | {
       operation_id: string;
@@ -73,6 +82,7 @@ type OperationDetails =
       updated_at: string | null;
       completed_at: string | null;
       error_message: string | null;
+      next_retry_at?: string | null;
       progress?: OperationProgress | null;
       result_metadata?: {
         items_count?: number;
@@ -81,6 +91,7 @@ type OperationDetails =
         is_parent?: boolean;
         [key: string]: any;
       } | null;
+      details?: RefreshOperationDetail | null;
       child_operations?: ChildOperationStatus[] | null;
       task_payload?: Record<string, unknown> | null;
       error?: never; // Not present in success case
@@ -94,8 +105,10 @@ type OperationDetails =
       updated_at?: never;
       completed_at?: never;
       error_message?: never;
+      next_retry_at?: never;
       progress?: never;
       result_metadata?: never;
+      details?: never;
       child_operations?: never;
       task_payload?: never;
     };
@@ -108,6 +121,7 @@ const OPERATION_TYPE_VALUES = [
   "file_convert_retain",
   "webhook_delivery",
   "graph_maintenance",
+  "vector_index_maintenance",
   "export_documents",
   "import_documents",
 ] as const;
@@ -162,6 +176,7 @@ export function BankOperationsView() {
     file_convert_retain: t("operationType.fileConvertRetain"),
     webhook_delivery: t("operationType.webhookDelivery"),
     graph_maintenance: t("operationType.graphMaintenance"),
+    vector_index_maintenance: t("operationType.vectorIndexMaintenance"),
     export_documents: t("operationType.exportDocuments"),
     import_documents: t("operationType.importDocuments"),
   };
@@ -172,10 +187,33 @@ export function BankOperationsView() {
   const formatOperationType = (operationType: string | null | undefined) =>
     operationType ? (operationTypeLabels[operationType] ?? operationType) : t("notAvailable");
 
-  const renderStatusBadge = (status: string | null | undefined, title?: string | null) => {
+  const renderStatusBadge = (
+    status: string | null | undefined,
+    title?: string | null,
+    nextRetryAt?: string | null
+  ) => {
     const label = formatStatus(status);
 
     if (status === "pending") {
+      // "Pending" alone cannot distinguish "queued, waiting for a worker" from
+      // "deliberately held back until a known time" — which is what a refresh
+      // parked by min_refresh_interval_seconds, or any extension-deferred task,
+      // actually is. Without this the UI just looks stuck.
+      const deferredUntil = nextRetryAt ? new Date(nextRetryAt) : null;
+      if (deferredUntil && deferredUntil.getTime() > Date.now()) {
+        return (
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+            title={t("deferredUntilTitle", { time: deferredUntil.toLocaleString() })}
+          >
+            <Clock className="w-3 h-3" />
+            {t("status.deferred")}
+            <span className="opacity-70">
+              {deferredUntil.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          </span>
+        );
+      }
       return (
         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
           <Clock className="w-3 h-3" />
@@ -613,7 +651,7 @@ export function BankOperationsView() {
                       </TableCell>
                       <TableCell className="w-[300px]">
                         <div className="flex items-center gap-2 whitespace-nowrap">
-                          {renderStatusBadge(op.status, op.error_message)}
+                          {renderStatusBadge(op.status, op.error_message, op.next_retry_at)}
                           {op.status === "processing" &&
                             renderProgress(op.progress, { compact: true })}
                         </div>
@@ -751,7 +789,13 @@ export function BankOperationsView() {
                       <div className="text-sm font-medium text-muted-foreground">
                         {t("field.status")}
                       </div>
-                      <div className="mt-1">{renderStatusBadge(selectedOperation.status)}</div>
+                      <div className="mt-1">
+                        {renderStatusBadge(
+                          selectedOperation.status,
+                          null,
+                          selectedOperation.next_retry_at
+                        )}
+                      </div>
                     </div>
                     <div>
                       <div className="text-sm font-medium text-muted-foreground">
@@ -924,6 +968,18 @@ export function BankOperationsView() {
                           {t("action.download")}
                         </Button>
                       )}
+                    </div>
+                  )}
+
+                  {/* Outcome details (typed, per-operation-type) */}
+                  {selectedOperation.details && (
+                    <div>
+                      <div className="text-sm font-medium text-muted-foreground mb-2">
+                        {t("outcomeDetails")}
+                      </div>
+                      <pre className="rounded-lg border bg-muted/30 p-3 text-xs font-mono overflow-x-auto max-h-96 whitespace-pre-wrap break-words">
+                        {JSON.stringify(selectedOperation.details, null, 2)}
+                      </pre>
                     </div>
                   )}
 

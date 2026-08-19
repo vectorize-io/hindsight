@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ...search.tags import (
@@ -36,7 +36,7 @@ from ...search.tags import (
     build_tags_where_clause,
     build_tags_where_clause_simple,
 )
-from ..base import ScanPage, StoredMemory
+from ..base import MemoryScopeWatermark, ScanPage, StoredMemory
 
 # The `memory_units` projection every read here shares. Superset of the by-id
 # SELECT the recall source-facts path used (text/fact_type/context/timestamps/
@@ -461,8 +461,9 @@ async def mark_consolidated(
     observations are never themselves consolidated, so nothing about them should
     be reset by a requeue.
 
-    ``updated_at`` is deliberately left alone, matching the consolidator's own
-    statements: consolidation bookkeeping is not an edit to the memory, and
+    ``updated_at`` is deliberately left alone — the one exception to the contract
+    documented on ``META_UPDATED_AT`` (``memories.base``) that every other write
+    path owes the column. Consolidation bookkeeping is not an edit to the memory, and
     bumping it would make every consolidation pass look like a write to the
     staleness check below.
     """
@@ -528,12 +529,178 @@ async def any_memory_updated_since(
     return row is not None
 
 
+async def any_memory_updated_since_batch(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    scopes: list["MemoryScopeWatermark"],
+) -> dict[str, bool]:
+    """:func:`any_memory_updated_since` for many scopes, in one query per scope *shape*.
+
+    The knowledge tree and the mental-model list ask this for every model in the
+    bank on a poll, and one round-trip each is what made the exact answer look
+    expensive — the scans themselves are microseconds once
+    ``idx_memory_units_bank_updated_at`` exists. Scopes are grouped by the tag
+    clause they generate (a bank's pages almost always share one), each group is
+    joined against its scope set as JSON, and every group is a single prepared
+    plan however many pages it covers.
+
+    Two details in the SQL are load-bearing:
+
+    * ``ORDER BY mu.updated_at DESC`` inside the LATERAL. It does not change the
+      answer — we only ask whether a row exists — but without it the planner
+      estimates the ``LIMIT 1`` will be satisfied early, picks a sequential scan,
+      and the whole point is lost (measured: 13 ms per scope instead of 0.03 ms).
+      The ORDER BY makes the ``(bank_id, updated_at DESC)`` index the obvious way
+      to run the join, which is also the cheapest.
+    * ``LEFT JOIN LATERAL`` rather than a correlated ``EXISTS``. A scalar subquery
+      over a function scan gets no useful row estimate and falls back to a
+      sequential scan for the same reason.
+
+    Compound ``tag_groups`` scopes cannot be expressed against a joined row, so
+    they fall back to one :func:`any_memory_updated_since` each — they are rare,
+    and correctness beats uniformity.
+
+    Postgres only. This module backs both SQL dialects, and Oracle reaches it
+    through a regex rewriter that does not model ``jsonb_to_recordset`` or
+    ``LATERAL``, so an Oracle connection takes the same per-scope path. It is the
+    round-trips that are saved here, not the scans — the scans are cheap on both
+    dialects once the ``(bank_id, updated_at)`` index exists.
+    """
+    if not scopes:
+        return {}
+
+    if getattr(conn, "backend_type", "postgresql") != "postgresql":
+        return {
+            scope.key: await any_memory_updated_since(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                since=scope.since,
+                fact_types=scope.fact_types,
+                tags=scope.tags,
+                tags_match=scope.tags_match,
+                tag_groups=scope.tag_groups,
+            )
+            for scope in scopes
+        }
+
+    table = fq_table("memory_units")
+    results: dict[str, bool] = {}
+
+    # Group by the generated clause: same clause, same query text, one plan.
+    by_clause: dict[str, list[MemoryScopeWatermark]] = {}
+    for scope in scopes:
+        if scope.tag_groups:
+            results[scope.key] = await any_memory_updated_since(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                since=scope.since,
+                fact_types=scope.fact_types,
+                tags=scope.tags,
+                tags_match=scope.tags_match,
+                tag_groups=scope.tag_groups,
+            )
+            continue
+        # `s.tags` is the joined scope's tag array, so one clause serves every scope
+        # in the group whatever its actual tags. The `mu.` alias is required, not
+        # cosmetic: both sides of the join expose a `tags` column, and an unqualified
+        # one would resolve by scoping rules rather than by intent.
+        tag_clause, _, _ = build_tags_where_clause(
+            scope.tags, table_alias="mu.", match=scope.tags_match, value_expr="s.tags"
+        )
+        by_clause.setdefault(tag_clause, []).append(scope)
+
+    for tag_clause, group in by_clause.items():
+        payload = [
+            {
+                "scope_key": scope.key,
+                "since": _as_utc(scope.since).isoformat(),
+                "tags": list(scope.tags) if scope.tags else None,
+                # Empty means "no fact-type filter", exactly as in the single-scope
+                # query; NULL is how the SQL below spells that.
+                "fact_types": list(scope.fact_types) if scope.fact_types else None,
+            }
+            for scope in group
+        ]
+        rows = await conn.fetch(
+            f"""
+            SELECT s.scope_key, (h.hit IS NOT NULL) AS stale
+            FROM jsonb_to_recordset($2::jsonb)
+                 -- `tags` must be varchar[], matching memory_units.tags: there is no
+                 -- `varchar[] @> text[]` operator, so a text[] column here fails to
+                 -- resolve the containment operators the tag clauses are built from.
+                 AS s(scope_key text, since timestamptz, tags varchar[], fact_types text[])
+            LEFT JOIN LATERAL (
+                SELECT 1 AS hit
+                FROM {table} mu
+                WHERE mu.bank_id = $1
+                  AND mu.updated_at > s.since
+                  {tag_clause}
+                  AND (s.fact_types IS NULL OR mu.fact_type = ANY(s.fact_types))
+                ORDER BY mu.updated_at DESC
+                LIMIT 1
+            ) h ON TRUE
+            """,
+            bank_id,
+            json.dumps(payload),
+        )
+        results.update({row["scope_key"]: row["stale"] for row in rows})
+
+    return results
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Treat a naive timestamp as UTC, so the JSON payload always carries an offset.
+
+    The scope watermarks come from ``TIMESTAMPTZ`` columns and are normally
+    aware, but a caller that built one itself may not be; without an offset the
+    ``timestamptz`` cast would resolve it against the session's TimeZone.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+async def live_memory_ids(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    unit_ids: list[Any],
+) -> set[str]:
+    """Which of ``unit_ids`` still exist in ``bank_id``'s live memories.
+
+    Backs the retraction check: a mental model's grounding is stored as ids on
+    ``reflect_response.based_on``, and an id that no longer answers here has been
+    retracted — invalidated (moved to the archive), deleted outright, or swept as
+    a stale observation. The three are indistinguishable from the document's point
+    of view and are treated the same, so this deliberately does not consult
+    ``invalidated_memory_units``: "not live" is the whole question.
+
+    Ids that do not parse as UUIDs are dropped rather than raising, so a caller can
+    pass a mixed ``based_on`` without pre-filtering — an unparseable id simply
+    reads as absent, which is what it is.
+    """
+    ids = _as_uuids(unit_ids)
+    if not ids:
+        return set()
+    rows = await conn.fetch(
+        f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[])",
+        bank_id,
+        ids,
+    )
+    return {str(row["id"]) for row in rows}
+
+
 __all__ = [
     "any_memory_updated_since",
+    "any_memory_updated_since_batch",
     "count_memories",
     "find_unconsolidated",
     "get_memories",
     "list_tags",
+    "live_memory_ids",
     "mark_consolidated",
     "scan_memories",
 ]
