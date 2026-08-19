@@ -60,8 +60,8 @@ hindsight-embed configure --profile staging
 ```
 
 This will:
-- Let you choose an LLM provider (OpenAI, Groq, Google, Ollama)
-- Configure your API key
+- Let you choose an LLM provider (OpenAI, Groq, Google, Ollama, GitHub Copilot)
+- Configure credentials when the provider requires them
 - Set the model
 - Start the daemon with your configuration
 
@@ -151,7 +151,7 @@ Run `hindsight-embed configure` for a guided setup that saves to `~/.hindsight/e
 |----------|-------------|---------|
 | `HINDSIGHT_EMBED_PROFILE` | Profile name to use (overrides active profile) | None (uses default profile) |
 | `HINDSIGHT_API_LLM_API_KEY` | LLM API key (or use `OPENAI_API_KEY`); required only when the selected provider uses an API key | Provider-dependent |
-| `HINDSIGHT_API_LLM_PROVIDER` | LLM provider (`openai`, `groq`, `google`, `ollama`) | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | LLM provider (`openai`, `groq`, `gemini`, `ollama`, `github-copilot`) | `openai` |
 | `HINDSIGHT_API_LLM_MODEL` | LLM model | `gpt-4o-mini` |
 | `HINDSIGHT_EMBED_API_URL` | Use external API server instead of starting local daemon | None (starts local daemon) |
 | `HINDSIGHT_EMBED_API_TOKEN` | Authentication token for external API (sent as Bearer token) | None |

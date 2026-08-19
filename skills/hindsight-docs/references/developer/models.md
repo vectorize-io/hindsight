@@ -39,6 +39,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Requesty
 - OpenAI Codex
 - Claude Code
+- GitHub Copilot
 - AWS Bedrock
 - Fireworks AI
 - Nous Portal
@@ -121,6 +122,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | Requesty (`requesty`) | — | — |
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
+| GitHub Copilot (`github-copilot`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
 | Fireworks AI (`fireworks`) | ✅ | — |
 | Nous Portal (`nous`) | — | — |
@@ -186,6 +188,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `requesty` | `openai/gpt-4o-mini` |
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
+| `github-copilot` | `gpt-5.6-terra` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
 | `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
 | `nous` | `deepseek/deepseek-v4-flash` |
@@ -329,6 +332,34 @@ export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
 ```
 
 **Note:** The LLM is the primary bottleneck for retain operations. See [Performance](./performance) for optimization strategies.
+
+---
+
+### GitHub Copilot Setup
+
+Use a GitHub Copilot subscription for Hindsight's extraction, consolidation, and reflection calls through the official GitHub Copilot SDK.
+
+**Prerequisites:**
+- An active GitHub Copilot entitlement
+- Copilot CLI signed in under the same operating-system user that runs Hindsight
+
+**Configure Hindsight:**
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=github-copilot
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6-terra
+# No HINDSIGHT_API_LLM_API_KEY is needed.
+```
+
+The provider starts one shared Copilot runtime for all Hindsight LLM lanes. That runtime uses a hook-free temporary `COPILOT_HOME` containing only the signed-in account selection; the credential itself is resolved by the runtime from the system keychain or an existing `gh` CLI login. Each call then uses an isolated transient session with repository instructions, skills, Copilot memory, built-in tools, and the cross-session store disabled. This prevents the memory integration from recursively retaining its own extraction calls.
+
+For automation, the Copilot SDK also accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`. With one of those set, Copilot CLI never has to have been run on the host, so containers and CI images work with no `~/.copilot` at all. GitHub Actions and server-to-server deployments must have the appropriate Copilot organization policy and token permissions.
+
+**Important notes:**
+- Usage counts against the authenticated account or organization's Copilot allowance and AI Credits.
+- `HINDSIGHT_API_LLM_BASE_URL` optionally points to an existing headless Copilot runtime, such as `http://127.0.0.1:4321`; it is not an LLM-provider endpoint for this provider.
+- GitHub-hosted Copilot sessions do not expose temperature or maximum-output-token controls through the SDK, so those Hindsight settings are not applied.
+- Embeddings and reranking continue to use Hindsight's separately configured providers; their local defaults require no API key.
 
 ---
 

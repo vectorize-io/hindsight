@@ -352,6 +352,15 @@ describe("applyEmbeddedMode", () => {
     expect(pc.llmApiKey).toBeUndefined();
   });
 
+  it("omits llmApiKey for github-copilot", () => {
+    const pc: Record<string, unknown> = {
+      llmApiKey: { source: "env", provider: "default", id: "STALE" },
+    };
+    applyEmbeddedMode(pc, { llmProvider: "github-copilot" });
+    expect(pc.llmProvider).toBe("github-copilot");
+    expect(pc.llmApiKey).toBeUndefined();
+  });
+
   it("throws when a key-requiring provider is given without a key", () => {
     const pc: Record<string, unknown> = {};
     expect(() => applyEmbeddedMode(pc, { llmProvider: "openai" })).toThrow(

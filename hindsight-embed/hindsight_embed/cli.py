@@ -126,9 +126,14 @@ def get_config():
     venvs (e.g. `uvx hindsight-embed`) where `hindsight-api` isn't installed.
     """
     load_config_file()
+    provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
     return {
-        "llm_api_key": os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"),
-        "llm_provider": os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai"),
+        "llm_api_key": (
+            None
+            if provider in NO_API_KEY_PROVIDERS
+            else os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        ),
+        "llm_provider": provider,
         "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL"),
     }
 
@@ -140,7 +145,9 @@ PROVIDER_API_KEYS = {
     "gemini": "GEMINI_API_KEY",
     "ollama": None,
     "vertexai": None,
+    "github-copilot": None,
 }
+NO_API_KEY_PROVIDERS = frozenset(provider for provider, key_env in PROVIDER_API_KEYS.items() if key_env is None)
 
 
 def do_configure(args):
@@ -194,29 +201,31 @@ def _has_non_interactive_env() -> bool:
     """Whether the env vars required by _do_configure_from_env are already set.
 
     Returns True when an API key is present, OR when the provider is one that
-    doesn't need a key (ollama, vertexai — the latter authenticates via a
-    service-account file path). Prevents the interactive prompt from kicking
-    in when the user clearly wants CI/scripted behavior.
+    doesn't need a key. Prevents the interactive prompt from kicking in when
+    the user clearly wants CI/scripted behavior.
     """
     if os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"):
         return True
-    return os.environ.get("HINDSIGHT_API_LLM_PROVIDER") in ("ollama", "vertexai")
+    return os.environ.get("HINDSIGHT_API_LLM_PROVIDER") in NO_API_KEY_PROVIDERS
 
 
 def _do_configure_from_env():
     """Non-interactive configuration from environment variables (for CI)."""
     # Check for required environment variables
-    api_key = os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
     provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
+    api_key = (
+        None
+        if provider in NO_API_KEY_PROVIDERS
+        else os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    )
 
-    # Don't gate on PROVIDER_API_KEYS — that's only the interactive-menu set
-    # (5 entries). hindsight-api's PROVIDER_DEFAULT_MODELS supports ~18
+    # Don't gate on PROVIDER_API_KEYS — that's only the small interactive-menu
+    # set. hindsight-api's PROVIDER_DEFAULT_MODELS supports many more
     # providers (anthropic, claude-code, bedrock, openrouter, ...). Let the
     # daemon validate; rejecting here would block valid configurations.
 
-    # Check for API key (required for non-ollama and non-vertexai providers)
-    # vertexai uses GCP service account credentials instead of an API key
-    if not api_key and provider not in ("ollama", "vertexai"):
+    # These providers authenticate locally rather than through an LLM API key.
+    if not api_key and provider not in NO_API_KEY_PROVIDERS:
         print("Error: Cannot run interactive configuration without a terminal.", file=sys.stderr)
         print("", file=sys.stderr)
         print("For non-interactive (CI) mode, set environment variables:", file=sys.stderr)
@@ -373,6 +382,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
         ("Groq (fast & free tier)", "groq"),
         ("Google Gemini", "gemini"),
         ("Ollama (local, no API key)", "ollama"),
+        ("GitHub Copilot (signed-in account, no LLM API key)", "github-copilot"),
     ]
 
     provider = _prompt_choice("Select your LLM provider:", providers, default=1)

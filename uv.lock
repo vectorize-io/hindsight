@@ -1449,6 +1449,19 @@ wheels = [
 ]
 
 [[package]]
+name = "github-copilot-sdk"
+version = "1.0.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/ac/175cbb71fe637d963a885248a421040c9d500ea6390ed3b88bc68ecf51ca/github_copilot_sdk-1.0.11-py3-none-any.whl", hash = "sha256:6f664c7b843c34ab5a7455f7effb4d339eae75969d2b72f43c2e6214c9c637dc", size = 486719, upload-time = "2026-08-14T16:12:20.01Z" },
+]
+
+[[package]]
 name = "gitpython"
 version = "3.1.59"
 source = { registry = "https://pypi.org/simple" }
@@ -1688,6 +1701,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "fastmcp" },
     { name = "filelock" },
+    { name = "github-copilot-sdk" },
     { name = "google-auth" },
     { name = "google-genai" },
     { name = "greenlet" },
@@ -1819,6 +1833,7 @@ requires-dist = [
     { name = "filelock", specifier = ">=3.20.1" },
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.20.1" },
     { name = "flashrank", marker = "extra == 'local-ml'", specifier = ">=0.2.0" },
+    { name = "github-copilot-sdk", specifier = ">=1.0.11" },
     { name = "google-auth", specifier = ">=2.0.0" },
     { name = "google-genai", specifier = ">=1.72.0" },
     { name = "greenlet", specifier = ">=3.2.4,<3.4.0" },

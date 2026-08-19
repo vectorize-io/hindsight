@@ -74,7 +74,7 @@ class HindsightEmbedded:
     Args:
         profile: Profile name for data isolation (default: "default")
         llm_provider: LLM provider ("groq", "openai", "ollama", "gemini", "anthropic",
-            "lmstudio"). Omit to inherit; the server default is "openai".
+            "lmstudio", "github-copilot"). Omit to inherit; the server default is "openai".
         llm_api_key: API key for the LLM provider. Omit to inherit; pass "" to
             explicitly run without a key (local services that need no auth).
         llm_model: Model name to use. Omit to inherit; the server picks a default

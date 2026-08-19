@@ -594,7 +594,7 @@ def test_configure_from_env_accepts_providers_outside_interactive_menu(temp_home
     """Regression test for issue #1360.
 
     `_do_configure_from_env` previously rejected any provider not in the small
-    interactive-menu set (`PROVIDER_API_KEYS` — 5 entries) with "Unknown
+    interactive-menu set (`PROVIDER_API_KEYS`) with "Unknown
     provider". hindsight-api supports ~18 providers (anthropic, claude-code,
     bedrock, openrouter, ...), so the gate blocked valid CI configurations.
     Validation belongs in the daemon, not in the CLI's UX-only menu list.
@@ -614,6 +614,29 @@ def test_configure_from_env_accepts_providers_outside_interactive_menu(temp_home
 
     contents = (config_dir / "embed").read_text()
     assert "HINDSIGHT_API_LLM_PROVIDER=anthropic" in contents
+
+
+def test_configure_from_env_accepts_github_copilot_without_api_key(temp_home, monkeypatch):
+    """GitHub Copilot authenticates through Copilot CLI rather than an LLM API key."""
+    from hindsight_embed import cli
+
+    config_dir = temp_home / ".hindsight"
+    monkeypatch.setattr(cli, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "CONFIG_FILE", config_dir / "embed")
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "github-copilot")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_MODEL", "gpt-5.6-terra")
+    monkeypatch.delenv("HINDSIGHT_API_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-key")
+
+    assert cli._has_non_interactive_env() is True
+    assert cli._do_configure_from_env() == 0
+
+    contents = (config_dir / "embed").read_text()
+    assert "HINDSIGHT_API_LLM_PROVIDER=github-copilot" in contents
+    assert "HINDSIGHT_API_LLM_MODEL=gpt-5.6-terra" in contents
+    active_lines = [line for line in contents.splitlines() if line and not line.startswith("#")]
+    assert not any(line.startswith("HINDSIGHT_API_LLM_API_KEY=") for line in active_lines)
 
 
 def _windows_scripts_dir(tmp_path: Path, *, with_pythonw: bool) -> Path:

@@ -1291,7 +1291,12 @@ export function formatMemories(results: MemoryResult[]): string {
 }
 
 // Providers that authenticate via OAuth or run locally — no API key needed.
-const NO_KEY_REQUIRED_PROVIDERS = new Set(["ollama", "openai-codex", "claude-code"]);
+const NO_KEY_REQUIRED_PROVIDERS = new Set([
+  "ollama",
+  "openai-codex",
+  "claude-code",
+  "github-copilot",
+]);
 
 export function detectLLMConfig(pluginConfig?: PluginConfig): {
   provider?: string;
