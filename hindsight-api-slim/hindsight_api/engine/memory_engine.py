@@ -134,6 +134,51 @@ def _authorize_nested_operations() -> "Iterator[None]":
 
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
+_ITERATION_LIMIT_PREFIX = "I was unable to formulate a complete answer"
+
+
+def is_placeholder_refresh_candidate(text: str) -> bool:
+    """True when the reflect candidate is a known failure placeholder, not a document."""
+    from .reflect.agent import NO_ANSWER_TEXT
+
+    candidate = text.strip()
+    return candidate == NO_ANSWER_TEXT.strip() or candidate.startswith(_ITERATION_LIMIT_PREFIX)
+
+
+EmptyEvidenceState = Literal["retrieval_empty", "no_grounded_facts"]
+
+
+def empty_evidence_state(*, based_on_empty: bool, retrieved_count: int) -> EmptyEvidenceState | None:
+    """Name the empty-evidence diagnostic, or None when this run grounded facts.
+
+    ``retrieval_empty``: recall returned nothing (``facts.retrieved == 0``).
+    ``no_grounded_facts``: recall returned facts but ``based_on`` is empty —
+    the agent used none of them. The overwrite guard keys on based_on
+    emptiness (either state) so a real document is not replaced by an
+    ungrounded render (#2894). These two used to be collapsed as
+    ``fresh_retrieval_empty`` / ``empty_fresh_retrieval``.
+    """
+    if not based_on_empty:
+        return None
+    if retrieved_count == 0:
+        return "retrieval_empty"
+    return "no_grounded_facts"
+
+
+def should_refuse_failed_refresh_overwrite(
+    *,
+    has_delta_baseline: bool,
+    is_placeholder: bool,
+    no_grounded_facts: bool,
+) -> bool:
+    """Refuse a failed render only when it would overwrite existing real content.
+
+    ``no_grounded_facts`` is based_on emptiness (no facts used/grounded), not
+    "retrieval returned nothing". Retrieval can be nonempty while based_on is
+    empty; the conservative guard still refuses in that case.
+    """
+    return has_delta_baseline and (is_placeholder or no_grounded_facts)
+
 
 def get_current_schema() -> str:
     """Get the current schema from context (falls back to config default)."""
@@ -13142,6 +13187,12 @@ class MemoryEngine(MemoryEngineInterface):
         for _facts in based_on_serialized_payload.values():
             delta_supporting_facts.extend(_facts)
 
+        # Capture whether THIS reflect grounded any facts BEFORE the delta-mode
+        # merge below folds in facts from previous refreshes. Post-merge
+        # emptiness is fail-open under carry-over (#2894). based_on empty means
+        # no facts used/grounded — retrieval can still have returned facts.
+        no_grounded_facts = not any(payload for payload in based_on_serialized_payload.values() if payload)
+
         # In delta mode, based_on must accumulate: the mental model is
         # grounded on ALL facts ever used, not just the latest delta's new
         # ones. Merge previous based_on with current, deduplicating by id.
@@ -13410,6 +13461,35 @@ class MemoryEngine(MemoryEngineInterface):
             warnings.append(
                 "The refresh produced empty content, which usually means an upstream LLM failure. "
                 "A real refresh would preserve the existing content and fail."
+            )
+            return _finish(
+                effective_mode=effective_mode,
+                mode_fallback_reason=mode_fallback_reason,
+                final_content=final_content,
+                final_structured=None,
+                delta_operations=delta_operations,
+                outcome="refresh_failed_empty_candidate",
+            )
+
+        # Refuse to overwrite EXISTING REAL content with a failure placeholder
+        # (#2959: NO_ANSWER_TEXT / iteration-limit fallback — non-empty, so the
+        # emptiness guard above lets it through) or when this run grounded no
+        # facts (#2894). based_on empty is the conservative trigger; the warning
+        # names retrieval_empty vs no_grounded_facts so a nonempty recall that
+        # the agent ignored is not reported as "retrieval returned nothing".
+        # Both legs require a real baseline so a bootstrap write onto
+        # empty/PENDING content still lands.
+        is_placeholder = is_placeholder_refresh_candidate(final_content)
+        if should_refuse_failed_refresh_overwrite(
+            has_delta_baseline=has_delta_baseline,
+            is_placeholder=is_placeholder,
+            no_grounded_facts=no_grounded_facts,
+        ):
+            evidence_state = empty_evidence_state(based_on_empty=no_grounded_facts, retrieved_count=retrieved_total)
+            reason = "placeholder_candidate" if is_placeholder else (evidence_state or "no_grounded_facts")
+            warnings.append(
+                f"Refresh produced a {reason} render over existing real content; "
+                "preserving previous content and failing the refresh."
             )
             return _finish(
                 effective_mode=effective_mode,

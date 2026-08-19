@@ -461,6 +461,116 @@ class TestDryRunReportsRetrievalHealth:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_placeholder_candidate_over_real_content_fails(
+        self, memory: MemoryEngine, request_context: RequestContext, patch_reflect
+    ):
+        """NO_ANSWER_TEXT is non-empty, so the emptiness guard does not see it."""
+        from hindsight_api.engine.reflect.agent import NO_ANSWER_TEXT
+
+        bank_id = await _make_bank(memory, request_context, "test-dryrun-placeholder")
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nStill here.",
+            trigger={"mode": "full"},
+            request_context=request_context,
+        )
+
+        patch_reflect(
+            memory,
+            text=NO_ANSWER_TEXT,
+            facts=[{"id": "f1", "text": "used", "fact_type": "observation"}],
+        )
+        result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        assert result.outcome == "refresh_failed_empty_candidate"
+        assert result.would_persist is False
+        assert result.preview_content == "# Team\n\nStill here."
+        assert any("placeholder_candidate" in w for w in result.warnings)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_retrieval_empty_over_real_content_fails(
+        self, memory: MemoryEngine, request_context: RequestContext, patch_reflect
+    ):
+        """A generic non-empty render with no facts this run must not clobber."""
+        bank_id = await _make_bank(memory, request_context, "test-dryrun-emptyfresh")
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nStill here.",
+            trigger={"mode": "full"},
+            request_context=request_context,
+        )
+
+        patch_reflect(memory, text="# Team\n\nNothing relevant was found.", facts=[], retrieved=[])
+        result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        assert result.outcome == "refresh_failed_empty_candidate"
+        assert result.would_persist is False
+        assert result.preview_content == "# Team\n\nStill here."
+        assert any("retrieval_empty" in w for w in result.warnings)
+        assert not any("no_grounded_facts" in w for w in result.warnings)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_no_grounded_facts_with_nonzero_retrieval_over_real_content_fails(
+        self, memory: MemoryEngine, request_context: RequestContext, patch_reflect
+    ):
+        """Recall can return facts while based_on is empty; still refuse, name the state."""
+        bank_id = await _make_bank(memory, request_context, "test-dryrun-ungrounded")
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nStill here.",
+            trigger={"mode": "full"},
+            request_context=request_context,
+        )
+
+        patch_reflect(
+            memory,
+            text="# Team\n\nNothing relevant was found.",
+            facts=[],
+            retrieved=[{"id": "f1", "text": "off topic", "fact_type": "observation"}],
+        )
+        result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        assert result.outcome == "refresh_failed_empty_candidate"
+        assert result.would_persist is False
+        assert result.preview_content == "# Team\n\nStill here."
+        assert any("no_grounded_facts" in w for w in result.warnings)
+        assert not any("retrieval_empty" in w for w in result.warnings)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_placeholder_on_pending_model_still_writes(
+        self, memory: MemoryEngine, request_context: RequestContext, patch_reflect
+    ):
+        """Bootstrap onto PENDING content is a first write, not a clobber."""
+        from hindsight_api.engine.memory_engine import MENTAL_MODEL_PENDING_CONTENT
+        from hindsight_api.engine.reflect.agent import NO_ANSWER_TEXT
+
+        bank_id = await _make_bank(memory, request_context, "test-dryrun-bootph")
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            trigger={"mode": "full"},
+            request_context=request_context,
+        )
+
+        patch_reflect(memory, text=NO_ANSWER_TEXT, facts=[], retrieved=[])
+        result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        assert result.outcome == "content_written"
+        assert result.would_persist is True
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestDryRunScopeResolution:
     """A model's stored tags are not what filters memories; the resolved scope is."""
