@@ -37,7 +37,7 @@ from hindsight import HindsightServer, HindsightClient
 
 with HindsightServer(llm_provider="groq", llm_api_key="...") as server:
     client = HindsightClient(base_url=server.url)
-    # ... use client ...
+  #  # ... use client ...
 # Server automatically stops
 ```
 
