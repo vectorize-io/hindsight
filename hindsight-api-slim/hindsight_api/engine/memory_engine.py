@@ -11444,32 +11444,46 @@ class MemoryEngine(MemoryEngineInterface):
             if created:
                 await self._apply_default_bank_template(bank_id, rc)
 
+        Concurrency & Validation:
+          * Lockless Optimistic Concurrency: To avoid advisory lock deadlocks
+            and holding transactions across async validator hooks, all callers
+            observing an uncreated bank state independently evaluate
+            `validate_create_bank` before attempting database insertion.
+          * Atomic Arbitration: The database unique constraint arbitrates
+            competing inserts (via `INSERT ... ON CONFLICT DO NOTHING`). Only
+            the winning caller receives `created=True` and applies the default
+            bank template; concurrent losers safely receive `created=False`.
+          * Existing Bank Bypass: Once a bank is committed, subsequent callers
+            observe `exists=True` on their initial probe, returning `False`
+            immediately and bypassing `validate_create_bank`.
+
         Returns:
             True if the bank was freshly created on this call.
         """
         backend = await self._get_backend()
-        if self._operation_validator:
-            if conn is not None:
-                exists = await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
-            else:
-                exists = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
-            if not exists:
-                from hindsight_api.extensions import CreateBankContext
+        if conn is not None:
+            exists = bool(await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id))
+        else:
+            exists = bool(await bank_utils.get_bank_profile_if_exists(backend, bank_id))
+        if exists:
+            return False
 
-                ctx = CreateBankContext(
-                    bank_id=bank_id,
-                    request_context=request_context,
-                )
-                await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
+        if self._operation_validator:
+            from hindsight_api.extensions import CreateBankContext
+
+            ctx = CreateBankContext(
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
 
         if conn is not None:
-            result = await bank_utils.get_or_create_bank_profile_on_conn(conn, bank_id, ops=backend.ops)
-            return result.created
+            return await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=backend.ops)
 
-        result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
-        if result.created:
+        created = await bank_utils.create_bank_if_missing(backend, bank_id)
+        if created:
             await self._apply_default_bank_template(bank_id, request_context)
-        return result.created
+        return created
 
     async def get_bank_config(
         self,
