@@ -27,6 +27,7 @@ import os
 import re
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable
@@ -52,6 +53,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import strict_json_schema
@@ -64,6 +66,24 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
 DEFAULT_VERIFICATION_MAX_COMPLETION_TOKENS = 512
+
+
+@dataclass(frozen=True)
+class _JsonParseFailure:
+    """Where a structured response failed to parse, used to spot a repeat.
+
+    Every retry re-sends a byte-identical request, so the same failure at the
+    same position twice in a row means the model is deterministic here and more
+    generations cannot help (#3683).
+    """
+
+    message: str
+    lineno: int
+    colno: int
+
+    @classmethod
+    def from_error(cls, error: json.JSONDecodeError) -> "_JsonParseFailure":
+        return cls(message=error.msg, lineno=error.lineno, colno=error.colno)
 
 
 def _validate_ollama_num_ctx(value: Any) -> int | None:
@@ -1001,6 +1021,7 @@ class OpenAICompatibleLLM(LLMInterface):
         apply_cache_affinity(call_params, self._cache_affinity)
 
         last_exception = None
+        last_parse_failure: _JsonParseFailure | None = None
 
         for attempt in range(max_retries + 1):
             # Surface attempt count in worker stage so JSON-schema retry loops
@@ -1051,14 +1072,26 @@ class OpenAICompatibleLLM(LLMInterface):
                                 f"  Content preview: {content_preview!r}\n"
                                 f"  Finish reason: {_finish_reason_for_choice(first_choice)}"
                             )
-                            # Retry on JSON parse errors
-                            if attempt < max_retries:
+                            # Retry on JSON parse errors, but only while a fresh
+                            # generation could still produce something different.
+                            failure = _JsonParseFailure.from_error(json_err)
+                            repeated = failure == last_parse_failure
+                            last_parse_failure = failure
+                            if attempt < max_retries and not repeated:
                                 backoff = min(initial_backoff * (2**attempt), max_backoff)
                                 await asyncio.sleep(backoff)
                                 last_exception = json_err
                                 continue
-                            else:
-                                logger.error(f"JSON parse error after {max_retries + 1} attempts, giving up")
+                            # Retry budget spent, or the same failure twice on a
+                            # byte-identical request: another generation cannot
+                            # help. Repair structurally as a last resort, the way
+                            # litellm_llm.py has since #2547/#2544. json_repair is
+                            # already a dependency and raises again when the
+                            # content is genuinely unrecoverable.
+                            try:
+                                json_data = parse_llm_json(content)
+                            except json.JSONDecodeError:
+                                logger.error(f"JSON parse error after {attempt + 1} attempts, giving up")
                                 raise
 
                     if skip_validation:
@@ -1605,6 +1638,7 @@ class OpenAICompatibleLLM(LLMInterface):
         payload["options"] = options
 
         last_exception = None
+        last_parse_failure: _JsonParseFailure | None = None
 
         # Pass API key as Bearer token for cloud Ollama endpoints
         headers: dict[str, str] = {}
@@ -1655,13 +1689,18 @@ class OpenAICompatibleLLM(LLMInterface):
                                     f"  Content length: {len(content) if content else 0} chars\n"
                                     f"  Content preview: {content_preview!r}"
                                 )
-                                if attempt < max_retries:
+                                failure = _JsonParseFailure.from_error(json_err)
+                                repeated = failure == last_parse_failure
+                                last_parse_failure = failure
+                                if attempt < max_retries and not repeated:
                                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                                     await asyncio.sleep(backoff)
                                     last_exception = json_err
                                     continue
-                                else:
-                                    raise
+                                # Same last-resort repair as the OpenAI-compatible
+                                # path above; this parses identically and had the
+                                # identical gap.
+                                json_data = parse_llm_json(content)
 
                     # Extract token usage from Ollama response
                     duration = time.time() - start_time
