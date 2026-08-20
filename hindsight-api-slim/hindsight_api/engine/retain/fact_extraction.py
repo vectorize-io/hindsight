@@ -1289,8 +1289,11 @@ def _build_request_body(batch_impl, config, prompt: str, user_message: str, resp
     if config.retain_max_completion_tokens:
         request_body["max_completion_tokens"] = config.retain_max_completion_tokens
 
-    # Add service_tier for OpenAI Flex Processing
-    if getattr(batch_impl, "provider", None) == "openai" and getattr(batch_impl, "openai_service_tier", None):
+    # Add service_tier for OpenAI Flex Processing. ``provider`` is set by every
+    # LLMInterface, and the short-circuit keeps impls without a service tier
+    # (gemini/anthropic/fireworks) from ever reaching the second attribute — so a
+    # renamed field fails loudly here instead of silently dropping flex pricing.
+    if batch_impl.provider == "openai" and batch_impl.openai_service_tier:
         request_body["service_tier"] = batch_impl.openai_service_tier
 
     # Add response_format (JSON schema). The batch path builds the request body
@@ -2009,14 +2012,12 @@ async def extract_facts_from_contents_batch_api(
 
     # Resolve the provider implementation that serves the batch. For a multi-LLM
     # chain this is the first batch-capable member (not necessarily the primary);
-    # for a single provider it is the primary itself. The whole batch lifecycle
-    # (submit → poll → retrieve) must target this ONE impl, so resolve it once and
-    # reuse it. Crash-recovery resume re-resolves to the same member because the
-    # selection is deterministic by declared member order.
+    # for a single provider it is the primary itself, and ``None`` when nothing
+    # configured can serve a batch at all. The whole batch lifecycle (submit →
+    # poll → retrieve) must target this ONE impl, so resolve it once and reuse it.
     batch_impl = await llm_config.batch_provider_impl()
 
-    # Check if the resolved provider supports the batch API
-    if not await batch_impl.supports_batch_api():
+    if batch_impl is None:
         raise RuntimeError(
             f"retain_batch_enabled=True but provider '{llm_config.provider}' does not "
             f"support the batch API. This should have been caught at startup — check "
@@ -2043,6 +2044,21 @@ async def extract_facts_from_contents_batch_api(
             batch_id = metadata.get("batch_id")
 
             if batch_id:
+                # Member selection is deterministic by declared order, but the
+                # chain configuration can change between the submit and the
+                # resume (a member added, removed, or given batch capacity). A
+                # batch_id only exists on the account that created it, so polling
+                # a different one would hang until the wall clock ran out and then
+                # report a provider error nobody can act on. Fail on the mismatch
+                # instead, naming both sides.
+                submitted_provider = metadata.get("batch_provider")
+                if submitted_provider and submitted_provider != batch_impl.provider:
+                    raise RuntimeError(
+                        f"Cannot resume batch {batch_id}: it was submitted to "
+                        f"'{submitted_provider}' but the retain LLM configuration now "
+                        f"serves batch from '{batch_impl.provider}'. Restore the LLM "
+                        f"member that submitted it, or fail this operation and retain again."
+                    )
                 logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
 
     # Step 1: Chunk all contents and build batch requests (skip if resuming)

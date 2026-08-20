@@ -32,6 +32,7 @@ from ..config import (
 from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
     LLMToolChoice,
     LLMToolChoiceMode,
 )
@@ -962,14 +963,18 @@ class LLMProvider:
         """Whether the underlying provider supports the OpenAI/Groq Batch API."""
         return await self._provider_impl.supports_batch_api()
 
-    async def batch_provider_impl(self) -> Any:
-        """Return the implementation used for batch operations.
+    async def batch_provider_impl(self) -> LLMInterface | None:
+        """The implementation serving batch, or ``None`` when it cannot serve one.
 
         Exists so the batch path (``extract_facts_from_contents_batch_api``) can
         target the implementation through the same interface as a multi-LLM chain:
         ``MultiLLMProvider`` returns the first batch-capable member's impl here,
-        while a single provider returns its own.
+        while a single provider returns its own. Returning ``None`` rather than a
+        provider that would reject every batch call keeps the "can it serve one?"
+        answer in one place — the caller raises on ``None``.
         """
+        if not await self._provider_impl.supports_batch_api():
+            return None
         return self._provider_impl
 
     async def call(

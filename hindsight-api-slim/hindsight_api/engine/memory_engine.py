@@ -663,6 +663,34 @@ def _build_llm(
     return MultiLLMProvider([base, *extra], strategy)
 
 
+async def validate_retain_batch_support(
+    retain_llm_config: "LLMConfig | MultiLLMProvider", config: HindsightConfig
+) -> None:
+    """Fail startup when batch retain is enabled but nothing configured can serve it.
+
+    Otherwise the server would silently fall back to sync mode on every retain,
+    which is confusing and wastes a config knob. For a multi-LLM chain the
+    capability is evaluated across ALL members, not just the primary: batch
+    capacity may live on a secondary (issue #3645), and gating on the primary
+    alone rejected configurations that would in fact have worked.
+    """
+    if not config.retain_batch_enabled:
+        return
+    if await retain_llm_config.supports_batch_api():
+        return
+
+    if isinstance(retain_llm_config, MultiLLMProvider):
+        members = ", ".join(f"'{member.provider}'" for member in retain_llm_config.members)
+        cause = f"no member of the retain LLM chain ({members}) supports the batch API"
+    else:
+        cause = f"the retain LLM provider '{retain_llm_config.provider}' does not support the batch API"
+    raise RuntimeError(
+        f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true but {cause}. "
+        f"Either switch to a provider that supports batch operations "
+        f"(e.g. 'openai', 'groq', 'gemini') or set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
+    )
+
+
 def _is_oracledb_connection_error(e: Exception) -> bool:
     """Check if an exception is an Oracle connection/interface error."""
     try:
@@ -4069,21 +4097,10 @@ class MemoryEngine(MemoryEngineInterface):
                             e,
                         )
 
-                # Validate batch API compatibility: if retain_batch_enabled is set,
-                # the retain LLM provider must actually support the batch API.
-                # Otherwise the server would silently fall back to sync mode on
-                # every retain, which is confusing and wastes a config knob.
-                config = get_config()
-                if config.retain_batch_enabled:
-                    supports_batch = await self._retain_llm_config.supports_batch_api()
-                    if not supports_batch:
-                        raise RuntimeError(
-                            f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true "
-                            f"but the retain LLM provider '{self._retain_llm_config.provider}' "
-                            f"does not support the batch API. Either switch to a provider "
-                            f"that supports batch operations (e.g. 'openai', 'groq', 'gemini') or "
-                            f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
-                        )
+                # Validate batch API compatibility: if retain_batch_enabled is
+                # set, the retain LLM configuration must actually be able to
+                # serve a batch (any member of a chain will do).
+                await validate_retain_batch_support(self._retain_llm_config, get_config())
 
         # Build list of initialization tasks. The cross-encoder is initialized
         # eagerly here (single-threaded, before any request is served) so that
