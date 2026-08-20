@@ -52,6 +52,7 @@ import type {
   TagGroupOrInput,
   TagGroupNotInput,
   MinScores,
+  TemporalWindow,
   AsyncOperationSubmitResponse,
   CreateKnowledgePageResponse,
   CreateMentalModelResponse,
@@ -390,6 +391,8 @@ export class HindsightClient {
       tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
       /** Optional per-stage score floors, e.g. {semantic: 0.2, final: 0.5}. 'semantic' and 'keyword' are retrieval-level cutoffs; 'reranker' and 'final' are applied to the scored results after reranking. Any omitted stage imposes no floor. */
       minScores?: MinScores;
+      /** Window for the temporal retrieval arm, supplied instead of extracting dates from the query text. Ranks memories dated inside the window higher; it does NOT drop memories dated outside it, so it is not a way to restrict results to a period. Ignored when the bank has temporal retrieval disabled. */
+      temporalWindow?: TemporalWindow;
       signal?: AbortSignal;
     }
   ): Promise<RecallResponse> {
@@ -422,6 +425,7 @@ export class HindsightClient {
         tags_match: options?.tagsMatch,
         tag_groups: options?.tagGroups,
         min_scores: options?.minScores,
+        temporal_window: options?.temporalWindow,
       },
       signal: options?.signal,
     });
@@ -1537,6 +1541,7 @@ export type {
   TagGroupOrInput,
   TagGroupNotInput,
   MinScores,
+  TemporalWindow,
   AsyncOperationSubmitResponse,
   CreateKnowledgePageResponse,
   CreateMentalModelResponse,

@@ -317,6 +317,7 @@ pub fn recall(
         tags_match: parse_tags_match(&tags_match),
         tag_groups: None,
         min_scores: None,
+        temporal_window: None,
     };
 
     let response = client.recall(agent_id, &request, verbose);

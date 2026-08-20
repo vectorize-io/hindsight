@@ -9194,6 +9194,9 @@ components:
         tags:
         - user_a
         tags_match: any
+        temporal_window:
+          end: 2023-06-30T23:59:59Z
+          start: 2023-04-01T00:00:00Z
         trace: true
         types:
         - world
@@ -9260,6 +9263,8 @@ components:
           type: array
         min_scores:
           $ref: '#/components/schemas/MinScores'
+        temporal_window:
+          $ref: '#/components/schemas/TemporalWindow'
       required:
       - query
       title: RecallRequest
@@ -10025,6 +10030,38 @@ components:
       - count
       - tag
       title: TagItem
+    TemporalWindow:
+      description: |-
+        A caller-supplied window for recall's temporal arm.
+
+        Supplying this **replaces the date extraction** recall would otherwise run
+        over the query text, so a caller that already knows the range it means does
+        not have to phrase it in English and hope the parser agrees.
+
+        It is **not a filter**. The temporal arm is one of four retrieval arms: it
+        surfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /
+        ``occurred_end``) fall inside the window so fusion can rank them higher.
+        The semantic, keyword and graph arms are unaffected, so results dated
+        outside the window are still returned. Narrowing results to a date range is
+        a different operation this does not provide.
+
+        Has no effect when the bank's ``enable_temporal_retrieval`` config is off:
+        that flag gates the arm itself, and stays the single switch for it.
+      properties:
+        start:
+          description: Start of the window (inclusive).
+          format: date-time
+          title: Start
+          type: string
+        end:
+          description: End of the window (inclusive).
+          format: date-time
+          title: End
+          type: string
+      required:
+      - end
+      - start
+      title: TemporalWindow
     TokenUsage:
       description: |-
         Token usage metrics for LLM calls.

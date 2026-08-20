@@ -206,6 +206,7 @@ Search memories to provide personalized responses.
 | `tag_groups` | list[object] | No | Compound boolean tag filter. Mutually exclusive with `tags`; each leaf has its own `match` value |
 | `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
 | `min_scores` | object | No | Optional per-stage score floors, e.g. `{"reranker": 0.5}`. Keys: `semantic`/`keyword` (retrieval-level cutoffs), `reranker`/`final` (post-ranking). All inclusive and AND-ed; omit for no filtering. Reranker scores aren't calibrated across queries — calibrate before use |
+| `temporal_window` | object | No | An explicit `{"start": ISO, "end": ISO}` period to search over, used instead of reading dates out of the query text. Ranks memories dated inside the window higher; it does not drop the ones outside it, so it can't restrict results to a period |
 
 **Example:**
 ```json

@@ -23,6 +23,7 @@ from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.include_options import IncludeOptions
 from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
 from hindsight_client_api.models.min_scores import MinScores
+from hindsight_client_api.models.temporal_window import TemporalWindow
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -42,7 +43,8 @@ class RecallRequest(BaseModel):
     tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.")
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
     min_scores: Optional[MinScores] = None
-    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores"]
+    temporal_window: Optional[TemporalWindow] = None
+    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores", "temporal_window"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -106,6 +108,9 @@ class RecallRequest(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of min_scores
         if self.min_scores:
             _dict['min_scores'] = self.min_scores.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of temporal_window
+        if self.temporal_window:
+            _dict['temporal_window'] = self.temporal_window.to_dict()
         # set to None if types (nullable) is None
         # and model_fields_set contains the field
         if self.types is None and "types" in self.model_fields_set:
@@ -131,6 +136,11 @@ class RecallRequest(BaseModel):
         if self.min_scores is None and "min_scores" in self.model_fields_set:
             _dict['min_scores'] = None
 
+        # set to None if temporal_window (nullable) is None
+        # and model_fields_set contains the field
+        if self.temporal_window is None and "temporal_window" in self.model_fields_set:
+            _dict['temporal_window'] = None
+
         return _dict
 
     @classmethod
@@ -154,7 +164,8 @@ class RecallRequest(BaseModel):
             "tags": obj.get("tags"),
             "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',
             "tag_groups": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None,
-            "min_scores": MinScores.from_dict(obj["min_scores"]) if obj.get("min_scores") is not None else None
+            "min_scores": MinScores.from_dict(obj["min_scores"]) if obj.get("min_scores") is not None else None,
+            "temporal_window": TemporalWindow.from_dict(obj["temporal_window"]) if obj.get("temporal_window") is not None else None
         })
         return _obj
 

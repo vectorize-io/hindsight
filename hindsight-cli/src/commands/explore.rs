@@ -327,6 +327,7 @@ impl App {
                             tags_match: TagsMatch::Any,
                             tag_groups: None,
                             min_scores: None,
+                            temporal_window: None,
                         };
 
                         let result = client.recall(&bank_id, &request, false)

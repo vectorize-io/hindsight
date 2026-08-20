@@ -455,6 +455,7 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool = False,
         min_scores: dict[str, float] | None = None,
+        temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (sync wrapper — prefer :meth:`arecall` in async code).
@@ -487,6 +488,11 @@ class Hindsight:
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
                 Unknown keys raise ``ValueError`` (rather than silently applying no floor).
+            temporal_window: Window for the temporal retrieval arm as ``{"start": ..., "end": ...}``
+                (ISO strings or datetimes), used instead of extracting dates from ``query``. It ranks
+                memories dated inside the window higher; it does **not** drop memories dated outside
+                it, so it is not a way to restrict results to a period. Ignored when the bank has
+                temporal retrieval disabled.
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -511,6 +517,7 @@ class Hindsight:
                 tag_groups=tag_groups,
                 prefer_observations=prefer_observations,
                 min_scores=min_scores,
+                temporal_window=temporal_window,
             )
         )
 
@@ -997,6 +1004,7 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool = False,
         min_scores: dict[str, float] | None = None,
+        temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (async — preferred over :meth:`recall`).
@@ -1034,6 +1042,11 @@ class Hindsight:
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
                 Unknown keys raise ``ValueError`` (rather than silently applying no floor).
+            temporal_window: Window for the temporal retrieval arm as ``{"start": ..., "end": ...}``
+                (ISO strings or datetimes), used instead of extracting dates from ``query``. It ranks
+                memories dated inside the window higher; it does **not** drop memories dated outside
+                it, so it is not a way to restrict results to a period. Ignored when the bank has
+                temporal retrieval disabled.
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -1076,6 +1089,12 @@ class Hindsight:
                 )
             min_scores_obj = MinScores.from_dict(min_scores)
 
+        temporal_window_obj = None
+        if temporal_window is not None:
+            from hindsight_client_api.models.temporal_window import TemporalWindow
+
+            temporal_window_obj = TemporalWindow.from_dict(temporal_window)
+
         request_obj = recall_request.RecallRequest(
             query=query,
             types=types,
@@ -1089,6 +1108,7 @@ class Hindsight:
             tags_match=tags_match,
             tag_groups=tag_groups_objs,
             min_scores=min_scores_obj,
+            temporal_window=temporal_window_obj,
         )
 
         return await self._memory_api.recall_memories(bank_id, request_obj, _request_timeout=self._timeout)

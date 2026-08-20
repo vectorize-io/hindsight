@@ -186,6 +186,7 @@ from hindsight_client_api.models.tag_group_not_output import TagGroupNotOutput
 from hindsight_client_api.models.tag_group_or_input import TagGroupOrInput
 from hindsight_client_api.models.tag_group_or_output import TagGroupOrOutput
 from hindsight_client_api.models.tag_item import TagItem
+from hindsight_client_api.models.temporal_window import TemporalWindow
 from hindsight_client_api.models.timestamp import Timestamp
 from hindsight_client_api.models.token_usage import TokenUsage
 from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions

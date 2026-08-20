@@ -130,6 +130,18 @@ The maximum number of tokens the returned facts can collectively occupy. Default
 
 An ISO 8601 datetime representing when the query is being asked, from the user's perspective. When provided, it is used as the anchor for resolving relative temporal expressions in the query and for recency scoring — for example, if the query says "last month" and `query_timestamp` is `2023-05-30`, the temporal search window becomes approximately April 2023, and recency boosts are calculated as of May 30, 2023. Without it, the server's current time is used as the anchor. This field matters most for replaying historical conversations or building agents that need time-anchored recall.
 
+### temporal_window
+
+An explicit `{ "start": ..., "end": ... }` pair of ISO 8601 datetimes for the temporal part of the search. Supply it when you already know the period you mean — a date picker in your UI, or an agent that has already worked out what "last quarter" resolves to — and Hindsight uses those bounds directly instead of reading dates out of the query text.
+
+```json
+{ "query": "what did we decide about pricing", "temporal_window": { "start": "2023-04-01T00:00:00Z", "end": "2023-06-30T23:59:59Z" } }
+```
+
+**This ranks, it does not filter.** Hindsight searches several ways at once, and the window steers only the time-aware part of that search: memories dated inside it are surfaced and ranked higher, while everything else keeps being searched normally. Results dated outside the window are still returned, so this is not a way to restrict an answer to a period. Note also that the dates being compared are the *memory's own* dates — when the memory says something happened — not when it was stored.
+
+Two smaller things worth knowing: bounds are inclusive and a naive datetime (one with no timezone) is read as UTC; and the window is ignored on banks that have time-aware search turned off. `temporal_window` replaces date extraction only — [`query_timestamp`](#query_timestamp) still anchors recency scoring, so it remains useful alongside it.
+
 ### include
 
 An optional object controlling supplementary data returned alongside the main facts.
