@@ -38,6 +38,53 @@ def test_output_retry_split_preserves_conversation_array_boundaries():
     assert json.loads(second) == turns[2:]
 
 
+def test_output_retry_split_unwraps_nested_conversation_array():
+    """A nested conversation array should use the normal turn splitter."""
+    from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
+
+    turns = [
+        {"role": "user", "content": "alpha " * 40},
+        {"role": "assistant", "content": "bravo " * 40},
+        {"role": "user", "content": "charlie " * 40},
+        {"role": "assistant", "content": "delta " * 40},
+    ]
+
+    split = _split_chunk_for_output_retry(json.dumps([turns]))
+
+    assert split is not None
+    first, second = split
+    assert json.loads(first) == turns[:2]
+    assert json.loads(second) == turns[2:]
+
+
+def test_output_retry_split_unwraps_nested_single_conversation_turn():
+    """A nested single turn should reach the existing content splitter."""
+    from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
+
+    turn = {
+        "role": "user",
+        "content": "abcdefghijklmnopqrstuvwxyz" * 40,
+        "name": "casey",
+    }
+
+    split = _split_chunk_for_output_retry(json.dumps([[turn]]))
+
+    assert split is not None
+    first, second = split
+    first_turn = json.loads(first)[0]
+    second_turn = json.loads(second)[0]
+    assert first_turn["name"] == "casey"
+    assert second_turn["name"] == "casey"
+    assert first_turn["content"] + second_turn["content"] == turn["content"]
+
+
+def test_output_retry_split_leaves_unknown_nested_shapes_alone():
+    """Only a single-element list of turn dicts is unwrapped."""
+    from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
+
+    assert _split_chunk_for_output_retry(json.dumps([[1, 2, 3] * 200])) is None
+
+
 def test_output_retry_split_divides_single_oversized_turn_content():
     """A lone oversized conversation turn is split inside content and rewrapped."""
     from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
