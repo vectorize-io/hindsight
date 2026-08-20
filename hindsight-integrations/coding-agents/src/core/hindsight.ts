@@ -23,6 +23,9 @@ export interface KnowledgeNode {
   name: string;
   /** The page's source query (OKF `description`) — what a re-sync compares against. */
   description?: string;
+  /** The page's EFFECTIVE refresh policy, on servers new enough to report it (#3572). Absent
+   *  everywhere else, which `seedPages()` reads as "unknown, re-send it". */
+  trigger?: { tags_match?: string };
   children?: KnowledgeNode[];
 }
 
@@ -615,12 +618,25 @@ export class HindsightClient {
           return;
         }
         if (r.status !== 409) created++;
-      } else if (hit.description !== page.source_query) {
-        // Only the source query can drift — the name IS the match key, so it can't.
+      } else if (
+        hit.description !== page.source_query ||
+        hit.trigger?.tags_match !== pageTrigger.tags_match
+      ) {
+        // The name IS the match key, so it can't drift; the source query and the trigger can.
+        // The trigger is re-sent because it is the only way a policy change reaches a page that
+        // already exists — `tags_match` (see PAGE_TAGS_MATCH) is a fix every previously seeded
+        // page needs, and a `pageTriggerType` change never reached one either. Servers that don't
+        // report a page's trigger on the tree yet answer "unknown" and get it re-sent every run:
+        // the PATCH is idempotent and schedules no refresh unless the source query also changed.
+        const patch: Record<string, unknown> = { trigger: pageTrigger };
+        if (hit.description !== page.source_query) {
+          patch.source_query = page.source_query;
+          patch.tags = page.tags;
+        }
         const r = await this.req(
           "PATCH",
           this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(hit.id)}`),
-          { source_query: page.source_query, tags: page.tags }
+          patch
         );
         if ([404, 405, 501].includes(r.status)) {
           this.knowledgePagesSupported = false;
@@ -650,10 +666,17 @@ export class HindsightClient {
   }
 
   /**
-   * Active-path capture: register a major feature as a per-initiative page + a tagged marker memory.
-   * New initiative → creates a page under the Initiatives folder tagged `relatedPageId:<pageId>`.
+   * Active-path capture: register a major feature as a per-initiative page + a marker memory.
+   * New initiative → creates a page under the Initiatives folder.
    * Update (relatesToPageId) → no new page; only a marker accruing to the existing page, so an
    * enhancement or a mid-work plan change lands on the initiative it belongs to.
+   *
+   * The marker carries its page id in two places, neither of them a tag (#3641):
+   * `metadata.relatedPageId` for provenance (visible on the document, and to a reflect loop that
+   * expands one), and a `[[page:<id>]]` link in the retain CONTEXT, which is the only one of the
+   * three channels a page synthesis actually reads — reflect's search results keep `context` and
+   * `tags` but strip `metadata` (`_UNREAD_RESULT_FIELDS`), and the id has no business in a tag
+   * vocabulary that exists to be matched with exact set-ops.
    */
   async captureInitiative(args: {
     title: string;
@@ -666,8 +689,8 @@ export class HindsightClient {
   }): Promise<{ page_id: string }> {
     // `/knowledge-base/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
     // we create the page first and adopt the server-assigned id — that id is what the return value
-    // and the marker's `relatedPageId` tag must use, or `read_knowledge_page(id)` 404s and the
-    // `[[page:<id>]]` link points at nothing.
+    // and the marker must use, or `read_knowledge_page(id)` 404s and the `[[page:<id>]]` link
+    // points at nothing.
     let pageId = args.relatesToPageId;
     if (!pageId) {
       const folderId = await this.ensureFolder("Initiatives");
@@ -692,20 +715,13 @@ export class HindsightClient {
     const content = `${verb}: ${args.title}. ${args.summary}`;
     // Unique marker document id (NOT pageId) so repeated captures accrue instead of replacing.
     const markerId = `initiative-marker-${this.slugify(args.title)}-${Date.now()}`;
-    const tags = [
-      ...new Set([
-        ...(args.stamp?.tags ?? []),
-        "knowledge:feature-work",
-        `relatedPageId:${pageId}`,
-      ]),
-    ];
-    if (Object.keys(args.stamp?.metadata ?? {}).length) {
-      await this.retain(content, "initiative marker", markerId, tags, "document", {
-        metadata: args.stamp?.metadata,
-      });
-    } else {
-      await this.retain(content, "initiative marker", markerId, tags, "document");
-    }
+    const tags = [...new Set([...(args.stamp?.tags ?? []), "knowledge:feature-work"])];
+    // The context rides on every fact extracted from this marker, verbatim (ExtractedFact.context),
+    // so the Initiatives overview can link an initiative to its own page from what it retrieved.
+    const context = `initiative marker for [[page:${pageId}]]`;
+    await this.retain(content, context, markerId, tags, "document", {
+      metadata: { ...(args.stamp?.metadata ?? {}), relatedPageId: pageId },
+    });
     return { page_id: pageId };
   }
 

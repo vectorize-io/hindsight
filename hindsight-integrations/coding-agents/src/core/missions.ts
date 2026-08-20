@@ -262,8 +262,8 @@ const PAGE_TAXONOMY: readonly KnowledgePage[] = [
     source_query:
       "Based on this repository's commit history, what are the major initiatives, features, and " +
       "enhancements the project has worked on? Summarize the themes and notable changes over time. " +
-      "When a source memory carries a tag of the form `relatedPageId:<id>`, include a Markdown link " +
-      "`[[page:<id>]]` to that page in the summary, so each initiative links to its detailed page.",
+      "When a source memory's context carries a `[[page:<id>]]` link, repeat that link in the " +
+      "summary of what it describes, so each initiative links to its detailed page.",
     tags: ["knowledge:feature-work"],
   },
 ];
@@ -286,9 +286,28 @@ export const PAGE_MAX_TOKENS = 4096;
 /** A page's `trigger`, in the API's own shape (see MentalModelTrigger in api/http.py). */
 export interface PageTrigger {
   fact_types: string[];
+  /** How the page's own `tags` filter the memories a refresh reads. See `PAGE_TAGS_MATCH`. */
+  tags_match: "any" | "all" | "any_strict" | "all_strict" | "exact";
   refresh_after_consolidation?: boolean;
   refresh_cron?: string;
 }
+
+/**
+ * `all` — AND over the page's tier tag, but INCLUDING untagged memories.
+ *
+ * The server defaults a tagged model to `all_strict`, which excludes untagged memories, and every
+ * observation in these banks is untagged: `DEFAULT_OBSERVATION_SCOPES = "shared"` consolidates into
+ * the single empty scope on purpose (#3564), so the consolidated tier carries no tags to match on.
+ * Under `all_strict` that put `"observation"` in `PAGE_FACT_TYPES` and the consolidated beliefs it
+ * asks for on opposite sides of the filter: pages declared the tier and could never retrieve a
+ * single row of it, synthesizing from raw world/experience facts alone.
+ *
+ * `all` keeps the discrimination that matters — a `knowledge:decision` fact still cannot reach the
+ * Component map, since it is tagged and lacks that page's tag — while letting the untagged shared
+ * observations reach every page, where the page's `source_query` is what selects among them. That
+ * is what one shared belief pool means.
+ */
+const PAGE_TAGS_MATCH = "all" as const;
 
 /** A page synthesizes from all three tiers; the fact types are not a preference. */
 export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
@@ -318,13 +337,13 @@ export interface PageTriggerConfig {
  *
  * `fact_types` IS ours to state: the server's page default is observation-only, while these pages
  * are tag-scoped syntheses over the `knowledge:<tier>` labels the extractor puts on world and
- * experience facts.
+ * experience facts. So is `tags_match`, for the reason `PAGE_TAGS_MATCH` gives.
  *
  * `refresh_after_consolidation` and `refresh_cron` are mutually exclusive server-side, so exactly
  * one of them is ever set here.
  */
 export function buildPageTrigger(cfg: PageTriggerConfig = {}): PageTrigger {
-  const base: PageTrigger = { fact_types: PAGE_FACT_TYPES };
+  const base: PageTrigger = { fact_types: PAGE_FACT_TYPES, tags_match: PAGE_TAGS_MATCH };
   switch (cfg.pageTriggerType) {
     case "cron":
       return { ...base, refresh_cron: cfg.pageTriggerCron };

@@ -17,6 +17,21 @@ describe("buildPageTrigger", () => {
     expect(buildPageTrigger(resolveConfig({}))).toEqual(buildPageTrigger());
   });
 
+  /**
+   * The server defaults a tagged model to `all_strict`, which EXCLUDES untagged memories — and
+   * `DEFAULT_OBSERVATION_SCOPES = "shared"` makes every observation in these banks untagged
+   * (#3564). Left at the default, a page asked for the `observation` fact type and could never
+   * retrieve one (#3641).
+   */
+  it("admits the untagged shared observations these pages ask for", () => {
+    expect(buildPageTrigger().tags_match).toBe("all");
+    expect(PAGE_FACT_TYPES).toContain("observation");
+    // Not the strict variants: those are the ones that drop untagged rows.
+    for (const type of ["auto-refresh", "cron", "manual"] as const) {
+      expect(buildPageTrigger(resolveConfig({ pageTriggerType: type })).tags_match).toBe("all");
+    }
+  });
+
   it("puts pages on a schedule", () => {
     const trigger = buildPageTrigger(
       resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "0 3 * * *" })
@@ -39,9 +54,9 @@ describe("buildPageTrigger", () => {
    * what this plugin actually decides.
    */
   it.each([
-    ["auto-refresh", ["fact_types", "refresh_after_consolidation"]],
-    ["cron", ["fact_types", "refresh_cron"]],
-    ["manual", ["fact_types", "refresh_after_consolidation"]],
+    ["auto-refresh", ["fact_types", "tags_match", "refresh_after_consolidation"]],
+    ["cron", ["fact_types", "tags_match", "refresh_cron"]],
+    ["manual", ["fact_types", "tags_match", "refresh_after_consolidation"]],
   ] as const)("states nothing the server owns under %s", (pageTriggerType, keys) => {
     const trigger = buildPageTrigger(
       resolveConfig({ pageTriggerType, pageTriggerCron: "0 3 * * *" })

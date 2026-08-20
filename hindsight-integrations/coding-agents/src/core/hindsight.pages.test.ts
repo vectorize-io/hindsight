@@ -180,6 +180,10 @@ describe("HindsightClient.seedPages", () => {
       );
       expect(post.body.max_tokens).toBe(PAGE_MAX_TOKENS);
       expect(post.body.trigger.refresh_after_consolidation).toBe(true);
+      // NOT the server's `all_strict` default for a tagged model: that excludes untagged
+      // memories, and every observation this plugin's banks consolidate is untagged.
+      expect(post.body.trigger.tags_match).toBe("all");
+      expect(post.body.trigger.fact_types).toContain("observation");
       expect(post.body.parent_id).toBeUndefined(); // seeded at the tree root
     }
     // Nothing on the mental-models surface.
@@ -220,6 +224,7 @@ describe("HindsightClient.seedPages", () => {
             kind: "page",
             name: p.name,
             description: p.source_query,
+            trigger: { tags_match: buildPageTrigger().tags_match },
           })),
         },
       },
@@ -265,6 +270,7 @@ describe("HindsightClient.seedPages", () => {
             kind: "page",
             name: p.name.toUpperCase(),
             description: p === drifted ? "an older wording of the query" : p.source_query,
+            trigger: { tags_match: buildPageTrigger().tags_match },
           })),
         },
       },
@@ -280,7 +286,39 @@ describe("HindsightClient.seedPages", () => {
     expect(patches[0].body).toEqual({
       source_query: drifted.source_query,
       tags: drifted.tags,
+      trigger: buildPageTrigger(),
     });
+  });
+
+  // A page seeded before `tags_match` existed keeps the server's `all_strict` default, which
+  // excludes the untagged shared observations these pages are meant to synthesize from. The
+  // source query is unchanged on such a bank, so the trigger has to be its own drift signal.
+  it("re-syncs the refresh trigger onto a page whose query did NOT drift", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p.source_query,
+            trigger: { tags_match: "all_strict" },
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(PAGES.length);
+    for (const patch of patches) {
+      // ONLY the trigger: sending `source_query` would schedule a full rebuild of every page on
+      // a bank whose question never changed.
+      expect(patch.body).toEqual({ trigger: buildPageTrigger() });
+    }
   });
 
   it("names the repository in every seeded query, so synthesis can exclude a dependency's facts", async () => {
@@ -409,7 +447,7 @@ describe("HindsightClient.ensureFolder", () => {
 });
 
 describe("HindsightClient.captureInitiative", () => {
-  it("new initiative: POSTs a per-initiative page + a marker retain sharing the same relatedPageId", async () => {
+  it("new initiative: POSTs a per-initiative page + a marker retain naming the same page id", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
@@ -446,26 +484,29 @@ describe("HindsightClient.captureInitiative", () => {
     expect(pagePost.body.parent_id).toBe("folder-abc");
     expect(pagePost.body.tags).toEqual(["knowledge:feature-work"]);
 
-    // Marker retain POST to /memories: the ONLY tag is relatedPageId, pointing at the REAL
-    // server-assigned page id ("pg").
+    // Marker retain POST to /memories. The page id rides on the metadata and on the context —
+    // NEVER on a tag: tags are matched with exact set-ops against a fixed vocabulary, and one
+    // more tag value per initiative both isolates nothing and pollutes every fact (#3641).
     const memPost = calls.find((k) => k.method === "POST" && k.url.endsWith("/memories"));
     expect(memPost).toBeDefined();
     const item = memPost.body.items[0];
-    expect(item.tags).toEqual(["knowledge:feature-work", "relatedPageId:pg"]);
+    expect(item.tags).toEqual(["knowledge:feature-work"]);
+    expect(item.metadata).toEqual({ relatedPageId: "pg" });
+    // The context is the one channel a page synthesis reads back (reflect strips `metadata` from
+    // its search results), so this is what lets the overview link to the REAL page id.
+    expect(item.context).toBe("initiative marker for [[page:pg]]");
     expect(item.strategy).toBe("document");
     expect(memPost.body.async).toBe(true);
     // Unique per-marker document id (NOT the page id) so repeated captures accrue.
     expect(item.document_id).not.toBe("pg");
     expect(item.document_id).toContain("initiative-marker-retry-backoff-for-the-uploader-");
 
-    // The returned page id and the marker tag's id must be identical (the real page node id).
-    const tagId = item.tags
-      .find((t: string) => t.startsWith("relatedPageId:"))
-      .slice("relatedPageId:".length);
-    expect(tagId).toBe(result.page_id);
+    // The returned page id and the id the marker names must be the same (the real page node id).
+    expect(item.metadata.relatedPageId).toBe(result.page_id);
+    expect(item.context).toContain(`[[page:${result.page_id}]]`);
   });
 
-  it("enhancement (relatesToPageId): NO page POST; marker tagged the existing page id", async () => {
+  it("enhancement (relatesToPageId): NO page POST; marker names the existing page id", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
       {
@@ -494,7 +535,9 @@ describe("HindsightClient.captureInitiative", () => {
     const memPost = calls.find((k) => k.method === "POST" && k.url.endsWith("/memories"));
     expect(memPost).toBeDefined();
     const item = memPost.body.items[0];
-    expect(item.tags).toEqual(["knowledge:feature-work", "relatedPageId:initiative-x"]);
+    expect(item.tags).toEqual(["knowledge:feature-work"]);
+    expect(item.metadata).toEqual({ relatedPageId: "initiative-x" });
+    expect(item.context).toBe("initiative marker for [[page:initiative-x]]");
     expect(item.content).toContain("Update to an existing initiative");
   });
 
@@ -518,12 +561,13 @@ describe("HindsightClient.captureInitiative", () => {
     });
 
     const item = calls.find((k) => k.url.endsWith("/memories")).body.items[0];
-    expect(item.tags).toEqual([
-      "project:repo-a",
-      "knowledge:feature-work",
-      "relatedPageId:initiative-x",
-    ]);
-    expect(item.metadata).toEqual({ project: "repo-a", source: "configured" });
+    expect(item.tags).toEqual(["project:repo-a", "knowledge:feature-work"]);
+    // The configured attribution survives alongside the page id the marker adds.
+    expect(item.metadata).toEqual({
+      project: "repo-a",
+      source: "configured",
+      relatedPageId: "initiative-x",
+    });
   });
 });
 
