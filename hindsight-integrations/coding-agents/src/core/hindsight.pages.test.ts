@@ -321,6 +321,32 @@ describe("HindsightClient.seedPages", () => {
     }
   });
 
+  // The common case in the field: a server older than #3572 reports no trigger at all, so the
+  // policy is unknowable and gets re-sent. Cheap, idempotent, and self-healing once the server
+  // starts answering — but it must still be trigger-ONLY, or every run rebuilds all five pages.
+  it("re-sends the trigger to a server that does not report one", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p.source_query,
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(PAGES.length);
+    for (const patch of patches) expect(patch.body).toEqual({ trigger: buildPageTrigger() });
+  });
+
   it("names the repository in every seeded query, so synthesis can exclude a dependency's facts", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [

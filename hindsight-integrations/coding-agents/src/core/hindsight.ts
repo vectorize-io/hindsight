@@ -628,7 +628,9 @@ export class HindsightClient {
         // page needs, and a `pageTriggerType` change never reached one either. Servers that don't
         // report a page's trigger on the tree yet answer "unknown" and get it re-sent every run:
         // the PATCH is idempotent and schedules no refresh unless the source query also changed.
-        const patch: Record<string, unknown> = { trigger: pageTrigger };
+        const patch: { trigger: PageTrigger; source_query?: string; tags?: string[] } = {
+          trigger: pageTrigger,
+        };
         if (hit.description !== page.source_query) {
           patch.source_query = page.source_query;
           patch.tags = page.tags;
