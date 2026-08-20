@@ -635,7 +635,7 @@ class TestPageDefaults:
             captured.update(kwargs)
             return {"id": ids.orders, "kind": "page", "name": "Orders", "mental_model_id": ids.orders_mm}
 
-        monkeypatch.setattr(memory, "update_knowledge_page", fake_update)
+        monkeypatch.setattr(memory, "update_knowledge_node", fake_update)
         resp = await api_client.patch(
             f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
             json={"trigger": {"refresh_cron": "0 4 * * *"}},
@@ -1068,6 +1068,117 @@ class TestMoveRenameDelete:
             assert remaining == {folder_c["id"]}
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_atomic_patch_rename_and_invalid_parent_rolls_back(self, api_client, kb_bank):
+        bank_id, ids = kb_bank
+        # Rename + non-existent parent must fail and roll back the rename
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.policies}",
+            json={"name": "NeverPersisted", "parent_id": "missing-parent-folder"},
+        )
+        assert resp.status_code == 400, resp.text
+        # Verify the name was NOT changed
+        tree = (await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")).json()
+        names = {r["name"] for r in tree["roots"]}
+        assert "Policies" in names
+        assert "NeverPersisted" not in names
+
+    async def test_atomic_patch_folder_with_page_fields_rejected(self, api_client, kb_bank):
+        bank_id, ids = kb_bank
+        # A folder cannot accept page-only fields (tags, source_query, etc.)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.policies}",
+            json={"name": "NeverPersisted", "tags": ["type:runbook"]},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "Cannot update page-only options" in resp.text or "folder" in resp.text
+        # Verify the folder name was NOT changed
+        tree = (await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")).json()
+        names = {r["name"] for r in tree["roots"]}
+        assert "Policies" in names
+        assert "NeverPersisted" not in names
+
+    async def test_atomic_patch_folder_with_explicit_null_tags_rejected(self, api_client, kb_bank):
+        bank_id, ids = kb_bank
+        # Providing page-only fields with explicit null on a folder must also be rejected
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.policies}",
+            json={"name": "NeverPersisted", "tags": None},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "Cannot update page-only options" in resp.text or "folder" in resp.text
+        # Verify the folder name was NOT changed
+        tree = (await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")).json()
+        names = {r["name"] for r in tree["roots"]}
+        assert "Policies" in names
+        assert "NeverPersisted" not in names
+
+    async def test_atomic_patch_null_field_validations(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        # 1. Null name is rejected
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": None},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "name" in resp.text.lower()
+
+        # 2. Null source_query is rejected and does not schedule refresh
+        refresh_called = False
+
+        async def fake_refresh(*args, **kwargs):
+            nonlocal refresh_called
+            refresh_called = True
+
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_refresh)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"source_query": None},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "source_query" in resp.text.lower()
+        assert not refresh_called
+
+        # 3. Null tags is rejected
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"tags": None},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "tags" in resp.text.lower()
+
+    async def test_atomic_patch_combined_success(self, api_client, kb_bank, memory, request_context):
+        bank_id, ids = kb_bank
+        # Atomically rename, move, and update page options on a single page
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.loose}",
+            json={
+                "name": "Consolidated Policy",
+                "parent_id": ids.policies,
+                "tags": ["type:policy", "compliance"],
+                "source_query": "what are the updated compliance rules?",
+                "max_tokens": 1024,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        node = resp.json()
+        assert node["name"] == "Consolidated Policy"
+        assert node["parent_id"] == ids.policies
+        assert set(node["tags"]) == {"type:policy", "compliance"}
+        assert node["description"] == "what are the updated compliance rules?"
+
+        # Verify in database
+        page = (await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.loose}")).json()
+        assert page["name"] == "Consolidated Policy"
+        assert page["description"] == "what are the updated compliance rules?"
+        assert page["type"] == "policy"
+        assert page["tags"] == ["compliance"]
+
+        mm = await memory.get_mental_model(bank_id, node["mental_model_id"], request_context=request_context)
+        assert mm["name"] == "Consolidated Policy"
+        assert mm["source_query"] == "what are the updated compliance rules?"
+        assert set(mm["tags"]) == {"type:policy", "compliance"}
+        assert mm["max_tokens"] == 1024
 
     async def test_delete_folder_cascades(self, api_client, kb_bank, memory, request_context):
         bank_id, ids = kb_bank

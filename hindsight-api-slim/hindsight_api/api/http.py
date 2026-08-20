@@ -6014,51 +6014,44 @@ def _register_routes(app: FastAPI):
     ):
         """Rename/move a node and/or update a page's options."""
         try:
-            updated: dict[str, Any] | None = None
-            did_change = False
-            if body.name is not None:
-                did_change = True
-                updated = await app.state.memory.rename_knowledge_node(
-                    bank_id=bank_id, node_id=node_id, name=body.name, request_context=request_context
-                )
-            # parent_id is applied only when present in the body, so passing null
-            # moves the node to the root (distinct from "not provided").
-            if "parent_id" in body.model_fields_set:
-                did_change = True
-                updated = await app.state.memory.move_knowledge_node(
-                    bank_id=bank_id, node_id=node_id, new_parent_id=body.parent_id, request_context=request_context
-                )
-            # Page options live on the backing mental model; each applies only when
-            # present in the body (so tags=[] clears, distinct from "not provided").
-            page_fields = {"source_query", "tags", "max_tokens", "trigger"} & body.model_fields_set
-            if page_fields:
-                did_change = True
-                updated = await app.state.memory.update_knowledge_page(
-                    bank_id=bank_id,
-                    page_id=node_id,
-                    source_query=body.source_query if "source_query" in page_fields else None,
-                    tags=body.tags if "tags" in page_fields else None,
-                    max_tokens=body.max_tokens if "max_tokens" in page_fields else None,
-                    # Only the trigger fields the client stated: the engine patches them over
-                    # the page's current trigger, and a full dump would carry this model's own
-                    # defaults (mode="full", exclude_mental_models=False) into every update.
-                    trigger=(body.trigger.model_dump(exclude_unset=True) if body.trigger else None),
-                    request_context=request_context,
-                )
-                # A new source query means the content is stale — rebuild it.
-                if updated is not None and "source_query" in page_fields and updated.get("mental_model_id"):
-                    await app.state.memory.submit_async_refresh_mental_model(
-                        bank_id=bank_id,
-                        mental_model_id=updated["mental_model_id"],
-                        request_context=request_context,
-                    )
-            if not did_change:
+            has_name = "name" in body.model_fields_set
+            has_parent = "parent_id" in body.model_fields_set
+            has_source_query = "source_query" in body.model_fields_set
+            has_tags = "tags" in body.model_fields_set
+            has_max_tokens = "max_tokens" in body.model_fields_set
+            has_trigger = "trigger" in body.model_fields_set
+
+            if not (has_name or has_parent or has_source_query or has_tags or has_max_tokens or has_trigger):
                 raise HTTPException(
                     status_code=400,
                     detail="Provide name, parent_id, source_query, tags, max_tokens, and/or trigger to update",
                 )
+
+            updated = await app.state.memory.update_knowledge_node(
+                bank_id=bank_id,
+                node_id=node_id,
+                name=body.name if has_name else MemoryEngine.KP_UNSET,
+                parent_id=body.parent_id if has_parent else MemoryEngine.KP_UNSET,
+                source_query=body.source_query if has_source_query else MemoryEngine.KP_UNSET,
+                tags=body.tags if has_tags else MemoryEngine.KP_UNSET,
+                max_tokens=body.max_tokens if has_max_tokens else MemoryEngine.KP_UNSET,
+                trigger=(
+                    (body.trigger.model_dump(exclude_unset=True) if body.trigger is not None else None)
+                    if has_trigger
+                    else MemoryEngine.KP_UNSET
+                ),
+                request_context=request_context,
+            )
             if updated is None:
                 raise HTTPException(status_code=404, detail=f"Knowledge node '{node_id}' not found")
+
+            # A new source query means the content is stale — schedule refresh.
+            if has_source_query and body.source_query is not None and updated.get("mental_model_id"):
+                await app.state.memory.submit_async_refresh_mental_model(
+                    bank_id=bank_id,
+                    mental_model_id=updated["mental_model_id"],
+                    request_context=request_context,
+                )
             return _knowledge_node_model(updated)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

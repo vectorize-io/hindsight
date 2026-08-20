@@ -277,6 +277,7 @@ def mock_memory():
     )
     memory.create_knowledge_folder = AsyncMock(return_value=dict(_KNOWLEDGE_FOLDER))
     memory.create_knowledge_page = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
+    memory.update_knowledge_node = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
     memory.rename_knowledge_node = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
     memory.move_knowledge_node = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
     memory.update_knowledge_page = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
@@ -2110,41 +2111,38 @@ class TestKnowledgeBaseTools:
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         result = json.loads(await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", name="Deployments"))
         assert result["id"] == "kp-1"
-        assert mock_memory.rename_knowledge_node.call_args.kwargs["name"] == "Deployments"
-        mock_memory.update_knowledge_page.assert_not_called()
-        mock_memory.move_knowledge_node.assert_not_called()
+        assert mock_memory.update_knowledge_node.call_args.kwargs["name"] == "Deployments"
 
     async def test_update_move_to_folder(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", parent_id="kf-2")
-        assert mock_memory.move_knowledge_node.call_args.kwargs["new_parent_id"] == "kf-2"
+        assert mock_memory.update_knowledge_node.call_args.kwargs["parent_id"] == "kf-2"
 
     async def test_update_move_to_root(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", parent_id=KNOWLEDGE_ROOT_PARENT)
-        assert mock_memory.move_knowledge_node.call_args.kwargs["new_parent_id"] is None
+        assert mock_memory.update_knowledge_node.call_args.kwargs["parent_id"] is None
 
     async def test_update_source_query_triggers_refresh(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", source_query="new question?")
-        assert mock_memory.update_knowledge_page.call_args.kwargs["source_query"] == "new question?"
+        assert mock_memory.update_knowledge_node.call_args.kwargs["source_query"] == "new question?"
         assert mock_memory.submit_async_refresh_mental_model.call_args.kwargs["mental_model_id"] == "mm-page"
 
     async def test_update_tags_only_does_not_refresh(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", tags=[])
-        assert mock_memory.update_knowledge_page.call_args.kwargs["tags"] == []
+        assert mock_memory.update_knowledge_node.call_args.kwargs["tags"] == []
         mock_memory.submit_async_refresh_mental_model.assert_not_called()
 
     async def test_update_requires_a_field(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         result = await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1")
         assert "Provide name" in result
-        mock_memory.rename_knowledge_node.assert_not_called()
-        mock_memory.update_knowledge_page.assert_not_called()
+        mock_memory.update_knowledge_node.assert_not_called()
 
     async def test_update_not_found(self, mock_memory):
-        mock_memory.rename_knowledge_node.return_value = None
+        mock_memory.update_knowledge_node.return_value = None
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         result = await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-missing", name="x")
         assert "not found" in result

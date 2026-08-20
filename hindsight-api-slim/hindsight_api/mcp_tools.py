@@ -2283,35 +2283,31 @@ async def _do_update_knowledge_node(
             "and/or refresh_after_consolidation to update"
         }
 
-    updated: dict[str, Any] | None = None
-    if name is not None:
-        updated = await memory.rename_knowledge_node(
-            bank_id=target_bank, node_id=node_id, name=name, request_context=request_context
-        )
-    if parent_id is not None:
-        updated = await memory.move_knowledge_node(
+    try:
+        updated = await memory.update_knowledge_node(
             bank_id=target_bank,
             node_id=node_id,
-            new_parent_id=None if parent_id == KNOWLEDGE_ROOT_PARENT else parent_id,
+            name=name if name is not None else MemoryEngine.KP_UNSET,
+            parent_id=(None if parent_id == KNOWLEDGE_ROOT_PARENT else parent_id)
+            if parent_id is not None
+            else MemoryEngine.KP_UNSET,
+            source_query=source_query if source_query is not None else MemoryEngine.KP_UNSET,
+            tags=tags if tags is not None else MemoryEngine.KP_UNSET,
+            max_tokens=max_tokens if max_tokens is not None else MemoryEngine.KP_UNSET,
+            trigger=trigger if trigger is not None else MemoryEngine.KP_UNSET,
             request_context=request_context,
         )
-    if page_update:
-        updated = await memory.update_knowledge_page(
-            bank_id=target_bank,
-            page_id=node_id,
-            source_query=source_query,
-            tags=tags,
-            max_tokens=max_tokens,
-            trigger=trigger,
-            request_context=request_context,
-        )
-        # A new source query means the page's content no longer answers it — rebuild.
-        if updated is not None and source_query is not None and updated.get("mental_model_id"):
-            await memory.submit_async_refresh_mental_model(
-                bank_id=target_bank, mental_model_id=updated["mental_model_id"], request_context=request_context
-            )
+    except ValueError as e:
+        return {"error": str(e)}
+
     if updated is None:
         return {"error": f"Knowledge node '{node_id}' not found in bank '{target_bank}'"}
+
+    # A new source query means the page's content no longer answers it — rebuild.
+    if source_query is not None and updated.get("mental_model_id"):
+        await memory.submit_async_refresh_mental_model(
+            bank_id=target_bank, mental_model_id=updated["mental_model_id"], request_context=request_context
+        )
     return _knowledge_node_json(updated)
 
 
