@@ -580,6 +580,8 @@ def test_build_request_body_retain_strict_false_overrides_global_true():
     strict_schema.assert_not_called()
     assert body["response_format"]["json_schema"]["schema"] == {"schema": "non-strict"}
     assert body["response_format"]["json_schema"]["strict"] is False
+
+
 @pytest.mark.asyncio
 async def test_fact_saturation_boundary_allows_fifteen_facts():
     """A response below the saturation boundary remains a normal success."""
@@ -644,8 +646,8 @@ async def test_fact_saturation_uses_auto_split_and_returns_subchunk_facts():
     """Saturation must split the chunk and return facts from both sub-chunks."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain.fact_extraction import (
-        resolve_facts_saturation_limit,
         _extract_facts_with_auto_split,
+        resolve_facts_saturation_limit,
     )
 
     config = _make_config(llm_max_retries=0)
@@ -653,7 +655,11 @@ async def test_fact_saturation_uses_auto_split_and_returns_subchunk_facts():
     llm_config.call = AsyncMock(
         side_effect=[
             (
-                {"facts": [{"what": f"saturated fact {index}"} for index in range(resolve_facts_saturation_limit(config))]},
+                {
+                    "facts": [
+                        {"what": f"saturated fact {index}"} for index in range(resolve_facts_saturation_limit(config))
+                    ]
+                },
                 TokenUsage(),
             ),
             ({"facts": [{"what": "left fact"}]}, TokenUsage()),
