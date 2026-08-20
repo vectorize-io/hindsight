@@ -50,6 +50,23 @@ def _month_end(year: int, month: int) -> datetime:
     return datetime(year, month, calendar.monthrange(year, month)[1])
 
 
+# A four-digit year on its own is ambiguous — dateparser reads every isolated
+# integer as one, which is how port and ticket numbers became temporal
+# constraints (issue #3250). What disambiguates it is the word introducing it:
+# "in 2019" is a year, "port 2019" is not. dateparser cannot make that call (it
+# returns the identical span "2019" for both), so the rule lives here, where the
+# whole query is still in hand and periods already resolve to a full range.
+#
+# Deliberately excludes "since"/"from", which open an interval ending now rather
+# than selecting the named year — collapsing those to Jan-Dec would be a
+# narrower window than asked for.
+_YEAR_ONLY_RE = re.compile(
+    r"\b(?:in|during|throughout|year|en|durante|a[nñ]o|nel|anno|dans|pendant|ann[ée]e|im|w[äa]hrend|jahr|в)\s+"
+    r"(?<![-/.])(?P<year>\d{4})\b(?![-/.]\d)",
+    re.IGNORECASE,
+)
+
+
 def _extract_non_chinese_period(
     query: str, reference_date: datetime
 ) -> DateRange | NoTemporalConstraintSentinel | None:
@@ -171,6 +188,24 @@ def _extract_non_chinese_period(
                 return NO_TEMPORAL_CONSTRAINT
             start = datetime(year, month_num, 1)
             return _constraint(start, _month_end(year, month_num))
+
+    year_only = _YEAR_ONLY_RE.search(query)
+    if year_only:
+        year = int(year_only.group("year"))
+        # A year with no month or day beside it is only credible near the
+        # reference date. "listening in 8080" is a port someone happened to
+        # phrase with a preposition, and a year-8080 window is the silent
+        # empty-arm failure of issue #3250 all over again.
+        #
+        # Implausible years fall through rather than returning
+        # NO_TEMPORAL_CONSTRAINT (which the month rule uses for "june 0000"):
+        # the sentinel would drop a genuine date elsewhere in the same query,
+        # and there is nothing to protect against downstream any more — the
+        # dateparser fallback now rejects bare integers on its own.
+        # max() with datetime.min.year keeps "in 0000" out of datetime() for a
+        # reference date low enough that the window would otherwise admit it.
+        if max(datetime.min.year, reference_date.year - 120) <= year <= reference_date.year + 20:
+            return _constraint(datetime(year, 1, 1), datetime(year, 12, 31))
 
     return None
 

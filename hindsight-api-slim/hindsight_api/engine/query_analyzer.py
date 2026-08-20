@@ -135,10 +135,11 @@ def _is_bare_year_span(tokens: list[str], token_set: set[str]) -> bool:
     month or period word ("March 1890", "year 2019"), or an ordinal/unit suffix
     ("the 21st", "10am"), all of which leave this predicate False.
 
-    The cost is that a bare year introduced only by a preposition ("since 2019")
-    is no longer temporal. That is deliberate: the span carries no month or day,
-    so the constraint it produced was the reference date's month/day in that
-    year — a single wrong day, never the year the user asked for.
+    Genuine bare years never reach here: ``extract_period`` runs first and
+    resolves the ones a word disambiguates ("in 2019") to the whole calendar
+    year, which is the window the query actually asks for. This path only sees
+    the ones nothing introduces, where dateparser would have produced the
+    reference date's month/day in that year — a single wrong day.
     """
     numeric = [token for token in tokens if token.isdigit()]
     if len(numeric) != 1 or len(numeric[0]) != 4:
