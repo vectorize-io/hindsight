@@ -347,6 +347,43 @@ describe("HindsightClient credential refresh", () => {
   });
 });
 
+/**
+ * The other half of the same invariant: forwarding the config is worthless if a write path skips
+ * the client method that SENDS it. One bank must consolidate into exactly one observation scope
+ * (#3564), and `retain()` is the only place that puts `observation_scopes` on the wire — so a
+ * second `/memories` POST anywhere would quietly consolidate under the server's `combined`
+ * default, splitting the repo's beliefs per tag combination again. No unit test would fail: the
+ * new path writes perfectly good memories. Hence a check over the whole source tree.
+ */
+describe("every memory write goes through the one call site that scopes it", () => {
+  const SRC = fileURLToPath(new URL("..", import.meta.url));
+
+  function sourceFiles(dir: string, prefix = ""): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory())
+        return entry.name === "e2e" ? [] : sourceFiles(join(dir, entry.name), rel);
+      return entry.name.endsWith(".ts") && !entry.name.includes(".test.") ? [rel] : [];
+    });
+  }
+
+  it("has no module addressing the memories endpoint except the client", () => {
+    const writers = sourceFiles(SRC).filter((rel) =>
+      readFileSync(join(SRC, rel), "utf8").includes('"/memories')
+    );
+    expect(writers).toEqual(["core/hindsight.ts"]);
+  });
+
+  it("keeps that call site inside retain(), with the scoping on the item it posts", () => {
+    const src = readFileSync(join(SRC, "core/hindsight.ts"), "utf8");
+    expect(src.match(/bankUrl\("\/memories"\)/g)).toHaveLength(1);
+    // Everything between retain()'s signature and the POST is the body it builds; the scoping
+    // has to be set in there, not left to whatever the server defaults to.
+    const body = src.slice(src.indexOf("async retain("), src.indexOf('bankUrl("/memories")'));
+    expect(body).toContain("observation_scopes: this.observationScopes");
+  });
+});
+
 describe("every client-building entrypoint forwards observationScopes", () => {
   const SRC = fileURLToPath(new URL("..", import.meta.url));
 

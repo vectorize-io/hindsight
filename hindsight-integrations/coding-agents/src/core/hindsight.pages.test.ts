@@ -496,6 +496,8 @@ describe("HindsightClient.captureInitiative", () => {
     // its search results), so this is what lets the overview link to the REAL page id.
     expect(item.context).toBe("initiative marker for [[page:pg]]");
     expect(item.strategy).toBe("document");
+    // A marker consolidates into the same single scope as everything else this plugin writes.
+    expect(item.observation_scopes).toBe("shared");
     expect(memPost.body.async).toBe(true);
     // Unique per-marker document id (NOT the page id) so repeated captures accrue.
     expect(item.document_id).not.toBe("pg");
