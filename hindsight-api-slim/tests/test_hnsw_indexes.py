@@ -205,6 +205,76 @@ async def test_delete_bank_drops_vector_indexes(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_delete_bank_drops_indexes_before_data(memory, request_context, monkeypatch):
+    """delete_bank must drop the per-bank vector indexes BEFORE the delete transaction.
+
+    Regression test for #3485: when the cluster-wide index count approaches the
+    Postgres lock-table budget, planning ANY statement against memory_units
+    fails — including the delete DML. DROP INDEX (a utility statement) only
+    locks its own index and the table, so it keeps working; dropping first is
+    what keeps bank deletion usable at high bank counts.
+    """
+    bank_id = f"test_hnsw_order_{uuid.uuid4().hex[:8]}"
+    await memory.retain_async(
+        bank_id=bank_id,
+        content="Dana is a research scientist.",
+        request_context=request_context,
+    )
+
+    backend = await memory._get_backend()
+    real = backend.ops.drop_bank_vector_indexes
+    drop_rows_present: bool | None = None
+    drop_profile_present: bool | None = None
+
+    async def recording_drop(conn, schema, internal_id, fact_types):
+        # At drop time the bank's memory rows and profile must still exist —
+        # the drop runs before the delete transaction, not after it.
+        nonlocal drop_rows_present, drop_profile_present
+        drop_rows_present = (await conn.fetchval("SELECT COUNT(*) FROM memory_units WHERE bank_id = $1", bank_id)) > 0
+        drop_profile_present = (
+            await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id)
+        ) is not None
+        return await real(conn, schema, internal_id, fact_types)
+
+    monkeypatch.setattr(backend.ops, "drop_bank_vector_indexes", recording_drop)
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+    assert drop_rows_present is True, "indexes must be dropped while the bank's rows still exist"
+    assert drop_profile_present is True, "indexes must be dropped before the bank profile is deleted"
+    assert await _get_bank_vector_indexes(memory._pool, bank_id) == []
+
+
+@pytest.mark.asyncio
+async def test_delete_bank_fact_type_scoped_keeps_indexes(memory, request_context):
+    """A fact_type-scoped delete must not drop the bank's vector indexes.
+
+    Only the full-delete path drops indexes: the bank survives a
+    fact_type-scoped delete, so its remaining partitions still earn them, and
+    nothing else knows the internal_id they are named after.
+    """
+    bank_id = f"test_hnsw_facttype_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Eve is a data analyst.",
+            request_context=request_context,
+        )
+        await _build_bank_vector_indexes(memory._pool, bank_id)
+        indexes_before = await _get_bank_vector_indexes(memory._pool, bank_id)
+        assert len(indexes_before) == 3, "setup: the bank should have indexes to keep"
+
+        await memory.delete_bank(bank_id, fact_type="world", request_context=request_context)
+
+        indexes_after = await _get_bank_vector_indexes(memory._pool, bank_id)
+        assert indexes_after == indexes_before, (
+            f"fact_type-scoped delete must keep the bank's indexes, got: {indexes_after}"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_retain_idempotent_bank_creation(memory, request_context):
     """Retaining twice must not error, and must not duplicate or rebuild indexes.
 

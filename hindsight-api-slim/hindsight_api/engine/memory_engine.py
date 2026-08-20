@@ -8586,10 +8586,36 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         invalidated_obs = 0
         result: dict[str, int] = {}
-        bank_internal_id: str | None = None
         async with acquire_with_retry(backend) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
+
+            # Drop this bank's per-bank vector indexes BEFORE the delete
+            # transaction (issue #3485): when the cluster-wide index count
+            # approaches the lock-table budget, planning any statement against
+            # memory_units fails — including the delete DML — while DROP INDEX
+            # (a utility statement) only locks its own index and the table, so
+            # it still works. Dropping first keeps bank deletion usable as a
+            # recovery path and frees lock-table space for the delete that
+            # follows. The drop runs CONCURRENTLY (see
+            # ops.drop_bank_vector_indexes), which cannot run inside a
+            # transaction block — this autocommit connection is exactly where
+            # it belongs. Only the full-delete path drops indexes:
+            # fact_type-scoped deletes and delete_bank_profile=False keep them.
+            if not fact_type and delete_bank_profile:
+                internal_id = await conn.fetchval(
+                    f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
+                )
+                if internal_id:
+                    # Retry the transient deadlock a concurrent index
+                    # build/drop on the shared memory_units table can still
+                    # trigger (sqlstate 40P01 / ORA-00060).
+                    await retry_with_backoff(
+                        lambda: bank_utils.drop_bank_vector_indexes(conn, str(internal_id), ops=self._backend.ops),
+                        max_retries=7,
+                        max_delay=10.0,
+                    )
+
             async with conn.transaction():
                 try:
                     if fact_type:
@@ -8740,35 +8766,13 @@ class MemoryEngine(MemoryEngineInterface):
                         }
 
                         if delete_bank_profile:
-                            # Delete the bank profile and retrieve internal_id for HNSW index cleanup
-                            internal_id = await conn.fetchval(
-                                f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1 RETURNING internal_id", bank_id
-                            )
-                            if internal_id:
-                                bank_internal_id = str(internal_id)
+                            # Delete the bank profile (its vector indexes were
+                            # already dropped above, before the delete tx).
+                            await conn.execute(f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
                             result["bank_deleted"] = True
 
                 except Exception as e:
                     raise Exception(f"Failed to delete agent data: {str(e)}")
-
-            # Drop per-bank vector indexes AFTER the transaction commits: the
-            # drop runs CONCURRENTLY (see ops.drop_bank_vector_indexes), which
-            # cannot run inside a transaction block. Same-process drops are
-            # serialized by the ops-level DDL lock; retry_with_backoff absorbs
-            # the residual cross-process deadlock a concurrent index build/drop
-            # on the shared memory_units table can still trigger (sqlstate
-            # 40P01 / ORA-00060) so a delete is never lost to a transient lock
-            # cycle. Sized well above the defaults: a many-process delete storm
-            # (CI teardown ran 8 workers' drops at once) drains at roughly one
-            # deadlock victim per deadlock_timeout (1s), so the default ~2.4s
-            # of backoff lost every retry; ~30s of jittered backoff outlasts
-            # any realistic pile-up.
-            if bank_internal_id:
-                await retry_with_backoff(
-                    lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops),
-                    max_retries=7,
-                    max_delay=10.0,
-                )
 
         # A store that keeps memories outside SQL leaves memory_units empty, so every DELETE
         # above was a no-op on its data — it must be told to drop the bank's memories too, or
