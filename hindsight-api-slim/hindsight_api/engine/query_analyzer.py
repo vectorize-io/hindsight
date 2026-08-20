@@ -125,22 +125,46 @@ def _query_can_score(query: str) -> bool:
     return bool(_SCOREABLE_RE.search(_NON_ALNUM_RE.sub("", low)))
 
 
+def _is_bare_year_span(tokens: list[str], token_set: set[str]) -> bool:
+    """Whether a matched span's only date content is a single four-digit integer.
+
+    dateparser resolves an isolated four-digit integer to a year, so port
+    numbers, ticket ids and buffer sizes come back as dates that outscore every
+    other candidate — the false-positive class from issue #3250. A real date
+    always carries something more: a second number ("2026-06-10", "15:30"), a
+    month or period word ("March 1890", "year 2019"), or an ordinal/unit suffix
+    ("the 21st", "10am"), all of which leave this predicate False.
+
+    The cost is that a bare year introduced only by a preposition ("since 2019")
+    is no longer temporal. That is deliberate: the span carries no month or day,
+    so the constraint it produced was the reference date's month/day in that
+    year — a single wrong day, never the year the user asked for.
+    """
+    numeric = [token for token in tokens if token.isdigit()]
+    if len(numeric) != 1 or len(numeric[0]) != 4:
+        return False
+    return not (token_set & _SCOREABLE_WORDS)
+
+
 def _date_match_score(text: str) -> int:
     """Score how strong a temporal signal a matched span carries.
 
-    A score of 0 means the span is a bare token with no explicit date content
-    (the false-positive class from issue #2768) and should be rejected. Higher
-    scores mean a stronger, less ambiguous date reference. A digit is the
-    strongest signal (day/year/ISO date); an explicit English month/relative
-    word next; weekday names and period words weakest but still explicit.
+    A score of 0 means the span carries no explicit date content and should be
+    rejected: a bare token (issue #2768) or a lone four-digit integer, which
+    dateparser resolves to a year (issue #3250). Higher scores mean a stronger,
+    less ambiguous date reference. A digit is the strongest signal (day/year/ISO
+    date); an explicit English month/relative word next; weekday names and
+    period words weakest but still explicit.
     """
     tokens = _TOKEN_RE.findall(text.lower())
     if not tokens:
         return 0
+    token_set = set(tokens)
     score = 0
     if any(any(ch.isdigit() for ch in tok) for tok in tokens):
+        if _is_bare_year_span(tokens, token_set):
+            return 0
         score += 100
-    token_set = set(tokens)
     if token_set & _MONTH_WORDS:
         score += 50
     if token_set & _RELATIVE_WORDS:

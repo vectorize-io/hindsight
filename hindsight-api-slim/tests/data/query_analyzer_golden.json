@@ -34,10 +34,7 @@
   "2026-07-13T00:00:00",
   "2026-07-13T23:59:59.999999"
  ],
- "2024-02-29T12:00:00\u001f15.01.2024": [
-  "2024-02-29T00:00:00",
-  "2024-02-29T23:59:59.999999"
- ],
+ "2024-02-29T12:00:00\u001f15.01.2024": null,
  "2024-02-29T12:00:00\u001f1mon ago": [
   "2024-01-29T00:00:00",
   "2024-01-29T23:59:59.999999"
@@ -47,10 +44,7 @@
   "2024-01-15T00:00:00",
   "2024-01-15T23:59:59.999999"
  ],
- "2024-02-29T12:00:00\u001f2024年": [
-  "2024-02-29T00:00:00",
-  "2024-02-29T23:59:59.999999"
- ],
+ "2024-02-29T12:00:00\u001f2024年": null,
  "2024-02-29T12:00:00\u001f2024年3月": [
   "2024-03-01T00:00:00",
   "2024-03-31T23:59:59.999999"
@@ -77,8 +71,8 @@
   "1999-12-31T23:59:59.999999"
  ],
  "2024-02-29T12:00:00\u001f31 february 2020": [
-  "2020-02-29T00:00:00",
-  "2020-02-29T23:59:59.999999"
+  "2024-02-29T00:00:00",
+  "2024-02-29T23:59:59.999999"
  ],
  "2024-02-29T12:00:00\u001f3:30pm": null,
  "2024-02-29T12:00:00\u001f3月3日": [
@@ -117,22 +111,13 @@
  ],
  "2024-02-29T12:00:00\u001fSELECT * FROM memory_units": null,
  "2024-02-29T12:00:00\u001fTODO": null,
- "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-02-29T00:00:00",
-  "2000-02-29T23:59:59.999999"
- ],
- "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-02-29T00:00:00",
-  "2000-02-29T23:59:59.999999"
- ],
+ "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
+ "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The migration ran on 2026-06-10 without incident.": [
   "2026-06-10T00:00:00",
   "2026-06-10T23:59:59.999999"
  ],
- "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-02-29T00:00:00",
-  "2000-02-29T23:59:59.999999"
- ],
+ "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2024-02-29T12:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. This was decided last week during the architecture review.": [
   "2024-02-19T00:00:00",
   "2024-02-25T23:59:59.999999"
@@ -1420,10 +1405,7 @@
   "2026-07-13T00:00:00",
   "2026-07-13T23:59:59.999999"
  ],
- "2026-01-01T00:00:00\u001f15.01.2024": [
-  "2024-01-01T00:00:00",
-  "2024-01-01T23:59:59.999999"
- ],
+ "2026-01-01T00:00:00\u001f15.01.2024": null,
  "2026-01-01T00:00:00\u001f1mon ago": [
   "2025-12-01T00:00:00",
   "2025-12-01T23:59:59.999999"
@@ -1433,10 +1415,7 @@
   "2024-01-15T00:00:00",
   "2024-01-15T23:59:59.999999"
  ],
- "2026-01-01T00:00:00\u001f2024年": [
-  "0002-01-01T00:00:00",
-  "0002-01-01T23:59:59.999999"
- ],
+ "2026-01-01T00:00:00\u001f2024年": null,
  "2026-01-01T00:00:00\u001f2024年3月": [
   "2024-03-01T00:00:00",
   "2024-03-31T23:59:59.999999"
@@ -1463,8 +1442,8 @@
   "1999-12-31T23:59:59.999999"
  ],
  "2026-01-01T00:00:00\u001f31 february 2020": [
-  "2020-01-01T00:00:00",
-  "2020-01-01T23:59:59.999999"
+  "2025-02-01T00:00:00",
+  "2025-02-01T23:59:59.999999"
  ],
  "2026-01-01T00:00:00\u001f3:30pm": null,
  "2026-01-01T00:00:00\u001f3月3日": [
@@ -1503,22 +1482,13 @@
  ],
  "2026-01-01T00:00:00\u001fSELECT * FROM memory_units": null,
  "2026-01-01T00:00:00\u001fTODO": null,
- "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-01-01T00:00:00",
-  "2000-01-01T23:59:59.999999"
- ],
- "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-01-01T00:00:00",
-  "2000-01-01T23:59:59.999999"
- ],
+ "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
+ "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The migration ran on 2026-06-10 without incident.": [
   "2026-06-10T00:00:00",
   "2026-06-10T23:59:59.999999"
  ],
- "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-01-01T00:00:00",
-  "2000-01-01T23:59:59.999999"
- ],
+ "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-01-01T00:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. This was decided last week during the architecture review.": [
   "2025-12-22T00:00:00",
   "2025-12-28T23:59:59.999999"
@@ -2806,10 +2776,7 @@
   "2026-07-13T00:00:00",
   "2026-07-13T23:59:59.999999"
  ],
- "2026-08-03T09:00:00\u001f15.01.2024": [
-  "2024-08-03T00:00:00",
-  "2024-08-03T23:59:59.999999"
- ],
+ "2026-08-03T09:00:00\u001f15.01.2024": null,
  "2026-08-03T09:00:00\u001f1mon ago": [
   "2026-07-03T00:00:00",
   "2026-07-03T23:59:59.999999"
@@ -2819,10 +2786,7 @@
   "2024-01-15T00:00:00",
   "2024-01-15T23:59:59.999999"
  ],
- "2026-08-03T09:00:00\u001f2024年": [
-  "0002-08-03T00:00:00",
-  "0002-08-03T23:59:59.999999"
- ],
+ "2026-08-03T09:00:00\u001f2024年": null,
  "2026-08-03T09:00:00\u001f2024年3月": [
   "2024-03-01T00:00:00",
   "2024-03-31T23:59:59.999999"
@@ -2849,8 +2813,8 @@
   "1999-12-31T23:59:59.999999"
  ],
  "2026-08-03T09:00:00\u001f31 february 2020": [
-  "2020-08-03T00:00:00",
-  "2020-08-03T23:59:59.999999"
+  "2026-02-03T00:00:00",
+  "2026-02-03T23:59:59.999999"
  ],
  "2026-08-03T09:00:00\u001f3:30pm": null,
  "2026-08-03T09:00:00\u001f3月3日": [
@@ -2889,22 +2853,13 @@
  ],
  "2026-08-03T09:00:00\u001fSELECT * FROM memory_units": null,
  "2026-08-03T09:00:00\u001fTODO": null,
- "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-03T00:00:00",
-  "2000-08-03T23:59:59.999999"
- ],
- "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-03T00:00:00",
-  "2000-08-03T23:59:59.999999"
- ],
+ "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
+ "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The migration ran on 2026-06-10 without incident.": [
   "2026-06-10T00:00:00",
   "2026-06-10T23:59:59.999999"
  ],
- "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-03T00:00:00",
-  "2000-08-03T23:59:59.999999"
- ],
+ "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-08-03T09:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. This was decided last week during the architecture review.": [
   "2026-07-27T00:00:00",
   "2026-08-02T23:59:59.999999"
@@ -4192,10 +4147,7 @@
   "2026-07-13T00:00:00",
   "2026-07-13T23:59:59.999999"
  ],
- "2026-08-09T18:00:00\u001f15.01.2024": [
-  "2024-08-09T00:00:00",
-  "2024-08-09T23:59:59.999999"
- ],
+ "2026-08-09T18:00:00\u001f15.01.2024": null,
  "2026-08-09T18:00:00\u001f1mon ago": [
   "2026-07-09T00:00:00",
   "2026-07-09T23:59:59.999999"
@@ -4205,10 +4157,7 @@
   "2024-01-15T00:00:00",
   "2024-01-15T23:59:59.999999"
  ],
- "2026-08-09T18:00:00\u001f2024年": [
-  "0002-08-09T00:00:00",
-  "0002-08-09T23:59:59.999999"
- ],
+ "2026-08-09T18:00:00\u001f2024年": null,
  "2026-08-09T18:00:00\u001f2024年3月": [
   "2024-03-01T00:00:00",
   "2024-03-31T23:59:59.999999"
@@ -4235,8 +4184,8 @@
   "1999-12-31T23:59:59.999999"
  ],
  "2026-08-09T18:00:00\u001f31 february 2020": [
-  "2020-08-09T00:00:00",
-  "2020-08-09T23:59:59.999999"
+  "2026-02-09T00:00:00",
+  "2026-02-09T23:59:59.999999"
  ],
  "2026-08-09T18:00:00\u001f3:30pm": null,
  "2026-08-09T18:00:00\u001f3月3日": [
@@ -4275,22 +4224,13 @@
  ],
  "2026-08-09T18:00:00\u001fSELECT * FROM memory_units": null,
  "2026-08-09T18:00:00\u001fTODO": null,
- "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-09T00:00:00",
-  "2000-08-09T23:59:59.999999"
- ],
- "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-09T00:00:00",
-  "2000-08-09T23:59:59.999999"
- ],
+ "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
+ "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The migration ran on 2026-06-10 without incident.": [
   "2026-06-10T00:00:00",
   "2026-06-10T23:59:59.999999"
  ],
- "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-09T00:00:00",
-  "2000-08-09T23:59:59.999999"
- ],
+ "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-08-09T18:00:00\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. This was decided last week during the architecture review.": [
   "2026-07-27T00:00:00",
   "2026-08-02T23:59:59.999999"
@@ -5578,10 +5518,7 @@
   "2026-07-13T00:00:00",
   "2026-07-13T23:59:59.999999"
  ],
- "2026-08-12T14:30:45.123456\u001f15.01.2024": [
-  "2024-08-12T00:00:00",
-  "2024-08-12T23:59:59.999999"
- ],
+ "2026-08-12T14:30:45.123456\u001f15.01.2024": null,
  "2026-08-12T14:30:45.123456\u001f1mon ago": [
   "2026-07-12T00:00:00",
   "2026-07-12T23:59:59.999999"
@@ -5591,10 +5528,7 @@
   "2024-01-15T00:00:00",
   "2024-01-15T23:59:59.999999"
  ],
- "2026-08-12T14:30:45.123456\u001f2024年": [
-  "0002-08-12T00:00:00",
-  "0002-08-12T23:59:59.999999"
- ],
+ "2026-08-12T14:30:45.123456\u001f2024年": null,
  "2026-08-12T14:30:45.123456\u001f2024年3月": [
   "2024-03-01T00:00:00",
   "2024-03-31T23:59:59.999999"
@@ -5621,8 +5555,8 @@
   "1999-12-31T23:59:59.999999"
  ],
  "2026-08-12T14:30:45.123456\u001f31 february 2020": [
-  "2020-08-12T00:00:00",
-  "2020-08-12T23:59:59.999999"
+  "2026-02-12T00:00:00",
+  "2026-02-12T23:59:59.999999"
  ],
  "2026-08-12T14:30:45.123456\u001f3:30pm": null,
  "2026-08-12T14:30:45.123456\u001f3月3日": [
@@ -5661,22 +5595,13 @@
  ],
  "2026-08-12T14:30:45.123456\u001fSELECT * FROM memory_units": null,
  "2026-08-12T14:30:45.123456\u001fTODO": null,
- "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-12T00:00:00",
-  "2000-08-12T23:59:59.999999"
- ],
- "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-12T00:00:00",
-  "2000-08-12T23:59:59.999999"
- ],
+ "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
+ "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The migration ran on 2026-06-10 without incident.": [
   "2026-06-10T00:00:00",
   "2026-06-10T23:59:59.999999"
  ],
- "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-08-12T00:00:00",
-  "2000-08-12T23:59:59.999999"
- ],
+ "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-08-12T14:30:45.123456\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. This was decided last week during the architecture review.": [
   "2026-08-03T00:00:00",
   "2026-08-09T23:59:59.999999"
@@ -6964,10 +6889,7 @@
   "2026-07-13T00:00:00",
   "2026-07-13T23:59:59.999999"
  ],
- "2026-12-31T23:59:59\u001f15.01.2024": [
-  "2024-12-31T00:00:00",
-  "2024-12-31T23:59:59.999999"
- ],
+ "2026-12-31T23:59:59\u001f15.01.2024": null,
  "2026-12-31T23:59:59\u001f1mon ago": [
   "2026-11-30T00:00:00",
   "2026-11-30T23:59:59.999999"
@@ -6977,10 +6899,7 @@
   "2024-01-15T00:00:00",
   "2024-01-15T23:59:59.999999"
  ],
- "2026-12-31T23:59:59\u001f2024年": [
-  "0002-12-31T00:00:00",
-  "0002-12-31T23:59:59.999999"
- ],
+ "2026-12-31T23:59:59\u001f2024年": null,
  "2026-12-31T23:59:59\u001f2024年3月": [
   "2024-03-01T00:00:00",
   "2024-03-31T23:59:59.999999"
@@ -7007,8 +6926,8 @@
   "1999-12-31T23:59:59.999999"
  ],
  "2026-12-31T23:59:59\u001f31 february 2020": [
-  "2020-12-31T00:00:00",
-  "2020-12-31T23:59:59.999999"
+  "2026-02-28T00:00:00",
+  "2026-02-28T23:59:59.999999"
  ],
  "2026-12-31T23:59:59\u001f3:30pm": null,
  "2026-12-31T23:59:59\u001f3月3日": [
@@ -7047,22 +6966,13 @@
  ],
  "2026-12-31T23:59:59\u001fSELECT * FROM memory_units": null,
  "2026-12-31T23:59:59\u001fTODO": null,
- "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-12-31T00:00:00",
-  "2000-12-31T23:59:59.999999"
- ],
- "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-12-31T00:00:00",
-  "2000-12-31T23:59:59.999999"
- ],
+ "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
+ "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The migration ran on 2026-06-10 without incident.": [
   "2026-06-10T00:00:00",
   "2026-06-10T23:59:59.999999"
  ],
- "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": [
-  "2000-12-31T00:00:00",
-  "2000-12-31T23:59:59.999999"
- ],
+ "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. The user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. ": null,
  "2026-12-31T23:59:59\u001fThe user configured the retain pipeline to use a chunk size of 2000 tokens and enabled delta refresh for mental models. They prefer functional patterns and asked that the reranker stay on the local cross-encoder rather than TEI. This was decided last week during the architecture review.": [
   "2026-12-21T00:00:00",
   "2026-12-27T23:59:59.999999"
