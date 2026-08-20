@@ -971,23 +971,30 @@ def test_query_analyzer_bare_year_resolves_to_whole_year(query_analyzer, query):
 
 
 @pytest.mark.parametrize(
-    ("query", "reason"),
+    ("query", "expected_start", "expected_end"),
     [
-        ("meeting in room 2019", "the word must introduce the number directly"),
-        ("listening in 8080", "an implausible year is a port someone prepositioned"),
-        ("in 2026-06-10", "an explicit date must not collapse to its year"),
-        ("in june 2019", "month+year is more precise than the year"),
+        # The word has to introduce the number directly, not merely precede it.
+        ("meeting in room 2019", None, None),
+        # An implausible year is a port someone happened to put a preposition on.
+        ("listening in 8080", None, None),
+        # An explicit date must not collapse to its year.
+        ("in 2026-06-10", datetime(2026, 6, 10), datetime(2026, 6, 10)),
+        # Month+year is more precise than the year, and already handled above it.
+        ("in june 2019", datetime(2019, 6, 1), datetime(2019, 6, 30)),
     ],
 )
-def test_query_analyzer_bare_year_rule_does_not_overreach(query_analyzer, query, reason):
+def test_query_analyzer_bare_year_rule_does_not_overreach(query_analyzer, query, expected_start, expected_end):
     """#3250: the year rule must not swallow ports, exact dates or month+year."""
     reference_date = datetime(2026, 8, 7, 12, 0, 0)
 
     analysis = query_analyzer.analyze(query, reference_date)
 
-    whole_2019 = datetime(2019, 1, 1).date()
-    if analysis.temporal_constraint is not None:
-        assert analysis.temporal_constraint.start_date.date() != whole_2019, reason
+    if expected_start is None:
+        assert analysis.temporal_constraint is None
+        return
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == expected_start.date()
+    assert analysis.temporal_constraint.end_date.date() == expected_end.date()
 
 
 def test_query_analyzer_implausible_bare_year_keeps_a_real_date(query_analyzer):

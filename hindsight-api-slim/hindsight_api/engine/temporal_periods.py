@@ -62,7 +62,7 @@ def _month_end(year: int, month: int) -> datetime:
 # narrower window than asked for.
 _YEAR_ONLY_RE = re.compile(
     r"\b(?:in|during|throughout|year|en|durante|a[nñ]o|nel|anno|dans|pendant|ann[ée]e|im|w[äa]hrend|jahr|в)\s+"
-    r"(?<![-/.])(?P<year>\d{4})\b(?![-/.]\d)",
+    r"(?P<year>\d{4})\b(?![-/.]\d)",
     re.IGNORECASE,
 )
 
