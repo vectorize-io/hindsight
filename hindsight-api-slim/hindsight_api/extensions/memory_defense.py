@@ -13,7 +13,9 @@ from __future__ import annotations
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
 
 from hindsight_api.extensions.base import Extension
@@ -219,7 +221,53 @@ _REDACTION_PATTERNS: list[tuple[str, str]] = [
     # --- Private keys & generic credentials ---
     ("private_key_pem", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY( BLOCK)?-----"),
     ("jwt", _ascii_token_pattern(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
-    # --- PII (US-centric defaults; can be tuned per deployment) ---
+    # --- PII ---
+    # These patterns use explicit ASCII lookarounds instead of ``\b`` so a
+    # value immediately next to CJK text is still detected. Name and address
+    # matching is intentionally context-bound to reduce false positives.
+    (
+        "email",
+        r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+        r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
+        r"(?![A-Za-z0-9._%+-])",
+    ),
+    (
+        "phone_cn",
+        _ascii_token_pattern(r"(?:(?:\+|00)86[ -]?)?1[3-9](?:[ -]?\d){9}"),
+    ),
+    (
+        "phone_international",
+        _ascii_token_pattern(r"(?:\+[1-9]\d{0,2}|00[1-9]\d{0,2})(?:[ .()-]*\d){6,14}"),
+    ),
+    (
+        "id_cn",
+        _ascii_token_pattern(
+            r"[1-9]\d{5}(?:18|19|20)\d{2}"
+            r"(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]"
+        ),
+    ),
+    (
+        "bank_card_cn",
+        _ascii_token_pattern(r"62(?:[ -]?\d){14,17}"),
+    ),
+    (
+        "person_name",
+        _ascii_token_pattern(
+            r"(?i:(?:full[ -]?name|name|contact|recipient|"
+            r"客户姓名|姓名|联系人|收件人)[ \t:：]+"
+            r"(?:[\u4e00-\u9fff]{2,4}|[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+){0,2}))"
+        ),
+    ),
+    (
+        "address",
+        _ascii_token_pattern(
+            r"(?im:(?:(?:^|(?<=[\r\n]))[ \t]*address[ \t:：]+|"
+            r"(?:home[ -]?address|shipping[ -]?address|postal[ -]?address|"
+            r"收件地址|收货地址|联系地址|(?<![\u4e00-\u9fff])(?:地址|住址))[ \t:：]+)"
+            r"[^\r\n;；。.!！？]{4,160}(?<![ \t,，]))"
+        ),
+    ),
     # NOTE: credit_card regex is intentionally narrowed to 13-19 digits with
     # exact separators to reduce false positives on long product IDs.
     ("credit_card", _ascii_token_pattern(r"(?:\d{4}[ -]?){3}\d{1,4}")),
@@ -230,6 +278,58 @@ _REDACTION_PATTERNS: list[tuple[str, str]] = [
 _COMPILED_REDACTIONS: list[tuple[str, re.Pattern]] = [
     (label, re.compile(pattern)) for label, pattern in _REDACTION_PATTERNS
 ]
+
+_CN_ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+_CN_ID_CHECK_CODES = "10X98765432"
+
+
+def _is_valid_cn_id(value: str) -> bool:
+    """Validate the birth date and ISO 7064 checksum of a PRC ID number."""
+    normalized = value.upper()
+    try:
+        birth_date = date(int(normalized[6:10]), int(normalized[10:12]), int(normalized[12:14]))
+    except ValueError:
+        return False
+    if birth_date > date.today():
+        return False
+
+    checksum_index = sum(int(digit) * weight for digit, weight in zip(normalized[:17], _CN_ID_WEIGHTS)) % 11
+    return normalized[-1] == _CN_ID_CHECK_CODES[checksum_index]
+
+
+def _is_luhn_valid(value: str) -> bool:
+    """Validate a separated or contiguous payment-card number with Luhn."""
+    digits = [int(char) for char in value if char.isdigit()]
+    total = 0
+    for index, digit in enumerate(reversed(digits)):
+        if index % 2:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def _is_generic_credit_card_candidate(value: str) -> bool:
+    """Do not let invalid 16-digit UnionPay candidates fall through as credit cards."""
+    digits = "".join(char for char in value if char.isdigit())
+    return not (len(digits) == 16 and digits.startswith("62"))
+
+
+_REDACTION_VALIDATORS: dict[str, Callable[[str], bool]] = {
+    "id_cn": _is_valid_cn_id,
+    "bank_card_cn": _is_luhn_valid,
+    "credit_card": _is_generic_credit_card_candidate,
+}
+_FULLY_MASKED_REDACTION_TYPES = {
+    "email",
+    "phone_cn",
+    "phone_international",
+    "id_cn",
+    "bank_card_cn",
+    "person_name",
+    "address",
+}
 
 
 def apply_redaction(content: str) -> RedactionResult:
@@ -251,7 +351,11 @@ def apply_redaction(content: str) -> RedactionResult:
     matched: list[str] = []
     hits: list[dict] = []
     for label, pattern in _COMPILED_REDACTIONS:
-        raw_hits = pattern.findall(content)
+        validator = _REDACTION_VALIDATORS.get(label)
+        if validator is None:
+            raw_hits = pattern.findall(content)
+        else:
+            raw_hits = [match.group(0) for match in pattern.finditer(content) if validator(match.group(0))]
         if not raw_hits:
             continue
         if label not in matched:
@@ -268,8 +372,15 @@ def apply_redaction(content: str) -> RedactionResult:
                 raw_str = raw
             if not raw_str:
                 continue
-            hits.append({"detector": label, "preview": _fingerprint_value(raw_str)})
-        content = pattern.sub(f"[REDACTED:{label}]", content)
+            preview = "[redacted]" if label in _FULLY_MASKED_REDACTION_TYPES else _fingerprint_value(raw_str)
+            hits.append({"detector": label, "preview": preview})
+        if validator is None:
+            content = pattern.sub(f"[REDACTED:{label}]", content)
+        else:
+            content = pattern.sub(
+                lambda match: f"[REDACTED:{label}]" if validator(match.group(0)) else match.group(0),
+                content,
+            )
     return RedactionResult(content=content, matched_types=matched, hits=hits)
 
 

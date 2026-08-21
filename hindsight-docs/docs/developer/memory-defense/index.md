@@ -4,7 +4,7 @@ sidebar_position: 95
 
 # Memory Defense
 
-Hindsight scrubs secrets and PII from retain content using a 45-pattern regex set. Each match is replaced with a `[REDACTED:type]` marker before content reaches memory units or the document body. The feature is configured per bank and disabled by default.
+Hindsight scrubs secrets and PII from retain content using a 52-pattern regex set. Each match is replaced with a `[REDACTED:type]` marker before content reaches memory units or the document body. The feature is configured per bank and disabled by default.
 
 ## How it works
 
@@ -36,7 +36,7 @@ A minimal policy:
 }
 ```
 
-Once that policy is on a bank, every retain to that bank is screened with the 45 redaction patterns documented below.
+Once that policy is on a bank, every retain to that bank is screened with the 52 redaction patterns documented below.
 
 :::note Existing memories are not retroactively scanned
 Enabling Memory Defense on a bank only affects future retain calls. Memories already in the bank are not re-scanned or modified when you add or change a policy. If you need to scrub a bank that already contains unredacted content, you have to re-ingest the affected memories or remove them manually.
@@ -54,7 +54,7 @@ The same redact/block decisions are also recorded as `memory_defense` entries in
 
 ## Patterns covered
 
-The 45 bundled patterns cover the categories below.
+The 52 bundled patterns cover the categories below.
 
 ### AI and LLM providers
 
@@ -136,9 +136,18 @@ The 45 bundled patterns cover the categories below.
 | `private_key_pem` | `-----BEGIN ... PRIVATE KEY-----` PEM blocks |
 | `jwt` | `eyJ<header>.eyJ<payload>.<signature>` |
 
-### PII (US defaults)
+### PII
 
 | Label | Catches |
 |---|---|
+| `email` | Standard email address formats |
+| `phone_cn` | Mainland China mobile numbers, including `+86` and `0086` prefixes |
+| `phone_international` | International numbers with a `+` or `00` country prefix |
+| `id_cn` | Mainland China ID numbers with a valid birth date and checksum |
+| `bank_card_cn` | Mainland China `62`-prefixed bank cards with a valid Luhn checksum |
+| `person_name` | Chinese or English names following an explicit name or contact label |
+| `address` | Postal addresses following an explicit address label |
 | `credit_card` | 13 to 19 digits with regular separators |
 | `ssn_us` | `123-45-6789` shape |
+
+Name and address detection is deliberately context-bound. Unlabelled names and prose that happens to contain location words are not matched, which keeps the default local detector from redacting ordinary conversation text.

@@ -67,11 +67,18 @@ _BOUNDARY_REDACTION_SAMPLES = {
     "telegram_bot": "12345678:" + "A" * 35,
     "shopify_token": "shpat_" + "a" * 32,
     "jwt": "eyJ" + "A" * 10 + ".eyJ" + "A" * 10 + "." + "A" * 10,
+    "phone_cn": "13800138000",
+    "phone_international": "+1 (415) 555-0132",
+    "id_cn": "990000200001010012",
+    "bank_card_cn": "6217000000000000004",
+    "person_name": "姓名：张三",
+    "address": "收件地址：北京市海淀区示例路1号",
     "credit_card": "4111 1111 1111 1111",
     "ssn_us": "123-45-6789",
 }
 
 _NON_BOUNDARY_REDACTION_SAMPLES = {
+    "email": "alice@example.com",
     "aws_secret_key": "aws_secret_access_key=" + "A" * 40,
     "slack_webhook": "https://hooks.slack.com/services/T" + "A" * 8 + "/B" + "A" * 8 + "/" + "A" * 20,
     "db_url_postgres": "postgresql://user:password@localhost/db",
@@ -217,6 +224,91 @@ def test_apply_redaction_multiple_hits_per_pattern() -> None:
     assert len(gh_hits) == 2
     previews = {h["preview"] for h in gh_hits}
     assert previews == {"ghp_...AAAA", "ghp_...BBBB"}
+
+
+@pytest.mark.parametrize(
+    ("label", "content", "sensitive_value"),
+    [
+        ("email", "邮箱：alice@example.com", "alice@example.com"),
+        ("phone_cn", "请联系13800138000", "13800138000"),
+        ("phone_cn", "请联系+86 138-0013-8000", "+86 138-0013-8000"),
+        ("phone_international", "Call +1 (415) 555-0132 for support.", "+1 (415) 555-0132"),
+        ("phone_international", "Call 0044 20 7946 0958 for support.", "0044 20 7946 0958"),
+        ("id_cn", "身份证号：990000200001010012", "990000200001010012"),
+        ("bank_card_cn", "银行卡：6217000000000000004", "6217000000000000004"),
+        ("bank_card_cn", "银行卡：6217000000000006", "6217000000000006"),
+        ("person_name", "姓名：张三", "张三"),
+        ("person_name", "Contact: Alice Smith", "Alice Smith"),
+        ("address", "收件地址：北京市海淀区示例路1号", "北京市海淀区示例路1号"),
+        ("address", "Shipping address: 123 Example Street", "123 Example Street"),
+    ],
+)
+def test_apply_redaction_detects_locale_aware_and_contextual_pii(
+    label: str, content: str, sensitive_value: str
+) -> None:
+    result = apply_redaction(content)
+
+    assert f"[REDACTED:{label}]" in result.content
+    assert result.matched_types == [label]
+    assert sensitive_value not in result.content
+    assert result.hits == [{"detector": label, "preview": "[redacted]"}]
+
+
+@pytest.mark.parametrize(
+    ("content", "sensitive_value"),
+    [
+        (
+            "Shipping address: 123 Main St, Apt 4, Springfield, IL 62704",
+            "123 Main St, Apt 4, Springfield, IL 62704",
+        ),
+        (
+            "收件地址：北京市海淀区中关村大街1号，3单元402室，北京市100080",
+            "北京市海淀区中关村大街1号，3单元402室，北京市100080",
+        ),
+        ("Address: 123 Example Street, Suite 4", "123 Example Street, Suite 4"),
+    ],
+)
+def test_apply_redaction_covers_multi_component_addresses(content: str, sensitive_value: str) -> None:
+    result = apply_redaction(content)
+
+    assert result.content == "[REDACTED:address]"
+    assert result.matched_types == ["address"]
+    assert sensitive_value not in result.content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "身份证号：990000200002300014",  # invalid calendar date
+        "身份证号：990000200001010013",  # invalid checksum
+        "银行卡：6217000000000000005",  # invalid Luhn checksum
+        "银行卡：6217000000000000",  # invalid 16-digit card must not fall through to credit_card
+    ],
+)
+def test_apply_redaction_rejects_invalid_cn_identity_and_bank_numbers(content: str) -> None:
+    result = apply_redaction(content)
+
+    assert result.content == content
+    assert result.matched_types == []
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "这是普通中文文本，不应被姓名或地址规则匹配。",
+        "地址说明：这里不是收件地址字段。",
+        "username: Alice",
+        "server address: localhost",
+        "IP address: 192.0.2.1",
+        "nameplate and addressable resources are technical terms.",
+        "订单编号 6217000000000000004A 不应被识别为银行卡号。",
+    ],
+)
+def test_apply_redaction_avoids_contextual_pii_false_positives(content: str) -> None:
+    result = apply_redaction(content)
+
+    assert result.content == content
+    assert result.matched_types == []
 
 
 # ---------------------------------------------------------------------------
