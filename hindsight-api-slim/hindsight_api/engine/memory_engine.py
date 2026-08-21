@@ -49,6 +49,7 @@ from ..config import (
     HindsightConfig,
     LLMMemberConfig,
     LLMStrategyConfig,
+    _generate_member_id,
     get_config,
 )
 from ..tracing import create_operation_span
@@ -622,6 +623,7 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults:
         api_key=member.api_key or "",
         base_url=member.base_url,
         model=member.model,
+        member_id=member.member_id,
         reasoning_effort=member.reasoning_effort or config.llm_reasoning_effort,
         extra_body=member.extra_body,
         default_headers=member.default_headers or config.llm_default_headers,
@@ -1918,6 +1920,7 @@ class MemoryEngine(MemoryEngineInterface):
             api_key=memory_llm_api_key,
             base_url=memory_llm_base_url,
             model=memory_llm_model,
+            member_id=_generate_member_id(memory_llm_provider, memory_llm_model, memory_llm_api_key),
             reasoning_effort=config.llm_reasoning_effort,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
@@ -1965,6 +1968,7 @@ class MemoryEngine(MemoryEngineInterface):
             api_key=retain_api_key,
             base_url=retain_base_url,
             model=retain_model,
+            member_id=_generate_member_id(retain_provider, retain_model, retain_api_key),
             reasoning_effort=config.retain_llm_reasoning_effort or config.llm_reasoning_effort,
             extra_body=config.retain_llm_extra_body or config.llm_extra_body,
             default_headers=config.llm_default_headers,

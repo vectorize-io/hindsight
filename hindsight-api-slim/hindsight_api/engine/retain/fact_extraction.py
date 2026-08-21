@@ -2051,13 +2051,17 @@ async def extract_facts_from_contents_batch_api(
                 # report a provider error nobody can act on. Fail on the mismatch
                 # instead, naming both sides.
                 submitted_provider = metadata.get("batch_provider")
-                if submitted_provider and submitted_provider != batch_impl.provider:
+                submitted_member = metadata.get("batch_member")
+                # Resolve the specific member that originally submitted the batch
+                resolved_impl = await llm_config.batch_provider_impl(selector=submitted_member)
+                if resolved_impl is None or (submitted_provider and resolved_impl.provider != submitted_provider):
                     raise RuntimeError(
                         f"Cannot resume batch {batch_id}: it was submitted to "
-                        f"'{submitted_provider}' but the retain LLM configuration now "
-                        f"serves batch from '{batch_impl.provider}'. Restore the LLM "
-                        f"member that submitted it, or fail this operation and retain again."
+                        f"'{submitted_member or submitted_provider}' but the retain LLM configuration "
+                        f"cannot resolve this member. Restore the LLM member that submitted it, "
+                        f"or fail this operation and retain again."
                     )
+                batch_impl = resolved_impl
                 logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
 
     # Step 1: Chunk all contents and build batch requests (skip if resuming)
@@ -2114,9 +2118,13 @@ async def extract_facts_from_contents_batch_api(
         # CRITICAL: Store minimal batch state in operation metadata for crash recovery
         # This allows resuming polling if worker restarts
         if operation_id and pool:
+            member_selector = getattr(
+                batch_impl, "member_id", getattr(batch_impl, "name", getattr(batch_impl, "provider", None))
+            )
             batch_state = {
                 "batch_id": batch_id,
                 "batch_provider": batch_impl.provider,
+                "batch_member": member_selector,
                 "chunk_count": len(batch_requests),
             }
 

@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from hindsight_api.config import LLM_STRATEGY_FAILOVER, HindsightConfig, LLMStrategyConfig
+from hindsight_api.config import LLM_STRATEGY_FAILOVER, HindsightConfig, LLMStrategyConfig, _generate_member_id
 from hindsight_api.engine.multi_llm import MultiLLMProvider
 from hindsight_api.engine.retain.fact_extraction import RetainContent, extract_facts_from_contents_batch_api
 
@@ -21,8 +21,10 @@ from hindsight_api.engine.retain.fact_extraction import RetainContent, extract_f
 class _FakeBatchImpl:
     """Fake provider implementation recording the batch calls it serves."""
 
-    def __init__(self, name: str, supports_batch: bool, service_tier: str | None = None):
+    def __init__(self, name: str, supports_batch: bool, service_tier: str | None = None, member_id: str | None = None):
         self.provider = name
+        self.name = name
+        self.member_id = member_id or name
         self.model = f"{name}-model"
         self.openai_service_tier = service_tier
         self._supports_batch = supports_batch
@@ -221,3 +223,94 @@ async def test_resume_fails_loudly_when_the_chain_no_longer_serves_that_provider
         )
 
     assert groq._provider_impl.calls == []
+
+
+async def test_batch_resume_same_provider_member_reordered() -> None:
+    """Same-provider reorder must not route recovery to the wrong account.
+
+    Two members share the same provider string ("openai") but have distinct
+    member_id values ("account_a", "account_b"). After submitting via member_b
+    and restarting with member_a first in the chain, the persisted
+    ``batch_member`` selector must still resolve to member_b — not member_a.
+    """
+    # Configure two wrapper members of the same provider ("openai")
+    member_a = _BatchMember("openai", supports_batch=True)
+    member_a._provider_impl.member_id = "account_a"
+
+    member_b = _BatchMember("openai", supports_batch=True)
+    member_b._provider_impl.member_id = "account_b"
+
+    # Initial order where member_b is primary or chosen
+    pool_submit = MultiLLMProvider([member_b, member_a], strategy=LLMStrategyConfig(mode=LLM_STRATEGY_FAILOVER))
+    batch_impl = await pool_submit.batch_provider_impl()
+    assert getattr(batch_impl, "member_id", None) == "account_b"
+
+    # Simulate saved state from submission
+    persisted_metadata = {
+        "batch_id": "batch_123",
+        "batch_provider": "openai",
+        "batch_member": "account_b",
+    }
+
+    # Simulate restart with pool order swapped: [member_a, member_b]
+    pool_resumed = MultiLLMProvider([member_a, member_b], strategy=LLMStrategyConfig(mode=LLM_STRATEGY_FAILOVER))
+
+    # Resolving with selector should return member_b despite member_a being first
+    resumed_impl = await pool_resumed.batch_provider_impl(selector=persisted_metadata["batch_member"])
+    assert resumed_impl is not None
+    assert getattr(resumed_impl, "member_id", None) == "account_b"
+
+    # Call status & retrieve on the resumed implementation
+    await resumed_impl.get_batch_status(persisted_metadata["batch_id"])
+    await resumed_impl.retrieve_batch_results(persisted_metadata["batch_id"])
+
+    # Assert account_b handled recovery and account_a received 0 calls
+    assert member_b._provider_impl.calls == ["status", "retrieve"]
+    assert member_a._provider_impl.calls == []
+
+
+async def test_batch_resume_same_provider_real_fingerprint_reordered() -> None:
+    """Same as test_batch_resume_same_provider_member_reordered, but member_id
+    comes from the real _generate_member_id (differing only by api_key) rather
+    than being hand-assigned — proves the fingerprint function itself is what
+    makes recovery correct, not just the selector plumbing."""
+    member_id_a = _generate_member_id("openai", "gpt-4o", "sk-account-a")
+    member_id_b = _generate_member_id("openai", "gpt-4o", "sk-account-b")
+
+    member_a = _BatchMember("openai", supports_batch=True)
+    member_a._provider_impl.member_id = member_id_a
+
+    member_b = _BatchMember("openai", supports_batch=True)
+    member_b._provider_impl.member_id = member_id_b
+
+    # Sanity check: the two accounts must actually fingerprint differently,
+    # or this whole test would pass for the wrong reason.
+    assert member_id_a != member_id_b
+
+    # Initial order where member_b is primary or chosen
+    pool_submit = MultiLLMProvider([member_b, member_a], strategy=LLMStrategyConfig(mode=LLM_STRATEGY_FAILOVER))
+    batch_impl = await pool_submit.batch_provider_impl()
+    assert getattr(batch_impl, "member_id", None) == member_id_b
+
+    # Simulate saved state from submission
+    persisted_metadata = {
+        "batch_id": "batch_123",
+        "batch_provider": "openai",
+        "batch_member": member_id_b,
+    }
+
+    # Simulate restart with pool order swapped: [member_a, member_b]
+    pool_resumed = MultiLLMProvider([member_a, member_b], strategy=LLMStrategyConfig(mode=LLM_STRATEGY_FAILOVER))
+
+    # Resolving with selector should return member_b despite member_a being first
+    resumed_impl = await pool_resumed.batch_provider_impl(selector=persisted_metadata["batch_member"])
+    assert resumed_impl is not None
+    assert getattr(resumed_impl, "member_id", None) == member_id_b
+
+    # Call status & retrieve on the resumed implementation
+    await resumed_impl.get_batch_status(persisted_metadata["batch_id"])
+    await resumed_impl.retrieve_batch_results(persisted_metadata["batch_id"])
+
+    # Assert account_b handled recovery and account_a received 0 calls
+    assert member_b._provider_impl.calls == ["status", "retrieve"]
+    assert member_a._provider_impl.calls == []

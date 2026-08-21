@@ -71,6 +71,7 @@ class LLMInterface(ABC):
         api_key: str,
         base_url: str,
         model: str,
+        member_id: str | None = None,
         reasoning_effort: str | None = None,
         **kwargs: Any,
     ):
@@ -87,6 +88,7 @@ class LLMInterface(ABC):
                 every model runs at its own default effort.
             **kwargs: Additional provider-specific parameters.
         """
+        self.member_id = member_id
         self.provider = provider.lower()
         self.api_key = api_key
         self.base_url = base_url

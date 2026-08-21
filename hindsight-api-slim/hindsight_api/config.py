@@ -4,6 +4,8 @@ Centralized configuration for Hindsight API.
 All environment variables and their defaults are defined here.
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -20,6 +22,25 @@ from ._vector_index import validate_extension
 from .utils import mask_network_location
 
 logger = logging.getLogger(__name__)
+
+
+# Fixed HMAC context key for member-ID derivation. Using HMAC-SHA256 rather
+# than a bare hash keeps the api_key digest domain-separated from any other
+# hash of that value that may exist in the system, and avoids shipping a
+# fast-hash of credential material (MD5 preimage still holds for full-entropy
+# keys, but HMAC-SHA256 is the right tool when the input is a secret).
+_MEMBER_ID_HMAC_KEY = b"hindsight:llm-member-id:v1"
+
+
+def _generate_member_id(provider: str, model: str, api_key: str | None) -> str:
+    """Generate a stable, credential-safe fingerprint for an LLM pool member.
+
+    Uses HMAC-SHA256 with a fixed context key so the digest is domain-separated
+    from any bare hash of the api_key that may appear elsewhere, and the output
+    is safe to store in operation metadata without leaking credential material.
+    """
+    message = f"{provider}:{model}:{api_key or ''}".encode()
+    return hmac.new(_MEMBER_ID_HMAC_KEY, message, hashlib.sha256).hexdigest()
 
 
 def load_dotenv_for_entrypoint() -> None:
@@ -1868,6 +1889,7 @@ class LLMMemberConfig:
     default_headers: dict | None
     bedrock_service_tier: str | None
     gemini_service_tier: str | None
+    member_id: str | None = None
     cache_affinity: str | None = None
     vertexai_project_id: str | None = None
     vertexai_region: str | None = None
@@ -1951,13 +1973,16 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
             raise ValueError(
                 f"{base}API_KEY is required for provider '{provider}' (member {index} of the multi-LLM chain)."
             )
+        resolved_model = os.getenv(base + "MODEL") or _get_default_model_for_provider(provider)
+        member_id = _generate_member_id(provider, resolved_model, api_key)
 
         gemini_service_tier = os.getenv(base + "GEMINI_SERVICE_TIER")
         members.append(
             LLMMemberConfig(
+                member_id=member_id,
                 provider=provider,
                 api_key=api_key,
-                model=os.getenv(base + "MODEL") or _get_default_model_for_provider(provider),
+                model=resolved_model,
                 base_url=os.getenv(base + "BASE_URL") or None,
                 reasoning_effort=os.getenv(base + "REASONING_EFFORT") or None,
                 extra_body=json.loads(os.getenv(base + "EXTRA_BODY", "null")),
@@ -3217,6 +3242,7 @@ class HindsightConfig:
         # Get provider first to determine default model
         llm_provider = os.getenv(ENV_LLM_PROVIDER, DEFAULT_LLM_PROVIDER)
         llm_model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(llm_provider)
+        llm_api_key = os.getenv(ENV_LLM_API_KEY) or None
 
         # Parse per-type worker slot reservations (floors) once.
         worker_slot_reservations = _parse_worker_slot_reservations()
@@ -3252,7 +3278,7 @@ class HindsightConfig:
             llm_output_language=(os.getenv(ENV_LLM_OUTPUT_LANGUAGE) or None),
             # LLM
             llm_provider=llm_provider,
-            llm_api_key=os.getenv(ENV_LLM_API_KEY),
+            llm_api_key=llm_api_key,
             llm_model=llm_model,
             llm_base_url=os.getenv(ENV_LLM_BASE_URL) or None,
             llm_max_concurrent=int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT))),
