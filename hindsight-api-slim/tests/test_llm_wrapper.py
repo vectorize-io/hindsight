@@ -346,3 +346,61 @@ def test_llm_provider_constructor_ignores_global_safety_settings(monkeypatch):
     assert provider.gemini_safety_settings is None  # not inherited from global config
 
     clear_config_cache()
+
+
+from hindsight_api.engine.llm_wrapper import LLMProvider
+
+
+def _mk_provider(provider="mock", api_key="", base_url="", model="m", **kw):
+    return LLMProvider(provider=provider, api_key=api_key, base_url=base_url, model=model, **kw)
+
+
+async def test_account_identity_is_stable_across_instances():
+    """The identity is deterministic for an unchanged config, so a resume after a
+    restart re-resolves to the same account."""
+    a = _mk_provider(api_key="secret-1", base_url="https://api.openai.com/v1", model="gpt-4o")
+    b = _mk_provider(api_key="secret-1", base_url="https://api.openai.com/v1", model="gpt-4o")
+    assert await a.account_identity() == await b.account_identity()
+
+
+async def test_account_identity_differs_by_credential():
+    """Two accounts sharing provider+endpoint+model but with different credentials
+    must not collide — the exact case ``batch_provider`` (provider name alone) got wrong."""
+    a = _mk_provider(api_key="secret-1", base_url="https://api.openai.com/v1", model="gpt-4o")
+    b = _mk_provider(api_key="secret-2", base_url="https://api.openai.com/v1", model="gpt-4o")
+    assert await a.account_identity() != await b.account_identity()
+
+
+async def test_account_identity_differs_by_endpoint_and_model():
+    a = _mk_provider(api_key="k", base_url="https://api.openai.com/v1", model="gpt-4o")
+    b = _mk_provider(api_key="k", base_url="https://api.groq.com/openai/v1", model="gpt-4o")
+    c = _mk_provider(api_key="k", base_url="https://api.openai.com/v1", model="gpt-4o-mini")
+    assert len({await a.account_identity(), await b.account_identity(), await c.account_identity()}) == 3
+
+
+async def test_account_identity_does_not_leak_credential():
+    ident = await _mk_provider(api_key="supersecretvalue").account_identity()
+    assert "supersecretvalue" not in ident
+
+
+async def test_account_identity_vertexai_differs_by_project():
+    try:
+        a = _mk_provider(provider="vertexai", model="gemini-2.5-flash", vertexai_project_id="proj-a")
+        b = _mk_provider(provider="vertexai", model="gemini-2.5-flash", vertexai_project_id="proj-b")
+    except Exception:
+        pytest.skip("Vertex AI provider not constructible in this environment")
+    assert await a.account_identity() != await b.account_identity()
+
+
+async def test_resolve_batch_account_matches_self_identity():
+    p = _mk_provider(api_key="k", base_url="https://api.openai.com/v1", model="gpt-4o")
+    ident = await p.account_identity()
+    assert await p.resolve_batch_account(ident) is p._provider_impl
+
+
+async def test_resolve_batch_account_returns_none_for_other_identity():
+    p = _mk_provider(api_key="k", base_url="https://api.openai.com/v1", model="gpt-4o")
+    other = await _mk_provider(
+        api_key="different", base_url="https://api.openai.com/v1", model="gpt-4o"
+    ).account_identity()
+    assert await p.resolve_batch_account(other) is None

@@ -48,6 +48,10 @@ def mock_llm_config():
         return mock._provider_impl if await mock._provider_impl.supports_batch_api() else None
 
     mock.batch_provider_impl = _batch_provider_impl
+    # The batch path resolves the submitting account by a persisted identity
+    # (``batch_account``). Expose it as async matching the real LLMProvider.
+    mock.account_identity = AsyncMock(return_value="openai::https://api.openai.com/v1::gpt-4o-mini::mockdigest")
+    mock.resolve_batch_account = AsyncMock(return_value=mock._provider_impl)
     return mock
 
 

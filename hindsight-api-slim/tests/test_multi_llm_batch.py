@@ -52,11 +52,19 @@ class _FakeBatchImpl:
 
 
 class _BatchMember:
-    """Fake LLMProvider member exposing the batch surface the chain delegates to."""
+    """Fake LLMProvider member exposing the batch surface the chain delegates to.
 
-    def __init__(self, name: str, supports_batch: bool, service_tier: str | None = None):
+    ``identity`` folds a per-account marker (mirroring the real credential
+    digest) so two members with the same provider kind are still distinct
+    accounts — the collision case ``batch_provider`` (the provider name) used to
+    hit. This lets the account-identity resume path be exercised without real
+    credentials.
+    """
+
+    def __init__(self, name: str, supports_batch: bool, service_tier: str | None = None, identity: str | None = None):
         self.provider = name
         self.model = f"{name}-model"
+        self._identity = identity or f"{name}::{name}-model"
         self._provider_impl = _FakeBatchImpl(name, supports_batch, service_tier)
 
     async def supports_batch_api(self) -> bool:
@@ -64,6 +72,12 @@ class _BatchMember:
 
     async def batch_provider_impl(self) -> _FakeBatchImpl | None:
         return self._provider_impl if await self.supports_batch_api() else None
+
+    async def account_identity(self) -> str:
+        return self._identity
+
+    async def resolve_batch_account(self, identity: str) -> _FakeBatchImpl | None:
+        return self._provider_impl if identity == self._identity else None
 
 
 class _FakeConn:
@@ -206,6 +220,112 @@ async def test_resume_fails_loudly_when_the_chain_no_longer_serves_that_provider
     different account would hang until the wall clock ran out and then report a
     provider error nobody can act on.
     """
+    groq = _BatchMember("groq", True)
+    pool = _FakePool({"batch_id": "batch_123", "batch_provider": "openai", "chunk_count": 1})
+
+    with pytest.raises(RuntimeError, match="Cannot resume batch batch_123"):
+        await extract_facts_from_contents_batch_api(
+            contents=[RetainContent(content="Alice moved to Paris in 2023.")],
+            llm_config=_chain(_BatchMember("deepseek", False), groq),
+            agent_name="test_agent",
+            config=_batch_config(),
+            pool=pool,
+            operation_id=str(uuid.uuid4()),
+            schema=None,
+        )
+
+    assert groq._provider_impl.calls == []
+
+
+# ── account-identity resume (post-merge review follow-up) ──────────────────────
+
+
+async def test_resume_resolves_to_submitting_account_after_reorder() -> None:
+    """Regression for the post-merge review: recovery must resume on the ACCOUNT
+    that submitted the batch, not the newly-selected first-capable member after a
+    chain reorder.
+
+    Scenario: the batch was submitted through openai-A (secondary). Between
+    submit and resume the operator reorders the chain so a different openai
+    account (openai-B) becomes first-capable, while openai-A moves down.
+    ``resolve_batch_account`` must still find openai-A by its persisted identity.
+    """
+    openai_a = _BatchMember("openai", True, identity="openai::acct-A")
+    submit_chain = _chain(_BatchMember("deepseek", False), openai_a)
+    submitting_impl = await submit_chain.batch_provider_impl()
+    persisted_identity = await submit_chain.account_identity()
+    assert submitting_impl is openai_a._provider_impl
+    assert persisted_identity == "openai::acct-A"
+
+    # After restart the chain is reordered: openai-B is now primary+first-capable
+    # and the original openai-A is a secondary.
+    openai_b = _BatchMember("openai", True, identity="openai::acct-B")
+    resume_chain = _chain(openai_b, openai_a)
+    # Naive re-selection would poll through the new primary (openai-B)...
+    assert await resume_chain.batch_provider_impl() is openai_b._provider_impl
+    assert await resume_chain.batch_provider_impl() is not submitting_impl
+    # ...but identity-driven recovery finds the submitting account (openai-A):
+    resolved = await resume_chain.resolve_batch_account(persisted_identity)
+    assert resolved is openai_a._provider_impl
+    assert resolved is submitting_impl
+
+
+async def test_resume_resolves_to_submitting_account_via_fact_extraction() -> None:
+    """End-to-end: the persisted ``batch_account`` is written at submit and used
+    on resume, so the batch polls through the SAME secondary account even after
+    the chain is reordered."""
+    openai_a = _BatchMember("openai", True, identity="openai::acct-A")
+    openai_b = _BatchMember("openai", True, identity="openai::acct-B")
+    submit_chain = _chain(_BatchMember("deepseek", False), openai_a)
+    persisted_identity = await submit_chain.account_identity()
+
+    # Resume with the stored identity; the new chain would naively pick openai-B.
+    pool = _FakePool(
+        {
+            "batch_id": "batch_123",
+            "batch_provider": "openai",
+            "batch_account": persisted_identity,
+            "chunk_count": 1,
+        }
+    )
+    await extract_facts_from_contents_batch_api(
+        contents=[RetainContent(content="Alice moved to Paris in 2023.")],
+        llm_config=_chain(openai_b, openai_a),
+        agent_name="test_agent",
+        config=_batch_config(),
+        pool=pool,
+        operation_id=str(uuid.uuid4()),
+        schema=None,
+    )
+
+    # Resumed on openai-A (the submitting account) — no re-submit, polls on A.
+    assert openai_a._provider_impl.calls == ["status", "retrieve"]
+    assert openai_b._provider_impl.calls == []
+
+
+async def test_resume_fails_when_submitting_account_no_longer_configured() -> None:
+    """If the account that submitted the batch is removed from the chain, recovery
+    must surface a clear failure rather than silently polling a different account."""
+    submit_chain = _chain(_BatchMember("deepseek", False), _BatchMember("openai", True))
+    persisted_identity = await submit_chain.account_identity()
+
+    resume_chain = _chain(_BatchMember("openai", True, identity="openai::acct-B"))
+    with pytest.raises(RuntimeError, match="Cannot resume batch batch_123"):
+        await extract_facts_from_contents_batch_api(
+            contents=[RetainContent(content="Alice moved to Paris in 2023.")],
+            llm_config=resume_chain,
+            agent_name="test_agent",
+            config=_batch_config(),
+            pool=_FakePool({"batch_id": "batch_123", "batch_account": persisted_identity, "chunk_count": 1}),
+            operation_id=str(uuid.uuid4()),
+            schema=None,
+        )
+
+
+async def test_resume_legacy_metadata_still_guards_by_provider() -> None:
+    """Metadata written before ``batch_account`` existed falls back to the
+    coarse provider-name guard (upstream behaviour) so a cross-provider mismatch
+    still fails loudly."""
     groq = _BatchMember("groq", True)
     pool = _FakePool({"batch_id": "batch_123", "batch_provider": "openai", "chunk_count": 1})
 

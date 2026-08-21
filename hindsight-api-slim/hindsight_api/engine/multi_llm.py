@@ -195,6 +195,38 @@ class MultiLLMProvider:
                 return impl
         return None
 
+    async def account_identity(self) -> str:
+        """Stable identity of the account the batch is (or would be) tied to.
+
+        Resolution mirrors ``batch_provider_impl`` exactly — the first
+        batch-capable member, else ``None`` semantics — so a chain reorder
+        between submit and resume is reflected the same way in both. The identity
+        is a fingerprint of the *specific account* (not just the provider name),
+        so a resume resolves to the same account only when it is truly the same
+        account; otherwise recovery fails loudly instead of polling the wrong one.
+        """
+        for member in self._members:
+            if await member.batch_provider_impl() is not None:
+                return await member.account_identity()
+        return await self._members[0].account_identity()
+
+    async def resolve_batch_account(self, identity: str) -> Any | None:
+        """Return the impl for the member whose persisted identity is ``identity``.
+
+        This is what makes crash recovery correct: it resolves to the exact
+        account that *submitted* the batch (by its stored identity), instead of
+        re-running ``batch_provider_impl`` which may select a different member
+        after the chain was reordered or a member's capability changed.
+
+        Returns ``None`` when no configured member carries that identity — the
+        caller then raises a clear "member no longer configured" error rather than
+        silently polling the batch through a different account.
+        """
+        for member in self._members:
+            if await member.account_identity() == identity:
+                return member._provider_impl
+        return None
+
     async def cleanup(self) -> None:
         for member in self._members:
             await member.cleanup()

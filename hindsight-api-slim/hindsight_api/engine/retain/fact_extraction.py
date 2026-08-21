@@ -2014,6 +2014,11 @@ async def extract_facts_from_contents_batch_api(
     # for a single provider it is the primary itself, and ``None`` when nothing
     # configured can serve a batch at all. The whole batch lifecycle (submit →
     # poll → retrieve) must target this ONE impl, so resolve it once and reuse it.
+    #
+    # NOTE: for a fresh submit we select via ``batch_provider_impl``; for a resume
+    # we instead resolve by the account *identity* persisted when the batch was
+    # submitted (see below), so a chain reorder between submit and resume never
+    # silently polls the batch through a different account.
     batch_impl = await llm_config.batch_provider_impl()
 
     if batch_impl is None:
@@ -2043,22 +2048,45 @@ async def extract_facts_from_contents_batch_api(
             batch_id = metadata.get("batch_id")
 
             if batch_id:
-                # Member selection is deterministic by declared order, but the
-                # chain configuration can change between the submit and the
-                # resume (a member added, removed, or given batch capacity). A
-                # batch_id only exists on the account that created it, so polling
-                # a different one would hang until the wall clock ran out and then
-                # report a provider error nobody can act on. Fail on the mismatch
-                # instead, naming both sides.
-                submitted_provider = metadata.get("batch_provider")
-                if submitted_provider and submitted_provider != batch_impl.provider:
-                    raise RuntimeError(
-                        f"Cannot resume batch {batch_id}: it was submitted to "
-                        f"'{submitted_provider}' but the retain LLM configuration now "
-                        f"serves batch from '{batch_impl.provider}'. Restore the LLM "
-                        f"member that submitted it, or fail this operation and retain again."
+                # Resolve the serving impl to the exact account that submitted the
+                # batch (``batch_account``), not the current ``batch_provider_impl``
+                # selection. If the chain was reordered or a member changed between
+                # submit and resume, the stored identity still finds the submitting
+                # member; if that account is no longer configured we fail loudly
+                # instead of polling the batch through a different account.
+                stored_account = metadata.get("batch_account")
+                if stored_account:
+                    resolved = await llm_config.resolve_batch_account(stored_account)
+                    if resolved is None:
+                        raise RuntimeError(
+                            f"Cannot resume batch {batch_id}: it was submitted through an "
+                            f"LLM account (identity '{stored_account}') that is no longer "
+                            f"configured. Refusing to poll it through a different account. "
+                            f"Restore the original member or re-run the retain."
+                        )
+                    batch_impl = resolved
+                    logger.info(
+                        f"Resuming existing batch: batch_id={batch_id} via stored account identity (crash recovery)"
                     )
-                logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
+                else:
+                    # Legacy metadata (written before ``batch_account`` existed).
+                    # Best-effort: fall back to the current selection, but guard on
+                    # the coarse provider name so a cross-provider mismatch still
+                    # fails loudly (the pre-``batch_account`` behaviour).
+                    if batch_impl is None or metadata.get("batch_provider") != batch_impl.provider:
+                        submitted_provider = metadata.get("batch_provider")
+                        raise RuntimeError(
+                            f"Cannot resume batch {batch_id}: it was submitted to "
+                            f"'{submitted_provider}' but the retain LLM configuration now "
+                            f"serves batch from '{None if batch_impl is None else batch_impl.provider}'. "
+                            f"Restore the LLM member that submitted it, or fail this "
+                            f"operation and retain again."
+                        )
+                    logger.warning(
+                        f"Resuming batch {batch_id} with legacy metadata (no batch_account); "
+                        f"resolving via current selection."
+                    )
+                    logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
 
     # Step 1: Chunk all contents and build batch requests (skip if resuming)
     all_chunks_info = []  # List of (chunk_text, content_index, chunk_index_in_content, event_date, context)
@@ -2114,9 +2142,14 @@ async def extract_facts_from_contents_batch_api(
         # CRITICAL: Store minimal batch state in operation metadata for crash recovery
         # This allows resuming polling if worker restarts
         if operation_id and pool:
+            # ``batch_account`` pins the exact submitting account (provider +
+            # endpoint + model + credential digest), so a later resume resolves to
+            # the same member even if the chain is reordered. ``batch_provider`` is
+            # kept for backward compatibility with old resume readers.
             batch_state = {
                 "batch_id": batch_id,
                 "batch_provider": batch_impl.provider,
+                "batch_account": await llm_config.account_identity(),
                 "chunk_count": len(batch_requests),
             }
 

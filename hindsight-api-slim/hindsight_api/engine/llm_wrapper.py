@@ -804,6 +804,12 @@ class LLMProvider:
         # the caller resolves the server-level default, like the fields above.
         self.structured_output_forced_tool = structured_output_forced_tool
         self.ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
+        # Stored for account identity: Vertex AI auth is a service-account key file
+        # + project, which is what pins a specific account (two builds of the same
+        # model in different projects must not collide on batch recovery).
+        self._vertexai_project_id = vertexai_project_id
+        self._vertexai_region = vertexai_region or ("us-central1" if provider == "vertexai" else None)
+        self._vertexai_service_account_key = vertexai_service_account_key
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
         # Gemini prompt caching: when True, retain extraction (and any future
@@ -1026,6 +1032,47 @@ class LLMProvider:
         if not await self._provider_impl.supports_batch_api():
             return None
         return self._provider_impl
+
+    async def account_identity(self) -> str:
+        """Stable identity of the account that would serve a batch.
+
+        Unlike ``provider`` (which only names the product, so two OpenAI members
+        with different credentials collide), this is a fingerprint of the fields
+        that actually pin a *specific account and endpoint*: provider kind,
+        base URL, model, and a digest of the credential material. It is
+        deterministic across restarts for an unchanged config, and changes when
+        the underlying account does — which is exactly what a crash-recovery
+        resume needs to detect.
+
+        The credential is hashed, never stored in plaintext, so persisting this
+        in operation ``result_metadata`` does not leak the API key. Declared
+        ``async`` so ``MultiLLMProvider`` (whose selection needs an ``await`` on a
+        member's ``supports_batch_api``) exposes the same interface.
+        """
+        import hashlib
+
+        cred = self.api_key or ""
+        # Vertex AI authenticates via a service-account key file instead of a
+        # plain API key; fold the project/region/key in so two builds don't collide.
+        if self.provider == "vertexai":
+            cred = cred or self._vertexai_service_account_key or ""
+            suffix = f"::{self._vertexai_project_id or ''}::{self._vertexai_region or ''}"
+        else:
+            suffix = ""
+        digest = hashlib.sha256(cred.encode("utf-8")).hexdigest()[:16]
+        return "::".join((self.provider, self.base_url or "", self.model, digest)) + suffix
+
+    async def resolve_batch_account(self, identity: str) -> Any | None:
+        """Return the impl that can serve a batch for ``identity``.
+
+        Single providers own exactly one account: return ``_provider_impl`` when
+        the persisted identity still matches this provider, else ``None`` so the
+        caller can surface a clear "member no longer configured" error instead of
+        silently polling the batch through a different account.
+        """
+        if await self.account_identity() == identity:
+            return self._provider_impl
+        return None
 
     async def call(
         self,
