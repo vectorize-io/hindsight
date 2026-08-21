@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "Error running search",
     "tooltipCrossEncoder": "Cross-encoder score (primary relevance signal)",
     "tooltipTemporal": "Temporal proximity boost (±10% — only active for temporal queries)",
-    "tooltipRecency": "Recency boost (±10% — based on memory age)"
+    "tooltipRecency": "Recency boost (±10% — based on memory age)",
+    "temporalWindowLabel": "Time window",
+    "temporalWindowStart": "Window start",
+    "temporalWindowEnd": "Window end",
+    "temporalWindowTo": "to",
+    "temporalWindowClear": "Clear",
+    "temporalWindowHint": "Skips date extraction from the query and ranks memories dated in this range higher. It does not hide memories outside it. Times are read as UTC; set both ends to apply.",
+    "temporalWindowReversed": "The end of the window is before its start."
   },
   "webhooksView": {
     "title": "Webhooks",

@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "검색 실행 오류",
     "tooltipCrossEncoder": "교차 인코더 점수 (주요 관련성 신호)",
     "tooltipTemporal": "시간적 근접성 부스트 (±10% — 시간 쿼리에서만 활성화)",
-    "tooltipRecency": "최신성 부스트 (±10% — 메모리 연령 기반)"
+    "tooltipRecency": "최신성 부스트 (±10% — 메모리 연령 기반)",
+    "temporalWindowLabel": "기간",
+    "temporalWindowStart": "기간 시작",
+    "temporalWindowEnd": "기간 종료",
+    "temporalWindowTo": "~",
+    "temporalWindowClear": "지우기",
+    "temporalWindowHint": "질의에서 날짜를 추출하지 않고 이 기간의 기억을 상위에 노출합니다. 기간 밖의 기억을 숨기지는 않습니다. 시간은 UTC로 해석되며, 양쪽 끝을 모두 지정해야 적용됩니다.",
+    "temporalWindowReversed": "기간의 종료가 시작보다 앞섭니다."
   },
   "webhooksView": {
     "title": "Webhooks",

@@ -186,6 +186,7 @@ from hindsight_api.engine.response_models import (
     MemoryFact,
     MinScores,
     RecallScores,
+    TemporalWindow,
     TokenUsage,
 )
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
@@ -293,6 +294,7 @@ class RecallRequest(BaseModel):
                 "trace": True,
                 "query_timestamp": "2023-05-30T23:40:00",
                 "include": {"entities": {"max_tokens": 500}},
+                "temporal_window": {"start": "2023-04-01T00:00:00Z", "end": "2023-06-30T23:59:59Z"},
                 "tags": ["user_a"],
                 "tags_match": "any",
             }
@@ -354,6 +356,16 @@ class RecallRequest(BaseModel):
         "unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use "
         "with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match "
         "may score ~0.001 even though it is ranked first).",
+    )
+    temporal_window: TemporalWindow | None = Field(
+        default=None,
+        description="Window for the temporal retrieval arm, supplied instead of extracting dates from `query`. "
+        "Set this when you already know the range you mean — a date picker, or an agent that resolved "
+        "'last quarter' itself — and recall will skip parsing the query text for dates. "
+        "**This ranks, it does not filter**: the temporal arm surfaces memories whose own dates "
+        "(`mentioned_at`, `occurred_start`, `occurred_end`) fall inside the window so they rank higher, "
+        "while the semantic, keyword and graph arms are unaffected — so memories dated outside the window "
+        "are still returned. Ignored when the bank has temporal retrieval disabled.",
     )
 
     @field_validator("query")
@@ -4795,6 +4807,7 @@ def _register_routes(app: FastAPI):
                         tags_match=request.tags_match,
                         tag_groups=request.tag_groups,
                         min_scores=request.min_scores,
+                        temporal_window=request.temporal_window,
                     ),
                     operation="recall",
                     bank_id=bank_id,

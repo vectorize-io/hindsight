@@ -9,7 +9,8 @@ use std::process::Command;
 
 /// Check if the API server is available
 fn server_available() -> bool {
-    let api_url = env::var("HINDSIGHT_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let api_url =
+        env::var("HINDSIGHT_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let health_url = format!("{}/health", api_url);
 
     match reqwest::blocking::get(&health_url) {
@@ -30,19 +31,18 @@ macro_rules! skip_if_no_server {
 
 /// Get the path to the hindsight binary
 fn hindsight_binary() -> String {
-    env::var("CARGO_BIN_EXE_hindsight")
-        .unwrap_or_else(|_| {
-            // Try common locations
-            let target_debug = "./target/debug/hindsight";
-            let target_release = "./target/release/hindsight";
-            if std::path::Path::new(target_debug).exists() {
-                target_debug.to_string()
-            } else if std::path::Path::new(target_release).exists() {
-                target_release.to_string()
-            } else {
-                "hindsight".to_string()
-            }
-        })
+    env::var("CARGO_BIN_EXE_hindsight").unwrap_or_else(|_| {
+        // Try common locations
+        let target_debug = "./target/debug/hindsight";
+        let target_release = "./target/release/hindsight";
+        if std::path::Path::new(target_debug).exists() {
+            target_debug.to_string()
+        } else if std::path::Path::new(target_release).exists() {
+            target_release.to_string()
+        } else {
+            "hindsight".to_string()
+        }
+    })
 }
 
 /// Test bank ID for integration tests - each test needs a unique bank ID
@@ -53,7 +53,8 @@ fn test_bank_id(test_name: &str) -> String {
 
 /// Run a hindsight CLI command
 fn run_hindsight(args: &[&str]) -> std::process::Output {
-    let api_url = env::var("HINDSIGHT_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let api_url =
+        env::var("HINDSIGHT_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
 
     Command::new(hindsight_binary())
         .env("HINDSIGHT_API_URL", &api_url)
@@ -97,7 +98,10 @@ fn test_health_check_json_output() {
             .expect(&format!("Expected valid JSON output, got: {}", stdout));
 
         // Should have status field
-        assert!(result.get("status").is_some(), "Expected status field in health response");
+        assert!(
+            result.get("status").is_some(),
+            "Expected status field in health response"
+        );
     }
 }
 
@@ -141,10 +145,13 @@ fn test_bank_create_and_delete() {
 
     // Create a bank
     let output = run_hindsight(&[
-        "bank", "create",
+        "bank",
+        "create",
         &bank_id,
-        "--name", "Test Bank",
-        "--mission", "A test bank for CLI integration tests",
+        "--name",
+        "Test Bank",
+        "--mission",
+        "A test bank for CLI integration tests",
     ]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -242,7 +249,8 @@ fn test_mental_model_create_and_delete() {
 
     // Create a mental model
     let output = run_hindsight(&[
-        "mental-model", "create",
+        "mental-model",
+        "create",
         &bank_id,
         "Test Model",
         "A test mental model",
@@ -273,10 +281,14 @@ fn test_mental_model_create_and_delete() {
     if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
         if let Some(items) = result.get("items").and_then(|v| v.as_array()) {
             // Check if any model has the name "Test Model"
-            let found = items.iter().any(|item| {
-                item.get("name").and_then(|v| v.as_str()) == Some("Test Model")
-            });
-            assert!(found, "Expected to find 'Test Model' in mental models list: {}", stdout);
+            let found = items
+                .iter()
+                .any(|item| item.get("name").and_then(|v| v.as_str()) == Some("Test Model"));
+            assert!(
+                found,
+                "Expected to find 'Test Model' in mental models list: {}",
+                stdout
+            );
         }
     }
 
@@ -430,10 +442,7 @@ fn test_bank_update() {
 
     if output.status.success() {
         // Update the bank
-        let output = run_hindsight(&[
-            "bank", "update", &bank_id,
-            "--name", "Updated Test Bank",
-        ]);
+        let output = run_hindsight(&["bank", "update", &bank_id, "--name", "Updated Test Bank"]);
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -469,16 +478,16 @@ fn test_json_yaml_output_formats() {
     let output = run_hindsight(&["bank", "list", "-o", "json"]);
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let _: serde_json::Value = serde_json::from_str(&stdout)
-            .expect("Expected valid JSON for bank list");
+        let _: serde_json::Value =
+            serde_json::from_str(&stdout).expect("Expected valid JSON for bank list");
     }
 
     // Test YAML output for bank list
     let output = run_hindsight(&["bank", "list", "-o", "yaml"]);
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let _: serde_yaml::Value = serde_yaml::from_str(&stdout)
-            .expect("Expected valid YAML for bank list");
+        let _: serde_yaml::Value =
+            serde_yaml::from_str(&stdout).expect("Expected valid YAML for bank list");
     }
 }
 
@@ -524,7 +533,8 @@ fn test_directive_create_get_update_delete() {
 
     // Create a directive
     let output = run_hindsight(&[
-        "directive", "create",
+        "directive",
+        "create",
         &bank_id,
         "Test Directive",
         "Always respond politely",
@@ -544,23 +554,21 @@ fn test_directive_create_get_update_delete() {
     let output = run_hindsight(&["directive", "list", &bank_id, "-o", "json"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(
-        output.status.success(),
-        "Directive list failed: {}",
-        stdout
-    );
+    assert!(output.status.success(), "Directive list failed: {}", stdout);
 
     // Parse JSON and get directive ID
-    let directive_id: Option<String> = if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
-        result.get("items")
-            .and_then(|v| v.as_array())
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("id"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    } else {
-        None
-    };
+    let directive_id: Option<String> =
+        if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            result
+                .get("items")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        } else {
+            None
+        };
 
     if let Some(id) = directive_id {
         // Get the directive
@@ -577,11 +585,14 @@ fn test_directive_create_get_update_delete() {
 
         // Update the directive
         let output = run_hindsight(&[
-            "directive", "update",
+            "directive",
+            "update",
             &bank_id,
             &id,
-            "--name", "Updated Directive",
-            "--content", "Always respond very politely",
+            "--name",
+            "Updated Directive",
+            "--content",
+            "Always respond very politely",
         ]);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -636,7 +647,8 @@ fn test_mental_model_get() {
 
     // Create a mental model
     let output = run_hindsight(&[
-        "mental-model", "create",
+        "mental-model",
+        "create",
         &bank_id,
         "Test Get Model",
         "What are the key facts?",
@@ -648,11 +660,14 @@ fn test_mental_model_get() {
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            if let Some(id) = result.get("items")
+            if let Some(id) = result
+                .get("items")
                 .and_then(|v| v.as_array())
-                .and_then(|items| items.iter().find(|item| {
-                    item.get("name").and_then(|v| v.as_str()) == Some("Test Get Model")
-                }))
+                .and_then(|items| {
+                    items.iter().find(|item| {
+                        item.get("name").and_then(|v| v.as_str()) == Some("Test Get Model")
+                    })
+                })
                 .and_then(|item| item.get("id"))
                 .and_then(|v| v.as_str())
             {
@@ -686,7 +701,8 @@ fn test_mental_model_update() {
 
     // Create a mental model
     let output = run_hindsight(&[
-        "mental-model", "create",
+        "mental-model",
+        "create",
         &bank_id,
         "Test Update Model",
         "What are the key facts?",
@@ -698,20 +714,25 @@ fn test_mental_model_update() {
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            if let Some(id) = result.get("items")
+            if let Some(id) = result
+                .get("items")
                 .and_then(|v| v.as_array())
-                .and_then(|items| items.iter().find(|item| {
-                    item.get("name").and_then(|v| v.as_str()) == Some("Test Update Model")
-                }))
+                .and_then(|items| {
+                    items.iter().find(|item| {
+                        item.get("name").and_then(|v| v.as_str()) == Some("Test Update Model")
+                    })
+                })
                 .and_then(|item| item.get("id"))
                 .and_then(|v| v.as_str())
             {
                 // Update the mental model
                 let output = run_hindsight(&[
-                    "mental-model", "update",
+                    "mental-model",
+                    "update",
                     &bank_id,
                     id,
-                    "--name", "Updated Model Name",
+                    "--name",
+                    "Updated Model Name",
                 ]);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -752,7 +773,8 @@ fn test_mental_model_refresh() {
 
     // Create a mental model
     let output = run_hindsight(&[
-        "mental-model", "create",
+        "mental-model",
+        "create",
         &bank_id,
         "Test Refresh Model",
         "What are the key facts?",
@@ -764,11 +786,14 @@ fn test_mental_model_refresh() {
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            if let Some(id) = result.get("items")
+            if let Some(id) = result
+                .get("items")
                 .and_then(|v| v.as_array())
-                .and_then(|items| items.iter().find(|item| {
-                    item.get("name").and_then(|v| v.as_str()) == Some("Test Refresh Model")
-                }))
+                .and_then(|items| {
+                    items.iter().find(|item| {
+                        item.get("name").and_then(|v| v.as_str()) == Some("Test Refresh Model")
+                    })
+                })
                 .and_then(|item| item.get("id"))
                 .and_then(|v| v.as_str())
             {
@@ -883,7 +908,10 @@ fn test_version_json() {
             .expect(&format!("Expected valid JSON output, got: {}", stdout));
 
         // Should have api_version and features
-        assert!(result.get("api_version").is_some(), "Expected api_version field");
+        assert!(
+            result.get("api_version").is_some(),
+            "Expected api_version field"
+        );
         assert!(result.get("features").is_some(), "Expected features field");
     }
 }

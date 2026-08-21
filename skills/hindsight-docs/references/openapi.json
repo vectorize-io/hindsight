@@ -13733,6 +13733,17 @@
               }
             ],
             "description": "Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care \u2014 the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first)."
+          },
+          "temporal_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemporalWindow"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Window for the temporal retrieval arm, supplied instead of extracting dates from `query`. Set this when you already know the range you mean \u2014 a date picker, or an agent that resolved 'last quarter' itself \u2014 and recall will skip parsing the query text for dates. **This ranks, it does not filter**: the temporal arm surfaces memories whose own dates (`mentioned_at`, `occurred_start`, `occurred_end`) fall inside the window so they rank higher, while the semantic, keyword and graph arms are unaffected \u2014 so memories dated outside the window are still returned. Ignored when the bank has temporal retrieval disabled."
           }
         },
         "type": "object",
@@ -13755,6 +13766,10 @@
             "user_a"
           ],
           "tags_match": "any",
+          "temporal_window": {
+            "end": "2023-06-30T23:59:59Z",
+            "start": "2023-04-01T00:00:00Z"
+          },
           "trace": true,
           "types": [
             "world",
@@ -15227,6 +15242,29 @@
         ],
         "title": "TagItem",
         "description": "Single tag with usage count."
+      },
+      "TemporalWindow": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start",
+            "description": "Start of the window (inclusive)."
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End",
+            "description": "End of the window (inclusive)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "TemporalWindow",
+        "description": "A caller-supplied window for recall's temporal arm.\n\nSupplying this **replaces the date extraction** recall would otherwise run\nover the query text, so a caller that already knows the range it means does\nnot have to phrase it in English and hope the parser agrees.\n\nIt is **not a filter**. The temporal arm is one of four retrieval arms: it\nsurfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /\n``occurred_end``) fall inside the window so fusion can rank them higher.\nThe semantic, keyword and graph arms are unaffected, so results dated\noutside the window are still returned. Narrowing results to a date range is\na different operation this does not provide.\n\nHas no effect when the bank's ``enable_temporal_retrieval`` config is off:\nthat flag gates the arm itself, and stays the single switch for it."
       },
       "TokenUsage": {
         "properties": {

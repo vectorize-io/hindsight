@@ -4194,6 +4194,10 @@ export type RecallRequest = {
    * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
    */
   min_scores?: MinScores | null;
+  /**
+   * Window for the temporal retrieval arm, supplied instead of extracting dates from `query`. Set this when you already know the range you mean — a date picker, or an agent that resolved 'last quarter' itself — and recall will skip parsing the query text for dates. **This ranks, it does not filter**: the temporal arm surfaces memories whose own dates (`mentioned_at`, `occurred_start`, `occurred_end`) fall inside the window so they rank higher, while the semantic, keyword and graph arms are unaffected — so memories dated outside the window are still returned. Ignored when the bank has temporal retrieval disabled.
+   */
+  temporal_window?: TemporalWindow | null;
 };
 
 /**
@@ -4970,6 +4974,40 @@ export type TagItem = {
    * Number of memories with this tag
    */
   count: number;
+};
+
+/**
+ * TemporalWindow
+ *
+ * A caller-supplied window for recall's temporal arm.
+ *
+ * Supplying this **replaces the date extraction** recall would otherwise run
+ * over the query text, so a caller that already knows the range it means does
+ * not have to phrase it in English and hope the parser agrees.
+ *
+ * It is **not a filter**. The temporal arm is one of four retrieval arms: it
+ * surfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /
+ * ``occurred_end``) fall inside the window so fusion can rank them higher.
+ * The semantic, keyword and graph arms are unaffected, so results dated
+ * outside the window are still returned. Narrowing results to a date range is
+ * a different operation this does not provide.
+ *
+ * Has no effect when the bank's ``enable_temporal_retrieval`` config is off:
+ * that flag gates the arm itself, and stays the single switch for it.
+ */
+export type TemporalWindow = {
+  /**
+   * Start
+   *
+   * Start of the window (inclusive).
+   */
+  start: string;
+  /**
+   * End
+   *
+   * End of the window (inclusive).
+   */
+  end: string;
 };
 
 /**

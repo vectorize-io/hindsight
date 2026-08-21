@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "Error al ejecutar la búsqueda",
     "tooltipCrossEncoder": "Puntuación del cross-encoder (señal de relevancia principal)",
     "tooltipTemporal": "Refuerzo de proximidad temporal (±10% — solo activo para consultas temporales)",
-    "tooltipRecency": "Refuerzo de actualidad (±10% — basado en la antigüedad de la memoria)"
+    "tooltipRecency": "Refuerzo de actualidad (±10% — basado en la antigüedad de la memoria)",
+    "temporalWindowLabel": "Intervalo de tiempo",
+    "temporalWindowStart": "Inicio del intervalo",
+    "temporalWindowEnd": "Fin del intervalo",
+    "temporalWindowTo": "a",
+    "temporalWindowClear": "Limpiar",
+    "temporalWindowHint": "Omite la extracción de fechas de la consulta y prioriza los recuerdos fechados en este intervalo. No oculta los que quedan fuera. Las horas se leen como UTC; define ambos extremos para aplicarlo.",
+    "temporalWindowReversed": "El fin del intervalo es anterior a su inicio."
   },
   "webhooksView": {
     "title": "Webhooks",

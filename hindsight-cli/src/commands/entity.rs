@@ -1,7 +1,7 @@
-use anyhow::Result;
 use crate::api::ApiClient;
 use crate::output::{self, OutputFormat};
 use crate::ui;
+use anyhow::Result;
 
 pub fn list(
     client: &ApiClient,
@@ -112,7 +112,10 @@ pub fn regenerate(
     }
 
     if output_format == OutputFormat::Pretty {
-        ui::print_success(&format!("Successfully regenerated observations for entity: {}", entity_id));
+        ui::print_success(&format!(
+            "Successfully regenerated observations for entity: {}",
+            entity_id
+        ));
         println!("\nUpdated entity:");
         println!("  Name: {}", response.canonical_name);
         println!("  Mentions: {}", response.mention_count);

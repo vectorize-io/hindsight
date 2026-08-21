@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "検索の実行中にエラーが発生しました",
     "tooltipCrossEncoder": "クロスエンコーダースコア(主要な関連性シグナル)",
     "tooltipTemporal": "時間的近接性ブースト (±10% — 時間クエリでのみ有効)",
-    "tooltipRecency": "新しさブースト (±10% — メモリの年齢に基づく)"
+    "tooltipRecency": "新しさブースト (±10% — メモリの年齢に基づく)",
+    "temporalWindowLabel": "対象期間",
+    "temporalWindowStart": "期間の開始",
+    "temporalWindowEnd": "期間の終了",
+    "temporalWindowTo": "〜",
+    "temporalWindowClear": "クリア",
+    "temporalWindowHint": "クエリからの日付抽出を省略し、この期間の記憶を上位に表示します。期間外の記憶が隠れることはありません。時刻は UTC として扱われ、両端を指定すると適用されます。",
+    "temporalWindowReversed": "期間の終了が開始より前になっています。"
   },
   "webhooksView": {
     "title": "Webhooks",

@@ -6,9 +6,10 @@ API response models should be kept separate and convert from these core models t
 API stability even if internal models change.
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .metadata_utils import as_string_metadata
 
@@ -213,6 +214,43 @@ class MinScores(BaseModel):
     keyword: float | None = Field(default=None, description="Retrieval-level: minimum keyword/full-text (BM25) score.")
     reranker: float | None = Field(default=None, description="Post-query: minimum normalized reranker score (0-1).")
     final: float | None = Field(default=None, description="Post-query: minimum final ranking score.")
+
+
+class TemporalWindow(BaseModel):
+    """A caller-supplied window for recall's temporal arm.
+
+    Supplying this **replaces the date extraction** recall would otherwise run
+    over the query text, so a caller that already knows the range it means does
+    not have to phrase it in English and hope the parser agrees.
+
+    It is **not a filter**. The temporal arm is one of four retrieval arms: it
+    surfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /
+    ``occurred_end``) fall inside the window so fusion can rank them higher.
+    The semantic, keyword and graph arms are unaffected, so results dated
+    outside the window are still returned. Narrowing results to a date range is
+    a different operation this does not provide.
+
+    Has no effect when the bank's ``enable_temporal_retrieval`` config is off:
+    that flag gates the arm itself, and stays the single switch for it.
+    """
+
+    start: datetime = Field(description="Start of the window (inclusive).")
+    end: datetime = Field(description="End of the window (inclusive).")
+
+    @field_validator("start", "end")
+    @classmethod
+    def ensure_tz_aware(cls, v: datetime) -> datetime:
+        # The arm coerces naive datetimes to UTC before querying; do it here
+        # instead so both bounds are unambiguous the moment the request parses.
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "TemporalWindow":
+        if self.end < self.start:
+            raise ValueError("temporal_window.end must not be earlier than temporal_window.start")
+        return self
 
 
 class MemoryFact(BaseModel):
