@@ -242,11 +242,11 @@ async def test_repairable_json_is_recovered_instead_of_being_dropped():
 
 
 @pytest.mark.asyncio
-async def test_an_identical_parse_failure_stops_re_rolling_the_same_request():
+async def test_an_identical_response_stops_re_rolling_the_same_request():
     """A deterministic parse failure must not burn the whole retry budget (#3683).
 
-    Every attempt re-sends a byte-identical request, so a failure that repeats at
-    the same position will repeat forever. Two attempts are enough to establish
+    Every attempt re-sends a byte-identical request, so a response that comes back
+    unchanged will keep coming back unchanged. Two attempts are enough to establish
     that; the remaining budget is spent on repair instead of on more generations.
     """
     llm = _llm()
@@ -266,18 +266,49 @@ async def test_an_identical_parse_failure_stops_re_rolling_the_same_request():
 
 
 @pytest.mark.asyncio
-async def test_a_parse_failure_at_a_new_position_still_earns_a_fresh_generation():
+async def test_a_changed_response_still_earns_a_fresh_generation():
     """Flaky malformed output keeps the clean re-roll it had before (#3683).
 
-    Only a repeat of the same failure is treated as deterministic. A different
-    failure each time is the case a fresh generation can actually fix, so the
-    retry ladder must still run.
+    Only an unchanged response is treated as deterministic. Output that differs
+    each time is the case a fresh generation can actually fix, so the retry ladder
+    must still run.
     """
     llm = _llm()
     create = AsyncMock(
         side_effect=[
             _response(content='{"ok": true,}'),
             _response(content='{"ok": '),
+            _response(content='{"ok": true}'),
+        ]
+    )
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=SimpleJsonResponse,
+            max_retries=3,
+            initial_backoff=0,
+        )
+
+    assert result.ok is True
+    assert create.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_two_responses_failing_alike_are_not_treated_as_one():
+    """Different output that decodes to the same error still earns a re-roll (#3683).
+
+    ``{"aa": 1,}`` and ``{"bb": 2,}`` both raise at line 1 column 10 with the same
+    message, so a check on the decode position alone would call the second one a
+    deterministic repeat and stop generating. They are different responses, and the
+    third attempt here is the one that succeeds.
+    """
+    llm = _llm()
+    create = AsyncMock(
+        side_effect=[
+            _response(content='{"aa": 1,}'),
+            _response(content='{"bb": 2,}'),
             _response(content='{"ok": true}'),
         ]
     )
