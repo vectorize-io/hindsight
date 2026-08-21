@@ -178,8 +178,11 @@ class MultiLLMProvider:
         """
         return (await self.batch_provider_impl()) is not None
 
-    async def batch_provider_impl(self) -> "LLMInterface | None":
+    async def batch_provider_impl(self, selector: str | None = None) -> "LLMInterface | None":
         """The implementation serving batch, or ``None`` when no member can.
+
+        When selector is provided, resolves the exact member matching that
+        identifier. Otherwise, returns the first batch-capable member in declared order.
 
         Selection is deterministic by declared member order (primary first), so
         both the initial submit and a crash-recovery resume select the same
@@ -192,7 +195,9 @@ class MultiLLMProvider:
         for member in self._members:
             impl = await member.batch_provider_impl()
             if impl is not None:
-                return impl
+                member_selector = getattr(impl, "member_id", getattr(impl, "name", getattr(impl, "provider", None)))
+                if selector is None or member_selector == selector:
+                    return impl
         return None
 
     async def cleanup(self) -> None:
