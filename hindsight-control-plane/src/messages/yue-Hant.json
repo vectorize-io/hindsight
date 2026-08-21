@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "搜尋時發生錯誤",
     "tooltipCrossEncoder": "交叉編碼器分數(主要相關性信號)",
     "tooltipTemporal": "時間鄰近度增強 (±10% — 僅對時間查詢有效)",
-    "tooltipRecency": "新近度增強 (±10% — 基於記憶年齡)"
+    "tooltipRecency": "新近度增強 (±10% — 基於記憶年齡)",
+    "temporalWindowLabel": "時間範圍",
+    "temporalWindowStart": "範圍開始",
+    "temporalWindowEnd": "範圍結束",
+    "temporalWindowTo": "至",
+    "temporalWindowClear": "清除",
+    "temporalWindowHint": "唔會喺查詢度抽日期，而係將呢個範圍內嘅記憶排前啲。範圍以外嘅記憶唔會收埋。時間當 UTC 睇；兩頭都填咗先會生效。",
+    "temporalWindowReversed": "範圍嘅結束時間早過開始時間。"
   },
   "webhooksView": {
     "title": "Webhooks",
