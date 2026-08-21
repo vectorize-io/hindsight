@@ -50,6 +50,21 @@ describe("buildKnowledgePreamble", () => {
     const out = buildKnowledgePreamble([]);
     expect(out).toMatch(/no knowledge pages yet|still learning/i);
   });
+
+  it("checks knowledge pages before reflection in tool-only mode", () => {
+    for (const out of [
+      buildKnowledgePreamble([{ id: "p1", title: "Component map" }], {
+        reflectOnNewGoals: true,
+      }),
+      buildRosterRefresh([{ id: "p1", title: "Component map" }], {
+        reflectOnNewGoals: true,
+      }),
+    ]) {
+      expect(out).toMatch(/new task or goal.*knowledge pages FIRST/is);
+      expect(out).toMatch(/hindsight_reflect only when.*pages are too shallow/is);
+      expect(out).not.toMatch(/hindsight_reflect.*FIRST/);
+    }
+  });
 });
 
 describe("buildRosterRefresh", () => {
