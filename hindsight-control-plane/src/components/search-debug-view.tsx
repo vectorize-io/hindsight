@@ -114,6 +114,13 @@ export function SearchDebugView() {
   const temporalWindow = resolveTemporalWindow(windowStart, windowEnd);
 
   const runSearch = async () => {
+    // Guard here, not just on the button: Enter in the query box calls this
+    // directly, and searching anyway would silently drop the window the user
+    // set rather than telling them it is unusable.
+    if (temporalWindow.reversed) {
+      toast.error(t("temporalWindowReversed"));
+      return;
+    }
     if (!currentBank) {
       toast.error(t("errorSelectBank"));
       return;
