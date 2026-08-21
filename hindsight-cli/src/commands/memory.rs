@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
@@ -11,7 +12,7 @@ use crate::ui;
 // Import types from generated client
 use hindsight_client::types::{
     Budget, ChunkIncludeOptions, FactsIncludeOptions, IncludeOptions, ReflectIncludeOptions,
-    TagsMatch,
+    TagsMatch, TemporalWindow,
 };
 use serde::Deserialize;
 use serde_json;
@@ -45,6 +46,51 @@ fn parse_budget(budget: &str) -> Budget {
 }
 
 // Helper function to parse tags_match string to TagsMatch enum
+/// Build the recall temporal window from --window-start / --window-end.
+///
+/// Both ends are required: one alone is an incomplete range, not a half-open
+/// filter, and silently searching without the window the user asked for is
+/// worse than saying so. A datetime with no offset is read as UTC, matching how
+/// the API treats one.
+fn parse_temporal_window(
+    window_start: &Option<String>,
+    window_end: &Option<String>,
+) -> Result<Option<TemporalWindow>> {
+    match (window_start, window_end) {
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(anyhow!("--window-start requires --window-end")),
+        (None, Some(_)) => Err(anyhow!("--window-end requires --window-start")),
+        (Some(start), Some(end)) => {
+            let start = parse_window_bound(start, "--window-start")?;
+            let end = parse_window_bound(end, "--window-end")?;
+            if end < start {
+                return Err(anyhow!(
+                    "--window-end must not be earlier than --window-start"
+                ));
+            }
+            Ok(Some(TemporalWindow { start, end }))
+        }
+    }
+}
+
+fn parse_window_bound(value: &str, flag: &str) -> Result<DateTime<Utc>> {
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
+        return Ok(parsed.with_timezone(&Utc));
+    }
+    // No offset: read as UTC, as the API does.
+    for format in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"] {
+        if let Ok(naive) = NaiveDateTime::parse_from_str(value, format) {
+            return Ok(naive.and_utc());
+        }
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return Ok(date.and_hms_opt(0, 0, 0).unwrap().and_utc());
+    }
+    Err(anyhow!(
+        "{flag} must be an ISO 8601 datetime (e.g. 2023-04-01T00:00:00Z or 2023-04-01), got {value:?}"
+    ))
+}
+
 fn parse_tags_match(tags_match: &Option<String>) -> TagsMatch {
     match tags_match
         .as_deref()
@@ -278,9 +324,13 @@ pub fn recall(
     tags_match: Option<String>,
     query_timestamp: Option<String>,
     prefer_observations: bool,
+    window_start: Option<String>,
+    window_end: Option<String>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
+    let temporal_window = parse_temporal_window(&window_start, &window_end)?;
+
     let spinner = if output_format == OutputFormat::Pretty {
         Some(ui::create_spinner("Recalling memories..."))
     } else {
@@ -317,7 +367,7 @@ pub fn recall(
         tags_match: parse_tags_match(&tags_match),
         tag_groups: None,
         min_scores: None,
-        temporal_window: None,
+        temporal_window,
     };
 
     let response = client.recall(agent_id, &request, verbose);
@@ -578,8 +628,13 @@ pub fn retain_files(
             pb.inc(1);
         }
 
-        let result =
-            client.file_retain(agent_id, file_data, context.clone(), strategy.clone(), verbose)?;
+        let result = client.file_retain(
+            agent_id,
+            file_data,
+            context.clone(),
+            strategy.clone(),
+            verbose,
+        )?;
         all_operation_ids.extend(result.operation_ids);
     }
 
@@ -826,6 +881,53 @@ pub fn clear_observations(
 mod tests {
     use super::*;
     use std::path::Path;
+
+    fn some(value: &str) -> Option<String> {
+        Some(value.to_string())
+    }
+
+    #[test]
+    fn test_temporal_window_requires_both_ends() {
+        // One end alone is an incomplete range, not a half-open filter, so it
+        // is an error rather than a silently window-less recall.
+        assert!(parse_temporal_window(&None, &None).unwrap().is_none());
+        assert!(parse_temporal_window(&some("2023-04-01T00:00:00Z"), &None).is_err());
+        assert!(parse_temporal_window(&None, &some("2023-06-30T23:59:59Z")).is_err());
+    }
+
+    #[test]
+    fn test_temporal_window_rejects_reversed_range() {
+        let result =
+            parse_temporal_window(&some("2023-06-30T23:59:59Z"), &some("2023-04-01T00:00:00Z"));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_temporal_window_accepts_equal_bounds() {
+        let window =
+            parse_temporal_window(&some("2023-04-01T00:00:00Z"), &some("2023-04-01T00:00:00Z"))
+                .unwrap()
+                .expect("an instant is a degenerate but valid window");
+
+        assert_eq!(window.start, window.end);
+    }
+
+    #[test]
+    fn test_temporal_window_reads_a_missing_offset_as_utc() {
+        // Matches how the API treats a datetime with no offset.
+        let window = parse_temporal_window(&some("2023-04-01T00:00:00"), &some("2023-06-30"))
+            .unwrap()
+            .expect("both ends given");
+
+        assert_eq!(window.start.to_rfc3339(), "2023-04-01T00:00:00+00:00");
+        assert_eq!(window.end.to_rfc3339(), "2023-06-30T00:00:00+00:00");
+    }
+
+    #[test]
+    fn test_temporal_window_rejects_unparseable_bound() {
+        assert!(parse_temporal_window(&some("last quarter"), &some("2023-06-30")).is_err());
+    }
 
     #[test]
     fn test_is_supported_file_text_extensions() {

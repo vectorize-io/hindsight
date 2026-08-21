@@ -132,6 +132,7 @@ types = "CLI exposes this as --fact-type (the schema property is named `types` b
 include = "Flattened into --include-chunks / --chunk-max-tokens (facts are always included)."
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
 min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/final) not yet exposed in the CLI."
+temporal_window = "Flattened into --window-start / --window-end on `memory recall`."
 
 [fields.reflect]
 include = "Flattened into --include-facts and related flags."

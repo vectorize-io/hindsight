@@ -543,6 +543,14 @@ enum MemoryCommands {
         /// Prefer observations: drop raw facts a returned observation was consolidated from (no effect unless observation + a raw type are both recalled)
         #[arg(long)]
         prefer_observations: bool,
+
+        /// Start of the time window to search over (ISO 8601; no offset means UTC). Requires --window-end
+        #[arg(long)]
+        window_start: Option<String>,
+
+        /// End of the time window. Ranks memories dated in the window higher; it does not hide the ones outside it
+        #[arg(long)]
+        window_end: Option<String>,
     },
 
     /// Generate answers using bank identity (reflect/reasoning)
@@ -1574,6 +1582,8 @@ fn run() -> Result<()> {
                 tags_match,
                 query_timestamp,
                 prefer_observations,
+                window_start,
+                window_end,
             } => commands::memory::recall(
                 &client,
                 &bank_id,
@@ -1588,6 +1598,8 @@ fn run() -> Result<()> {
                 tags_match,
                 query_timestamp,
                 prefer_observations,
+                window_start,
+                window_end,
                 verbose,
                 output_format,
             ),
@@ -1947,7 +1959,13 @@ fn run() -> Result<()> {
                 output_format,
             ),
             KnowledgeBaseCommands::GetPage { bank_id, page_id } => {
-                commands::knowledge_base::get_page(&client, &bank_id, &page_id, verbose, output_format)
+                commands::knowledge_base::get_page(
+                    &client,
+                    &bank_id,
+                    &page_id,
+                    verbose,
+                    output_format,
+                )
             }
             KnowledgeBaseCommands::Search {
                 bank_id,

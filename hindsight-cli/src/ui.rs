@@ -1,4 +1,4 @@
-use crate::api::{BankProfileResponse, RecallResult, RecallResponse, ReflectResponse};
+use crate::api::{BankProfileResponse, RecallResponse, RecallResult, ReflectResponse};
 use colored::*;
 use hindsight_client::types::ChunkData;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -8,8 +8,8 @@ use std::io::{self, Write};
 const LOGO: &str = include_str!("logo.ansi");
 
 // Gradient colors: #0074d9 -> #009296
-const GRADIENT_START: (u8, u8, u8) = (0, 116, 217);  // #0074d9
-const GRADIENT_END: (u8, u8, u8) = (0, 146, 150);    // #009296
+const GRADIENT_START: (u8, u8, u8) = (0, 116, 217); // #0074d9
+const GRADIENT_END: (u8, u8, u8) = (0, 146, 150); // #009296
 
 /// Interpolate between two RGB colors
 fn interpolate_color(start: (u8, u8, u8), end: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
@@ -150,7 +150,10 @@ pub fn print_fact(fact: &RecallResult, _show_activation: bool) {
         _ => 0.5,
     };
 
-    println!("{}", gradient(&format!("[{}]", fact_type.to_uppercase()), type_t));
+    println!(
+        "{}",
+        gradient(&format!("[{}]", fact_type.to_uppercase()), type_t)
+    );
     println!("  {}", fact.text);
 
     // Show context if available
@@ -161,7 +164,12 @@ pub fn print_fact(fact: &RecallResult, _show_activation: bool) {
     // Show temporal information
     if let Some(occurred_start) = &fact.occurred_start {
         if let Some(occurred_end) = &fact.occurred_end {
-            println!("  {} {} - {}", dim("date:"), dim(occurred_start), dim(occurred_end));
+            println!(
+                "  {} {} - {}",
+                dim("date:"),
+                dim(occurred_start),
+                dim(occurred_end)
+            );
         } else {
             println!("  {} {}", dim("date:"), dim(occurred_start));
         }
@@ -187,7 +195,8 @@ pub fn print_chunk(chunk: &ChunkData) {
         println!("  {}", gradient_end("[Truncated due to token limit]"));
     }
 
-    println!("  {} {} | {} {}",
+    println!(
+        "  {} {} | {} {}",
         dim("Chunk ID:"),
         dim(&chunk.id),
         dim("Index:"),
@@ -256,11 +265,19 @@ pub fn print_trace_info(trace: &serde_json::Map<String, serde_json::Value>) {
     print_section_header("Trace");
 
     if let Some(time) = trace.get("total_time").and_then(|v| v.as_f64()) {
-        println!("  {} {}", dim("total time:"), gradient_start(&format!("{:.2}ms", time)));
+        println!(
+            "  {} {}",
+            dim("total time:"),
+            gradient_start(&format!("{:.2}ms", time))
+        );
     }
 
     if let Some(count) = trace.get("activation_count").and_then(|v| v.as_i64()) {
-        println!("  {} {}", dim("activation count:"), gradient_end(&count.to_string()));
+        println!(
+            "  {} {}",
+            dim("activation count:"),
+            gradient_end(&count.to_string())
+        );
     }
 
     println!();
@@ -328,7 +345,11 @@ impl GradientSpinner {
                     if *ch == ' ' {
                         result.push(' ');
                     } else {
-                        let base_t = if len > 1 { i as f32 / (len - 1) as f32 } else { 0.0 };
+                        let base_t = if len > 1 {
+                            i as f32 / (len - 1) as f32
+                        } else {
+                            0.0
+                        };
                         let t = (base_t + offset) % 1.0;
                         let (r, g, b) = interpolate_color(GRADIENT_START, GRADIENT_END, t);
                         result.push_str(&format!("\x1b[38;2;{};{};{}m{}", r, g, b, ch));
@@ -351,7 +372,8 @@ impl GradientSpinner {
     }
 
     pub fn finish(&mut self) {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         // Only a spinner that actually animated (spawned a thread) has a line
         // to clear; the no-op variant printed nothing.
         if let Some(handle) = self.handle.take() {
@@ -418,9 +440,24 @@ pub fn print_disposition(profile: &BankProfileResponse) {
 
     // New 3-trait disposition system (values 1-5)
     let traits: [(_, i64, f32, _); 3] = [
-        ("Skepticism", profile.disposition.skepticism.get() as i64, 0.0, "1=trusting, 5=skeptical"),
-        ("Literalism", profile.disposition.literalism.get() as i64, 0.5, "1=flexible, 5=literal"),
-        ("Empathy", profile.disposition.empathy.get() as i64, 1.0, "1=detached, 5=empathetic"),
+        (
+            "Skepticism",
+            profile.disposition.skepticism.get() as i64,
+            0.0,
+            "1=trusting, 5=skeptical",
+        ),
+        (
+            "Literalism",
+            profile.disposition.literalism.get() as i64,
+            0.5,
+            "1=flexible, 5=literal",
+        ),
+        (
+            "Empathy",
+            profile.disposition.empathy.get() as i64,
+            1.0,
+            "1=detached, 5=empathetic",
+        ),
     ];
 
     for (name, value, t, desc) in &traits {
@@ -431,11 +468,7 @@ pub fn print_disposition(profile: &BankProfileResponse) {
 
         let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
 
-        println!("  {:<12} [{}] {}/5",
-            name,
-            gradient(&bar, *t),
-            value
-        );
+        println!("  {:<12} [{}] {}/5", name, gradient(&bar, *t), value);
         println!("    {}", dim(desc));
     }
 

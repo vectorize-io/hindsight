@@ -67,9 +67,9 @@ fn test_ui_command_without_config() {
     // Just verify it doesn't crash unexpectedly
     assert!(
         !output.status.success()
-        || stdout.contains("Launching Hindsight Control Plane UI")
-        || stderr.contains("Configuration error")
-        || stderr.contains("HINDSIGHT_API_URL"),
+            || stdout.contains("Launching Hindsight Control Plane UI")
+            || stderr.contains("Configuration error")
+            || stderr.contains("HINDSIGHT_API_URL"),
         "Unexpected output - stdout: {}, stderr: {}",
         stdout,
         stderr
@@ -88,15 +88,19 @@ fn test_ui_command_with_config() {
     // 2. Run: cargo test test_ui_command_with_config -- --ignored
 
     // Just verify that the ui command accepts the configuration
-    let temp_dir = std::env::temp_dir().join(format!("hindsight-test-ui-valid-{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("hindsight-test-ui-valid-{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
     // Write a minimal config
     let config_dir = temp_dir.join(".config").join("hindsight");
     std::fs::create_dir_all(&config_dir).expect("Failed to create config dir");
     let config_file = config_dir.join("config");
-    std::fs::write(&config_file, "api_url=http://localhost:8888\napi_key=test-key\n")
-        .expect("Failed to write config");
+    std::fs::write(
+        &config_file,
+        "api_url=http://localhost:8888\napi_key=test-key\n",
+    )
+    .expect("Failed to write config");
 
     let output = Command::new("cargo")
         .args(["run", "--", "ui", "--help"])
@@ -175,7 +179,7 @@ fn test_configure_command() {
             "--api-url",
             "http://localhost:9999",
             "--api-key",
-            "test-key-123"
+            "test-key-123",
         ])
         .env("HOME", &temp_dir)
         .output()
