@@ -9103,10 +9103,14 @@ class MemoryEngine(MemoryEngineInterface):
 
         store = get_memories()
         if not store.writes_memory_rows_in_sql_for(bank_id):
-            if fact_type:
-                await store.delete_where(bank_id, DeletePredicate(fact_types=[fact_type]))
-            else:
-                await store.drop_bank_storage(bank_id)
+            # Both branches are a DELETE of memories, so both go through delete_where. The
+            # unfiltered case used to call drop_bank_storage, which removes the bank's whole
+            # namespace rather than its contents: the bank then existed in SQL with no storage
+            # behind it, and the store's read paths reported it as merely empty. It also lost the
+            # namespace's indexed_metadata_keys, which are fixed at creation and cannot be
+            # re-declared, silently emptying metadata facets for good.
+            predicate = DeletePredicate(fact_types=[fact_type]) if fact_type else DeletePredicate(delete_all=True)
+            await store.delete_where(bank_id, predicate)
 
         # Drop any cached stats for this bank — counts have changed and the
         # TTL would otherwise serve pre-delete values for up to a minute.
@@ -11785,6 +11789,11 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             exists = await bank_utils.bank_exists(backend, bank_id)
         if exists:
+            # Storage is ensured even when the ROW already exists: `created` is false for a bank
+            # that predates this call or whose storage was removed out of band, and those are
+            # exactly the banks that need it. Idempotent and cached per bank, so the repeat costs
+            # one conditional create per bank per process and nothing after that.
+            await self._ensure_bank_storage(bank_id)
             return False
 
         if self._operation_validator:
@@ -11797,15 +11806,39 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
 
         if conn is not None:
-            return await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=backend.ops)
+            created_on_conn = await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=backend.ops)
+            await self._ensure_bank_storage(bank_id)
+            return created_on_conn
 
         # Second connection, on purpose: the validator hook above must not run
         # while one is held. Only ever paid once per bank, on the call that
         # creates it — every later call returns above on the probe.
         created = await bank_utils.create_bank_if_missing(backend, bank_id)
+        await self._ensure_bank_storage(bank_id)
         if created:
             await self._apply_default_bank_template(bank_id, request_context)
         return created
+
+    async def _ensure_bank_storage(self, bank_id: str) -> None:
+        """Make sure the bank's external storage exists, for a store that owns its own.
+
+        Called on every ensure rather than only when the bank row was just inserted, and that is
+        deliberate: `created` is false for a bank that already exists in SQL but has no storage —
+        one that predates this call, or whose storage was removed out of band — and those are
+        exactly the banks that need it. The implementation is idempotent and caches per bank, so
+        the repeat costs one conditional create per bank per process and nothing after that.
+
+        A store that keeps memories in SQL implements this as a no-op.
+
+        Ordering note: on the `conn` path this runs inside the caller's transaction. If that
+        transaction rolls back, an empty namespace is left behind for a bank that does not
+        exist — an inert orphan, and a create-if-absent makes the eventual real creation a no-op.
+        The reverse (a committed bank with no storage) is the failure that matters, because every
+        read against it looks like an empty bank rather than a fault.
+        """
+        from .memories import get_memories
+
+        await get_memories().ensure_bank_storage(bank_id)
 
     async def get_bank_config(
         self,
