@@ -15,7 +15,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250327.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.6",
+    "vitest": "^4.1.11",
     "wrangler": "^4.107.1"
   },
   "engines": {
@@ -23,7 +23,7 @@
   },
   "overrides": {
     "undici": ">=7.29.0 <8.0.0",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "sharp": ">=0.35.0",
     "postcss": ">=8.5.23 <9.0.0"
   }
