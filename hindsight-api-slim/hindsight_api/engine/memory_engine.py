@@ -511,6 +511,7 @@ from enum import Enum
 
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
+from .fact_budget import select_facts_within_budget
 from .llm_wrapper import ConfiguredLLMProvider, LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
 from .mental_model_refresh import (
     MentalModelDeltaOperations,
@@ -7129,24 +7130,34 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 6: Token budget filtering
             step_start = time.time()
 
-            # Convert to dict for token filtering (backward compatibility)
-            top_dicts = [sr.to_dict() for sr in top_scored]
-            filtered_dicts, total_tokens = self._filter_by_token_budget(top_dicts, max_tokens)
-
-            # Convert back to list of IDs and filter scored_results
-            filtered_ids = {d["id"] for d in filtered_dicts}
-            top_scored = [sr for sr in top_scored if sr.id in filtered_ids]
+            encoding = _get_tiktoken_encoding()
+            selection = select_facts_within_budget(
+                fact_ids_ordered=[sr.id for sr in top_scored],
+                text_by_id={sr.id: sr.retrieval.text for sr in top_scored},
+                max_tokens=max_tokens,
+                count_tokens=lambda text: len(encoding.encode(text)),
+            )
+            total_tokens = selection.total_tokens
+            selected_ids = set(selection.ids)
+            top_scored = [sr for sr in top_scored if sr.id in selected_ids]
 
             step_duration = time.time() - step_start
+            truncated_note = " (truncated)" if selection.truncated else ""
             log_buffer.append(
-                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens in {step_duration:.3f}s"
+                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens"
+                f"{truncated_note} in {step_duration:.3f}s"
             )
 
             if tracer:
                 tracer.add_phase_metric(
                     "token_filtering",
                     step_duration,
-                    {"results_selected": len(top_scored), "tokens_used": total_tokens, "max_tokens": max_tokens},
+                    {
+                        "results_selected": len(top_scored),
+                        "tokens_used": total_tokens,
+                        "max_tokens": max_tokens,
+                        "truncated": selection.truncated,
+                    },
                 )
 
             # Record visits + build the JSON-serializable result dicts. Timed as one
@@ -7578,41 +7589,6 @@ class MemoryEngine(MemoryEngineInterface):
             if not quiet:
                 logger.error("\n" + "\n".join(log_buffer), exc_info=True)
             raise RuntimeError(f"Failed to search memories ({type(e).__name__}): {e!r}") from e
-
-    def _filter_by_token_budget(
-        self, results: list[dict[str, Any]], max_tokens: int
-    ) -> tuple[list[dict[str, Any]], int]:
-        """
-        Filter results to fit within token budget.
-
-        Counts tokens only for the 'text' field using tiktoken (cl100k_base encoding).
-        Stops before including a fact that would exceed the budget.
-
-        Args:
-            results: List of search results
-            max_tokens: Maximum tokens allowed
-
-        Returns:
-            Tuple of (filtered_results, total_tokens_used)
-        """
-        encoding = _get_tiktoken_encoding()
-
-        filtered_results = []
-        total_tokens = 0
-
-        for result in results:
-            text = result.get("text", "")
-            text_tokens = len(encoding.encode(text))
-
-            # Check if adding this result would exceed budget
-            if total_tokens + text_tokens <= max_tokens:
-                filtered_results.append(result)
-                total_tokens += text_tokens
-            else:
-                # Stop before including a fact that would exceed limit
-                break
-
-        return filtered_results, total_tokens
 
     def _observations_via_source_match_sql(
         self,
