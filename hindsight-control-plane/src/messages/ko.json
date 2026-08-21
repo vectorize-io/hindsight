@@ -603,7 +603,7 @@
     "noMemoriesMatchFilter": "필터와 일치하는 메모리 없음",
     "noMemoriesFound": "메모리를 찾을 수 없습니다",
     "noTimelineData": "타임라인 데이터 없음",
-    "noTimelineDataDescription": "occurred_at 날짜가 있는 메모리가 없습니다.",
+    "noTimelineDataDescription": "날짜 정보가 있는 메모리가 없습니다.",
     "memoriesWithoutDatesInTable": "표 뷰에 날짜 없는 메모리 {count}개.",
     "timelineMemoriesCount": "메모리 {count}개",
     "timelineWithoutDates": "· 날짜 없음 {count}개",

@@ -4,6 +4,11 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import {
+  groupTimelineItems,
+  partitionByEffectiveDate,
+  type TimelineGranularity,
+} from "@/lib/effective-date";
 import { EntityChip, TagChip } from "@/components/ui/facet-chip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1083,7 +1088,12 @@ export function DataView({
 // Exported for reuse (e.g. the per-entity timeline in entities-view). It renders
 // purely from `filteredRows`; `data`/`bankId` are accepted for backward-compat
 // with the memories view but unused here.
-type Granularity = "year" | "month" | "week" | "day";
+//
+// Items are plotted by their effective date (occurred_start, then mentioned_at,
+// then occurred_end, then created_at, then the legacy event_date) - the same
+// coalescing order the backend uses for a unit's effective time, extended with
+// the system fields which are always populated so memories without dates extracted
+// by LLMs still appear on the timeline.
 
 export function TimelineView({
   data,
@@ -1097,103 +1107,28 @@ export function TimelineView({
   onMemoryClick: (id: string) => void;
 }) {
   const t = useTranslations("dataView");
-  const [granularity, setGranularity] = useState<Granularity>("month");
+  const [granularity, setGranularity] = useState<TimelineGranularity>("month");
   const [currentIndex, setCurrentIndex] = useState(0);
   const timelineRef = useRef<HTMLDivElement>(null);
 
-  // Filter and sort items that have occurred_start dates (using filtered data)
-  const { sortedItems, itemsWithoutDates } = useMemo(() => {
-    if (!filteredRows || filteredRows.length === 0)
-      return { sortedItems: [], itemsWithoutDates: [] };
+  // Split rows by effective date (see partitionByEffectiveDate): date-bearing
+  // rows come back sorted ascending; rows without any usable date are kept
+  // aside for the "without dates" counter.
+  const { sortedItems, itemsWithoutDates } = useMemo(
+    () => partitionByEffectiveDate(filteredRows ?? []),
+    [filteredRows]
+  );
 
-    const withDates = filteredRows
-      .filter((row: any) => row.occurred_start)
-      .sort((a: any, b: any) => {
-        const dateA = new Date(a.occurred_start).getTime();
-        const dateB = new Date(b.occurred_start).getTime();
-        return dateA - dateB;
-      });
-
-    const withoutDates = filteredRows.filter((row: any) => !row.occurred_start);
-
-    return { sortedItems: withDates, itemsWithoutDates: withoutDates };
-  }, [filteredRows]);
-
-  // Group items by granularity
-  const timelineGroups = useMemo(() => {
-    if (sortedItems.length === 0) return [];
-
-    const getGroupKey = (date: Date): string => {
-      const year = date.getFullYear();
-      const month = date.getMonth();
-      const day = date.getDate();
-
-      switch (granularity) {
-        case "year":
-          return `${year}`;
-        case "month":
-          return `${year}-${String(month + 1).padStart(2, "0")}`;
-        case "week":
-          const startOfWeek = new Date(date);
-          startOfWeek.setDate(day - date.getDay());
-          return `${startOfWeek.getFullYear()}-W${String(Math.ceil(startOfWeek.getDate() / 7)).padStart(2, "0")}-${String(startOfWeek.getMonth() + 1).padStart(2, "0")}-${String(startOfWeek.getDate()).padStart(2, "0")}`;
-        case "day":
-          return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      }
-    };
-
-    const getGroupLabel = (key: string, date: Date): string => {
-      switch (granularity) {
-        case "year":
-          return key;
-        case "month":
-          return date.toLocaleDateString("en-US", { year: "numeric", month: "short" });
-        case "week":
-          const endOfWeek = new Date(date);
-          endOfWeek.setDate(date.getDate() + 6);
-          return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${endOfWeek.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-        case "day":
-          return date.toLocaleDateString("en-US", {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          });
-      }
-    };
-
-    const groups: { [key: string]: { items: any[]; date: Date } } = {};
-    sortedItems.forEach((row: any) => {
-      const date = new Date(row.occurred_start);
-      const key = getGroupKey(date);
-      if (!groups[key]) {
-        // For week, parse the start date from key
-        let groupDate = date;
-        if (granularity === "week") {
-          const parts = key.split("-");
-          groupDate = new Date(parseInt(parts[0]), parseInt(parts[2]) - 1, parseInt(parts[3]));
-        }
-        groups[key] = { items: [], date: groupDate };
-      }
-      groups[key].items.push(row);
-    });
-
-    return Object.entries(groups)
-      .sort(([, a], [, b]) => a.date.getTime() - b.date.getTime())
-      .map(([key, { items, date }]) => ({
-        key,
-        label: getGroupLabel(key, date),
-        items,
-        date,
-      }));
-  }, [sortedItems, granularity]);
+  // Group the date-bearing rows by granularity bucket.
+  const timelineGroups = useMemo(
+    () => groupTimelineItems(sortedItems, granularity),
+    [sortedItems, granularity]
+  );
 
   // Get date range info
   const dateRange = useMemo(() => {
     if (sortedItems.length === 0) return null;
-    const first = new Date(sortedItems[0].occurred_start);
-    const last = new Date(sortedItems[sortedItems.length - 1].occurred_start);
-    return { first, last };
+    return { first: sortedItems[0].date, last: sortedItems[sortedItems.length - 1].date };
   }, [sortedItems]);
 
   // Navigation
@@ -1205,7 +1140,7 @@ export function TimelineView({
   };
 
   const zoomIn = () => {
-    const levels: Granularity[] = ["year", "month", "week", "day"];
+    const levels: TimelineGranularity[] = ["year", "month", "week", "day"];
     const currentIdx = levels.indexOf(granularity);
     if (currentIdx < levels.length - 1) {
       setGranularity(levels[currentIdx + 1]);
@@ -1213,7 +1148,7 @@ export function TimelineView({
   };
 
   const zoomOut = () => {
-    const levels: Granularity[] = ["year", "month", "week", "day"];
+    const levels: TimelineGranularity[] = ["year", "month", "week", "day"];
     const currentIdx = levels.indexOf(granularity);
     if (currentIdx > 0) {
       setGranularity(levels[currentIdx - 1]);
@@ -1237,8 +1172,7 @@ export function TimelineView({
     );
   }
 
-  const formatDateTime = (dateStr: string) => {
-    const date = new Date(dateStr);
+  const formatDateTime = (date: Date) => {
     const dateFormatted = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     const timeFormatted = date.toLocaleTimeString("en-US", {
       hour: "2-digit",
@@ -1248,7 +1182,7 @@ export function TimelineView({
     return { date: dateFormatted, time: timeFormatted };
   };
 
-  const granularityLabels: Record<Granularity, string> = {
+  const granularityLabels: Record<TimelineGranularity, string> = {
     year: t("granularityYear"),
     month: t("granularityMonth"),
     week: t("granularityWeek"),
@@ -1373,7 +1307,7 @@ export function TimelineView({
 
               {/* Items in this month */}
               <div className="space-y-1">
-                {group.items.map((item: any, idx: number) => (
+                {group.items.map(({ row: item, date: itemDate }, idx: number) => (
                   <div
                     key={item.id || idx}
                     onClick={() => onMemoryClick(item.id)}
@@ -1382,10 +1316,10 @@ export function TimelineView({
                     {/* Date & Time */}
                     <div className="w-[60px] text-right pr-3 pt-1 flex-shrink-0">
                       <div className="text-[10px] text-muted-foreground">
-                        {formatDateTime(item.occurred_start).date}
+                        {formatDateTime(itemDate).date}
                       </div>
                       <div className="text-[9px] text-muted-foreground/70">
-                        {formatDateTime(item.occurred_start).time}
+                        {formatDateTime(itemDate).time}
                       </div>
                     </div>
 

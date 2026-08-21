@@ -603,7 +603,7 @@
     "noMemoriesMatchFilter": "Keine Erinnerungen entsprechen Ihrem Filter",
     "noMemoriesFound": "Keine Erinnerungen gefunden",
     "noTimelineData": "Keine Zeitreihendaten",
-    "noTimelineDataDescription": "Keine Erinnerungen haben occurred_at-Datumsangaben.",
+    "noTimelineDataDescription": "Keine Erinnerungen haben Datumsangaben.",
     "memoriesWithoutDatesInTable": "{count} Erinnerungen ohne Datum in der Tabellenansicht.",
     "timelineMemoriesCount": "{count} Erinnerungen",
     "timelineWithoutDates": "· {count} ohne Datum",

@@ -55,9 +55,10 @@ export function EntitiesView() {
   const [selectedEntity, setSelectedEntity] = useState<EntityDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   // Per-entity timeline: every memory linked to the entity (reverse lookup via
-  // the entity_id filter). We intentionally do NOT filter to observations —
-  // entity links live on the source world/experience facts (which carry the
-  // occurred dates the timeline plots); derived observations aren't entity-linked.
+  // the entity_id filter). We intentionally do NOT filter to observations -
+  // entity links live on the source world/experience facts; derived
+  // observations aren't entity-linked. TimelineView plots each row by its
+  // effective date, so facts without LLM-extracted occurred dates still show.
   const [entityMemories, setEntityMemories] = useState<MemoryRow[]>([]);
   const [loadingMemories, setLoadingMemories] = useState(false);
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);

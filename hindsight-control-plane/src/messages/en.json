@@ -603,7 +603,7 @@
     "noMemoriesMatchFilter": "No memories match your filter",
     "noMemoriesFound": "No memories found",
     "noTimelineData": "No Timeline Data",
-    "noTimelineDataDescription": "No memories have occurred_at dates.",
+    "noTimelineDataDescription": "No memories have date information.",
     "memoriesWithoutDatesInTable": "{count} memories without dates in Table View.",
     "timelineMemoriesCount": "{count} memories",
     "timelineWithoutDates": "· {count} without dates",

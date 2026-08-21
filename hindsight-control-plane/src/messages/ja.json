@@ -603,7 +603,7 @@
     "noMemoriesMatchFilter": "フィルターに一致するメモリがありません",
     "noMemoriesFound": "メモリが見つかりません",
     "noTimelineData": "タイムラインデータなし",
-    "noTimelineDataDescription": "発生日時が設定されたメモリがありません。",
+    "noTimelineDataDescription": "日付情報を持つメモリがありません。",
     "memoriesWithoutDatesInTable": "テーブルビューに日付のないメモリが{count}件あります。",
     "timelineMemoriesCount": "{count}件のメモリ",
     "timelineWithoutDates": "・日付なし{count}件",

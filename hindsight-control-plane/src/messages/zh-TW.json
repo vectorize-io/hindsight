@@ -603,7 +603,7 @@
     "noMemoriesMatchFilter": "沒有符合篩選條件的記憶",
     "noMemoriesFound": "找不到記憶",
     "noTimelineData": "沒有時間軸資料",
-    "noTimelineDataDescription": "沒有帶 occurred_at 日期的記憶。",
+    "noTimelineDataDescription": "沒有記憶帶有日期資訊。",
     "memoriesWithoutDatesInTable": "{count} 條無日期記憶已在表格檢視中顯示。",
     "timelineMemoriesCount": "{count} 條記憶",
     "timelineWithoutDates": "· {count} 條無日期",

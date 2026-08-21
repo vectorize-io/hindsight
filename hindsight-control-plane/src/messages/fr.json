@@ -603,7 +603,7 @@
     "noMemoriesMatchFilter": "Aucun souvenir ne correspond à votre filtre",
     "noMemoriesFound": "Aucun souvenir trouvé",
     "noTimelineData": "Aucune donnée chronologique",
-    "noTimelineDataDescription": "Aucun souvenir ne possède de date occurred_at.",
+    "noTimelineDataDescription": "Aucun souvenir ne possède d’informations de date.",
     "memoriesWithoutDatesInTable": "{count} souvenirs sans dates dans la vue tableau.",
     "timelineMemoriesCount": "{count} souvenirs",
     "timelineWithoutDates": "· {count} sans dates",

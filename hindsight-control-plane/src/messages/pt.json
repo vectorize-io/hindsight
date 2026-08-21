@@ -603,7 +603,7 @@
     "noMemoriesMatchFilter": "Nenhuma memória corresponde ao seu filtro",
     "noMemoriesFound": "Nenhuma memória encontrada",
     "noTimelineData": "Sem Dados de Linha do Tempo",
-    "noTimelineDataDescription": "Nenhuma memória possui datas de occurred_at.",
+    "noTimelineDataDescription": "Nenhuma memória possui informações de data.",
     "memoriesWithoutDatesInTable": "{count} memórias sem datas na Visualização de Tabela.",
     "timelineMemoriesCount": "{count} memórias",
     "timelineWithoutDates": "· {count} sem datas",
