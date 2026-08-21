@@ -8,7 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,10 @@ from ...config import get_config
 from ..db_utils import acquire_with_retry, retry_with_backoff
 from ..memory_engine import fq_table, get_current_schema
 from ..response_models import DispositionTraits
+
+if TYPE_CHECKING:
+    from ..db.base import DatabaseConnection
+    from ..db.ops import DataAccessOps
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +50,9 @@ def _vector_index_clause() -> str | None:
     return index_using_clause(ext)
 
 
-async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, *, ops) -> None:
+async def create_bank_vector_indexes(
+    conn: "DatabaseConnection", bank_id: str, internal_id: str, *, ops: "DataAccessOps"
+) -> None:
     """Create per-(bank, fact_type) partial vector indexes for a newly created bank.
 
     Only does anything when the size threshold is off — the default — where a
@@ -95,7 +101,7 @@ async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, *, op
     )
 
 
-async def drop_bank_vector_indexes(conn, internal_id: str, ops=None) -> None:
+async def drop_bank_vector_indexes(conn: "DatabaseConnection", internal_id: str, *, ops: "DataAccessOps") -> None:
     """Drop per-(bank, fact_type) partial vector indexes for a bank being deleted.
 
     Called before the bank row is deleted so internal_id is still known.
@@ -160,6 +166,30 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
     return result.profile
 
 
+async def get_bank_profile_if_exists_on_conn(conn: "DatabaseConnection", bank_id: str) -> BankProfile | None:
+    """Get bank profile (name, disposition + mission) on conn without auto-creating.
+
+    Returns None if the bank does not exist.
+    """
+    row = await conn.fetchrow(
+        f"""
+        SELECT name, disposition, mission
+        FROM {fq_table("banks")} WHERE bank_id = $1
+        """,
+        bank_id,
+    )
+    if not row:
+        return None
+    disposition_data = row["disposition"]
+    if isinstance(disposition_data, str):
+        disposition_data = json.loads(disposition_data)
+    return BankProfile(
+        name=row["name"],
+        disposition=DispositionTraits(**disposition_data),
+        mission=row["mission"] or "",
+    )
+
+
 async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
     """
     Get bank profile (name, disposition + mission) without auto-creating.
@@ -176,23 +206,55 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
         BankProfile if the bank exists, otherwise None.
     """
     async with acquire_with_retry(pool) as conn:
-        row = await conn.fetchrow(
-            f"""
-            SELECT name, disposition, mission
-            FROM {fq_table("banks")} WHERE bank_id = $1
-            """,
-            bank_id,
-        )
-        if not row:
-            return None
-        disposition_data = row["disposition"]
-        if isinstance(disposition_data, str):
-            disposition_data = json.loads(disposition_data)
-        return BankProfile(
-            name=row["name"],
-            disposition=DispositionTraits(**disposition_data),
-            mission=row["mission"] or "",
-        )
+        return await get_bank_profile_if_exists_on_conn(conn, bank_id)
+
+
+async def create_bank_row_on_conn(conn: "DatabaseConnection", bank_id: str, *, ops: "DataAccessOps") -> bool:
+    """Idempotently insert a default bank row and its vector indexes on conn.
+
+    Uses ``INSERT ... ON CONFLICT (bank_id) DO NOTHING RETURNING bank_id``.
+    Returns True if the bank was freshly inserted on this call, False if it already existed.
+
+    Note: On Oracle, the dialect layer strips RETURNING from ON CONFLICT DO NOTHING,
+    so fetchval returns None and created evaluates to False (pre-existing dialect behaviour).
+    """
+    internal_id = uuid.uuid4()
+    inserted = await conn.fetchval(
+        f"""
+        INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
+        VALUES ($1, $2, $3::jsonb, $4, $5)
+        ON CONFLICT (bank_id) DO NOTHING
+        RETURNING bank_id
+        """,
+        bank_id,
+        bank_id,  # Default name is the bank_id
+        json.dumps(DEFAULT_DISPOSITION),
+        "",
+        internal_id,
+    )
+
+    created = inserted is not None
+    if created:
+        # Fresh insert — create per-bank vector indexes (instant on an empty
+        # bank). A no-op unless the size threshold is off; see
+        # create_bank_vector_indexes.
+        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+
+    return created
+
+
+async def create_bank_if_missing(pool, bank_id: str) -> bool:
+    """Dedicated-connection variant of create_bank_row_on_conn with transaction & deadlock retry.
+
+    Returns True if freshly created on this call, False if it already existed.
+    """
+
+    async def _create() -> bool:
+        async with acquire_with_retry(pool) as conn:
+            async with conn.transaction():
+                return await create_bank_row_on_conn(conn, bank_id, ops=pool.ops)
+
+    return await retry_with_backoff(_create)
 
 
 async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
@@ -227,7 +289,9 @@ async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
     return await retry_with_backoff(_create)
 
 
-async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> BankProfileResult:
+async def get_or_create_bank_profile_on_conn(
+    conn: "DatabaseConnection", bank_id: str, *, ops: "DataAccessOps"
+) -> BankProfileResult:
     """
     Connection-bound variant of ``get_or_create_bank_profile``.
 
@@ -241,55 +305,18 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
     ``ops`` is the backend's dialect ops object (``backend.ops``), needed for
     per-bank vector index DDL.
     """
-    # Try to get existing bank
-    row = await conn.fetchrow(
-        f"""
-        SELECT name, disposition, mission
-        FROM {fq_table("banks")} WHERE bank_id = $1
-        """,
-        bank_id,
-    )
-
-    if row:
-        # asyncpg returns JSONB as a string, so parse it
-        disposition_data = row["disposition"]
-        if isinstance(disposition_data, str):
-            disposition_data = json.loads(disposition_data)
-
+    profile = await get_bank_profile_if_exists_on_conn(conn, bank_id)
+    if profile is not None:
         return BankProfileResult(
-            profile=BankProfile(
-                name=row["name"],
-                disposition=DispositionTraits(**disposition_data),
-                mission=row["mission"] or "",
-            ),
+            profile=profile,
             created=False,
         )
 
-    # Bank doesn't exist, create with defaults. internal_id is minted here rather
-    # than defaulted server-side so its value is known without a RETURNING
-    # round-trip: the index names derive from it, both for the eager create below
-    # and for the maintenance operation when a threshold is set.
-    internal_id = uuid.uuid4()
-    inserted = await conn.fetchval(
-        f"""
-        INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
-        VALUES ($1, $2, $3::jsonb, $4, $5)
-        ON CONFLICT (bank_id) DO NOTHING
-        RETURNING bank_id
-        """,
-        bank_id,
-        bank_id,  # Default name is the bank_id
-        json.dumps(DEFAULT_DISPOSITION),
-        "",
-        internal_id,
-    )
-
-    created = inserted is not None
-    if created:
-        # Fresh insert — create per-bank vector indexes (instant on an empty
-        # bank). A no-op unless the size threshold is off; see
-        # create_bank_vector_indexes.
-        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+    # Bank doesn't exist, create with defaults. internal_id is minted inside
+    # create_bank_row_on_conn rather than defaulted server-side so its value is
+    # known without a RETURNING round-trip: the index names derive from it, both
+    # for the eager create and for the maintenance operation when a threshold is set.
+    created = await create_bank_row_on_conn(conn, bank_id, ops=ops)
 
     return BankProfileResult(
         profile=BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission=""),
