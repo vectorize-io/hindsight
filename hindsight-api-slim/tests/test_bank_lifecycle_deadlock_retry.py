@@ -4,8 +4,9 @@ The test-api shard runs 8 pytest-xdist workers against one shared pg0 database
 (``public`` schema), so every bank create/delete does index DDL on the same
 ``memory_units`` table other workers are writing. A fresh bank builds its
 partial indexes with a plain ``CREATE INDEX`` inside the bank-create tx
-(ShareLock), and ``delete_bank`` drops them (CONCURRENTLY, post-commit); both
-can be chosen as a deadlock victim. These are the exact production paths that
+(ShareLock), and ``delete_bank`` drops them (CONCURRENTLY, once before the
+delete transaction and again after commit); both can be chosen as a deadlock
+victim. These are the exact production paths that
 flaked in CI — they must retry the transient deadlock, not surface it.
 
 The deadlock is injected via monkeypatch (one-shot ``DeadlockDetectedError``)
@@ -53,7 +54,12 @@ async def test_bank_create_retries_transient_deadlock(
 async def test_bank_delete_retries_transient_deadlock(
     memory: MemoryEngine, request_context: RequestContext, monkeypatch
 ):
-    """A deadlock while dropping per-bank indexes on delete is retried."""
+    """A deadlock while dropping per-bank indexes on delete is retried.
+
+    delete_bank drops once before the delete transaction and once after it
+    commits; the injected deadlock is retried on the first drop, and the
+    second drop is the post-commit no-op that closes the maintenance race.
+    """
     bank_id = f"test-deadlock-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
@@ -71,5 +77,5 @@ async def test_bank_delete_retries_transient_deadlock(
     monkeypatch.setattr(backend.ops, "drop_bank_vector_indexes", flaky)
 
     result = await memory.delete_bank(bank_id, request_context=request_context)
-    assert calls == 2, "expected exactly one retry after the injected deadlock"
+    assert calls == 3, "one deadlock retried on the pre-drop, plus the post-commit drop"
     assert result["bank_deleted"] is True

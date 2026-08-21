@@ -27,7 +27,7 @@ from hindsight_api.engine.retain.bank_utils import (
     _bank_index_name,
     _vector_index_clause,
 )
-from hindsight_api.engine.vector_index_health import CoverageTrigger
+from hindsight_api.engine.vector_index_health import BankIndexPlan, CoverageTrigger, apply_bank_index_plan
 
 
 @pytest.fixture
@@ -227,13 +227,17 @@ async def test_delete_bank_drops_indexes_before_data(memory, request_context, mo
     drop_profile_present: bool | None = None
 
     async def recording_drop(conn, schema, internal_id, fact_types):
-        # At drop time the bank's memory rows and profile must still exist —
-        # the drop runs before the delete transaction, not after it.
+        # Sample only the FIRST call — the pre-drop before the delete tx.
+        # The post-commit drop is a no-op that runs after the rows are gone,
+        # and must not overwrite the pre-drop observations.
         nonlocal drop_rows_present, drop_profile_present
-        drop_rows_present = (await conn.fetchval("SELECT COUNT(*) FROM memory_units WHERE bank_id = $1", bank_id)) > 0
-        drop_profile_present = (
-            await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id)
-        ) is not None
+        if drop_rows_present is None:
+            drop_rows_present = (
+                await conn.fetchval("SELECT COUNT(*) FROM memory_units WHERE bank_id = $1", bank_id)
+            ) > 0
+            drop_profile_present = (
+                await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id)
+            ) is not None
         return await real(conn, schema, internal_id, fact_types)
 
     monkeypatch.setattr(backend.ops, "drop_bank_vector_indexes", recording_drop)
@@ -243,6 +247,91 @@ async def test_delete_bank_drops_indexes_before_data(memory, request_context, mo
     assert drop_rows_present is True, "indexes must be dropped while the bank's rows still exist"
     assert drop_profile_present is True, "indexes must be dropped before the bank profile is deleted"
     assert await _get_bank_vector_indexes(memory._pool, bank_id) == []
+
+
+class _DeleteBankOnCreate:
+    """Connection wrapper that deletes the bank row right after the first
+    ``CREATE INDEX CONCURRENTLY``, simulating a bank deleted mid-build."""
+
+    def __init__(self, real, bank_id: str):
+        self._real = real
+        self._bank_id = bank_id
+        self.deleted = False
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    async def execute(self, query, *args, **kwargs):
+        result = await self._real.execute(query, *args, **kwargs)
+        if "CREATE INDEX CONCURRENTLY" in query and not self.deleted:
+            await self._real.execute("DELETE FROM banks WHERE bank_id = $1", self._bank_id)
+            self.deleted = True
+        return result
+
+
+@pytest.mark.asyncio
+async def test_delete_bank_drops_indexes_rebuilt_in_window(memory, request_context, monkeypatch):
+    """The post-commit drop removes an index maintenance rebuilt in the window.
+
+    Two-sided handshake, delete side: after the pre-drop but before the delete
+    transaction, maintenance rebuilds the bank indexes from a plan made while
+    the bank row still existed. The post-commit drop must remove them — the
+    bank row is gone by then and nothing else can name the orphan.
+    """
+    bank_id = f"test_hnsw_window_{uuid.uuid4().hex[:8]}"
+    await memory.retain_async(
+        bank_id=bank_id,
+        content="Frank is a physicist.",
+        request_context=request_context,
+    )
+
+    backend = await memory._get_backend()
+    real = backend.ops.drop_bank_vector_indexes
+    rebuilt = False
+
+    async def rebuild_in_window(conn, schema, internal_id, fact_types):
+        nonlocal rebuilt
+        await real(conn, schema, internal_id, fact_types)  # the real pre-drop
+        if not rebuilt:
+            rebuilt = True
+            index_clause = _vector_index_clause()
+            assert index_clause is not None
+            plan = BankIndexPlan(bank_id=bank_id, to_build=list(_BANK_INDEX_FACT_TYPES))
+            pool = await memory._get_pool()
+            async with pool.acquire() as build_conn:
+                await apply_bank_index_plan(build_conn, memory_engine_module.get_current_schema(), index_clause, plan)
+
+    monkeypatch.setattr(backend.ops, "drop_bank_vector_indexes", rebuild_in_window)
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+    assert rebuilt is True
+    assert await _get_bank_vector_indexes(memory._pool, bank_id) == []
+
+
+@pytest.mark.asyncio
+async def test_apply_index_plan_drops_orphan_built_during_delete(memory, request_context, threshold_set):
+    """apply_bank_index_plan re-checks the bank row after each build.
+
+    Two-sided handshake, maintenance side: the bank is deleted while a
+    ``CREATE INDEX CONCURRENTLY`` is building. The just-built index is an
+    orphan the delete path cannot name, so apply must drop it itself and not
+    count it as created.
+    """
+    bank_id = f"test_hnsw_selfcheck_{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        wrapped = _DeleteBankOnCreate(conn, bank_id)
+        index_clause = _vector_index_clause()
+        assert index_clause is not None
+        plan = BankIndexPlan(bank_id=bank_id, to_build=list(_BANK_INDEX_FACT_TYPES))
+        result = await apply_bank_index_plan(wrapped, memory_engine_module.get_current_schema(), index_clause, plan)
+
+    assert wrapped.deleted is True
+    assert result.created == 0
+    assert await _get_bank_vector_indexes(pool, bank_id) == []
 
 
 @pytest.mark.asyncio

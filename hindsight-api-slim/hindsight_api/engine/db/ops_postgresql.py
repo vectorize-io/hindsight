@@ -1107,8 +1107,10 @@ class PostgreSQLOps(DataAccessOps):
         # EXCLUSIVE, on the shared memory_units table. A plain DROP INDEX blocks
         # (and deadlocks with) every other bank's concurrent reads/writes on the
         # table; CONCURRENTLY does not conflict with DML. The caller
-        # (delete_bank) runs this on an autocommit connection after its delete
-        # transaction has committed — CONCURRENTLY cannot run inside a tx.
+        # (delete_bank) runs this on an autocommit connection before its delete
+        # transaction begins — CONCURRENTLY cannot run inside a tx — and then
+        # idempotently once more after the transaction commits, so a concurrent
+        # maintenance rebuild that landed in between cannot leave an orphan.
         #
         # The in-process lock serializes concurrent bank creates and deletes
         # against each other; its key must match create_bank_vector_indexes',
