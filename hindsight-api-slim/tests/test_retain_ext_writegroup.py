@@ -172,6 +172,10 @@ def _kwargs(tracker, provider, er, *, doc_tracking_done, existing_hash, new_hash
         # batch), while this says the document's prior version was actually replaced. These tests
         # drive one batch at a time, so a fresh latch per call is what they want.
         doc_replace_done=[False],
+        # No chunk rows survive from a previous version here, so the positional replacement the
+        # write path runs before storing its chunks has nothing to supersede.
+        document_cascade_deleted=[False],
+        existing_chunk_id_by_index={},
         pipeline_aborted=[False],
         append_base_hash=None,
         new_content_hash=new_hash,

@@ -614,6 +614,44 @@ async def _insert_facts_and_links(
     return result_unit_ids
 
 
+async def _supersede_rewritten_chunks(
+    conn,
+    *,
+    bank_id: str,
+    batch_chunk_meta: list,
+    existing_chunk_id_by_index: dict[int, str],
+    txn,
+    ops,
+    log_buffer: list[str],
+) -> None:
+    """Take the outgoing facts of the chunk indices this batch is about to write.
+
+    A chunk_id is ``{bank}_{document}_{index}``, so writing a chunk index REPLACES whatever
+    occupied it. The whole-document cascade delete that normally clears the previous version
+    runs only on the retain's first batch — and an oversized replacement is delivered as N
+    separate ``retain_batch`` calls of which only slice 1 carries ``is_first_batch``, while
+    slice 1 itself usually resolves through delta retain, which deletes nothing outside its own
+    slice. Without this the new facts for a changed chunk land NEXT TO the previous version's:
+    the chunk ends up holding both generations, and each further re-retain adds another.
+
+    Caller must skip this when its own document tracking just cascade-deleted the version —
+    there is nothing left to supersede and the rows read before extraction are already gone.
+    """
+    if not batch_chunk_meta or not existing_chunk_id_by_index:
+        return
+    superseded = [
+        chunk_id for chunk_id in (existing_chunk_id_by_index.get(cm.chunk_index) for cm in batch_chunk_meta) if chunk_id
+    ]
+    if not superseded:
+        return
+    step_start = time.time()
+    invalidated_obs = await chunk_storage.delete_chunks_by_ids(conn, superseded, bank_id, txn=txn, ops=ops)
+    log_buffer.append(
+        f"  Superseded {len(superseded)} previous-version chunk(s) at the indices this batch "
+        f"rewrites, invalidated {invalidated_obs} observation(s) in {time.time() - step_start:.3f}s"
+    )
+
+
 @dataclass
 class _ExtStreamingWriteResult:
     """Outcome of :func:`_streaming_batch_write_ext`."""
@@ -651,6 +689,8 @@ async def _streaming_batch_write_ext(
     is_last: bool,
     doc_tracking_done: list[bool],
     doc_replace_done: list[bool],
+    document_cascade_deleted: list[bool],
+    existing_chunk_id_by_index: dict[int, str],
     pipeline_aborted: list[bool],
     append_base_hash,
     new_content_hash,
@@ -809,6 +849,7 @@ async def _streaming_batch_write_ext(
                             txn=ext_txn,
                         )
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
+                        document_cascade_deleted[0] = is_first_batch
                     doc_tracking_done[0] = True
                 else:
                     # Later batches: verify we still own the document.
@@ -830,6 +871,16 @@ async def _streaming_batch_write_ext(
                         return _ExtStreamingWriteResult(aborted=True, batch_result_ids=batch_result_ids)
 
                 _pt["track"] = time.time()
+                if not document_cascade_deleted[0]:
+                    await _supersede_rewritten_chunks(
+                        conn,
+                        bank_id=bank_id,
+                        batch_chunk_meta=batch_chunk_meta,
+                        existing_chunk_id_by_index=existing_chunk_id_by_index,
+                        txn=ext_txn,
+                        ops=pool.ops,
+                        log_buffer=log_buffer,
+                    )
                 # Chunk metadata rows (bulky bodies were already stored before this call).
                 if batch_chunk_meta:
                     await chunk_storage.store_chunks_batch(
@@ -927,6 +978,11 @@ async def _streaming_store_owned_retain(
     make atomic *together*. Document/chunk BODIES were already sent to the store's document store by
     ``_store_document_bodies`` (``owns_document_store``); the small Postgres metadata rows that the
     Protocol-B path still wrote are simply gone.
+
+    With no chunk rows there is also nothing for :func:`_supersede_rewritten_chunks` (the two SQL
+    write paths' per-index replacement) to do here: ``replace_document_id`` below tombstones the
+    document's whole prior version inside the first batch's atomic retain, so a re-retain cannot
+    leave a previous version's facts sitting under a chunk index this one rewrites.
 
     Known gaps, tracked for the follow-on phases:
     * Concurrent same-document ownership/takeover is no longer serialized by a Postgres row lock;
@@ -2151,6 +2207,15 @@ async def _streaming_retain_batch(
     # Memory: sanitized_content is only needed for the hash; free it immediately.
     sanitized_content = ""
     is_recovery = False
+    # Which chunk_id currently occupies each of the document's chunk indices. Loaded whether or
+    # not this is a recovery, because it is also what makes the write below a *positional
+    # replacement*: a batch that re-extracts chunk index i must take the facts of whatever
+    # occupied i before, and only the retain's FIRST batch cascade-deletes the outgoing version.
+    # An oversized replacement arrives as N separate `retain_batch` calls of which only slice 1
+    # carries `is_first_batch` — and slice 1 typically resolves through delta retain, which
+    # deletes nothing outside its own slice. Without this, a changed chunk's new facts land NEXT
+    # TO the previous version's and every re-retain piles on another generation.
+    existing_chunk_id_by_index: dict[int, str] = {}
 
     try:
         async with acquire_with_retry(pool) as conn:
@@ -2159,15 +2224,17 @@ async def _streaming_retain_batch(
                 effective_doc_id,
                 bank_id,
             )
-            if doc_row and doc_row["content_hash"] == new_content_hash:
+            if doc_row:
                 existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
-                existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
-                if existing_chunk_hashes:
-                    is_recovery = True
-                    log_buffer.append(
-                        f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
-                        f"will skip matching and preserve existing data"
-                    )
+                existing_chunk_id_by_index = {c.chunk_index: c.chunk_id for c in existing_rows}
+                if doc_row["content_hash"] == new_content_hash:
+                    existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
+                    if existing_chunk_hashes:
+                        is_recovery = True
+                        log_buffer.append(
+                            f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
+                            f"will skip matching and preserve existing data"
+                        )
     except Exception:
         pass  # If we can't load, just process all chunks
 
@@ -2220,6 +2287,10 @@ async def _streaming_retain_batch(
     # that latch would let batch 1 replace nothing, latch, and leave the prior version standing
     # beside the new memories for every batch after it.
     doc_replace_done = [False]
+    # ...and whether that tracking cascade-deleted the outgoing version, which only the retain's
+    # first batch does. When it did, the chunk indices below start empty and the per-batch
+    # positional replacement has nothing to supersede.
+    document_cascade_deleted = [False]
     # Track whether the transactional-outbox callback has already fired inside a
     # batch write TXN. The in-TXN fire only runs on a final facts-bearing batch
     # (is_last=True); two success paths never reach it — a committed-chunk count
@@ -2653,6 +2724,8 @@ async def _streaming_retain_batch(
                     is_last=is_last,
                     doc_tracking_done=doc_tracking_done,
                     doc_replace_done=doc_replace_done,
+                    document_cascade_deleted=document_cascade_deleted,
+                    existing_chunk_id_by_index=existing_chunk_id_by_index,
                     pipeline_aborted=pipeline_aborted,
                     append_base_hash=append_base_hash,
                     new_content_hash=new_content_hash,
@@ -2747,6 +2820,9 @@ async def _streaming_retain_batch(
                                 txn=_group_txn,
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
+                            # That call cascade-deleted the whole outgoing version (it only does so
+                            # on the retain's first batch), so nothing is left to replace per chunk.
+                            document_cascade_deleted[0] = is_first_batch
                         doc_tracking_done[0] = True
                         # Memory: combined_content is no longer needed after
                         # this first-batch tracking call. Release it so the
@@ -2778,6 +2854,17 @@ async def _streaming_retain_batch(
                             # Signal the consumer to stop processing further batches
                             pipeline_aborted[0] = True
                             return
+
+                    if not document_cascade_deleted[0]:
+                        await _supersede_rewritten_chunks(
+                            conn,
+                            bank_id=bank_id,
+                            batch_chunk_meta=batch_chunk_meta,
+                            existing_chunk_id_by_index=existing_chunk_id_by_index,
+                            txn=_group_txn,
+                            ops=pool.ops,
+                            log_buffer=log_buffer,
+                        )
 
                     # Store chunks with correct global indices
                     step_start = time.time()
@@ -3332,6 +3419,19 @@ async def _try_delta_retain(
     new_indices = diff.new
     removed_indices = diff.removed
 
+    if document_body_override is not None and removed_indices:
+        # This delta is looking at ONE SLICE of an oversized replacement (only the first slice
+        # runs delta at all), so every stored chunk outside the slice reads as "removed" — they
+        # are the other slices' chunks, not deletions. Tombstoning them here left the rest of the
+        # document to be re-extracted in full, which is exactly the cost the split path exists to
+        # avoid. Chunks the new body genuinely drops are removed once the whole retain has
+        # landed, by the caller's tail truncation, which knows the document's real chunk count.
+        log_buffer.append(
+            f"[delta] Ignoring {len(removed_indices)} stored chunk(s) outside this slice — "
+            f"a slice cannot conclude they were removed from the document"
+        )
+        removed_indices = []
+
     log_buffer.append(
         f"[delta] Chunk diff: {len(unchanged_indices)} unchanged, "
         f"{len(changed_indices)} changed, {len(new_indices)} new, "
@@ -3362,8 +3462,21 @@ async def _try_delta_retain(
                 config=config,
                 expected_content_hash=doc_hash_at_load,
             )
-        logger.info(f"Delta retain: no unchanged chunks for {effective_doc_id}, falling back to full retain")
-        return None
+        if document_body_override is not None and existing_by_index:
+            # A SLICE of an oversized replacement whose own chunks all changed says nothing about
+            # the rest of the document — the stored chunks it cannot see are the other slices'.
+            # Falling back here handed the document to the streaming path with ``is_first_batch``,
+            # which cascade-deletes the ENTIRE outgoing version: the later slices then had nothing
+            # left to skip and a one-chunk edit re-extracted the whole document. Proceeding
+            # instead replaces this slice's chunks and leaves the rest to their own slices, which
+            # supersede their positions as they write (and to the tail truncation once they have).
+            log_buffer.append(
+                "[delta] Every chunk in this slice changed; the rest of the document is other "
+                "slices' to replace — running delta on this slice rather than replacing whole"
+            )
+        else:
+            logger.info(f"Delta retain: no unchanged chunks for {effective_doc_id}, falling back to full retain")
+            return None
 
     chunks_to_process = changed_indices + new_indices
 

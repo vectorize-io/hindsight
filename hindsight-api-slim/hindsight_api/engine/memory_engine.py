@@ -14,6 +14,7 @@ import contextvars
 import copy
 import difflib
 import functools
+import hashlib
 import inspect
 import json
 import logging
@@ -5231,6 +5232,22 @@ class MemoryEngine(MemoryEngineInterface):
 
             chunk_offsets: dict[str, int] = {}
 
+            # The content hash of the COMPLETE body each split document is being replaced with —
+            # the same value the retain writes to documents.content_hash. Kept so the tail
+            # truncation after the loop can prove this retain still owns the document before it
+            # deletes anything (a concurrent takeover writes a different hash, and its version
+            # may legitimately have more chunks than ours).
+            split_document_hashes: dict[str, str] = {}
+            for _sub_batch, _override in zip(sub_batches, document_body_overrides):
+                _override_doc_id = document_id or _sub_batch[0].get("document_id")
+                # Append grows a document, so it has no tail to drop — and its stored body is the
+                # prepend, not this override, so the hash below would not be the one written.
+                if _override is None or not _override_doc_id or _sub_batch[0].get("update_mode") == "append":
+                    continue
+                split_document_hashes[_override_doc_id] = hashlib.sha256(
+                    (fact_extraction._sanitize_text(_override) or "").encode()
+                ).hexdigest()
+
             # In update_mode="append", retain_batch prepends the existing document
             # body to the FIRST sub-batch as an extra content item before chunking
             # (see orchestrator.retain_batch), consuming chunks(existing_body)
@@ -5349,6 +5366,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # retain pipeline emits finer-grained "storing N/total chunks" snapshots
                 # via progress_callback as each sub-batch's chunks commit.
 
+            # Every sub-batch has landed, so chunk_offsets now holds each split document's real
+            # chunk count. Drop whatever the previous version left beyond it (see the helper).
+            # Skipped when the run was cancelled part-way: the later slices never wrote, so the
+            # counts describe a document that was only partly replaced.
+            if not cancelled:
+                await self._truncate_replaced_document_tails(bank_id, chunk_offsets, split_document_hashes)
+
             total_time = time.time() - start_time
             logger.info(
                 f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from {len(contents)} contents in {total_time:.3f}s"
@@ -5379,6 +5403,50 @@ class MemoryEngine(MemoryEngineInterface):
             processed_content_tokens=total_processed_content_tokens,
             cancelled=cancelled,
         )
+
+    async def _truncate_replaced_document_tails(
+        self,
+        bank_id: str,
+        chunk_counts: dict[str, int],
+        expected_hashes: dict[str, str],
+    ) -> None:
+        """Delete what a shrinking oversized replacement left past its new last chunk.
+
+        A replacement body over ``retain_batch_tokens`` is delivered as N sequential
+        ``retain_batch`` calls, and only the first carries ``is_first_batch`` — the flag that
+        cascade-deletes the outgoing version. That first slice normally resolves through delta
+        retain, which deletes nothing outside its own slice, so a document re-retained with fewer
+        chunks kept the dropped tail: its facts stayed recallable as part of a document that no
+        longer contains them.
+
+        Runs once, after every sub-batch has committed, because only then is the document's real
+        chunk count known. The document row is locked and its hash compared with the body this
+        retain wrote, so a concurrent takeover's (possibly longer) version is never truncated.
+        """
+        if not chunk_counts:
+            return
+        from .retain import chunk_storage
+
+        backend = await self._get_backend()
+        for document_id, chunk_count in chunk_counts.items():
+            expected_hash = expected_hashes.get(document_id)
+            if expected_hash is None:
+                continue
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    current_hash = await backend.ops.lock_document_for_write(
+                        conn, fq_table("documents"), document_id, bank_id
+                    )
+                    if current_hash != expected_hash:
+                        continue
+                    removed = await chunk_storage.delete_chunks_from_index(
+                        conn, bank_id, document_id, chunk_count, ops=backend.ops
+                    )
+            if removed:
+                logger.info(
+                    f"[BATCH_RETAIN] bank={bank_id} document={document_id}: dropped {removed} chunk(s) "
+                    f"left beyond the replacement's {chunk_count} chunk(s)"
+                )
 
     async def _retain_batch_async_internal(
         self,

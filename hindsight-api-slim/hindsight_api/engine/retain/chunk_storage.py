@@ -236,6 +236,40 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     return invalidated
 
 
+async def delete_chunks_from_index(
+    conn, bank_id: str, document_id: str, first_index: int, *, ops=None, txn=None
+) -> int:
+    """Delete the document's chunks at or beyond ``first_index`` — its previous version's tail.
+
+    A re-retain that SHRINKS a document writes chunk indices ``[0, new_count)`` and leaves
+    everything past them untouched. The whole-document cascade delete normally clears them, but
+    it only runs on the retain's first batch, so an oversized replacement (delivered as N
+    separate ``retain_batch`` calls, only slice 1 of which carries that flag, and which resolves
+    through delta retain that deletes nothing outside its own slice) left the dropped tail —
+    chunks, facts and all — recallable as if it were still part of the document.
+
+    Deletes through :func:`delete_chunks_by_ids`, so the facts, their observations, the entity
+    prune/relink bookkeeping and the store-side memories all go with them. Returns how many
+    chunks were removed.
+    """
+    rows = await conn.fetch(
+        f"""
+        SELECT chunk_id
+        FROM {fq_table("chunks")}
+        WHERE document_id = $1 AND bank_id = $2 AND chunk_index >= $3
+        ORDER BY chunk_index
+        """,
+        document_id,
+        bank_id,
+        first_index,
+    )
+    chunk_ids = [row["chunk_id"] for row in rows]
+    if not chunk_ids:
+        return 0
+    await delete_chunks_by_ids(conn, chunk_ids, bank_id, txn=txn, ops=ops)
+    return len(chunk_ids)
+
+
 async def store_chunks_batch(
     conn,
     bank_id: str,
