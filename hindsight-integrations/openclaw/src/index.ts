@@ -92,6 +92,12 @@ export type AsyncRetainOperationIdCapability = "supported" | "unsupported" | "un
 let asyncRetainOperationIdCapability: AsyncRetainOperationIdCapability = "unknown";
 const MIN_VERSION_FOR_ASYNC_RETAIN_OPERATION_ID = "0.8.6";
 
+// The /version capability is deployment-wide, but store_document_text can be
+// overridden per bank. Cache the resolved value after the first retain for a
+// bank so dynamic bank routing does not add a config request to every turn.
+const bankAppendCapability = new Map<string, boolean>();
+const bankAppendCapabilityProbes = new Map<string, Promise<boolean | null>>();
+
 // Store the current plugin config for bank ID derivation
 let currentPluginConfig: PluginConfig | null = null;
 let serviceGeneration = 0;
@@ -127,6 +133,8 @@ export interface BankScopedClient {
     timeoutMs?: number
   ): Promise<RecallResponse>;
   setMissions(opts: BankMissionsUpdate): Promise<void>;
+  /** Return the bank's resolved config, or null when the config API is unavailable. */
+  getConfig(signal?: globalThis.AbortSignal): Promise<Record<string, unknown> | null>;
 }
 
 export interface BankMissionsUpdate {
@@ -136,6 +144,14 @@ export interface BankMissionsUpdate {
 }
 
 export function scopeClient(c: HindsightClient, bankId: string): BankScopedClient {
+  // Keep this optional at runtime: older published client versions and the
+  // lightweight test doubles do not expose getBankConfig yet.
+  const configReader = c as HindsightClient & {
+    getBankConfig?: (
+      bankId: string,
+      options?: { signal?: globalThis.AbortSignal }
+    ) => Promise<{ config?: Record<string, unknown> }>;
+  };
   return {
     bankId,
     async retain(req, capability = asyncRetainOperationIdCapability, signal) {
@@ -184,7 +200,60 @@ export function scopeClient(c: HindsightClient, bankId: string): BankScopedClien
         observationsMission: opts.observationsMission,
       });
     },
+    async getConfig(signal) {
+      if (typeof configReader.getBankConfig !== "function") return null;
+      const response = await configReader.getBankConfig(bankId, { signal });
+      return response?.config ?? null;
+    },
   };
+}
+
+/**
+ * Resolve append support for one bank. A failed or unavailable config probe is
+ * deliberately treated as unsupported: a per-turn document preserves the
+ * conversation, while an append submitted to a text-disabled bank can be
+ * accepted by the HTTP layer and fail later in the worker.
+ */
+async function resolveBankAppendSupport(
+  bankId: string,
+  scopedClient: BankScopedClient,
+  signal?: globalThis.AbortSignal
+): Promise<boolean> {
+  if (!supportsUpdateModeAppend) return false;
+
+  const cached = bankAppendCapability.get(bankId);
+  if (cached !== undefined) return cached;
+
+  const inFlight = bankAppendCapabilityProbes.get(bankId);
+  if (inFlight) return (await inFlight) ?? false;
+
+  const probe = (async (): Promise<boolean | null> => {
+    try {
+      const config = await scopedClient.getConfig(signal);
+      if (!config) {
+        debug(`[Hindsight] Could not read resolved config for bank ${bankId}; disabling append`);
+        return null;
+      }
+      // A missing field inherits the global setting reported by /version.
+      return typeof config.store_document_text === "boolean" ? config.store_document_text : true;
+    } catch (error) {
+      debug(
+        `[Hindsight] Bank config probe failed for ${bankId}; disabling append: ${String(error)}`
+      );
+      return null;
+    }
+  })();
+  bankAppendCapabilityProbes.set(bankId, probe);
+
+  try {
+    const result = await probe;
+    if (result !== null) bankAppendCapability.set(bankId, result);
+    return result ?? false;
+  } finally {
+    if (bankAppendCapabilityProbes.get(bankId) === probe) {
+      bankAppendCapabilityProbes.delete(bankId);
+    }
+  }
 }
 
 async function ensureBankDefaultsApplied(bankId: string, config: PluginConfig): Promise<void> {
@@ -1662,6 +1731,10 @@ async function detectAppendCapability(
   const firstProbe = !appendCapabilityProbed;
   appendCapabilityProbed = true;
   supportsUpdateModeAppend = supported;
+  // A reconnect can point at a different deployment or a changed global
+  // default, so bank-level results must be re-read with the new probe.
+  bankAppendCapability.clear();
+  bankAppendCapabilityProbes.clear();
   if (supported && capabilities) {
     debug(
       `[Hindsight] API version ${capabilities.version} supports update_mode=append with stored document text`
@@ -2091,7 +2164,9 @@ export default function (api: MoltbotPluginAPI) {
 
               // Initialize client pointed at the local daemon URL
               debug("[Hindsight] Creating HindsightClient (local daemon)...");
-              clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
+              const localApiUrl = hindsightServer.getBaseUrl();
+              await detectAppendCapability(localApiUrl);
+              clientOptions = { baseUrl: localApiUrl };
               banksWithDefaultsApplied.clear();
               client = new HindsightClient(clientOptions);
 
@@ -2215,7 +2290,9 @@ export default function (api: MoltbotPluginAPI) {
 
             await hindsightServer.start();
 
-            clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
+            const localApiUrl = hindsightServer.getBaseUrl();
+            await detectAppendCapability(localApiUrl);
+            clientOptions = { baseUrl: localApiUrl };
             banksWithDefaultsApplied.clear();
             client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
@@ -2860,6 +2937,8 @@ ${memoriesFormatted}
             ? await refreshQueueOperationIdCapability(retainGeneration, retainSignal)
             : asyncRetainOperationIdCapability;
         if (!retainLifecycleIsCurrent()) return;
+        const appendSupportedForBank = await resolveBankAppendSupport(bankId, client, retainSignal);
+        if (!retainLifecycleIsCurrent()) return;
         const retainNow = Date.now();
         const retainRequest = buildRetainRequest(
           transcript,
@@ -2873,7 +2952,7 @@ ${memoriesFormatted}
               ? (pluginConfig.retainEveryNTurns ?? 1) + (pluginConfig.retainOverlapTurns ?? 0)
               : undefined,
             tags: inlineRetainTags,
-            appendSupported: supportsUpdateModeAppend,
+            appendSupported: appendSupportedForBank,
             operationId: createAsyncRetainOperationId(),
           }
         );
@@ -2886,6 +2965,38 @@ ${memoriesFormatted}
         const retainStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
         let retainElapsedMs = 0;
         let retainOutcome: "ok" | "queued" | "error" = "error";
+        const markRetainSucceeded = (request: RetainRequest, usedFallback: boolean): void => {
+          retainOutcome = "ok";
+          log.trackRetain(bankId, messageCount);
+          if (usedFallback) {
+            log.warn(
+              `[Hindsight] Bank ${bankId} rejected append; retained this turn with a per-turn document`
+            );
+          }
+          debug(
+            `[Hindsight] Retained ${messageCount} messages to bank ${bankId} for session ${request.documentId}`
+          );
+
+          // After a successful retain, try flushing any queued items.
+          if (retainQueue) {
+            flushRetainQueue(undefined, undefined, undefined, retainGeneration, retainSignal).catch(
+              () => {}
+            );
+          }
+        };
+        const handleRetainFailure = (request: RetainRequest, error: unknown): void => {
+          // Queue the failed retain for later delivery (external API mode only).
+          if (retainQueue) {
+            retainQueue.enqueue(bankId, request, request.metadata);
+            retainOutcome = "queued";
+            const pending = retainQueue.size();
+            log.warn(
+              `API unreachable — retain queued (${pending} pending, bank: ${bankId}): ${error instanceof Error ? error.message : error}`
+            );
+          } else {
+            log.error("error retaining messages", error);
+          }
+        };
         try {
           // An unknown capability does not hold up the first send: there is
           // nothing on the server yet for it to duplicate, so omitting the wire
@@ -2895,31 +3006,24 @@ ${memoriesFormatted}
           await client.retain(retainRequest, retainOperationIdCapability, retainSignal);
           if (!retainLifecycleIsCurrent()) return;
           retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
-          retainOutcome = "ok";
-          log.trackRetain(bankId, messageCount);
-          debug(
-            `[Hindsight] Retained ${messageCount} messages to bank ${bankId} for session ${retainRequest.documentId}`
-          );
-
-          // After a successful retain, try flushing any queued items
-          if (retainQueue) {
-            flushRetainQueue(undefined, undefined, undefined, retainGeneration, retainSignal).catch(
-              () => {}
-            );
-          }
+          markRetainSucceeded(retainRequest, false);
         } catch (retainError) {
           if (!retainLifecycleIsCurrent()) return;
-          retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
-          // Queue the failed retain for later delivery (external API mode only)
-          if (retainQueue) {
-            retainQueue.enqueue(bankId, retainRequest, retainRequest.metadata);
-            retainOutcome = "queued";
-            const pending = retainQueue.size();
-            log.warn(
-              `API unreachable — retain queued (${pending} pending, bank: ${bankId}): ${retainError instanceof Error ? retainError.message : retainError}`
-            );
+          if (retainRequest.updateMode === "append" && isAppendRetainRejection(retainError)) {
+            const fallbackRequest = buildPerTurnFallbackRetainRequest(retainRequest);
+            try {
+              await client.retain(fallbackRequest, retainOperationIdCapability, retainSignal);
+              if (!retainLifecycleIsCurrent()) return;
+              retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
+              markRetainSucceeded(fallbackRequest, true);
+            } catch (fallbackError) {
+              if (!retainLifecycleIsCurrent()) return;
+              retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
+              handleRetainFailure(fallbackRequest, fallbackError);
+            }
           } else {
-            log.error("error retaining messages", retainError);
+            retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
+            handleRetainFailure(retainRequest, retainError);
           }
         }
 
@@ -3110,6 +3214,50 @@ export function buildRetainRequest(
     tags: mergedTags.length > 0 ? mergedTags : undefined,
     ...(options?.operationId ? { operationId: options.operationId } : {}),
     updateMode: useSessionScopedDoc ? "append" : undefined,
+  };
+}
+
+/** Return true when the API rejected append because the target bank cannot store text. */
+export function isAppendRetainRejection(error: unknown): boolean {
+  const candidate = error as { message?: unknown; details?: unknown } | null;
+  const parts = [
+    typeof candidate?.message === "string" ? candidate.message : String(error),
+    typeof candidate?.details === "string"
+      ? candidate.details
+      : JSON.stringify(candidate?.details ?? ""),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return (
+    parts.includes("append") &&
+    (parts.includes("store_document_text") ||
+      parts.includes("document text storage") ||
+      parts.includes("not supported"))
+  );
+}
+
+/**
+ * Convert an append request to the legacy per-turn document path. This keeps
+ * the same transcript, metadata, and tags while avoiding an overwrite of a
+ * prior turn when the bank rejects append.
+ */
+export function buildPerTurnFallbackRetainRequest(request: RetainRequest): RetainRequest {
+  if (request.updateMode !== "append") return request;
+
+  const rawTurnIndex = request.metadata?.turn_index;
+  const parsedTurnIndex =
+    typeof rawTurnIndex === "string" ? Number.parseInt(rawTurnIndex, 10) : Number.NaN;
+  const turnSuffix = Number.isFinite(parsedTurnIndex)
+    ? String(parsedTurnIndex).padStart(6, "0")
+    : randomUUID();
+  const scope = request.metadata?.retention_scope === "window" ? "window" : "turn";
+  const baseDocumentId = request.documentId || "openclaw:session";
+
+  const { updateMode: _updateMode, operationId: _operationId, ...withoutAppend } = request;
+  return {
+    ...withoutAppend,
+    documentId: `${baseDocumentId}:${scope}:${turnSuffix}`,
+    operationId: createAsyncRetainOperationId(),
   };
 }
 
