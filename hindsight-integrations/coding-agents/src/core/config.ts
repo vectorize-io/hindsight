@@ -101,7 +101,9 @@ export interface RawConfig {
    *  timeout. The automatic session-start reflect is NOT affected — it always uses "low" to fit
    *  its hook window. */
   reflectBudget?: "low" | "mid" | "high";
-  autoReflect?: boolean; // inject a one-time reflect synthesis on the session's first prompt (default true; false = the agent reflects only via the hindsight_reflect tool, and the tool guide tells it to do so on new goals)
+  /** Inject one reflect synthesis on the session's first prompt (default true). False suppresses
+   *  automatic synthesis; the tool guide routes new goals through pages before optional reflection. */
+  autoReflect?: boolean;
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
