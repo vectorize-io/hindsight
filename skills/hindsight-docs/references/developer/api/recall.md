@@ -708,7 +708,7 @@ ISO 8601 datetimes representing when the described event started and ended. Extr
 
 #### mentioned_at
 
-ISO 8601 datetime of when this fact was retained into the bank.
+ISO 8601 datetime of when the fact was mentioned in its source, falling back to the retain item's timestamp when no source time can be attributed.
 
 #### document_id
 

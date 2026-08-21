@@ -9,7 +9,8 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
@@ -159,6 +160,9 @@ class Fact(BaseModel):
     # Optional temporal fields
     occurred_start: str | None = None
     occurred_end: str | None = None
+    mentioned_at: str | None = None
+    # Pipeline-only provenance used by the offset step; never serialize it as fact data.
+    mentioned_at_from_source: bool = Field(default=False, exclude=True)
 
     # Optional location field
     where: str | None = Field(
@@ -197,6 +201,13 @@ class FactCausalRelation(BaseModel):
     )
 
 
+_MENTIONED_AT_FIELD_DESCRIPTION = (
+    "Timezone-aware ISO 8601 timestamp for when the source message or record directly stating this fact was written. "
+    "Prefer the extended form, such as YYYY-MM-DDTHH:MM:SSZ. This is not when the described event happened. "
+    "Return null when unavailable, invalid, or not uniquely attributable to this fact."
+)
+
+
 class ExtractedFact(BaseModel):
     """A single extracted fact."""
 
@@ -214,6 +225,7 @@ class ExtractedFact(BaseModel):
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
     occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
+    mentioned_at: str | None = Field(default=None, description=_MENTIONED_AT_FIELD_DESCRIPTION)
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts, including user preferences, rules, corrections, and constraints even when stated during a conversation. 'assistant' = actions, experiences, or observations the assistant/agent actually performed."
     )
@@ -357,6 +369,7 @@ class ExtractedFactVerbose(BaseModel):
         default=None,
         description="WHEN the event ended (ISO timestamp). Only for events with duration. Leave null for conversations.",
     )
+    mentioned_at: str | None = Field(default=None, description=_MENTIONED_AT_FIELD_DESCRIPTION)
 
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts about the user, other people, events, general knowledge, preferences, rules, corrections, or constraints. 'assistant' = actions, experiences, or observations the assistant/agent actually performed (e.g., 'I changed X', 'I discovered Y')."
@@ -406,6 +419,7 @@ class ExtractedFactNoCausal(BaseModel):
     )
     occurred_start: str | None = Field(default=None, description="WHEN the event happened (ISO timestamp).")
     occurred_end: str | None = Field(default=None, description="WHEN the event ended (ISO timestamp).")
+    mentioned_at: str | None = Field(default=None, description=_MENTIONED_AT_FIELD_DESCRIPTION)
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = about the user/others, including user preferences, rules, corrections, and constraints. 'assistant' = actions or experiences the assistant/agent actually performed."
     )
@@ -967,6 +981,24 @@ Example: "Lost job → couldn't pay rent → moved apartment"
 - Fact 2: Moved apartment, causal_relations: [{target_index: 1, relation_type: "caused_by"}]"""
 
 
+MENTIONED_AT_SECTION = """
+
+══════════════════════════════════════════════════════════════════════════
+SOURCE TIMESTAMP (`mentioned_at`)
+══════════════════════════════════════════════════════════════════════════
+
+For every fact, return `mentioned_at` as the timezone-aware ISO 8601 time when the source message or record
+that directly states the fact was written.
+
+- Use only a timestamp visible in the source text and uniquely attributable to that fact.
+- Prefer the extended form, such as `2026-07-10T18:30:00Z` or `2026-07-10T18:30:00+02:00`,
+  but accept equivalent ISO 8601 source representations. The timestamp MUST include an explicit timezone.
+- This is not when the described event happened; use `occurred_start` / `occurred_end` for that.
+- Do not copy the request-level Event Date into `mentioned_at` and do not guess from text order.
+- If the source time is missing, invalid, lacks a timezone, or is ambiguous, return null.
+"""
+
+
 def _append_map_fields_prompt(fields: dict[str, "MapField"], lines: list[str], indent: int = 4) -> None:
     """Recursively append map field descriptions to the prompt lines."""
     pad = " " * indent
@@ -1128,6 +1160,13 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     else:
         base_fact_class = ExtractedFactNoCausal
         base_response_class = FactExtractionResponseNoCausal
+
+    # Verbatim deliberately remains one raw fact per chunk. A chunk can contain
+    # several source records with different timestamps, so there is no honest
+    # per-fact attribution in that mode; it keeps the item-level event_date
+    # fallback instead.
+    if extraction_mode != "verbatim":
+        prompt = prompt + MENTIONED_AT_SECTION
 
     # Add entity labels section if configured and build dynamic schema
     entity_labels_raw = config.entity_labels
@@ -1363,6 +1402,9 @@ async def _extract_facts_from_chunk(
         agent_name,
         mission_preamble=_retain_mission_preamble(config),
     )
+    # Source evidence is invariant for this chunk, including across malformed
+    # response retries; parse it once before entering the retry loop.
+    source_instants = _source_instants_from_text(chunk) if extraction_mode != "verbatim" else frozenset()
 
     # Opt into context caching when the provider supports it. The prompt and
     # response_schema are bank-agnostic (the mission lives in the user message),
@@ -1641,9 +1683,15 @@ async def _extract_facts_from_chunk(
                     if validated_relations:
                         fact_data["causal_relations"] = validated_relations
 
-                # Set mentioned_at to the event_date (when the conversation/document occurred),
-                # or None when the caller opted into no timestamp.
-                fact_data["mentioned_at"] = event_date.isoformat() if event_date is not None else None
+                mentioned_at_resolution = (
+                    _resolve_mentioned_at(get_value("mentioned_at"), event_date, source_instants)
+                    if extraction_mode != "verbatim"
+                    else _MentionedAtResolution(value=event_date, from_source=False)
+                )
+                fact_data["mentioned_at"] = (
+                    mentioned_at_resolution.value.isoformat() if mentioned_at_resolution.value is not None else None
+                )
+                fact_data["mentioned_at_from_source"] = mentioned_at_resolution.from_source
 
                 # Build Fact model instance
                 try:
@@ -2296,6 +2344,11 @@ async def extract_facts_from_contents_batch_api(
 
         # Parse facts (reuse existing logic from _extract_facts_from_chunk)
         raw_facts = extraction_response_json.get("facts", [])
+        # Keep Batch and streaming on the same per-chunk source-evidence path;
+        # verbatim never consumes per-fact source timestamps.
+        source_instants = (
+            _source_instants_from_text(chunk_content) if config.retain_extraction_mode != "verbatim" else frozenset()
+        )
         chunk_facts = []
 
         for i, llm_fact in enumerate(raw_facts):
@@ -2444,9 +2497,15 @@ async def extract_facts_from_contents_batch_api(
                 if validated_relations:
                     fact_data["causal_relations"] = validated_relations
 
-            # Set mentioned_at to the event_date (when the conversation/document occurred),
-            # or None when the caller opted into no timestamp.
-            fact_data["mentioned_at"] = event_date.isoformat() if event_date is not None else None
+            mentioned_at_resolution = (
+                _resolve_mentioned_at(get_value("mentioned_at"), event_date, source_instants)
+                if config.retain_extraction_mode != "verbatim"
+                else _MentionedAtResolution(value=event_date, from_source=False)
+            )
+            fact_data["mentioned_at"] = (
+                mentioned_at_resolution.value.isoformat() if mentioned_at_resolution.value is not None else None
+            )
+            fact_data["mentioned_at_from_source"] = mentioned_at_resolution.from_source
 
             try:
                 fact = Fact(fact=combined_text, fact_type=fact_type, **fact_data)
@@ -2507,7 +2566,10 @@ async def extract_facts_from_contents_batch_api(
                 content_index=chunk_meta.content_index,
                 chunk_index=chunk_meta.chunk_index,
                 context=content.context,
-                mentioned_at=content.event_date,
+                mentioned_at=_parse_datetime(fact_from_llm.mentioned_at)
+                if fact_from_llm.mentioned_at
+                else content.event_date,
+                mentioned_at_from_source=fact_from_llm.mentioned_at_from_source,
                 metadata=content.metadata,
                 tags=content.tags,
                 observation_scopes=content.observation_scopes,
@@ -2690,8 +2752,7 @@ async def extract_facts_from_contents(
             chunk_facts = facts_from_llm[fact_idx_in_content : fact_idx_in_content + chunk_fact_count]
 
             for fact_from_llm in chunk_facts:
-                # Convert Fact model from LLM to ExtractedFactType dataclass
-                # mentioned_at is always the event_date (when the conversation/document occurred)
+                # Convert Fact model from LLM to ExtractedFactType dataclass.
                 extracted_fact = ExtractedFactType(
                     fact_text=fact_from_llm.fact,
                     fact_type=fact_from_llm.fact_type,
@@ -2707,8 +2768,10 @@ async def extract_facts_from_contents(
                     content_index=content_index,
                     chunk_index=chunk_global_idx,
                     context=content.context,
-                    # mentioned_at: always the event_date (when the conversation/document occurred)
-                    mentioned_at=content.event_date,
+                    mentioned_at=_parse_datetime(fact_from_llm.mentioned_at)
+                    if fact_from_llm.mentioned_at
+                    else content.event_date,
+                    mentioned_at_from_source=fact_from_llm.mentioned_at_from_source,
                     metadata=content.metadata,
                     tags=content.tags,
                     observation_scopes=content.observation_scopes,
@@ -2768,6 +2831,61 @@ def _parse_datetime(date_str: str):
         return None
 
 
+_SOURCE_ISO_TIMESTAMP_RE = re.compile(
+    r"(?<![\w+-])((?:\d{4}-\d{2}-\d{2}|\d{8})[Tt ]"
+    r"\d{2}:?\d{2}(?::?\d{2}(?:[.,]\d+)?)?"
+    r"(?:[Zz]|[+-]\d{2}(?::?\d{2})?))(?![\w+-])"
+)
+
+
+def _source_instants_from_text(source_text: str) -> frozenset[datetime]:
+    """Normalize explicit instants without assigning meaning to source-specific keys."""
+
+    return frozenset(
+        parsed.astimezone(timezone.utc)
+        for match in _SOURCE_ISO_TIMESTAMP_RE.finditer(source_text)
+        if (parsed := _parse_source_mentioned_at(match.group(1))) is not None
+    )
+
+
+def _parse_source_mentioned_at(value: Any) -> datetime | None:
+    """Accept timestamp-shaped ISO 8601 values whose timezone is explicit."""
+    if not isinstance(value, str):
+        return None
+
+    # The regex prevents substring and natural-language matching; isoparse
+    # validates common basic/extended ISO representations after that boundary.
+    match = _SOURCE_ISO_TIMESTAMP_RE.fullmatch(value)
+    if match is None:
+        return None
+
+    parsed = _parse_datetime(match.group(1))
+    if parsed is None or parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
+@dataclass(frozen=True)
+class _MentionedAtResolution:
+    value: datetime | None
+    from_source: bool
+
+
+def _resolve_mentioned_at(
+    value: Any, event_date: datetime | None, source_instants: frozenset[datetime]
+) -> _MentionedAtResolution:
+    """Accept a source time only when its instant is present in source text.
+
+    This membership guard blocks pure hallucinations; it does not prove that
+    the instant semantically belongs to this particular fact.
+    """
+    source_mentioned_at = _parse_source_mentioned_at(value)
+    if source_mentioned_at is not None:
+        if source_mentioned_at.astimezone(timezone.utc) in source_instants:
+            return _MentionedAtResolution(value=source_mentioned_at, from_source=True)
+    return _MentionedAtResolution(value=event_date, from_source=False)
+
+
 def _convert_causal_relations(
     relations_from_llm, extraction_group_start_idx: int, extraction_group_size: int
 ) -> list[CausalRelationType]:
@@ -2795,11 +2913,12 @@ def _convert_causal_relations(
 
 def _add_temporal_offsets(facts: list[ExtractedFactType], contents: list[RetainContent]) -> None:
     """
-    Add time offsets to preserve fact ordering across all contents.
+    Add time offsets to temporal fallbacks and event dates to preserve fact ordering.
 
     This allows retrieval to distinguish between facts from different documents/conversations
     even when they have the same base event_date, and also between facts within the same
-    conversation.
+    conversation. Exact source ``mentioned_at`` values are not modified: multiple facts stated
+    in one source record legitimately share its timestamp.
 
     Uses absolute position across all facts to ensure unique timestamps.
 
@@ -2816,7 +2935,7 @@ def _add_temporal_offsets(facts: list[ExtractedFactType], contents: list[RetainC
             fact.occurred_start = parse_datetime_flexible(fact.occurred_start) + offset
         if fact.occurred_end:
             fact.occurred_end = parse_datetime_flexible(fact.occurred_end) + offset
-        if fact.mentioned_at:
+        if fact.mentioned_at and not fact.mentioned_at_from_source:
             fact.mentioned_at = parse_datetime_flexible(fact.mentioned_at) + offset
 
 

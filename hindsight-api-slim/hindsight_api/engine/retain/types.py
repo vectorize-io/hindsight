@@ -163,6 +163,9 @@ class ExtractedFact:
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
+    # Internal extraction provenance: only fallback timestamps receive the
+    # synthetic ordering offset. This is intentionally not persisted.
+    mentioned_at_from_source: bool = False
 
 
 @dataclass
