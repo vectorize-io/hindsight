@@ -16,8 +16,9 @@ explains what happens automatically, which tools you have, and how to configure 
 - **Ingestion builds itself**: on first open, the bank is seeded from recent commit messages and a
   read-only codebase survey; every session start, a background engine tops it up (new commits, new
   conversations) and keeps 5 knowledge pages current. There is NO ingest command to run.
-- **Session synthesis**: the first prompt of a session triggers one deep memory synthesis
-  (`reflect`) injected into context. Later turns inject nothing automatically.
+- **Session synthesis**: by default, the first prompt of a session triggers one deep memory
+  synthesis (`reflect`) injected into context. With `autoReflect=false`, the agent searches the
+  knowledge pages first and reflects only when they are too shallow.
 - **Write-back**: the session transcript is retained into the bank automatically at session end
   (per-turn on opencode). The user never needs to "save" a conversation.
 
