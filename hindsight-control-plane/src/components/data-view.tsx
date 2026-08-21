@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import { isSearchQueryCleared } from "@/lib/search-query";
 import { EntityChip, TagChip } from "@/components/ui/facet-chip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -386,6 +387,18 @@ export function DataView({
     }
   };
 
+  const handleSearchQueryChange = (nextQuery: string) => {
+    const queryCleared = isSearchQueryCleared(searchQuery, nextQuery);
+    setSearchQuery(nextQuery);
+    if (!queryCleared || !currentBank) return;
+
+    setCurrentPage(1);
+    const { tags, match } = resolveTagQuery();
+    // The auto-loader intentionally waits for Enter for non-empty queries, so
+    // clearing an active query must explicitly restore the unfiltered dataset.
+    loadData(undefined, undefined, tags, match);
+  };
+
   // Single auto-loader for the graph data. This deliberately replaces what used
   // to be two effects (mount/context + filter change) that BOTH fired on mount,
   // doubling the initial /api/graph request (see issue #2158). When the context
@@ -477,7 +490,7 @@ export function DataView({
           <Spinner size="lg" variant="jump" className="mx-auto mb-3" />
           <p className="text-muted-foreground">{t("loadingMemories")}</p>
         </div>
-      ) : data && data.total_units === 0 && !hasActiveMemoryFilters ? (
+      ) : data && data.total_units === 0 && !hasActiveMemoryFilters && !loading ? (
         <div className="text-center py-20">
           <FileText className="w-10 h-10 mx-auto mb-4 text-muted-foreground/50" />
           <h3 className="text-base font-medium text-foreground mb-1">{t("noMemoriesYet")}</h3>
@@ -518,7 +531,7 @@ export function DataView({
                   <Input
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => handleSearchQueryChange(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
