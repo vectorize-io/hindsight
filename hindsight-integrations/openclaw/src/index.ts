@@ -2091,7 +2091,9 @@ export default function (api: MoltbotPluginAPI) {
 
               // Initialize client pointed at the local daemon URL
               debug("[Hindsight] Creating HindsightClient (local daemon)...");
-              clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
+              const localApiUrl = hindsightServer.getBaseUrl();
+              await detectAppendCapability(localApiUrl);
+              clientOptions = { baseUrl: localApiUrl };
               banksWithDefaultsApplied.clear();
               client = new HindsightClient(clientOptions);
 
@@ -2215,7 +2217,9 @@ export default function (api: MoltbotPluginAPI) {
 
             await hindsightServer.start();
 
-            clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
+            const localApiUrl = hindsightServer.getBaseUrl();
+            await detectAppendCapability(localApiUrl);
+            clientOptions = { baseUrl: localApiUrl };
             banksWithDefaultsApplied.clear();
             client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
