@@ -9103,14 +9103,23 @@ class MemoryEngine(MemoryEngineInterface):
 
         store = get_memories()
         if not store.writes_memory_rows_in_sql_for(bank_id):
-            # Both branches are a DELETE of memories, so both go through delete_where. The
-            # unfiltered case used to call drop_bank_storage, which removes the bank's whole
-            # namespace rather than its contents: the bank then existed in SQL with no storage
-            # behind it, and the store's read paths reported it as merely empty. It also lost the
-            # namespace's indexed_metadata_keys, which are fixed at creation and cannot be
-            # re-declared, silently emptying metadata facets for good.
-            predicate = DeletePredicate(fact_types=[fact_type]) if fact_type else DeletePredicate(delete_all=True)
-            await store.delete_where(bank_id, predicate)
+            # Three cases, and the middle one is the whole point. `delete_bank_profile` is what
+            # separates "delete this bank" from "clear this bank's memories" — the API's clear
+            # endpoint calls in with it False, and the bank goes on existing afterwards.
+            #
+            # Only a real bank deletion may drop the storage. A clear used to take that branch
+            # too, which left a bank that still existed in SQL with no storage behind it: the
+            # store's read paths then reported it as merely empty, indistinguishable from a bank
+            # nobody had written to. It also discarded the namespace's declared metadata keys,
+            # which are fixed at creation and cannot be re-declared, so metadata facets came back
+            # empty for good even once the bank was written to again.
+            if fact_type:
+                await store.delete_where(bank_id, DeletePredicate(fact_types=[fact_type]))
+            elif delete_bank_profile:
+                # The bank row is going away; its storage goes with it or it is orphaned.
+                await store.drop_bank_storage(bank_id)
+            else:
+                await store.delete_where(bank_id, DeletePredicate(delete_all=True))
 
         # Drop any cached stats for this bank — counts have changed and the
         # TTL would otherwise serve pre-delete values for up to a minute.
