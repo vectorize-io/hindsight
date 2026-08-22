@@ -915,6 +915,21 @@ class PostgreSQLOps(DataAccessOps):
         # Unnesting once and hash-joining connected_sources makes the work linear in
         # the number of source ids instead.
         #
+        # The score is computed against the materialized `connected_array` rather
+        # than by re-joining the `connected_sources` CTE. PostgreSQL cannot derive
+        # statistics for a CTE scan and falls back to a hardcoded estimate of 1 row;
+        # on an aged bank that CTE actually holds thousands (3,493 observed). Believing
+        # it was joining against a single row, the planner chose a nested loop and
+        # spent ~27.6s doing 31M row comparisons to emit 3,715 (issue #3714). Scoring
+        # by array membership against connected_array keeps the same set-wise semantics
+        # -- COUNT(DISTINCT) over shared source ids -- without exposing a join whose
+        # shape depends on an estimate the planner cannot make. MATERIALIZED does not
+        # help here: the problem is join selection, not repeated CTE evaluation.
+        #
+        # `score > 0` cannot filter anything the previous inner join kept: `&&` in
+        # `candidates` already guarantees at least one shared source id. It is retained
+        # so the rewrite is equivalent by construction rather than by invariant.
+        #
         # `connected_sources` caps each entity with row_number() rather than the
         # LATERAL + LIMIT that reads more naturally. Do not "simplify" it back
         # (issue #3510). The scoring join above is O(C + U) when planned as a hash
@@ -983,11 +998,12 @@ class PostgreSQLOps(DataAccessOps):
                   {window.clause("mu")}
             ),
             scored AS (
-                SELECT c.id, COUNT(DISTINCT cs.source_id)::float AS score
-                FROM candidates c
-                CROSS JOIN LATERAL unnest(c.source_memory_ids) AS s(source_id)
-                JOIN connected_sources cs ON cs.source_id = s.source_id
-                GROUP BY c.id
+                SELECT c.id, (
+                    SELECT COUNT(DISTINCT s.source_id)::float
+                    FROM unnest(c.source_memory_ids) AS s(source_id)
+                    WHERE s.source_id = ANY(ca.source_ids)
+                ) AS score
+                FROM candidates c, connected_array ca
             )
             SELECT
                 c.id, c.text, c.context, c.event_date, c.occurred_start,
@@ -996,6 +1012,7 @@ class PostgreSQLOps(DataAccessOps):
                 sc.score
             FROM candidates c
             JOIN scored sc ON sc.id = c.id
+            WHERE sc.score > 0
             ORDER BY sc.score DESC
             LIMIT $2
             """,
