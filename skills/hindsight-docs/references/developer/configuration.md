@@ -2195,11 +2195,22 @@ you with an opaque restart.
 | `HINDSIGHT_API_LOOP_WATCHDOG_STALL_THRESHOLD_MS` | Log a stall once the loop is unresponsive for at least this long. | `1000` |
 | `HINDSIGHT_API_LOOP_WATCHDOG_POLL_INTERVAL_MS` | How often the watchdog thread pings the loop. | `250` |
 | `HINDSIGHT_API_DB_ACQUIRE_WARN_THRESHOLD_MS` | Log a warning (with pool stats) when acquiring a pooled connection waits at least this long. | `1000` |
+| `HINDSIGHT_API_DB_UNAVAILABLE_EXIT_SECONDS` | Exit the process when no pooled connection has been acquired for this long, so the supervisor can replace it. `0` disables. | `120` |
 
 The DB-pool acquire path also exposes `hindsight_db_pool_waiting` (callers currently
 queued for a connection) and the `hindsight_db_pool_acquire_wait` histogram. A slow
 or failing `/health` response additionally carries `db_acquire_ms`, `db_pool_waiting`,
 `db_pool_in_use`, and `db_pool_max` for triage.
+
+`HINDSIGHT_API_DB_UNAVAILABLE_EXIT_SECONDS` covers the case the metrics above only
+report: a pool that stops producing connections and never starts again. Liveness
+is deliberately database-free — a probe that queries the database restarts every
+replica at once whenever the database is merely slow — so nothing else brings such
+a process back. The window is measured from the last *successful* acquire, not
+from a count of failures, because a process serving little traffic may attempt an
+acquire only rarely. Set it comfortably longer than your longest expected
+failover or restart; a full window with no successful acquire is not a slow
+database.
 
 ### Metrics
 

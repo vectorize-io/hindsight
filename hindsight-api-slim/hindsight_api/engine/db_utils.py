@@ -4,11 +4,14 @@ Database utility functions for connection management with retry logic.
 
 import asyncio
 import logging
+import os
 import random
 import time
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
+
+from ..config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +19,52 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_DELAY = 0.5  # seconds
 DEFAULT_MAX_DELAY = 5.0  # seconds
+
+# Monotonic timestamp of the last acquire that succeeded. Seeded at import so a
+# process that has never reached the database still gets a full window before it
+# gives up, rather than exiting the moment its first acquire fails.
+#
+# The window is measured from the last SUCCESS, not from a count of failures: a
+# process serving little traffic may attempt an acquire only rarely, and a
+# counter would never trip. See DEFAULT_DB_UNAVAILABLE_EXIT_SECONDS in config for
+# why the process has to end itself at all.
+_last_acquire_success: float = time.monotonic()
+
+
+def _note_acquire_success() -> None:
+    """Record a working pool. Any success anywhere clears the failure window."""
+    global _last_acquire_success
+    _last_acquire_success = time.monotonic()
+
+
+def _exit_if_db_unavailable_too_long() -> None:
+    """Terminate the process when no acquire has succeeded for the whole window.
+
+    Called only after a call has exhausted its retries, so the common path is
+    untouched. Uses ``os._exit`` rather than raising: the exception would be
+    caught by whatever request handler happened to trigger it, and the process
+    would carry on in the same unusable state.
+    """
+    limit = get_config().db_unavailable_exit_seconds
+    if limit <= 0:
+        return
+    unavailable_for = time.monotonic() - _last_acquire_success
+    if unavailable_for < limit:
+        return
+    logger.critical(
+        "No database connection has been acquired for %.0fs (limit %.0fs). The pool is not "
+        "recovering; exiting so the supervisor can replace this process.",
+        unavailable_for,
+        limit,
+    )
+    # Flush before _exit: it skips atexit handlers, and losing the line above
+    # would leave an unexplained restart.
+    for handler in logging.getLogger().handlers:
+        try:
+            handler.flush()
+        except Exception:  # pragma: no cover - best effort
+            pass
+    os._exit(1)
 
 
 def _backoff_delay(attempt: int, base_delay: float, max_delay: float) -> float:
@@ -102,12 +151,12 @@ async def retry_with_backoff(
                     )
                 else:
                     logger.warning(
-                        f"Database operation failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                        f"Database operation failed (attempt {attempt + 1}/{max_retries + 1}): {e!r}. "
                         f"Retrying in {delay:.1f}s..."
                     )
                 await asyncio.sleep(delay)
             else:
-                logger.error(f"Database operation failed after {max_retries + 1} attempts: {e}")
+                logger.error(f"Database operation failed after {max_retries + 1} attempts: {e!r}")
     raise last_exception
 
 
@@ -146,19 +195,24 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
             for attempt in range(max_retries + 1):
                 try:
                     conn = await stack.enter_async_context(backend_or_pool.acquire())
+                    _note_acquire_success()
                     break
                 except Exception as e:
                     if not _is_retryable(e):
                         raise
                     if attempt < max_retries:
                         delay = _backoff_delay(attempt, DEFAULT_BASE_DELAY, DEFAULT_MAX_DELAY)
+                        # !r, not str(): several driver exceptions stringify to "",
+                        # which turns this line into "acquire failed: " and hides
+                        # whether the cause was auth, a timeout or an exhausted pool.
                         logger.warning(
-                            f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e!r}. "
                             f"Retrying in {delay:.1f}s..."
                         )
                         await asyncio.sleep(delay)
                     else:
-                        logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e}")
+                        logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e!r}")
+                        _exit_if_db_unavailable_too_long()
                         raise
 
             acquire_time = time.time() - start
@@ -174,7 +228,17 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
         async def acquire():
             return await pool.acquire()
 
-        conn = await retry_with_backoff(acquire, max_retries=max_retries)
+        try:
+            conn = await retry_with_backoff(acquire, max_retries=max_retries)
+        except Exception as e:
+            # Same reasoning as the backend path above: retries are spent and the
+            # pool may never come back on its own. Only connection failures count
+            # -- retry_with_backoff re-raises anything non-retryable on the first
+            # attempt, and a programming error says nothing about the database.
+            if _is_retryable(e):
+                _exit_if_db_unavailable_too_long()
+            raise
+        _note_acquire_success()
         acquire_time = time.time() - start
 
         if acquire_time > 0.05:

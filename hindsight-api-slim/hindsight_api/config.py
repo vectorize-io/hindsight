@@ -587,6 +587,7 @@ ENV_LOOP_WATCHDOG_ENABLED = "HINDSIGHT_API_LOOP_WATCHDOG_ENABLED"
 ENV_LOOP_WATCHDOG_STALL_THRESHOLD_MS = "HINDSIGHT_API_LOOP_WATCHDOG_STALL_THRESHOLD_MS"
 ENV_LOOP_WATCHDOG_POLL_INTERVAL_MS = "HINDSIGHT_API_LOOP_WATCHDOG_POLL_INTERVAL_MS"
 ENV_DB_ACQUIRE_WARN_THRESHOLD_MS = "HINDSIGHT_API_DB_ACQUIRE_WARN_THRESHOLD_MS"
+ENV_DB_UNAVAILABLE_EXIT_SECONDS = "HINDSIGHT_API_DB_UNAVAILABLE_EXIT_SECONDS"
 
 # Vertex AI configuration
 ENV_LLM_VERTEXAI_PROJECT_ID = "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"
@@ -1463,6 +1464,18 @@ DEFAULT_LOOP_WATCHDOG_ENABLED = True
 DEFAULT_LOOP_WATCHDOG_STALL_THRESHOLD_MS = 1000  # log a stall once the loop is unresponsive this long
 DEFAULT_LOOP_WATCHDOG_POLL_INTERVAL_MS = 250  # how often the watchdog thread pings the loop
 DEFAULT_DB_ACQUIRE_WARN_THRESHOLD_MS = 1000  # log a warning when a pool acquire waits this long
+# Exit the process when no pooled acquire has succeeded for this long, so the
+# supervisor can replace it. A pool can reach a state it never leaves -- every
+# acquire fails and the next caller repeats it forever -- and nothing else
+# recovers from that: liveness is deliberately database-free (a DB-touching probe
+# restarts every replica at once when the database is merely slow), so the pod
+# stays up and unready indefinitely. Two minutes clears a CNPG failover (tens of
+# seconds) and a database restart with room to spare, so the ordinary causes
+# resolve well inside it; two minutes in which not one acquire succeeded is not a
+# slow database. Was 600s initially, which left a wedged process serving nothing
+# for ten minutes -- far longer than the failures it is meant to ride out.
+# 0 disables it.
+DEFAULT_DB_UNAVAILABLE_EXIT_SECONDS = 120.0
 
 # Audit log defaults
 DEFAULT_AUDIT_LOG_ENABLED = False  # Disabled by default
@@ -2699,6 +2712,7 @@ class HindsightConfig:
     loop_watchdog_stall_threshold_ms: int
     loop_watchdog_poll_interval_ms: int
     db_acquire_warn_threshold_ms: int
+    db_unavailable_exit_seconds: float
 
     # Audit log configuration
     # audit_log_enabled is hierarchical (env -> tenant -> bank): a deployment can
@@ -4076,6 +4090,9 @@ class HindsightConfig:
             ),
             db_acquire_warn_threshold_ms=int(
                 os.getenv(ENV_DB_ACQUIRE_WARN_THRESHOLD_MS, str(DEFAULT_DB_ACQUIRE_WARN_THRESHOLD_MS))
+            ),
+            db_unavailable_exit_seconds=float(
+                os.getenv(ENV_DB_UNAVAILABLE_EXIT_SECONDS, str(DEFAULT_DB_UNAVAILABLE_EXIT_SECONDS))
             ),
             # Audit log configuration (static, server-level only)
             audit_log_enabled=os.getenv(ENV_AUDIT_LOG_ENABLED, str(DEFAULT_AUDIT_LOG_ENABLED)).lower() == "true",
