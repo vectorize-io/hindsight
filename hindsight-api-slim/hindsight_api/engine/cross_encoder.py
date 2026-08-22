@@ -42,7 +42,7 @@ from .local_device import (
     resolve_model_device_type,
     select_local_device,
 )
-from .tei_retry import tei_retry_delay
+from .tei_retry import TEI_KEEPALIVE_EXPIRY_SECONDS, is_retryable_tei_transport_error, tei_retry_delay
 
 logger = logging.getLogger(__name__)
 
@@ -383,7 +383,29 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
                         response = await client.post(url, **kwargs)
                     response.raise_for_status()
                     return response
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+                    last_error = e
+                    if attempt < self.max_retries:
+                        logger.warning(
+                            f"TEI request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                            f"Retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                except httpx.RequestError as e:
+                    if not is_retryable_tei_transport_error(e):
+                        raise
+                    last_error = e
+                    if attempt < self.max_retries:
+                        logger.warning(
+                            f"TEI request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                            f"Retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                except OSError as e:
+                    if not is_retryable_tei_transport_error(e):
+                        raise
                     last_error = e
                     if attempt < self.max_retries:
                         logger.warning(
@@ -422,7 +444,10 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
             f"Reranker: initializing TEI provider at {self.base_url} "
             f"(batch_size={self.batch_size}, max_concurrent={self.max_concurrent})"
         )
-        self._async_client = httpx.AsyncClient(timeout=self.timeout)
+        self._async_client = httpx.AsyncClient(
+            timeout=self.timeout,
+            limits=httpx.Limits(keepalive_expiry=min(self.timeout, TEI_KEEPALIVE_EXPIRY_SECONDS)),
+        )
 
         # Verify server is reachable and get model info
         # Use a temporary semaphore for initialization

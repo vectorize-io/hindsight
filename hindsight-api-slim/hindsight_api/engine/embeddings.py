@@ -53,7 +53,7 @@ from .local_device import (
     resolve_model_device_type,
     select_local_device,
 )
-from .tei_retry import tei_retry_delay
+from .tei_retry import TEI_KEEPALIVE_EXPIRY_SECONDS, is_retryable_tei_transport_error, tei_retry_delay
 
 logger = logging.getLogger(__name__)
 
@@ -537,6 +537,26 @@ class RemoteTEIEmbeddings(Embeddings):
                     )
                     time.sleep(delay)
                     delay *= 2  # Exponential backoff
+            except httpx.RequestError as e:
+                if not is_retryable_tei_transport_error(e):
+                    raise
+                last_error = e
+                if attempt < self.max_retries:
+                    logger.warning(
+                        f"TEI request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+            except OSError as e:
+                if not is_retryable_tei_transport_error(e):
+                    raise
+                last_error = e
+                if attempt < self.max_retries:
+                    logger.warning(
+                        f"TEI request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
             except httpx.HTTPStatusError as e:
                 # TEI uses 429 as normal overload backpressure. Retry it with
                 # the same bounded budget as transient server errors.
@@ -564,7 +584,10 @@ class RemoteTEIEmbeddings(Embeddings):
             return
 
         logger.info(f"Embeddings: initializing TEI provider at {self.base_url}")
-        self._client = httpx.Client(timeout=self.timeout)
+        self._client = httpx.Client(
+            timeout=self.timeout,
+            limits=httpx.Limits(keepalive_expiry=min(self.timeout, TEI_KEEPALIVE_EXPIRY_SECONDS)),
+        )
 
         # Verify server is reachable and get model info
         try:
