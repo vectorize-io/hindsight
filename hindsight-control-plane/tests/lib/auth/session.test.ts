@@ -5,6 +5,7 @@ import {
   SESSION_MAX_AGE_SECONDS,
   createSessionToken,
   isSecureRequest,
+  sessionCookieOptions,
   verifySessionToken,
 } from "@/lib/auth/session";
 
@@ -128,6 +129,41 @@ describe("isSecureRequest", () => {
 
   it("is case-insensitive on the forwarded value", () => {
     expect(isSecureRequest(fakeRequest({ forwardedProto: "HTTPS" }))).toBe(true);
+  });
+});
+
+describe("sessionCookieOptions", () => {
+  const ORIGINAL_ENV = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+  });
+
+  it("defaults to SameSite=Lax with Secure derived from the request", () => {
+    delete process.env.HINDSIGHT_CP_COOKIE_SAMESITE;
+    expect(sessionCookieOptions(fakeRequest({ protocol: "http:" }))).toEqual({
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+      path: "/",
+    });
+    expect(sessionCookieOptions(fakeRequest({ forwardedProto: "https" })).secure).toBe(true);
+  });
+
+  it("emits SameSite=None; Secure; Partitioned when opted in, even over plain http", () => {
+    process.env.HINDSIGHT_CP_COOKIE_SAMESITE = "none";
+    expect(sessionCookieOptions(fakeRequest({ protocol: "http:" }))).toEqual({
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/",
+      partitioned: true,
+    });
+  });
+
+  it("ignores an unrelated value and stays on Lax", () => {
+    process.env.HINDSIGHT_CP_COOKIE_SAMESITE = "strict";
+    expect(sessionCookieOptions(fakeRequest()).sameSite).toBe("lax");
   });
 });
 

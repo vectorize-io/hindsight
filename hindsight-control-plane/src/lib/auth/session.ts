@@ -55,11 +55,40 @@ export function isSecureRequest(request: NextRequest): boolean {
   return request.nextUrl.protocol === "https:";
 }
 
-export function sessionCookieOptions(request: NextRequest) {
+/**
+ * Cookie attributes for the session. When `HINDSIGHT_CP_COOKIE_SAMESITE=none`
+ * the cookie is emitted as `SameSite=None; Secure; Partitioned` so it survives
+ * inside a cross-site iframe (CHIPS). Otherwise it stays `SameSite=Lax` with
+ * `Secure` derived from the request protocol, keeping plain-http dev working.
+ *
+ * Note: `SameSite=None` drops the browser's implicit CSRF defense. The Origin
+ * check in `lib/auth/request-guard.ts` (applied in middleware) is what replaces
+ * it, so the two are deliberately shipped together.
+ *
+ * `partitioned` is not yet in the Next.js cookie option types, so the return is
+ * loosely typed to carry it through to `cookies().set(...)`.
+ */
+export function sessionCookieOptions(request: NextRequest): {
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: "lax" | "none";
+  path: string;
+  partitioned?: boolean;
+} {
+  if (process.env.HINDSIGHT_CP_COOKIE_SAMESITE === "none") {
+    return {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/",
+      partitioned: true,
+    };
+  }
+
   return {
     httpOnly: true,
     secure: isSecureRequest(request),
-    sameSite: "lax" as const,
+    sameSite: "lax",
     path: "/",
   };
 }
