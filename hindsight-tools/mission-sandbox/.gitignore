@@ -1,0 +1,8 @@
+node_modules
+dist
+.next
+.next-*
+standalone
+next-env.d.ts
+*.tsbuildinfo
+projects

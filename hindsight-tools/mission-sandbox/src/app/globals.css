@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0c0d10;
+  --surface: #14161b;
+  --surface-2: #1b1e25;
+  --border: #262a33;
+  --text: #eceef2;
+  --muted: #9aa3b2;
+  --good: #3fb950;
+  --bad: #f0726a;
+  --accent: #6aa0ff;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--text);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+/* Disclosure triangles: subtle, no default marker clutter. */
+summary {
+  list-style: none;
+  user-select: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+details[open] > summary::before {
+  content: "▾ ";
+}
