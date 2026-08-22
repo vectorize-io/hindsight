@@ -100,7 +100,7 @@ export async function buildHookOutput(args: {
 
   // ── reflect: once per session, on the first prompt ────────────────────────────
   // autoReflect false = tool-only mode: no injected synthesis; the roster's tool guide instead
-  // instructs the agent to call hindsight_reflect itself when a new goal is set.
+  // sends new goals through knowledge pages first and reserves reflection for gaps.
   let reflectAnswer = cached.reflectAnswer;
   let reflectRanThisTurn = false;
   // Set ONLY by the catch below. An empty answer is not a failure: reflect can legitimately have
