@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from hindsight_api.engine.providers.openai_compatible_llm import (
     OpenAICompatibleLLM,
     ProviderResponseError,
+    _rate_limit_retry_at,
 )
 from hindsight_api.worker.stage import StageHolder, bind_holder, set_stage
 
@@ -196,3 +198,22 @@ async def test_missing_choices_are_retryable_provider_response_errors():
     assert result.ok is True
     assert create.await_count == 2
     sleep_mock.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_seconds"),
+    [
+        # OpenAI's Go-style duration headers: a single component ("8.64s")
+        # and a compound one ("6m0s") that a naive parser reads as 0s.
+        ({"x-ratelimit-reset-tokens": "8.64s"}, 8.64),
+        ({"x-ratelimit-reset-requests": "6m0s"}, 360),
+        # Requests and tokens can reset at different times; wait for the max.
+        ({"x-ratelimit-reset-requests": "6m0s", "x-ratelimit-reset-tokens": "233ms"}, 360),
+    ],
+)
+def test_rate_limit_retry_at_parses_openai_reset_headers(headers, expected_seconds):
+    error = SimpleNamespace(body={"message": "Rate limit reached"}, response=SimpleNamespace(headers=headers))
+    retry_at = _rate_limit_retry_at(error)
+    assert retry_at is not None
+    wait = (retry_at - datetime.now(UTC)).total_seconds()
+    assert expected_seconds - 1 < wait <= expected_seconds + 1
