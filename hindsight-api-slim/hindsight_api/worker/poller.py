@@ -113,7 +113,7 @@ logger = logging.getLogger(__name__)
 PROGRESS_LOG_INTERVAL = 30
 
 # Stuck-task stack-dump thresholds (seconds). Each task gets one stack dump
-# per threshold it crosses (5min, 10min, 20min, 40min, 80min...).
+# per threshold its current stage crosses without making progress.
 STUCK_STACK_INITIAL_THRESHOLD_S = 300
 STUCK_STACK_MAX_THRESHOLD_S = 3600 * 6  # cap doubling at 6h
 
@@ -162,9 +162,10 @@ class ActiveTaskInfo:
     bg_task: "asyncio.Task[Any]"
     started_at: float
     stage_holder: StageHolder
-    # Largest stuck-stack threshold (seconds) for which we've already
-    # dumped a stack trace; used to suppress repeated dumps.
+    # Largest stuck-stack threshold (seconds) for the current stage. Resetting
+    # when the stage changes keeps a long, advancing task from looking wedged.
     last_stack_dump_threshold: int = 0
+    last_stack_dump_stage: str | None = None
     task_type: str = ""
 
 
@@ -1851,7 +1852,7 @@ class WorkerPoller:
             holder = info.stage_holder
             stage = holder.stage if holder is not None else "unknown"
             stage_age_s = (now - holder.updated_at) if holder is not None else 0.0
-            stuck_marker = "[STUCK?] " if age_s >= STUCK_STACK_INITIAL_THRESHOLD_S else ""
+            stuck_marker = "[STUCK?] " if stage_age_s >= STUCK_STACK_INITIAL_THRESHOLD_S else ""
             schema_part = f" schema={info.schema}" if info.schema else ""
             logger.info(
                 f"[WORKER_TASK] {stuck_marker}op={op_id} type={info.task_type} "
@@ -1859,22 +1860,28 @@ class WorkerPoller:
                 f"age={age_s:.0f}s stage={stage} stage_age={stage_age_s:.0f}s"
             )
 
-            self._maybe_dump_stuck_stack(op_id, info, age_s)
+            self._maybe_dump_stuck_stack(op_id, info, age_s, stage_age_s)
 
-    def _maybe_dump_stuck_stack(self, op_id: str, info: ActiveTaskInfo, age_s: float) -> None:
-        """Dump a coroutine stack for tasks that crossed a stuck threshold.
+    def _maybe_dump_stuck_stack(self, op_id: str, info: ActiveTaskInfo, age_s: float, stage_age_s: float) -> None:
+        """Dump a coroutine stack when a task's current stage stops progressing.
 
-        Each task gets one dump per threshold (5min, 10min, 20min, 40min...),
-        gated by `info.last_stack_dump_threshold` so logs don't flood for tasks
-        that legitimately take a long time (large LLM jobs, schema-retry loops).
+        Each stage gets one dump per threshold (5min, 10min, 20min, 40min...),
+        gated by `info.last_stack_dump_threshold` so logs do not flood while the
+        stalled stage remains unchanged. Total task age is retained in the log
+        for context but cannot distinguish a large, advancing job from a wedge.
         """
-        if age_s < STUCK_STACK_INITIAL_THRESHOLD_S:
+        stage = info.stage_holder.stage if info.stage_holder else "unknown"
+        if stage != info.last_stack_dump_stage:
+            info.last_stack_dump_stage = stage
+            info.last_stack_dump_threshold = 0
+
+        if stage_age_s < STUCK_STACK_INITIAL_THRESHOLD_S:
             return
 
-        # Find the largest doubling-threshold that the task has crossed.
+        # Find the largest doubling-threshold that the current stage has crossed.
         threshold = STUCK_STACK_INITIAL_THRESHOLD_S
         crossed = STUCK_STACK_INITIAL_THRESHOLD_S
-        while threshold <= age_s and threshold <= STUCK_STACK_MAX_THRESHOLD_S:
+        while threshold <= stage_age_s and threshold <= STUCK_STACK_MAX_THRESHOLD_S:
             crossed = threshold
             threshold *= 2
 
@@ -1886,10 +1893,10 @@ class WorkerPoller:
         try:
             buf = io.StringIO()
             info.bg_task.print_stack(file=buf, limit=15)
-            stage = info.stage_holder.stage if info.stage_holder else "unknown"
             logger.warning(
                 f"[STUCK_STACK] op={op_id} type={info.task_type} bank={info.bank_id} "
-                f"age={age_s:.0f}s threshold={crossed}s stage={stage}\n{buf.getvalue()}"
+                f"age={age_s:.0f}s stage_age={stage_age_s:.0f}s threshold={crossed}s "
+                f"stage={stage}\n{buf.getvalue()}"
             )
         except Exception as e:
             # Stack capture is best-effort - never crash the polling loop over it.
