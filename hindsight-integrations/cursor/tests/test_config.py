@@ -1,12 +1,8 @@
 """Tests for Cursor plugin configuration loading."""
 
-import os
 import json
-import tempfile
 
-import pytest
-
-from lib.config import load_config, DEFAULTS
+from lib.config import DEFAULTS, load_config
 
 
 class TestLoadConfig:
@@ -31,6 +27,18 @@ class TestLoadConfig:
         monkeypatch.setenv("HINDSIGHT_RECALL_MAX_TOKENS", "2048")
         config = load_config()
         assert config["recallMaxTokens"] == 2048
+
+    def test_env_overrides_recall_timeout(self, monkeypatch):
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+        monkeypatch.setenv("HINDSIGHT_RECALL_TIMEOUT", "42")
+        config = load_config()
+        assert config["recallTimeout"] == 42
+
+    def test_env_overrides_include_tools(self, monkeypatch):
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+        monkeypatch.setenv("HINDSIGHT_INCLUDE_TOOLS", "true")
+        config = load_config()
+        assert config["includeTools"] is True
 
     def test_env_overrides_string(self, monkeypatch):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
@@ -63,6 +71,7 @@ class TestLoadConfig:
         user_config = {"bankId": "user-bank"}
         (user_dir / "cursor.json").write_text(json.dumps(user_config))
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setattr("os.path.expanduser", lambda _: str(tmp_path / "home"))
 
         config = load_config()
         assert config["bankId"] == "user-bank"

@@ -233,7 +233,7 @@
     {
       "id": "cursor",
       "name": "Cursor",
-      "description": "Biomimetic long-term memory for the Cursor editor via Hindsight. Recalls relevant context at session start and retains conversation transcripts for future sessions.",
+      "description": "Biomimetic long-term memory for the Cursor editor via Hindsight. Recalls relevant context at session start and before each prompt, then retains conversation transcripts for future sessions.",
       "type": "official",
       "by": "hindsight",
       "category": "coding-agent",

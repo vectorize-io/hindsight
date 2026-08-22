@@ -29,6 +29,7 @@ from lib.content import (
     slice_last_turns_by_user_boundary,
 )
 from lib.daemon import get_api_url
+from lib.hook_io import read_hook_input
 from lib.state import increment_turn_count, write_state
 
 LAST_RETAIN_STATE = "last_retain.json"
@@ -48,17 +49,20 @@ def _write_retain_status(status: str, **extra):
         pass
 
 
-def _normalize_blocks_to_text(content) -> str:
-    """Flatten a content payload to a single text string.
+def _normalize_content(content, include_tools: bool = False) -> str | list:
+    """Normalize a content payload for text or structured retention.
 
-    Cursor 3 emits content as a list of typed blocks; we keep text blocks and
-    inline a compact tool_use marker so retain.py's downstream Answer:/Thought:
-    handling still sees recognizable structure.
+    Cursor 3 emits content as a list of typed blocks. Tool blocks are preserved
+    only when the caller explicitly opts into retaining tool calls; otherwise
+    only conversational text is passed downstream.
     """
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
         return str(content) if content else ""
+    if include_tools:
+        return content
+
     parts = []
     for block in content:
         if not isinstance(block, dict):
@@ -68,15 +72,10 @@ def _normalize_blocks_to_text(content) -> str:
             text = block.get("text", "")
             if text:
                 parts.append(text)
-        elif btype == "tool_use":
-            name = block.get("name", "tool")
-            parts.append(f"[tool_use:{name}]")
-        elif btype == "tool_result":
-            parts.append("[tool_result]")
     return "\n".join(parts)
 
 
-def read_transcript(transcript_path: str) -> list:
+def read_transcript(transcript_path: str, include_tools: bool = False) -> list:
     """Read a JSONL transcript file and return list of message dicts.
 
     Supports three shapes seen in the wild:
@@ -91,12 +90,14 @@ def read_transcript(transcript_path: str) -> list:
     transcripts because the top-level didn't have ``content`` and the
     ``type`` key wasn't present, so retain.py bailed with
     ``empty_transcript`` on every Cursor 3 stop hook.
+
+    Tool blocks are preserved only when ``include_tools`` is true.
     """
     if not transcript_path or not os.path.isfile(transcript_path):
         return []
     messages = []
     try:
-        with open(transcript_path) as f:
+        with open(transcript_path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -114,7 +115,7 @@ def read_transcript(transcript_path: str) -> list:
                     msg = entry.get("message", {})
                     if isinstance(msg, dict) and msg.get("role"):
                         if "content" in msg:
-                            msg = {**msg, "content": _normalize_blocks_to_text(msg.get("content"))}
+                            msg = {**msg, "content": _normalize_content(msg.get("content"), include_tools)}
                         messages.append(msg)
                     continue
 
@@ -123,13 +124,13 @@ def read_transcript(transcript_path: str) -> list:
                 role = entry.get("role")
                 if role in ("user", "assistant") and isinstance(entry.get("message"), dict):
                     msg_obj = entry["message"]
-                    content = _normalize_blocks_to_text(msg_obj.get("content"))
+                    content = _normalize_content(msg_obj.get("content"), include_tools)
                     messages.append({"role": role, "content": content})
                     continue
 
                 # Flat: {role, content}
                 if role in ("user", "assistant") and "content" in entry:
-                    messages.append({"role": role, "content": _normalize_blocks_to_text(entry.get("content"))})
+                    messages.append({"role": role, "content": _normalize_content(entry.get("content"), include_tools)})
                     continue
     except OSError:
         pass
@@ -146,19 +147,28 @@ def main():
 
     # Read hook input from stdin
     try:
-        hook_input = json.load(sys.stdin)
+        hook_input = read_hook_input()
     except (json.JSONDecodeError, EOFError):
         print("[Hindsight] Failed to read hook input", file=sys.stderr)
         return
 
     debug_log(config, f"Stop hook input keys: {list(hook_input.keys())}")
 
-    # Cursor stop hook provides conversation_id and transcript_path
-    session_id = hook_input.get("conversation_id") or hook_input.get("session_id") or "unknown"
-    transcript_path = hook_input.get("transcript_path", "")
+    # Cursor's documented stop payload omits transcript_path; the hook runtime
+    # exposes it as CURSOR_TRANSCRIPT_PATH instead.
+    transcript_path = hook_input.get("transcript_path") or os.environ.get("CURSOR_TRANSCRIPT_PATH", "")
+    session_id = (
+        hook_input.get("conversation_id")
+        or hook_input.get("session_id")
+        or os.environ.get("CURSOR_SESSION_ID")
+        or "unknown"
+    )
+    if session_id == "unknown" and transcript_path:
+        session_id = os.path.splitext(os.path.basename(transcript_path))[0] or session_id
 
     # Read full transcript
-    all_messages = read_transcript(transcript_path)
+    include_tool_calls = config.get("retainToolCalls", False)
+    all_messages = read_transcript(transcript_path, include_tools=include_tool_calls)
     if not all_messages:
         debug_log(config, "No messages in transcript, skipping retain")
         _write_retain_status("skipped", reason="empty_transcript")
@@ -194,9 +204,9 @@ def main():
         debug_log(config, f"Full session retain: {len(all_messages)} messages")
 
     # Format transcript
-    include_tool_calls = config.get("retainToolCalls", False)
+    retain_roles = config.get("retainRoles", ["user", "assistant"])
     transcript, message_count = prepare_retention_transcript(
-        messages_to_retain, ["user", "assistant"], retain_full_window, include_tool_calls=include_tool_calls
+        messages_to_retain, retain_roles, retain_full_window, include_tool_calls=include_tool_calls
     )
 
     if not transcript:
@@ -227,19 +237,18 @@ def main():
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
 
-    # Document ID: unique per retain so successive retains within one session
-    # accumulate across distinct documents instead of upserting a single one.
-    # The previous design used document_id=session_id in full-session mode,
-    # which silently dropped earlier turns whenever a multi-turn session
-    # re-retained — the V2 audit's 5-turn driver surfaced this as the
-    # "5-turn → 1 topic" failure mode. Timestamps are millisecond-grained
-    # so back-to-back retains in the same wall-clock millisecond stay distinct
-    # via session_id.
-    document_id = f"{session_id}-{int(time.time() * 1000)}"
+    # Full-session retains resend the cumulative transcript, so reuse the
+    # session ID and let Hindsight update one document. Chunked retains need
+    # distinct IDs because each request represents a separate transcript window.
+    if retain_mode == "chunked" and retain_every_n > 1:
+        document_id = f"{session_id}-{int(time.time() * 1000)}"
+    else:
+        document_id = session_id
 
     # Resolve template variables in tags and metadata
     template_vars = {
         "session_id": session_id,
+        "conversation_id": session_id,
         "bank_id": bank_id,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

@@ -18,9 +18,13 @@ DEFAULTS = {
     "autoRecall": True,
     "recallBudget": "mid",
     "recallMaxTokens": 1024,
+    "recallTimeout": 10,
     "recallTypes": ["world", "experience"],
     "recallContextTurns": 1,
     "recallMaxQueryChars": 800,
+    "recallRoles": ["user", "assistant"],
+    "includeTools": False,
+    "recallMinScores": {},
     "recallPromptPreamble": (
         "Relevant memories from past coding sessions (prioritize recent when "
         "conflicting). Only use memories that are directly useful to continue "
@@ -29,6 +33,7 @@ DEFAULTS = {
     # Retain
     "autoRetain": True,
     "retainMode": "full-session",
+    "retainRoles": ["user", "assistant"],
     "retainEveryNTurns": 10,
     "retainOverlapTurns": 2,
     "retainToolCalls": False,
@@ -47,7 +52,7 @@ DEFAULTS = {
     # cloud-default convention. Self-hosters who want the plugin to auto-start
     # a local daemon (the historical behaviour) opt in by setting True.
     "useLocalDaemon": False,
-    # Workaround for Cursor's broken sessionStart additionalContext path.
+    # Workaround for Cursor's broken sessionStart additional_context path.
     # See scripts/lib/rules_file.py for the upstream bug link.
     "useRulesFileFallback": True,
     "appendToGitignore": True,
@@ -78,8 +83,10 @@ ENV_OVERRIDES = {
     "HINDSIGHT_RETAIN_MODE": ("retainMode", str),
     "HINDSIGHT_RECALL_BUDGET": ("recallBudget", str),
     "HINDSIGHT_RECALL_MAX_TOKENS": ("recallMaxTokens", int),
+    "HINDSIGHT_RECALL_TIMEOUT": ("recallTimeout", int),
     "HINDSIGHT_RECALL_MAX_QUERY_CHARS": ("recallMaxQueryChars", int),
     "HINDSIGHT_RECALL_CONTEXT_TURNS": ("recallContextTurns", int),
+    "HINDSIGHT_INCLUDE_TOOLS": ("includeTools", bool),
     "HINDSIGHT_API_PORT": ("apiPort", int),
     "HINDSIGHT_DAEMON_IDLE_TIMEOUT": ("daemonIdleTimeout", int),
     "HINDSIGHT_EMBED_VERSION": ("embedVersion", str),

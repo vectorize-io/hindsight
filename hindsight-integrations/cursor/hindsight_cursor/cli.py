@@ -18,8 +18,11 @@ _PLUGIN_FILES = [
     "scripts/lib/config.py",
     "scripts/lib/content.py",
     "scripts/lib/daemon.py",
+    "scripts/lib/hook_io.py",
     "scripts/lib/llm.py",
+    "scripts/lib/rules_file.py",
     "scripts/lib/state.py",
+    "scripts/recall.py",
     "scripts/session_start.py",
     "scripts/retain.py",
     "settings.json",
@@ -28,6 +31,7 @@ _PLUGIN_FILES = [
 
 _USER_CONFIG_DIR = Path.home() / ".hindsight"
 _USER_CONFIG_FILE = _USER_CONFIG_DIR / "cursor.json"
+_DEFAULT_HOOK_TIMEOUT = None
 
 
 def _plugin_data_dir() -> Path:
@@ -35,9 +39,32 @@ def _plugin_data_dir() -> Path:
     return Path(__file__).resolve().parent / "plugin_data"
 
 
-def _copy_plugin(dest: Path) -> None:
+def _default_python_command() -> str:
+    """Return the platform's conventional Python launcher command."""
+    return "py -3" if sys.platform == "win32" else "python3"
+
+
+def _render_hooks(source: Path, destination: Path, python_command: str, hook_timeout: int | None) -> None:
+    """Render platform-specific commands and prompt-hook timeout into hooks.json."""
+    hooks = json.loads(source.read_text(encoding="utf-8"))
+    for event, entries in hooks.get("hooks", {}).items():
+        for entry in entries:
+            command = entry.get("command")
+            if isinstance(command, str):
+                entry["command"] = command.replace("python3", python_command, 1)
+            if hook_timeout is not None and event in ("sessionStart", "beforeSubmitPrompt"):
+                entry["timeout"] = hook_timeout
+    destination.write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
+
+
+def _copy_plugin(
+    dest: Path,
+    python_command: str | None = None,
+    hook_timeout: int | None = _DEFAULT_HOOK_TIMEOUT,
+) -> None:
     """Copy plugin files into *dest*, creating directories as needed."""
     src_root = _plugin_data_dir()
+    python_command = python_command or _default_python_command()
     for rel in _PLUGIN_FILES:
         src = src_root / rel
         if not src.exists():
@@ -45,7 +72,10 @@ def _copy_plugin(dest: Path) -> None:
             continue
         dst = dest / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        if rel == "hooks/hooks.json":
+            _render_hooks(src, dst, python_command, hook_timeout)
+        else:
+            shutil.copy2(src, dst)
 
 
 def _scaffold_config(api_url: str | None, api_token: str | None, bank_id: str) -> None:
@@ -116,7 +146,11 @@ def cmd_init(args: argparse.Namespace) -> None:
         return
 
     print(f"Installing Hindsight plugin into {dest} ...")
-    _copy_plugin(dest)
+    _copy_plugin(
+        dest,
+        python_command=getattr(args, "python_command", None),
+        hook_timeout=getattr(args, "hook_timeout", _DEFAULT_HOOK_TIMEOUT),
+    )
     print("  Plugin files copied.")
 
     _scaffold_config(args.api_url, args.api_token, args.bank_id)
@@ -178,6 +212,17 @@ def main() -> None:
     init_p.add_argument("--api-token", default=None, help="Hindsight API token")
     init_p.add_argument("--bank-id", default="cursor", help="Memory bank ID (default: cursor)")
     init_p.add_argument("--no-mcp", action="store_true", help="Skip MCP integration setup")
+    init_p.add_argument(
+        "--python-command",
+        default=None,
+        help="Python launcher for hooks (default: py -3 on Windows, python3 elsewhere)",
+    )
+    init_p.add_argument(
+        "--hook-timeout",
+        type=int,
+        default=_DEFAULT_HOOK_TIMEOUT,
+        help="Override the timeout in seconds for session and prompt hooks",
+    )
     init_p.set_defaults(func=cmd_init)
 
     # -- uninstall --

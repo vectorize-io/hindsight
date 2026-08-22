@@ -7,6 +7,12 @@
         "timeout": 15
       }
     ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/recall.py\"",
+        "timeout": 45
+      }
+    ],
     "stop": [
       {
         "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/retain.py\"",

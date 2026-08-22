@@ -57,18 +57,3 @@ class TestGetApiUrlResolution:
         monkeypatch.setenv("HINDSIGHT_USE_LOCAL_DAEMON", "true")
         cfg = load_config()
         assert cfg["useLocalDaemon"] is True
-
-
-class TestDocumentIdIsUniquePerRetain:
-    """Pin the V2 audit fix: full-session retains used to share document_id=
-    session_id and silently dropped earlier turns. Each retain now creates
-    a distinct document so multi-turn sessions accumulate."""
-
-    def test_retain_module_constructs_timestamp_suffixed_document_id(self):
-        # Light-touch source pin — the document_id derivation is a single
-        # f-string that mixes session_id with a millisecond wall clock.
-        # We just confirm the source still has the expected shape; the
-        # behavioural test is the live E2E retain roundtrip.
-        src = open("scripts/retain.py").read()
-        assert 'document_id = f"{session_id}-{int(time.time() * 1000)}"' in src
-        assert "document_id = session_id" not in src

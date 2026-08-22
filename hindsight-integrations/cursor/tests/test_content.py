@@ -1,11 +1,12 @@
 """Tests for content processing utilities."""
 
-import pytest
 from lib.content import (
+    compose_recall_query,
     format_memories,
     prepare_retention_transcript,
     slice_last_turns_by_user_boundary,
     strip_memory_tags,
+    truncate_recall_query,
 )
 
 
@@ -21,6 +22,18 @@ class TestStripMemoryTags:
     def test_no_tags_unchanged(self):
         content = "Just plain text"
         assert strip_memory_tags(content) == "Just plain text"
+
+    def test_strips_external_link_preview(self):
+        content = "User request\n<external_links>web preview data</external_links>\ncontinued request"
+        assert strip_memory_tags(content) == "User request\n\ncontinued request"
+
+    def test_strips_cursor_timestamp_block(self):
+        content = "User request\n<timestamp>2026-08-14T21:00:00Z</timestamp>\ncontinued request"
+        assert strip_memory_tags(content) == "User request\n\ncontinued request"
+
+    def test_strips_user_query_wrapper_but_preserves_text(self):
+        content = "<user_query>Remember this preference</user_query>"
+        assert strip_memory_tags(content) == "Remember this preference"
 
 
 class TestSliceLastTurns:
@@ -47,6 +60,28 @@ class TestSliceLastTurns:
         assert slice_last_turns_by_user_boundary([], 1) == []
 
 
+class TestRecallQuery:
+    def test_composes_recent_context_with_latest_prompt(self):
+        messages = [
+            {"role": "user", "content": "I use Python"},
+            {"role": "assistant", "content": "Noted"},
+        ]
+        query = compose_recall_query("Which language should I use?", messages, 2)
+        assert "Prior context:" in query
+        assert "user: I use Python" in query
+        assert query.endswith("Which language should I use?")
+
+    def test_truncation_preserves_latest_prompt(self):
+        query = compose_recall_query(
+            "Use the project convention",
+            [{"role": "user", "content": "A very long earlier discussion"}],
+            2,
+        )
+        truncated = truncate_recall_query(query, "Use the project convention", 45)
+        assert truncated.endswith("Use the project convention")
+        assert len(truncated) <= 45
+
+
 class TestFormatMemories:
     def test_formats_with_type_and_date(self):
         results = [
@@ -59,7 +94,6 @@ class TestFormatMemories:
 
     def test_empty_results(self):
         assert format_memories([]) == ""
-
 
 class TestPrepareRetentionTranscript:
     def test_formats_user_assistant(self):
@@ -86,3 +120,43 @@ class TestPrepareRetentionTranscript:
         assert transcript is not None
         assert "hindsight_memories" not in transcript
         assert "injected" not in transcript
+
+    def test_strips_external_link_preview(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "Please use this context\n<external_links>scraped page contents</external_links>",
+            },
+        ]
+        transcript, count = prepare_retention_transcript(messages, ["user"], True)
+        assert transcript is not None
+        assert "Please use this context" in transcript
+        assert "external_links" not in transcript
+        assert "scraped page contents" not in transcript
+
+    def test_strips_cursor_timestamp_block(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "Please remember this\n<timestamp>2026-08-14T21:00:00Z</timestamp>",
+            },
+        ]
+        transcript, count = prepare_retention_transcript(messages, ["user"], True)
+        assert transcript is not None
+        assert count == 1
+        assert "Please remember this" in transcript
+        assert "timestamp" not in transcript
+        assert "2026-08-14" not in transcript
+
+    def test_strips_user_query_wrapper_from_retention(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "<user_query>Remember this preference</user_query>",
+            },
+        ]
+        transcript, count = prepare_retention_transcript(messages, ["user"], True)
+        assert transcript is not None
+        assert count == 1
+        assert "Remember this preference" in transcript
+        assert "user_query" not in transcript

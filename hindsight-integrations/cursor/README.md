@@ -46,12 +46,13 @@ hindsight-cursor init --api-url http://localhost:8888
 - Writes `.cursor/mcp.json` with the Hindsight MCP endpoint for on-demand recall/retain/reflect tools
 - Use `--force` to overwrite an existing installation
 - Use `--no-mcp` to skip the MCP configuration
+- Renders platform-appropriate hook commands (`py -3` on Windows, `python3` elsewhere); override with `--python-command` or `--hook-timeout` when needed
 
 After installing, **fully quit and reopen Cursor**. The plugin activates automatically.
 
 ## Features
 
-- **Session recall** — at the start of each session, queries Hindsight for relevant project memories and injects them as context via `additionalContext`
+- **Automatic recall** — at session start and before every user prompt, queries Hindsight for relevant project memories and injects them as context
 - **Auto-retain** — after every task, extracts and retains conversation content to Hindsight for long-term storage
 - **On-demand MCP tools** — use `recall`, `retain`, and `reflect` tools from the Hindsight MCP server for explicit memory operations during a session
 - **On-demand recall skill** — use the `hindsight-recall` skill for explicit memory lookups
@@ -67,27 +68,28 @@ The plugin uses two complementary mechanisms:
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `session_start.py` | `sessionStart` | **Session recall** — query memories, write `<workspace>/.cursor/rules/hindsight-session.mdc` so the agent gets memory in its system context, *and* emit `additionalContext` JSON (forward-compat). |
+| `session_start.py` | `sessionStart` | **Session recall** — query broad project memories, write `<workspace>/.cursor/rules/hindsight-session.mdc`, and emit `additional_context` JSON. |
+| `recall.py` | `beforeSubmitPrompt` | **Prompt recall** — query memories relevant to the submitted prompt, emit `additional_context`, and refresh the rules-file fallback. |
 | `retain.py` | `stop` | **Auto-retain** — extract transcript, POST to Hindsight |
 
-The `sessionStart` hook fires when the agent processes the first prompt of each new chat. It performs a broad project-level recall and surfaces the result two ways — see ["How session memory reaches the agent"](#how-session-memory-reaches-the-agent) below for why both.
+The `sessionStart` hook performs a broad project-level recall when a new composer conversation is created. The `beforeSubmitPrompt` hook then performs a prompt-specific recall before every submitted prompt.
 
 The `stop` hook fires when the agent completes a task. It reads the conversation transcript and retains it to Hindsight for future recall.
 
 ### How session memory reaches the agent
 
-Cursor's native injection channel for session-start hooks is the `additionalContext` JSON field — the hook returns memory text on stdout and Cursor places it in the agent's system prompt. **That channel has been broken in Cursor 3.x** (acknowledged by Cursor staff in [forum thread 158452](https://forum.cursor.com/t/sessionstart-hook-additional-context-is-never-injected-into-agents-initial-system-context/158452); reconfirmed still-open against Cursor 3.6.31). When `additionalContext` is the only delivery path, recalled memories never reach the model — the agent answers as if Hindsight isn't installed.
+Cursor's hooks support `additional_context` for context injection, but some releases have silently dropped session-start hook context before the agent's composer handle was ready. Current Cursor builds also consume `additional_context` from `beforeSubmitPrompt`; older builds may ignore it.
 
-This plugin works around the bug by **also** writing the recalled memories to `<workspace>/.cursor/rules/hindsight-session.mdc` with `alwaysApply: true` in the frontmatter. Workspace rules files *are* reliably injected by Cursor's rules engine, so the agent sees the memories on the very first prompt of each new chat.
+For compatibility, this plugin **also** writes a best-effort snapshot of recalled memories to `<workspace>/.cursor/rules/hindsight-session.mdc` with `alwaysApply: true` in the frontmatter. Updating the file does not guarantee that Cursor reloads it into an existing conversation.
 
 What this means in practice:
 
-- **Every new agent's first prompt has memories.** Cursor blocks prompt submission until the `sessionStart` hook returns — verified empirically. The only delay is the recall latency itself (typically <1s).
-- **The rules file is regenerated at the top of every `sessionStart`.** Stale memories from a previous session never linger.
+- **Native prompt recall is preferred.** `beforeSubmitPrompt` emits `additional_context` on Cursor builds that support it.
+- **The rules file is regenerated after successful prompt recalls and at the top of every `sessionStart`.** This is a compatibility snapshot, not a guaranteed live context channel.
 - **The rules file is auto-`.gitignore`'d** in git workspaces. It's safe to delete by hand; it'll be regenerated.
-- **`additionalContext` is still emitted to stdout** for forward-compat. If Cursor restores the native channel, the same plugin keeps working without code changes.
+- **`additional_context` is emitted by both recall hooks.** The rules-file fallback remains enabled by default for older or unreliable Cursor builds.
 
-You can disable the rules-file write entirely (`useRulesFileFallback: false`) — then the plugin relies on `additionalContext`, which means no memory delivery until Cursor fixes the upstream bug. Useful only if you'd rather see the bug bite than have the plugin touch your workspace.
+You can disable the rules-file write entirely (`useRulesFileFallback: false`) — then the plugin relies on native `additional_context` support in the installed Cursor build.
 
 ### 2. MCP Server (on-demand)
 
@@ -176,13 +178,18 @@ All settings live in `~/.hindsight/cursor.json`. Every setting can also be overr
 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Enable/disable session-start recall |
+| `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Enable/disable automatic session and prompt recall |
 | `recallBudget` | `HINDSIGHT_RECALL_BUDGET` | `"mid"` | Search thoroughness: low, mid, high |
 | `recallMaxTokens` | `HINDSIGHT_RECALL_MAX_TOKENS` | `1024` | Max tokens in recalled memory block |
+| `recallTimeout` | `HINDSIGHT_RECALL_TIMEOUT` | `10` | Timeout in seconds for each prompt recall |
 | `recallTypes` | — | `["world", "experience"]` | Memory types to recall |
+| `recallContextTurns` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | `1` | Number of recent conversation turns used to build the recall query |
+| `recallRoles` | — | `["user", "assistant"]` | Roles included when building multi-turn recall queries |
+| `includeTools` | `HINDSIGHT_INCLUDE_TOOLS` | `false` | Include compact tool markers in multi-turn recall queries |
+| `recallMinScores` | — | `{}` | Optional score floors applied after recall |
 | `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Max characters in the recall query |
 | `recallPromptPreamble` | — | *(see settings.json)* | Text prepended to recalled memories |
-| `useRulesFileFallback` | `HINDSIGHT_USE_RULES_FILE_FALLBACK` | `true` | Write recalled memories to `<workspace>/.cursor/rules/hindsight-session.mdc` so Cursor's rules engine injects them. Workaround for [the broken native `additionalContext` channel](#how-session-memory-reaches-the-agent). |
+| `useRulesFileFallback` | `HINDSIGHT_USE_RULES_FILE_FALLBACK` | `true` | Write recalled memories to `<workspace>/.cursor/rules/hindsight-session.mdc` so Cursor's rules engine injects them. This is the prompt-recall delivery path and also works around unreliable native `additional_context`. |
 | `appendToGitignore` | `HINDSIGHT_APPEND_TO_GITIGNORE` | `true` | When writing the rules-file fallback, idempotently append its path to the workspace `.gitignore` (no-op for non-git workspaces). |
 
 ### Auto-Retain
@@ -191,6 +198,7 @@ All settings live in `~/.hindsight/cursor.json`. Every setting can also be overr
 |---------|---------|---------|-------------|
 | `autoRetain` | `HINDSIGHT_AUTO_RETAIN` | `true` | Enable/disable auto-retain |
 | `retainMode` | `HINDSIGHT_RETAIN_MODE` | `"full-session"` | Retention strategy: `full-session` or `chunked` |
+| `retainRoles` | — | `["user", "assistant"]` | Roles included in retained transcripts |
 | `retainEveryNTurns` | `HINDSIGHT_RETAIN_EVERY_N_TURNS` | `10` | Retain every N turns (1 = every turn) |
 | `retainOverlapTurns` | — | `2` | Overlap turns between chunks (chunked mode only) |
 | `retainToolCalls` | — | `false` | Include tool call messages in retained transcript |
