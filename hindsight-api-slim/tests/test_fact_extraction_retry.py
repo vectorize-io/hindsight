@@ -253,11 +253,10 @@ async def test_top_level_fact_list_is_accepted_without_retry():
     [
         ({"text": "Alice visited Paris"}, 1, "Alice visited Paris"),
         ({"what": "Alice visited Paris"}, 1, "Alice visited Paris"),
-        ({}, 0, None),
     ],
 )
 async def test_fact_text_alias_is_recovered_without_accepting_empty_facts(fact_fields, expected_count, expected_text):
-    """Recover schema-drifted ``text`` facts while still skipping empty facts."""
+    """Recover schema-drifted ``text`` facts without spending a retry."""
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
 
     config = _make_config(llm_max_retries=0, retain_llm_max_retries=None)
@@ -289,6 +288,64 @@ async def test_fact_text_alias_is_recovered_without_accepting_empty_facts(fact_f
     assert len(facts) == expected_count
     if expected_text:
         assert expected_text in facts[0].fact
+
+
+@pytest.mark.asyncio
+async def test_missing_fact_text_retries_and_recovers():
+    """A schema-shaped fact without usable text must use the content retry budget."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={})
+    llm_config.call.side_effect = [
+        ({"facts": [{"who": "Alice", "fact_type": "world"}]}, MagicMock()),
+        ({"facts": [{"what": "Alice visited Paris", "fact_type": "world"}]}, MagicMock()),
+    ]
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="travel notes",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert llm_config.call.call_count == 2
+    assert [fact.fact for fact in facts] == ["Alice visited Paris"]
+
+
+@pytest.mark.asyncio
+async def test_missing_fact_text_fails_after_retries():
+    """Persistently malformed facts must not become a successful zero-fact retain."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={"facts": [{"who": "Alice", "fact_type": "world"}]})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        with pytest.raises(RuntimeError, match="all facts were malformed after 2 attempts"):
+            await _extract_facts_from_chunk(
+                chunk="Alice visited Paris.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="travel notes",
+                llm_config=llm_config,
+                config=config,
+                agent_name="test-agent",
+            )
+
+    assert llm_config.call.call_count == 2
 
 
 @pytest.mark.asyncio
