@@ -308,7 +308,7 @@
       },
       "retainQueuePath": {
         "type": "string",
-        "description": "Path to JSONL file for buffering failed retains (external API mode only). Default: ~/.openclaw/data/hindsight-retain-queue.jsonl"
+        "description": "Path to JSONL file for buffering failed retains. Default: ~/.openclaw/data/hindsight-retain-queue.jsonl"
       },
       "retainQueueMaxAgeMs": {
         "type": "number",

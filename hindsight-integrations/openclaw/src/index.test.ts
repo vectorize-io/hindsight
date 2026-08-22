@@ -10,6 +10,7 @@ import {
   composeRecallQuery,
   truncateRecallQuery,
   buildRetainRequest,
+  getDocumentIdBootToken,
   meetsMinimumVersion,
   parseHindsightApiCapabilities,
   supportsAppendFromCapabilities,
@@ -599,7 +600,9 @@ describe("buildRetainRequest", () => {
       1700000000000,
       { turnIndex: 4, appendSupported: false }
     );
-    expect(request.documentId).toBe("openclaw:agent:main:main:turn:000004");
+    expect(request.documentId).toBe(
+      `openclaw:agent:main:main:turn:${getDocumentIdBootToken()}:000004`
+    );
     expect(request.updateMode).toBeUndefined();
   });
 
@@ -616,8 +619,29 @@ describe("buildRetainRequest", () => {
       1700000000000,
       { turnIndex: 6 }
     );
-    expect(request.documentId).toBe("openclaw:agent:main:main:turn:000006");
+    expect(request.documentId).toBe(
+      `openclaw:agent:main:main:turn:${getDocumentIdBootToken()}:000006`
+    );
     expect(request.updateMode).toBeUndefined();
+  });
+
+  it("stamps a stable per-process boot token into fallback doc ids (#3686)", () => {
+    // The turn counter lives in memory, so it restarts at 1 on every host
+    // restart. The boot token is what keeps the replayed counter from landing
+    // on the previous run's document, which retain would then *replace*.
+    const ctx = { agentId: "main", sessionKey: "agent:main:main" };
+    const first = buildRetainRequest("a", 1, ctx, {}, 1700000000000, { turnIndex: 1 });
+    const second = buildRetainRequest("b", 1, ctx, {}, 1700000000000, { turnIndex: 2 });
+
+    expect(getDocumentIdBootToken()).toMatch(/^[0-9a-f]{8}$/);
+    // Same process → same token, so ids stay comparable within a run.
+    expect(first.documentId).toBe(
+      `openclaw:agent:main:main:turn:${getDocumentIdBootToken()}:000001`
+    );
+    expect(second.documentId).toBe(
+      `openclaw:agent:main:main:turn:${getDocumentIdBootToken()}:000002`
+    );
+    expect(first.documentId).not.toBe(second.documentId);
   });
 
   it("uses window ids and metadata for chunked retention", () => {
@@ -642,7 +666,7 @@ describe("buildRetainRequest", () => {
     );
 
     expect(request.documentId).toBe(
-      "openclaw:agent:agentname:discord:group:123:topic:456:window:000002"
+      `openclaw:agent:agentname:discord:group:123:topic:456:window:${getDocumentIdBootToken()}:000002`
     );
     expect(request.metadata).toMatchObject({
       source: "openclaw",
