@@ -233,3 +233,86 @@ async def test_per_entity_cap_bounds_hub_traversal(memory, request_context):
         assert outside not in scores, "the per-entity cap must exclude ids ranked below it"
     finally:
         await memory.delete_bank(bank_id=bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_scoring_does_not_rejoin_the_connected_sources_cte(memory, request_context):
+    """The scoring step must not re-join the opaque ``connected_sources`` CTE (#3714).
+
+    PostgreSQL cannot derive statistics for a CTE scan: it assumes 1 row. When the
+    score was computed by joining ``candidates`` against that CTE, an aged bank whose
+    CTE really held thousands of rows made the planner pick a nested loop and compare
+    tens of millions of rows to emit a few thousand -- ~27.6s for one recall arm, with
+    ``MATERIALIZED`` making no difference because the fault is join selection.
+
+    Asserting a wall-clock number would be flaky on shared CI, so this pins the
+    structural property that caused the blowup: the scoring CTE must not contain a
+    join against ``connected_sources``.
+    """
+    import inspect
+
+    from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+
+    source = inspect.getsource(PostgreSQLOps.expand_observations)
+    scored = source[source.index("scored AS (") :]
+    scored = scored[: scored.index("LIMIT $2")]
+
+    assert "JOIN connected_sources" not in scored, (
+        "scoring must not join the connected_sources CTE -- PostgreSQL estimates a "
+        "CTE scan at 1 row and will choose a nested loop at real cardinality (#3714)"
+    )
+    assert "connected_array" in scored, "scoring should count shared sources against the materialized connected_array"
+
+
+@pytest.mark.asyncio
+async def test_scoring_is_exact_across_wide_fanout(memory, request_context):
+    """Shared-source counts stay exact when many candidates share many sources.
+
+    Guards the #3714 rewrite against an off-by-one or double-count at the fan-out
+    where the old nested loop used to blow up.
+    """
+    from hindsight_api.engine.db.ops import UpdatedWindow
+    from hindsight_api.engine.task_backend import fq_table
+
+    bank_id = f"test_obs_fanout_{uuid.uuid4().hex[:8]}"
+    try:
+        pool = await memory._get_pool()
+        backend = await memory._get_backend()
+        mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
+
+        async with pool.acquire() as conn:
+            await _ensure_bank(conn, bank_id)
+            entity_id = uuid.uuid4()
+            await conn.execute(
+                f"INSERT INTO {fq_table('entities')} (id, bank_id, canonical_name) VALUES ($1, $2, $3)",
+                entity_id,
+                bank_id,
+                "Hub",
+            )
+            facts = [await _insert_unit(conn, mu, bank_id, f"fact {i}", "world") for i in range(60)]
+            for fid in facts:
+                await conn.execute(f"INSERT INTO {ue} (unit_id, entity_id) VALUES ($1, $2)", fid, entity_id)
+
+            seed = await _insert_unit(conn, mu, bank_id, "seed obs", "observation", [facts[0]])
+            # Every candidate shares exactly the same 19 non-seed facts.
+            for i in range(40):
+                await _insert_unit(conn, mu, bank_id, f"cand {i}", "observation", facts[1:20])
+
+            rows = await backend.ops.expand_observations(
+                conn,
+                mu,
+                ue,
+                ml,
+                [seed],
+                100,
+                200,
+                UpdatedWindow(after=None, before=None, first_param_index=3),
+            )
+
+        assert rows.entity, "expansion must still return candidates"
+        assert all(r["score"] == 19.0 for r in rows.entity), (
+            "each candidate shares exactly 19 sources with the seed neighbourhood"
+        )
+        assert seed not in {r["id"] for r in rows.entity}
+    finally:
+        await memory.delete_bank(bank_id=bank_id, request_context=request_context)
