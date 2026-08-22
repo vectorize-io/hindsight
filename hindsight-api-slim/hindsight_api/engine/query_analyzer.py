@@ -90,6 +90,7 @@ _PERIOD_WORDS = {
     "noon",
     "midnight",
 }
+_BARE_YEAR_PADDING_WORDS = {"and", "at", "from", "in", "on", "the"}
 
 
 # Every token _date_match_score can award points for, in one alternation.
@@ -175,6 +176,26 @@ def _date_match_score(text: str) -> int:
     if token_set & _PERIOD_WORDS:
         score += 20
     return score
+
+
+def _is_implausible_bare_year_match(text: str, parsed_date: datetime, reference_date: datetime) -> bool:
+    """Return whether dateparser treated an isolated identifier as a year.
+
+    dateparser may include a neighbouring preposition or conjunction in the
+    matched span (for example, ``"9077 and"``), so checking ``isdigit()`` is
+    not sufficient. Preserve explicit calendar expressions such as
+    ``1890-03-05`` and ``March 1890`` even when their year is far from the
+    reference date.
+    """
+    earliest_year = max(1, reference_date.year - 120)
+    latest_year = min(9999, reference_date.year + 20)
+    if earliest_year <= parsed_date.year <= latest_year:
+        return False
+
+    tokens = _TOKEN_RE.findall(text.lower())
+    year_tokens = [token for token in tokens if len(token) == 4 and token.isdigit()]
+    padding_tokens = [token for token in tokens if token not in year_tokens]
+    return len(year_tokens) == 1 and all(token in _BARE_YEAR_PADDING_WORDS for token in padding_tokens)
 
 
 class TemporalConstraint(BaseModel):
@@ -397,17 +418,25 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         # by longest span, so an explicit date ("in May", "2026-06-10") always
         # beats an earlier weak word regardless of position. See issue #2768.
         scored_results = [
-            (_date_match_score(text), len(text), date)
+            (_date_match_score(text), len(text), date, text)
             for text, date in results
             if not is_embedded_cjk_dateparser_match(query, text)
         ]
         scored_results = [entry for entry in scored_results if entry[0] > 0]
 
+        # Bare integers (ports, ticket IDs, model numbers) are parsed as years
+        # and otherwise outrank every genuine relative-date match. Filter them
+        # before ranking so a plausible date elsewhere in the query can still
+        # win instead of silently disabling temporal retrieval. See issue #3250.
+        scored_results = [
+            entry for entry in scored_results if not _is_implausible_bare_year_match(entry[3], entry[2], reference_date)
+        ]
+
         if not scored_results:
             return QueryAnalysis(temporal_constraint=None)
 
         # Highest signal score wins; ties broken by the longest matched span.
-        _, _, parsed_date = max(scored_results, key=lambda entry: (entry[0], entry[1]))
+        _, _, parsed_date, _ = max(scored_results, key=lambda entry: (entry[0], entry[1]))
 
         # Create constraint for single day
         start_date = parsed_date.replace(hour=0, minute=0, second=0, microsecond=0)

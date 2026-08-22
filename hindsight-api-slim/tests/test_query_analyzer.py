@@ -1053,6 +1053,47 @@ def test_query_analyzer_keeps_real_month_with_leading_weak_word(query_analyzer):
 
 
 @pytest.mark.parametrize(
+    "query",
+    ["is hindsight listening on port 9077", "check job 4417 for Castle Pines"],
+)
+def test_query_analyzer_rejects_implausible_bare_number_year(query_analyzer, query):
+    """#3250: common identifiers must not become temporal constraints."""
+    reference_date = datetime(2026, 8, 7, 12, 0, 0)
+
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is None
+
+
+def test_query_analyzer_keeps_plausible_date_with_implausible_number(query_analyzer):
+    """Filtering happens before ranking so a real date elsewhere can win."""
+    reference_date = datetime(2026, 8, 7, 12, 0, 0)  # Friday
+
+    analysis = query_analyzer.analyze("port 9077 and also last Tuesday", reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == datetime(2026, 8, 4).date()
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("notes from 1890-03-05", datetime(1890, 3, 5)),
+        ("the roadmap milestone on 2050-01-15", datetime(2050, 1, 15)),
+        ("notes from March 1890", datetime(1890, 3, 1)),
+    ],
+)
+def test_query_analyzer_keeps_explicit_dates_outside_bare_year_window(query_analyzer, query, expected):
+    """The plausibility window applies to isolated years, not full dates."""
+    reference_date = datetime(2026, 8, 7, 12, 0, 0)
+
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == expected.date()
+
+
+@pytest.mark.parametrize(
     ("query", "start", "end"),
     [
         # Relative days.
