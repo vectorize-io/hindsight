@@ -20,6 +20,7 @@ from hindsight_api.extensions.base import Extension
 from hindsight_api.extensions.builtin import (
     ApiKeyTenantExtension,
     MemoryDefenseRegexExtension,
+    StaticKeysTenantExtension,
     SupabaseTenantExtension,
 )
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
@@ -121,6 +122,7 @@ __all__ = [
     "MentalModelRefreshResult",
     # Tenant/Auth
     "ApiKeyTenantExtension",
+    "StaticKeysTenantExtension",
     "SupabaseTenantExtension",
     "AuthenticationError",
     "RequestContext",

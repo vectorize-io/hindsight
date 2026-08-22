@@ -34,6 +34,26 @@ See the [source code](https://github.com/vectorize-io/hindsight/blob/main/hindsi
 
 For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT-based auth), implement a custom `TenantExtension`.
 
+**Built-in: StaticKeysTenantExtension**
+
+A fully self-hosted multi-user mode: users and their API keys are declared in environment variables (no external identity provider, no users table). Each user maps to their own PostgreSQL schema (`{prefix}_{user_id}`), provisioned lazily on first access, giving database-level memory isolation between users. Multiple API keys may map to the same user and schema.
+
+```bash
+HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.multi_key_tenant:StaticKeysTenantExtension
+# Comma-separated user_id:api_key pairs. Required.
+HINDSIGHT_API_TENANT_USERS=user1:key1,user2:key2
+# Optional, default: "user" -> creates user_<user_id> schemas
+HINDSIGHT_API_TENANT_SCHEMA_PREFIX=user
+# Optional, disable authentication for MCP endpoints (MCP clients land in the base schema)
+HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED=true
+```
+
+```bash
+curl -H "Authorization: Bearer <user1's key>" http://localhost:8888/v1/default/banks
+```
+
+The worker picks up all configured users automatically via `list_tenants()`, so maintenance and consolidation run per user schema. Keys are compared in constant time (`hmac.compare_digest`).
+
 ---
 
 ### HttpExtension
