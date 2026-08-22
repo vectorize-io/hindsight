@@ -317,4 +317,70 @@ describe("createTools", () => {
     expect(client.recall.mock.calls[0][0]).toBe("fixed-bank");
     expect(client.reflect.mock.calls[0][0]).toBe("fixed-bank");
   });
+
+  describe("dynamic per-agent keys", () => {
+    it("routes each tool call to the client resolved for context.agent", async () => {
+      const buildClient = {
+        retain: vi.fn().mockResolvedValue({}),
+        recall: vi.fn().mockResolvedValue({ results: [] }),
+        reflect: vi.fn().mockResolvedValue({ text: "build-answer" }),
+        createBank: vi.fn().mockResolvedValue({}),
+      } as any;
+      const reviewClient = {
+        retain: vi.fn().mockResolvedValue({}),
+        recall: vi.fn().mockResolvedValue({ results: [] }),
+        reflect: vi.fn().mockResolvedValue({ text: "review-answer" }),
+        createBank: vi.fn().mockResolvedValue({}),
+      } as any;
+      const resolver = {
+        forAgent: vi.fn((agent?: string | null) =>
+          agent === "code-reviewer" ? reviewClient : buildClient
+        ),
+      };
+
+      const tools = createTools(resolver, "bank", makeConfig());
+      const buildCtx = { ...mockContext, agent: "build" };
+      const reviewCtx = { ...mockContext, agent: "code-reviewer" };
+
+      await tools.hindsight_retain.execute({ content: "fact" }, buildCtx);
+      await tools.hindsight_recall.execute({ query: "q" }, reviewCtx);
+      await tools.hindsight_reflect.execute({ query: "q" }, reviewCtx);
+
+      expect(resolver.forAgent).toHaveBeenCalledWith("build");
+      expect(resolver.forAgent).toHaveBeenCalledWith("code-reviewer");
+      expect(buildClient.retain).toHaveBeenCalledWith("bank", "fact", expect.anything());
+      expect(reviewClient.recall).toHaveBeenCalledWith("bank", "q", expect.anything());
+      expect(reviewClient.reflect).toHaveBeenCalledWith("bank", "q", expect.anything());
+      expect(buildClient.recall).not.toHaveBeenCalled();
+      expect(reviewClient.retain).not.toHaveBeenCalled();
+    });
+
+    it("routes each tool call to the bank resolved for context.agent", async () => {
+      const client = {
+        retain: vi.fn().mockResolvedValue({}),
+        recall: vi.fn().mockResolvedValue({ results: [] }),
+        reflect: vi.fn().mockResolvedValue({ text: "" }),
+        createBank: vi.fn().mockResolvedValue({}),
+      } as any;
+      const bankResolver = {
+        forAgent: vi.fn((agent?: string | null) =>
+          agent === "code-reviewer" ? "review-bank" : "build-bank"
+        ),
+      };
+
+      const tools = createTools(client, bankResolver, makeConfig());
+      const buildCtx = { ...mockContext, agent: "build" };
+      const reviewCtx = { ...mockContext, agent: "code-reviewer" };
+
+      await tools.hindsight_retain.execute({ content: "fact" }, buildCtx);
+      await tools.hindsight_recall.execute({ query: "q" }, reviewCtx);
+      await tools.hindsight_reflect.execute({ query: "q" }, reviewCtx);
+
+      expect(bankResolver.forAgent).toHaveBeenCalledWith("build");
+      expect(bankResolver.forAgent).toHaveBeenCalledWith("code-reviewer");
+      expect(client.retain.mock.calls[0][0]).toBe("build-bank");
+      expect(client.recall.mock.calls[0][0]).toBe("review-bank");
+      expect(client.reflect.mock.calls[0][0]).toBe("review-bank");
+    });
+  });
 });

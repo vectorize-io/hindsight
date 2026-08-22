@@ -13,8 +13,10 @@
  *                  directory is not a repo.
  */
 
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import type { HindsightConfig } from "./config.js";
 import { Logger } from "./logger.js";
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
@@ -146,4 +148,175 @@ export async function ensureBankMission(
     // Don't fail if mission set fails — bank may not exist yet
     logger.debug(`Could not set bank mission for ${bankId}`, { error: String(e) });
   }
+}
+
+/**
+ * Search locations for agent definition files, in priority order.
+ * Project-scoped files take precedence over global ones (mirroring how
+ * OpenCode merges configs).
+ */
+const AGENT_FILE_DIRS = (directory: string): string[] => [
+  join(directory, ".opencode", "agent"),
+  join(directory, ".opencode", "agents"),
+  join(homedir(), ".config", "opencode", "agent"),
+  join(homedir(), ".config", "opencode", "agents"),
+];
+
+/** Cache: agent name → { mtime, bankId } so we re-read only when the file changes. */
+const agentFileCache = new Map<string, { mtime: number; bankId: string | null }>();
+
+/**
+ * Extract the `bankid` scalar from YAML frontmatter without a full YAML parser.
+ * Handles `bankid: value`, `"value"`, and `'value'` forms. Only top-level keys
+ * (column 0) are matched, so nested keys with the same name are ignored.
+ */
+function extractBankIdFromFrontmatter(content: string): string | null {
+  // Find frontmatter block between the first pair of `---` lines.
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return null;
+  const body = match[1];
+  for (const line of body.split("\n")) {
+    // Top-level key only (no leading whitespace).
+    const m = line.match(/^bankid:\s*(.*)$/i);
+    if (m) {
+      let val = m[1].trim();
+      // Strip surrounding quotes.
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      return val || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Read the `bankid` field from an agent's `.md` definition file.
+ *
+ * Searches the standard agent file locations (project then global) and returns
+ * the frontmatter `bankid` value if present. Results are cached per agent name
+ * keyed on file mtime, so repeated calls during a session are cheap.
+ *
+ * Returns `null` when the agent file is not found, has no frontmatter, or the
+ * frontmatter does not declare a `bankid`.
+ */
+export function readAgentBankId(
+  agentName: string | null | undefined,
+  directory: string
+): string | null {
+  if (!agentName) return null;
+
+  const dirs = AGENT_FILE_DIRS(directory);
+  let filePath: string | null = null;
+  for (const dir of dirs) {
+    const candidate = join(dir, `${agentName}.md`);
+    if (existsSync(candidate)) {
+      filePath = candidate;
+      break;
+    }
+  }
+  if (!filePath) return null;
+
+  let mtime: number;
+  try {
+    mtime = statSync(filePath).mtimeMs;
+  } catch {
+    return null;
+  }
+
+  const cached = agentFileCache.get(filePath);
+  if (cached && cached.mtime === mtime) {
+    return cached.bankId;
+  }
+
+  let bankId: string | null = null;
+  try {
+    const raw = readFileSync(filePath, "utf-8");
+    bankId = extractBankIdFromFrontmatter(raw);
+  } catch {
+    bankId = null;
+  }
+
+  agentFileCache.set(filePath, { mtime, bankId });
+  return bankId;
+}
+
+/**
+ * Resolve the bank ID for a given agent name, applying the per-agent
+ * `hindsightBankIds` map with a fallback to the normal `deriveBankId` result.
+ *
+ * Resolution order (first defined value wins):
+ *   1. Agent `.md` frontmatter `bankid` field — read from the agent's
+ *      definition file. This takes precedence over all other sources.
+ *      The `bankIdPrefix` is applied.
+ *   2. `hindsightBankIds[agentName]` — explicit entry for the running agent.
+ *      The `bankIdPrefix` is applied.
+ *   3. `hindsightBankIds[config.agentName]` — entry for the configured
+ *      default agent name. The `bankIdPrefix` is applied.
+ *   4. `deriveBankId(config, directory)` — the legacy derivation (static
+ *      `bankId` or dynamic-granularity composition). Already applies the prefix.
+ *
+ * `agentName` is the name of the OpenCode agent currently driving the session
+ * (e.g. "build", "code-reviewer"). Pass `null`/`undefined` when the agent
+ * name is unknown — resolution then skips straight to the fallback.
+ */
+export function resolveBankId(
+  config: HindsightConfig,
+  directory: string,
+  agentName?: string | null
+): string {
+  const prefix = config.bankIdPrefix;
+  const applyPrefix = (base: string) => (prefix ? `${prefix}-${base}` : base);
+
+  // 1. Agent .md frontmatter (highest precedence)
+  const agentFileBankId = readAgentBankId(agentName, directory);
+  if (agentFileBankId) {
+    return applyPrefix(agentFileBankId);
+  }
+
+  // 2. Per-agent map
+  if (agentName && config.hindsightBankIds?.[agentName]) {
+    return applyPrefix(config.hindsightBankIds[agentName]);
+  }
+  // 3. Default agentName entry
+  if (config.hindsightBankIds?.[config.agentName]) {
+    return applyPrefix(config.hindsightBankIds[config.agentName]);
+  }
+  // 4. Legacy derivation
+  return deriveBankId(config, directory);
+}
+
+/** Anything that can resolve a bank ID for a given agent name. */
+export interface BankResolver {
+  forAgent(agentName?: string | null): string;
+}
+
+/**
+ * Normalize a `string | BankResolver` into a `BankResolver`. A bare string
+ * (e.g. a fixed bank ID in unit tests) is wrapped so `forAgent()` always
+ * returns it, regardless of agent — keeping existing call sites unchanged.
+ */
+export function toBankResolver(bankIdOrResolver: string | BankResolver): BankResolver {
+  const maybe = bankIdOrResolver as Partial<BankResolver>;
+  if (typeof maybe.forAgent === "function") {
+    return bankIdOrResolver as BankResolver;
+  }
+  const bankId = bankIdOrResolver as string;
+  return { forAgent: () => bankId };
+}
+
+/**
+ * Build a `BankResolver` that resolves the bank ID per-agent from
+ * `hindsightBankIds`, falling back to the legacy `deriveBankId` derivation.
+ */
+export function createBankResolver(
+  config: HindsightConfig,
+  directory: string
+): BankResolver {
+  return {
+    forAgent: (agentName?: string | null) => resolveBankId(config, directory, agentName),
+  };
 }

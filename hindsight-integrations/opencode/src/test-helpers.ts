@@ -20,6 +20,8 @@ export function makeConfig(overrides: Partial<HindsightConfig> = {}): HindsightC
     retainMetadata: {},
     hindsightApiUrl: "https://api.hindsight.vectorize.io",
     hindsightApiToken: null,
+    hindsightApiTokens: {},
+    dynamicApiKey: true,
     bankId: null,
     bankIdPrefix: "",
     dynamicBankId: false,
@@ -27,6 +29,7 @@ export function makeConfig(overrides: Partial<HindsightConfig> = {}): HindsightC
     bankMission: "",
     retainMission: null,
     agentName: "opencode",
+    hindsightBankIds: {},
     debug: false,
     ...overrides,
   };

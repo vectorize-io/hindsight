@@ -5,7 +5,17 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { execFileSync } from "node:child_process";
-import { deriveBankId, ensureBankMission } from "./bank.js";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  deriveBankId,
+  ensureBankMission,
+  resolveBankId,
+  readAgentBankId,
+  toBankResolver,
+  createBankResolver,
+} from "./bank.js";
 import { makeConfig } from "./test-helpers.js";
 
 const mockExec = vi.mocked(execFileSync);
@@ -255,5 +265,246 @@ describe("ensureBankMission", () => {
       reflectMission: "Reflect",
       retainMission: "Extract carefully",
     });
+  });
+});
+
+describe("resolveBankId", () => {
+  beforeEach(() => {
+    mockExec.mockImplementation(() => {
+      throw new Error("fatal: not a git repository");
+    });
+  });
+
+  it("returns the per-agent entry for the running agent", () => {
+    const config = makeConfig({
+      bankId: "default-bank",
+      hindsightBankIds: { build: "build-bank", "review-agent": "review-bank" },
+    });
+    expect(resolveBankId(config, "/dir", "build")).toBe("build-bank");
+    expect(resolveBankId(config, "/dir", "review-agent")).toBe("review-bank");
+  });
+
+  it("applies bankIdPrefix to per-agent entries", () => {
+    const config = makeConfig({
+      bankId: "default-bank",
+      bankIdPrefix: "dev",
+      hindsightBankIds: { build: "build-bank" },
+    });
+    expect(resolveBankId(config, "/dir", "build")).toBe("dev-build-bank");
+  });
+
+  it("falls back to the default agentName entry", () => {
+    const config = makeConfig({
+      bankId: "default-bank",
+      agentName: "opencode",
+      hindsightBankIds: { opencode: "default-agent-bank" },
+    });
+    expect(resolveBankId(config, "/dir", "security-reviewer")).toBe("default-agent-bank");
+    expect(resolveBankId(config, "/dir", undefined)).toBe("default-agent-bank");
+  });
+
+  it("falls back to deriveBankId when the map has no matching entry", () => {
+    const config = makeConfig({ bankId: "static-bank" });
+    expect(resolveBankId(config, "/dir", "build")).toBe("static-bank");
+  });
+
+  it("falls back to dynamic-granularity derivation", () => {
+    const config = makeConfig({
+      dynamicBankId: true,
+      dynamicBankGranularity: ["agent", "project"],
+    });
+    expect(resolveBankId(config, "/home/user/my-project", "build")).toBe(
+      "opencode::my-project"
+    );
+  });
+});
+
+describe("toBankResolver", () => {
+  it("wraps a bare string so forAgent() always returns it", () => {
+    const resolver = toBankResolver("fixed-bank");
+    expect(resolver.forAgent("build")).toBe("fixed-bank");
+    expect(resolver.forAgent(undefined)).toBe("fixed-bank");
+    expect(resolver.forAgent(null)).toBe("fixed-bank");
+  });
+
+  it("passes through an existing BankResolver unchanged", () => {
+    const resolver = { forAgent: () => "dynamic" };
+    expect(toBankResolver(resolver)).toBe(resolver);
+  });
+});
+
+describe("createBankResolver", () => {
+  it("resolves per-agent, falling back to derivation", () => {
+    mockExec.mockImplementation(() => {
+      throw new Error("fatal: not a git repository");
+    });
+    const config = makeConfig({
+      bankId: "default-bank",
+      hindsightBankIds: { build: "build-bank" },
+    });
+    const resolver = createBankResolver(config, "/dir");
+    expect(resolver.forAgent("build")).toBe("build-bank");
+    expect(resolver.forAgent("other")).toBe("default-bank");
+    expect(resolver.forAgent()).toBe("default-bank");
+  });
+});
+
+describe("readAgentBankId (agent .md frontmatter)", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    // Default: simulate "not in a git repo" so deriveBankId fallback works.
+    mockExec.mockImplementation(() => {
+      throw new Error("fatal: not a git repository");
+    });
+    tmpRoot = mkdtempSync(join(tmpdir(), "hindsight-bank-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function writeAgentFile(
+    agentName: string,
+    frontmatter: Record<string, string> | null,
+    body = ""
+  ): string {
+    const dir = join(tmpRoot, ".opencode", "agent");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${agentName}.md`);
+    let content = body;
+    if (frontmatter) {
+      const fmLines = Object.entries(frontmatter)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("\n");
+      content = `---\n${fmLines}\n---\n${body}`;
+    }
+    writeFileSync(path, content, "utf-8");
+    return path;
+  }
+
+  it("reads the bankid field from agent frontmatter", () => {
+    writeAgentFile("code-reviewer", {
+      bankid: "reviewer-bank-from-md",
+      description: "Reviews code",
+    });
+    expect(readAgentBankId("code-reviewer", tmpRoot)).toBe(
+      "reviewer-bank-from-md"
+    );
+  });
+
+  it("supports quoted bankid values", () => {
+    writeAgentFile("build", { bankid: '"quoted-bank"' });
+    expect(readAgentBankId("build", tmpRoot)).toBe("quoted-bank");
+  });
+
+  it("supports single-quoted bankid values", () => {
+    writeAgentFile("build", { bankid: "'single-quoted-bank'" });
+    expect(readAgentBankId("build", tmpRoot)).toBe("single-quoted-bank");
+  });
+
+  it("ignores nested keys named bankid (top-level only)", () => {
+    const dir = join(tmpRoot, ".opencode", "agent");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "build.md"),
+      // The indented `bankid:` is nested under `permission:` and must be ignored.
+      `---\ndescription: x\npermission:\n  bankid: nested-bank\nbankid: top-level-bank\n---\nbody`,
+      "utf-8"
+    );
+    expect(readAgentBankId("build", tmpRoot)).toBe("top-level-bank");
+  });
+
+  it("returns null when the agent file has no frontmatter", () => {
+    writeAgentFile("build", null, "Just body, no frontmatter.");
+    expect(readAgentBankId("build", tmpRoot)).toBeNull();
+  });
+
+  it("returns null when frontmatter has no bankid field", () => {
+    writeAgentFile("build", { description: "No bankid here" });
+    expect(readAgentBankId("build", tmpRoot)).toBeNull();
+  });
+
+  it("returns null when the agent file does not exist", () => {
+    expect(readAgentBankId("nonexistent", tmpRoot)).toBeNull();
+  });
+
+  it("returns null when agentName is null or undefined", () => {
+    expect(readAgentBankId(null, tmpRoot)).toBeNull();
+    expect(readAgentBankId(undefined, tmpRoot)).toBeNull();
+  });
+
+  it("caches based on file mtime", () => {
+    const path = writeAgentFile("build", { bankid: "v1-bank" });
+    expect(readAgentBankId("build", tmpRoot)).toBe("v1-bank");
+    // Overwrite with a new bankid; mtime likely advances → cache should refresh.
+    // Add a tiny delay on platforms with coarse mtime resolution.
+    writeFileSync(path, `---\nbankid: v2-bank\n---\nbody`, "utf-8");
+    expect(readAgentBankId("build", tmpRoot)).toBe("v2-bank");
+  });
+
+  it("checks .opencode/agents/ (plural) as a fallback location", () => {
+    const dir = join(tmpRoot, ".opencode", "agents");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "plural-agent.md"),
+      `---\nbankid: plural-bank\n---\nbody`,
+      "utf-8"
+    );
+    expect(readAgentBankId("plural-agent", tmpRoot)).toBe("plural-bank");
+  });
+});
+
+describe("resolveBankId with agent .md frontmatter precedence", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    mockExec.mockImplementation(() => {
+      throw new Error("fatal: not a git repository");
+    });
+    tmpRoot = mkdtempSync(join(tmpdir(), "hindsight-bank-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function writeAgentFile(agentName: string, bankId: string): void {
+    const dir = join(tmpRoot, ".opencode", "agent");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${agentName}.md`),
+      `---\ndescription: test\nbankid: ${bankId}\n---\nbody`,
+      "utf-8"
+    );
+  }
+
+  it("agent .md frontmatter takes precedence over hindsightBankIds", () => {
+    writeAgentFile("code-reviewer", "from-md-bank");
+    const config = makeConfig({
+      bankId: "default-bank",
+      hindsightBankIds: { "code-reviewer": "from-map-bank" },
+    });
+    expect(resolveBankId(config, tmpRoot, "code-reviewer")).toBe("from-md-bank");
+  });
+
+  it("applies bankIdPrefix to the frontmatter bankid", () => {
+    writeAgentFile("build", "md-bank");
+    const config = makeConfig({ bankIdPrefix: "dev" });
+    expect(resolveBankId(config, tmpRoot, "build")).toBe("dev-md-bank");
+  });
+
+  it("falls back to hindsightBankIds when no frontmatter bankid", () => {
+    // No .md file written for this agent.
+    const config = makeConfig({
+      bankId: "default-bank",
+      hindsightBankIds: { build: "from-map-bank" },
+    });
+    expect(resolveBankId(config, tmpRoot, "build")).toBe("from-map-bank");
+  });
+
+  it("falls back to deriveBankId when neither frontmatter nor map match", () => {
+    const config = makeConfig({ bankId: "static-bank" });
+    expect(resolveBankId(config, tmpRoot, "unknown-agent")).toBe("static-bank");
   });
 });

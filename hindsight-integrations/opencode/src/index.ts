@@ -19,11 +19,12 @@
 
 import type { Plugin } from "@opencode-ai/plugin";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
-import { loadConfig } from "./config.js";
-import { deriveBankId } from "./bank.js";
+import { loadConfig, resolveApiKey } from "./config.js";
+import { createBankResolver } from "./bank.js";
 import { createTools } from "./tools.js";
 import { createHooks, type PluginState } from "./hooks.js";
 import { Logger, type OpencodeLogClient } from "./logger.js";
+import { ClientRegistry } from "./registry.js";
 
 // Module-level state persists across sessions (plugin is instantiated per session,
 // but the module is loaded once per OpenCode server process).
@@ -44,31 +45,48 @@ const HindsightPlugin: Plugin = async (input, options) => {
     debug: config.debug,
   });
 
-  // hindsightApiUrl always resolves to a value (DEFAULT_HINDSIGHT_API_URL by default),
+// hindsightApiUrl always resolves to a value (DEFAULT_HINDSIGHT_API_URL by default),
   // so plugin instantiation never fails just because the URL is unset.
   // Requests fail at call time if no API key is configured for a Cloud URL —
   // that surfaces a clear, actionable error from the server rather than silently
   // disabling the plugin.
-  const client = new HindsightClient({
+  //
+  // The default client is built eagerly from the static fallback token
+  // (resolveApiKey with no agent) so legacy single-token setups and the plugin
+  // tests that assert eager construction keep working. Per-agent tokens are
+  // resolved lazily via the registry (see ClientRegistry).
+  const defaultToken = resolveApiKey(config);
+  const defaultClient = new HindsightClient({
     baseUrl: config.hindsightApiUrl!,
-    apiKey: config.hindsightApiToken || undefined,
+    apiKey: defaultToken || undefined,
+  });
+  const registry = new ClientRegistry({
+    baseUrl: config.hindsightApiUrl!,
+    config,
+    defaultClient,
+    logger,
   });
 
-  const bankId = deriveBankId(config, input.directory);
+  const bankResolver = createBankResolver(config, input.directory);
+  const defaultBankId = bankResolver.forAgent();
   // Always log the resolved endpoint + bank so users can see which instance the
   // plugin is talking to (a common source of "memories aren't saving" confusion).
   logger.info("Hindsight plugin initialized", {
     api: config.hindsightApiUrl,
-    bank: bankId,
-    authenticated: Boolean(config.hindsightApiToken),
+    bank: defaultBankId,
+    authenticated: Boolean(defaultToken),
+    dynamicApiKey: config.dynamicApiKey,
+    perAgentTokens: Object.keys(config.hindsightApiTokens || {}).length,
+    dynamicBankId: config.dynamicBankId,
+    perAgentBankIds: Object.keys(config.hindsightBankIds || {}).length,
     autoRecall: config.autoRecall,
     autoRetain: config.autoRetain,
   });
 
-  const tools = createTools(client, bankId, config, state.missionsSet, logger);
+  const tools = createTools(registry, bankResolver, config, state.missionsSet, logger);
   const hooks = createHooks(
-    client,
-    bankId,
+    registry,
+    bankResolver,
     config,
     state,
     input.client as unknown as Parameters<typeof createHooks>[4],
@@ -94,3 +112,5 @@ export default HindsightPlugin;
 // Re-export types for consumers
 export type { HindsightConfig } from "./config.js";
 export type { PluginState } from "./hooks.js";
+export type { ClientRegistry, ClientResolver } from "./registry.js";
+export type { BankResolver } from "./bank.js";
