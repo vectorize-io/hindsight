@@ -2965,59 +2965,77 @@ async def _streaming_retain_batch(
 
             _edge_provider = get_memories()
             _edge_txn = None
-            async with acquire_with_retry(pool) as conn:
-                async with conn.transaction():
-                    await conn.execute(
-                        f"INSERT INTO {fq_table('documents')} (id, bank_id, original_text, content_hash) "
-                        f"VALUES ($1, $2, '', '__pending__') "
-                        f"ON CONFLICT (id, bank_id) DO NOTHING",
-                        effective_doc_id,
-                        bank_id,
-                    )
-                    await conn.fetchval(
-                        f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
-                        effective_doc_id,
-                        bank_id,
-                    )
-                    if is_recovery:
-                        await fact_storage.upsert_document_metadata(
-                            conn,
-                            bank_id,
+            if _edge_provider.store_owned_retain_for(bank_id):
+                # Store-owned zero-batch retain — the post-loop analogue of the per-batch 0-fact
+                # PG-free branch above. Reached when NO batch ran at all (empty/gibberish content,
+                # or a recovery where every chunk was already committed as a prior attempt). The
+                # document's bodies are already in the store (via _store_document_bodies); a
+                # re-ingest that yields no facts must still drop the document's PRIOR memories —
+                # ONE plain store-side delete-by-document. No Postgres documents row, no
+                # write-group (store-only), so nothing is left undecided to stall the store's
+                # indexer.
+                await _edge_provider.delete_document(
+                    conn=None, fq_table=fq_table, bank_id=bank_id, document_id=effective_doc_id
+                )
+                doc_tracking_done[0] = True
+                combined_content = ""
+                log_buffer.append(
+                    f"[streaming] Document {effective_doc_id} tracked (no facts, store-owned, PG-free)"
+                )
+            else:
+                async with acquire_with_retry(pool) as conn:
+                    async with conn.transaction():
+                        await conn.execute(
+                            f"INSERT INTO {fq_table('documents')} (id, bank_id, original_text, content_hash) "
+                            f"VALUES ($1, $2, '', '__pending__') "
+                            f"ON CONFLICT (id, bank_id) DO NOTHING",
                             effective_doc_id,
-                            combined_content,
-                            retain_params,
-                            merged_tags,
-                            store_document_text=config.store_document_text,
-                        )
-                    else:
-                        # A no-facts re-ingest still deletes the outgoing memories — tag that
-                        # tombstone with a write-group so it commits atomically with the doc row.
-                        _edge_txn = await _edge_provider.begin_txn(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True
-                        )
-                        await fact_storage.handle_document_tracking(
-                            conn,
                             bank_id,
-                            effective_doc_id,
-                            combined_content,
-                            is_first_batch,
-                            retain_params,
-                            merged_tags,
-                            ops=pool.ops,
-                            store_document_text=config.store_document_text,
-                            txn=_edge_txn,
                         )
-                        # Re-record the witness now that the group's writes have happened, so the
-                        # row carries what they actually wrote. `begin_txn` recorded it before any
-                        # write existed; the upsert widens rather than replaces.
-                        await _edge_provider.write_txn_witness(_edge_txn, conn=conn, fq_table=fq_table)
-                    doc_tracking_done[0] = True
-                    # Memory: combined_content has been persisted and won't be
-                    # read again — release the per-document text now.
-                    combined_content = ""
-                    log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (no facts extracted)")
-            if _edge_txn is not None:
-                await _edge_provider.decide_txn(_edge_txn, commit=True)
+                        await conn.fetchval(
+                            f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
+                            effective_doc_id,
+                            bank_id,
+                        )
+                        if is_recovery:
+                            await fact_storage.upsert_document_metadata(
+                                conn,
+                                bank_id,
+                                effective_doc_id,
+                                combined_content,
+                                retain_params,
+                                merged_tags,
+                                store_document_text=config.store_document_text,
+                            )
+                        else:
+                            # A no-facts re-ingest still deletes the outgoing memories — tag that
+                            # tombstone with a write-group so it commits atomically with the doc row.
+                            _edge_txn = await _edge_provider.begin_txn(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True
+                            )
+                            await fact_storage.handle_document_tracking(
+                                conn,
+                                bank_id,
+                                effective_doc_id,
+                                combined_content,
+                                is_first_batch,
+                                retain_params,
+                                merged_tags,
+                                ops=pool.ops,
+                                store_document_text=config.store_document_text,
+                                txn=_edge_txn,
+                            )
+                            # Re-record the witness now that the group's writes have happened, so the
+                            # row carries what they actually wrote. `begin_txn` recorded it before any
+                            # write existed; the upsert widens rather than replaces.
+                            await _edge_provider.write_txn_witness(_edge_txn, conn=conn, fq_table=fq_table)
+                        doc_tracking_done[0] = True
+                        # Memory: combined_content has been persisted and won't be
+                        # read again — release the per-document text now.
+                        combined_content = ""
+                        log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (no facts extracted)")
+                if _edge_txn is not None:
+                    await _edge_provider.decide_txn(_edge_txn, commit=True)
 
         # Transactional-outbox fallback. The in-TXN fire only runs on a final
         # facts-bearing batch (is_last=True). When the committed-chunk count lands

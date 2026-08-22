@@ -8807,10 +8807,23 @@ class MemoryEngine(MemoryEngineInterface):
 
         store = get_memories()
         if not store.writes_memory_rows_in_sql_for(bank_id):
+            # Three cases, and the middle one is the whole point. `delete_bank_profile` is what
+            # separates "delete this bank" from "clear this bank's memories" — the API's clear
+            # endpoint calls in with it False, and the bank goes on existing afterwards.
+            #
+            # Only a real bank deletion may drop the storage. A clear used to take that branch
+            # too, which left a bank that still existed in SQL with no storage behind it: the
+            # store's read paths then reported it as merely empty, indistinguishable from a bank
+            # nobody had written to. It also discarded the namespace's declared metadata keys,
+            # which are fixed at creation and cannot be re-declared, so metadata facets came back
+            # empty for good even once the bank was written to again.
             if fact_type:
                 await store.delete_where(bank_id, DeletePredicate(fact_types=[fact_type]))
-            else:
+            elif delete_bank_profile:
+                # The bank row is going away; its storage goes with it or it is orphaned.
                 await store.drop_bank_storage(bank_id)
+            else:
+                await store.delete_where(bank_id, DeletePredicate(delete_all=True))
 
         # Drop any cached stats for this bank — counts have changed and the
         # TTL would otherwise serve pre-delete values for up to a minute.
@@ -11477,12 +11490,35 @@ class MemoryEngine(MemoryEngineInterface):
 
         if conn is not None:
             result = await bank_utils.get_or_create_bank_profile_on_conn(conn, bank_id, ops=backend.ops)
+            await self._ensure_bank_storage(bank_id)
             return result.created
 
         result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        await self._ensure_bank_storage(bank_id)
         if result.created:
             await self._apply_default_bank_template(bank_id, request_context)
         return result.created
+
+    async def _ensure_bank_storage(self, bank_id: str) -> None:
+        """Make sure the bank's external storage exists, for a store that owns its own.
+
+        Called on every ensure rather than only when the bank row was just inserted, and that is
+        deliberate: `created` is false for a bank that already exists in SQL but has no storage —
+        one that predates this call, or whose storage was removed out of band — and those are
+        exactly the banks that need it. The implementation is idempotent and caches per bank, so
+        the repeat costs one conditional create per bank per process and nothing after that.
+
+        A store that keeps memories in SQL implements this as a no-op.
+
+        Ordering note: on the `conn` path this runs inside the caller's transaction. If that
+        transaction rolls back, an empty namespace is left behind for a bank that does not
+        exist — an inert orphan, and a create-if-absent makes the eventual real creation a no-op.
+        The reverse (a committed bank with no storage) is the failure that matters, because every
+        read against it looks like an empty bank rather than a fault.
+        """
+        from .memories import get_memories
+
+        await get_memories().ensure_bank_storage(bank_id)
 
     async def get_bank_config(
         self,

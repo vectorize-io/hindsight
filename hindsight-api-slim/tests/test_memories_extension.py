@@ -75,6 +75,12 @@ class InMemoryMemories(MemoriesExtension):
         self.documents: dict[str, dict] = {}
         # Proof the engine went through the interface rather than around it.
         self.calls: list[str] = []
+        # Banks whose storage exists. A store that owns its storage creates it when the
+        # bank is created and keeps it for as long as the bank lives.
+        self.ensured: set[str] = set()
+        # Every DeletePredicate handed to delete_where, so a test can assert WHICH delete
+        # was asked for and not merely that one happened.
+        self.predicates: list = []
 
     # -- writes --------------------------------------------------------------
 
@@ -437,8 +443,22 @@ class InMemoryMemories(MemoriesExtension):
 
     # -- curation / bulk writes ----------------------------------------------
 
+    async def ensure_bank_storage(self, bank_id):
+        self.calls.append("ensure_bank_storage")
+        self.ensured.add(bank_id)
+
+    async def drop_bank_storage(self, bank_id):
+        self.calls.append("drop_bank_storage")
+        self.ensured.discard(bank_id)
+        self.rows = {k: v for k, v in self.rows.items() if False}
+
     async def delete_where(self, bank_id, predicate, txn=None):
         self.calls.append("delete_where")
+        self.predicates.append(predicate)
+        if predicate.delete_all:
+            n = len(self.rows)
+            self.rows.clear()
+            return n
         victims = []
         for uid, row in self.rows.items():
             if predicate.fact_types and row.fact_type not in predicate.fact_types:
@@ -1376,3 +1396,91 @@ async def test_recall_all_enrichments_together_through_store(memory, request_con
             await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
+
+
+# ---------------------------------------------------------------------------
+# Bank storage lifecycle. A store that owns its storage relies on exactly one
+# thing: the storage exists for as long as the bank does. Both halves live here
+# because neither is visible from the store's own suite — they are engine
+# behaviour, and a store can only observe them through these calls.
+#
+# `_ensure_bank_exists` is called directly rather than through a public entry
+# point: it IS the seam under test, and reaching it via retain would drag in
+# embeddings and an LLM to assert something neither is involved in.
+# ---------------------------------------------------------------------------
+
+
+async def test_ensuring_a_bank_ensures_its_storage(memory, request_context, restore_default_store):
+    """A bank that exists must have storage behind it.
+
+    Without this the storage is only ever created implicitly by a write, so "bank exists, storage
+    does not" is a routine state every read path has to decide what to do about. The store cannot
+    tell that apart from an empty bank, so it reports empty — and a bank whose storage went
+    missing then serves empty results, successfully, until somebody notices the data is gone.
+    """
+    store = InMemoryMemories({})
+    set_memories(store)
+
+    await memory._ensure_bank_exists("lifecycle-bank", request_context)
+
+    assert "ensure_bank_storage" in store.calls
+    assert "lifecycle-bank" in store.ensured
+
+
+async def test_ensuring_an_existing_bank_still_ensures_its_storage(memory, request_context, restore_default_store):
+    """Ensuring is not gated on the bank row having just been inserted.
+
+    `created` is False for a bank that already exists in SQL but has no storage — one predating
+    this call, or whose storage went away out of band. Those are exactly the banks that need it,
+    so a second ensure must still reach the store. That is also what backfills them.
+    """
+    store = InMemoryMemories({})
+    set_memories(store)
+    await memory._ensure_bank_exists("twice-bank", request_context)
+    store.calls.clear()
+    store.ensured.clear()
+
+    await memory._ensure_bank_exists("twice-bank", request_context)
+
+    assert "ensure_bank_storage" in store.calls, "the second ensure must still reach the store"
+    assert "twice-bank" in store.ensured
+
+
+async def test_clearing_a_banks_memories_keeps_its_storage(memory, request_context, restore_default_store):
+    """Clearing empties the bank; it does not delete the bank's storage.
+
+    `delete_bank_profile=False` is the API's clear endpoint — the bank goes on existing. Dropping
+    the storage there left it existing in SQL with nothing behind it, and discarded the
+    namespace's declared metadata keys, which are fixed at creation: the facets then stayed empty
+    even after the bank was written to again.
+    """
+    store = InMemoryMemories({})
+    set_memories(store)
+    await memory._ensure_bank_exists("clear-bank", request_context)
+    await _seed(store, "clear-bank", text="wipe me")
+    assert store.rows
+
+    await memory.delete_bank("clear-bank", delete_bank_profile=False, request_context=request_context)
+
+    assert "drop_bank_storage" not in store.calls, "a clear must not delete the bank's storage"
+    assert "clear-bank" in store.ensured, "the storage outlives the memories it held"
+    assert store.predicates and store.predicates[-1].delete_all, "an unfiltered clear is a delete-all"
+    assert store.rows == {}, "and it really did empty the bank"
+
+
+async def test_deleting_a_bank_drops_its_storage(memory, request_context, restore_default_store):
+    """The other side of the same coin: when the BANK goes, its storage goes with it.
+
+    This direction needs guarding as much as the first. Routing a real bank deletion to a
+    delete-all would leave the namespace behind for a bank that no longer exists — storage nothing
+    will ever read, delete, or account for.
+    """
+    store = InMemoryMemories({})
+    set_memories(store)
+    await memory._ensure_bank_exists("doomed-bank", request_context)
+    await _seed(store, "doomed-bank", text="going away")
+
+    await memory.delete_bank("doomed-bank", request_context=request_context)
+
+    assert "drop_bank_storage" in store.calls, "deleting the bank must drop its storage, not orphan it"
+    assert "doomed-bank" not in store.ensured
