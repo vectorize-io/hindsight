@@ -384,6 +384,140 @@ class TestMentalModelsAPI:
         # Cleanup
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
+    @pytest.mark.asyncio
+    async def test_update_mental_model_content_via_api(
+        self, memory: MemoryEngine, api_client, test_bank_id, request_context
+    ):
+        """PATCH /mental-models/{id} with only `content` set must apply the new
+        content, record a mental_model_history row for the previous content, and
+        advance last_refreshed_at -- not silently drop the field.
+
+        Regression test: `content` was missing from UpdateMentalModelRequest, so
+        Pydantic dropped it and the PATCH was a no-op even though
+        MemoryEngine.update_mental_model fully supports it.
+
+        Scope of the assertions, stated so the docstring cannot outrun them: content
+        round-trip (PATCH echo and a fresh GET), the history row, and the
+        last_refreshed_at advance. Embedding recomputation happens on the same engine
+        path but is not asserted here -- it has no API-visible surface to check.
+        """
+        await memory.get_bank_profile(test_bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=test_bank_id,
+            name="Content Update Test",
+            source_query="What is being tested?",
+            content="Original content",
+            request_context=request_context,
+        )
+        mental_model_id = mm["id"]
+
+        before = await api_client.get(f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}")
+        assert before.status_code == 200
+        refreshed_before = before.json()["last_refreshed_at"]
+
+        response = await api_client.patch(
+            f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}",
+            json={"content": "Restored content from history"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["content"] == "Restored content from history"
+        # Setting content counts as a refresh for staleness/scheduling. Asserted rather
+        # than merely documented, because the PR makes a product claim about it.
+        assert response.json()["last_refreshed_at"] != refreshed_before
+
+        # Confirm via a fresh GET, not just the PATCH response echo.
+        get_response = await api_client.get(f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}")
+        assert get_response.status_code == 200
+        assert get_response.json()["content"] == "Restored content from history"
+
+        # A history row must have been recorded for the previous content.
+        history_response = await api_client.get(
+            f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}/history"
+        )
+        assert history_response.status_code == 200
+        history = history_response.json()
+        assert len(history) == 1
+        assert history[0]["previous_content"] == "Original content"
+
+        await memory.delete_bank(test_bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_update_mental_model_empty_body_returns_422_not_404(
+        self, memory: MemoryEngine, api_client, test_bank_id, request_context
+    ):
+        """PATCH with no updatable fields must return a clear 422, never a 404.
+
+        MemoryEngine.update_mental_model returns None both when the model is
+        not found and when no fields were supplied (`if not updates: return
+        None`) -- the two cases are indistinguishable from that return value
+        alone. Before the fix the HTTP layer treated any None as "not found",
+        so an empty PATCH against a model that genuinely exists returned a
+        misleading 404.
+        """
+        await memory.get_bank_profile(test_bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=test_bank_id,
+            name="Empty Patch Test",
+            source_query="What is being tested?",
+            content="Some content",
+            request_context=request_context,
+        )
+        mental_model_id = mm["id"]
+
+        response = await api_client.patch(
+            f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}",
+            json={},
+        )
+        assert response.status_code == 422, response.text
+        assert "at least one field" in response.json()["detail"].lower()
+
+        # The model must be completely unaffected -- still there, still the
+        # original content.
+        get_response = await api_client.get(f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}")
+        assert get_response.status_code == 200
+        assert get_response.json()["content"] == "Some content"
+
+        await memory.delete_bank(test_bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_update_mental_model_name_only_unchanged_behavior(
+        self, memory: MemoryEngine, api_client, test_bank_id, request_context
+    ):
+        """A name-only PATCH still returns 200, applies the name, leaves content
+        unchanged, and writes no history row.
+
+        This is the non-regression pin for the new empty-body validation: it proves
+        the 422 branch does not swallow an ordinary single-field update. It is not a
+        claim of full parity with the pre-change handler -- only these four things
+        are checked.
+        """
+        await memory.get_bank_profile(test_bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=test_bank_id,
+            name="Original Name",
+            source_query="What is being tested?",
+            content="Untouched content",
+            request_context=request_context,
+        )
+        mental_model_id = mm["id"]
+
+        response = await api_client.patch(
+            f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}",
+            json={"name": "Renamed"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["name"] == "Renamed"
+        assert body["content"] == "Untouched content"
+
+        history_response = await api_client.get(
+            f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}/history"
+        )
+        assert history_response.status_code == 200
+        assert history_response.json() == []
+
+        await memory.delete_bank(test_bank_id, request_context=request_context)
+
 
 class TestRecallWithObservationsAndMentalModels:
     """Test recall integration with observations and mental models."""

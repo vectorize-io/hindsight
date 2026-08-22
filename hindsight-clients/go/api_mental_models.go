@@ -1146,7 +1146,9 @@ func (r ApiUpdateMentalModelRequest) Execute() (*MentalModelResponse, *http.Resp
 /*
 UpdateMentalModel Update mental model
 
-Update a mental model's name and/or source query.
+Update a mental model's name, content, source query, and/or other fields.
+
+At least one field must be provided.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

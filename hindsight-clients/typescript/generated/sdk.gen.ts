@@ -665,7 +665,9 @@ export const getMentalModel = <ThrowOnError extends boolean = false>(
 /**
  * Update mental model
  *
- * Update a mental model's name and/or source query.
+ * Update a mental model's name, content, source query, and/or other fields.
+ *
+ * At least one field must be provided.
  */
 export const updateMentalModel = <ThrowOnError extends boolean = false>(
   options: Options<UpdateMentalModelData, ThrowOnError>

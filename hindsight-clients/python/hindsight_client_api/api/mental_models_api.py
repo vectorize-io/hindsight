@@ -2512,7 +2512,7 @@ class MentalModelsApi:
     ) -> MentalModelResponse:
         """Update mental model
 
-        Update a mental model's name and/or source query.
+        Update a mental model's name, content, source query, and/or other fields.  At least one field must be provided.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2592,7 +2592,7 @@ class MentalModelsApi:
     ) -> ApiResponse[MentalModelResponse]:
         """Update mental model
 
-        Update a mental model's name and/or source query.
+        Update a mental model's name, content, source query, and/or other fields.  At least one field must be provided.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2672,7 +2672,7 @@ class MentalModelsApi:
     ) -> RESTResponseType:
         """Update mental model
 
-        Update a mental model's name and/or source query.
+        Update a mental model's name, content, source query, and/or other fields.  At least one field must be provided.
 
         :param bank_id: (required)
         :type bank_id: str

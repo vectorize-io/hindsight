@@ -20,6 +20,7 @@ var _ MappedNullable = &UpdateMentalModelRequest{}
 // UpdateMentalModelRequest Request model for updating a mental model.
 type UpdateMentalModelRequest struct {
 	Name NullableString `json:"name,omitempty"`
+	Content NullableString `json:"content,omitempty"`
 	SourceQuery NullableString `json:"source_query,omitempty"`
 	MaxTokens NullableInt32 `json:"max_tokens,omitempty"`
 	Tags []string `json:"tags,omitempty"`
@@ -83,6 +84,48 @@ func (o *UpdateMentalModelRequest) SetNameNil() {
 // UnsetName ensures that no value is present for Name, not even an explicit nil
 func (o *UpdateMentalModelRequest) UnsetName() {
 	o.Name.Unset()
+}
+
+// GetContent returns the Content field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *UpdateMentalModelRequest) GetContent() string {
+	if o == nil || IsNil(o.Content.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.Content.Get()
+}
+
+// GetContentOk returns a tuple with the Content field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *UpdateMentalModelRequest) GetContentOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Content.Get(), o.Content.IsSet()
+}
+
+// HasContent returns a boolean if a field has been set.
+func (o *UpdateMentalModelRequest) HasContent() bool {
+	if o != nil && o.Content.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetContent gets a reference to the given NullableString and assigns it to the Content field.
+func (o *UpdateMentalModelRequest) SetContent(v string) {
+	o.Content.Set(&v)
+}
+// SetContentNil sets the value for Content to be an explicit nil
+func (o *UpdateMentalModelRequest) SetContentNil() {
+	o.Content.Set(nil)
+}
+
+// UnsetContent ensures that no value is present for Content, not even an explicit nil
+func (o *UpdateMentalModelRequest) UnsetContent() {
+	o.Content.Unset()
 }
 
 // GetSourceQuery returns the SourceQuery field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -256,6 +299,9 @@ func (o UpdateMentalModelRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	if o.Name.IsSet() {
 		toSerialize["name"] = o.Name.Get()
+	}
+	if o.Content.IsSet() {
+		toSerialize["content"] = o.Content.Get()
 	}
 	if o.SourceQuery.IsSet() {
 		toSerialize["source_query"] = o.SourceQuery.Get()

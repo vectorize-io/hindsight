@@ -1298,7 +1298,10 @@ paths:
       tags:
       - Mental Models
     patch:
-      description: Update a mental model's name and/or source query.
+      description: |-
+        Update a mental model's name, content, source query, and/or other fields.
+
+        At least one field must be provided.
       operationId: update_mental_model
       parameters:
       - explode: false
@@ -10242,6 +10245,9 @@ components:
           refresh_after_consolidation: true
       properties:
         name:
+          nullable: true
+          type: string
+        content:
           nullable: true
           type: string
         source_query:
