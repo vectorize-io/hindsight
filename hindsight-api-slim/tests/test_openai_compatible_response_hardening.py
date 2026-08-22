@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -196,3 +197,155 @@ async def test_missing_choices_are_retryable_provider_response_errors():
     assert result.ok is True
     assert create.await_count == 2
     sleep_mock.assert_awaited_once()
+
+
+def _ollama_llm() -> OpenAICompatibleLLM:
+    return OpenAICompatibleLLM(
+        provider="ollama",
+        api_key="",
+        base_url="http://localhost:11434/v1",
+        model="qwen3",
+    )
+
+
+def _ollama_response(content: str) -> httpx.Response:
+    body = {
+        "model": "qwen3",
+        "message": {"role": "assistant", "content": content},
+        "done": True,
+    }
+    request = httpx.Request("POST", "http://localhost:11434/api/chat")
+    return httpx.Response(200, json=body, request=request)
+
+
+@pytest.mark.asyncio
+async def test_repairable_json_is_recovered_instead_of_being_dropped():
+    """A malformed but structurally repairable response must not be lost (#3683).
+
+    The trailing comma is what json_repair exists to fix. Before #3683 this
+    provider parsed with bare json.loads and raised once the retries ran out,
+    so the facts in the response never reached the caller.
+    """
+    llm = _llm()
+    create = AsyncMock(return_value=_response(content='{"ok": true,}'))
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=SimpleJsonResponse,
+            max_retries=1,
+            initial_backoff=0,
+        )
+
+    assert result.ok is True
+
+
+@pytest.mark.asyncio
+async def test_an_identical_response_stops_re_rolling_the_same_request():
+    """A deterministic parse failure must not burn the whole retry budget (#3683).
+
+    Every attempt re-sends a byte-identical request, so a response that comes back
+    unchanged will keep coming back unchanged. Two attempts are enough to establish
+    that; the remaining budget is spent on repair instead of on more generations.
+    """
+    llm = _llm()
+    create = AsyncMock(return_value=_response(content='{"ok": true,}'))
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=SimpleJsonResponse,
+            max_retries=3,
+            initial_backoff=0,
+        )
+
+    assert result.ok is True
+    assert create.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_changed_response_still_earns_a_fresh_generation():
+    """Flaky malformed output keeps the clean re-roll it had before (#3683).
+
+    Only an unchanged response is treated as deterministic. Output that differs
+    each time is the case a fresh generation can actually fix, so the retry ladder
+    must still run.
+    """
+    llm = _llm()
+    create = AsyncMock(
+        side_effect=[
+            _response(content='{"ok": true,}'),
+            _response(content='{"ok": '),
+            _response(content='{"ok": true}'),
+        ]
+    )
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=SimpleJsonResponse,
+            max_retries=3,
+            initial_backoff=0,
+        )
+
+    assert result.ok is True
+    assert create.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_two_responses_failing_alike_are_not_treated_as_one():
+    """Different output that decodes to the same error still earns a re-roll (#3683).
+
+    ``{"aa": 1,}`` and ``{"bb": 2,}`` both raise at line 1 column 10 with the same
+    message, so a check on the decode position alone would call the second one a
+    deterministic repeat and stop generating. They are different responses, and the
+    third attempt here is the one that succeeds.
+    """
+    llm = _llm()
+    create = AsyncMock(
+        side_effect=[
+            _response(content='{"aa": 1,}'),
+            _response(content='{"bb": 2,}'),
+            _response(content='{"ok": true}'),
+        ]
+    )
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=SimpleJsonResponse,
+            max_retries=3,
+            initial_backoff=0,
+        )
+
+    assert result.ok is True
+    assert create.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_ollama_native_repairs_malformed_json_instead_of_dropping_it():
+    """The native /api/chat path parses the same way and had the same gap (#3683)."""
+    llm = _ollama_llm()
+    mock_client = AsyncMock()
+    mock_client.post.return_value = _ollama_response('{"ok": true,}')
+    mock_client.__aenter__.return_value = mock_client
+
+    with (
+        patch(
+            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
+            return_value=mock_client,
+        ),
+        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
+    ):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=SimpleJsonResponse,
+            max_retries=1,
+            initial_backoff=0,
+        )
+
+    assert result.ok is True
