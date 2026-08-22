@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from hindsight_embed import get_embed_manager
-from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager, _find_linux_pid_via_proc
 
 
 def _mock_sentence_transformers_present(monkeypatch):
@@ -382,6 +382,36 @@ def test_listening_pids_windows_hides_netstat_console(monkeypatch):
 
     assert DaemonEmbedManager._listening_pids(9177) == [4321]
     assert calls[0][1]["creationflags"] == 0x08000000
+
+
+def test_find_linux_pid_via_proc_matches_listening_socket_inode(tmp_path):
+    proc_root = tmp_path / "proc"
+    (proc_root / "net").mkdir(parents=True)
+    (proc_root / "net" / "tcp").write_text(
+        "header\n"
+        "  0: 0100007F:23D9 00000000:0000 0A 00000000:00000000 00:00000000 "
+        "00000000 1000 0 424242 1 0000000000000000 100 0 0 10 0\n"
+    )
+    (proc_root / "net" / "tcp6").write_text("header\n")
+    fd_dir = proc_root / "15774" / "fd"
+    fd_dir.mkdir(parents=True)
+    (fd_dir / "19").symlink_to("socket:[424242]")
+
+    assert _find_linux_pid_via_proc(9177, proc_root) == 15774
+    assert _find_linux_pid_via_proc(9178, proc_root) is None
+
+
+def test_listening_pids_linux_falls_back_to_proc(monkeypatch):
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.subprocess.run",
+        MagicMock(side_effect=FileNotFoundError),
+    )
+    proc_lookup = MagicMock(return_value=15774)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager._find_linux_pid_via_proc", proc_lookup)
+
+    assert DaemonEmbedManager._listening_pids(9177) == [15774]
+    proc_lookup.assert_called_once_with(9177)
 
 
 def test_stop_ui_kills_recorded_and_configured_ports(tmp_path, monkeypatch):

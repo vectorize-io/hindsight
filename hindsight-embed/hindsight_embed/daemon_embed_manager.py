@@ -43,6 +43,43 @@ def _parse_float_env(name: str, default: float) -> float:
         return default
 
 
+def _find_linux_pid_via_proc(port: int, proc_root: Path = Path("/proc")) -> int | None:
+    """Resolve a listening TCP socket to its owner without external tools."""
+    socket_inodes: set[str] = set()
+    for table in ("tcp", "tcp6"):
+        try:
+            lines = (proc_root / "net" / table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+
+        for line in lines:
+            fields = line.split()
+            if len(fields) > 9 and fields[3] == "0A":
+                try:
+                    local_port = int(fields[1].rsplit(":", 1)[1], 16)
+                except (IndexError, ValueError):
+                    continue
+                if local_port == port:
+                    socket_inodes.add(fields[9])
+
+    if not socket_inodes:
+        return None
+
+    for process_dir in proc_root.iterdir():
+        if not process_dir.name.isdigit():
+            continue
+        try:
+            descriptors = (process_dir / "fd").iterdir()
+            for descriptor in descriptors:
+                target = descriptor.readlink()
+                match = re.fullmatch(r"socket:\[(\d+)]", str(target))
+                if match and match.group(1) in socket_inodes:
+                    return int(process_dir.name)
+        except OSError:
+            continue
+    return None
+
+
 def _safe_non_negative_float(value: float, fallback: float) -> float:
     """Return a finite non-negative float, or fallback for invalid values."""
     return value if math.isfinite(value) and value >= 0 else fallback
@@ -464,6 +501,13 @@ class DaemonEmbedManager(EmbedManager):
                 if "users:" not in line:
                     continue
                 pids.extend(int(match) for match in re.findall(r"pid=(\d+)", line))
+        if pids:
+            return pids
+
+        if platform.system() == "Linux":
+            pid = _find_linux_pid_via_proc(port)
+            if pid is not None:
+                return [pid]
         return pids
 
     @staticmethod
