@@ -465,6 +465,27 @@ class VerbatimFactExtractionResponse(BaseModel):
     facts: list[VerbatimExtractedFact] = Field(description="List of metadata entries (one per chunk)")
 
 
+# Saturation/split threshold, not an extraction or storage limit. A response at
+# this bound is sent through the existing split/retry path, so it can never
+# silently truncate a degenerate or excessively dense chunk.
+#
+# The bound is derived from the configured output budget rather than fixed, so a
+# deployment with a large ceiling is not forced into constant splitting. A fact
+# object costs roughly this many output tokens; halving the budget keeps the item
+# bound biting before the token limit rather than at the same point.
+RETAIN_FACTS_SATURATION_FLOOR = 16
+_APPROX_OUTPUT_TOKENS_PER_FACT = 85
+
+
+def resolve_facts_saturation_limit(config) -> int:
+    """Facts a single extraction may return before the response counts as saturated."""
+    budget = getattr(config, "retain_max_completion_tokens", None)
+    if not isinstance(budget, int) or budget <= 0:
+        return RETAIN_FACTS_SATURATION_FLOOR
+    derived = budget // (2 * _APPROX_OUTPUT_TOKENS_PER_FACT)
+    return max(RETAIN_FACTS_SATURATION_FLOOR, derived)
+
+
 # Separators for sentence-aware recursive text splitting, ordered most- to
 # least-preferred. The final "" lets the splitter break mid-word as a last
 # resort so a chunk can never exceed the size budget.
@@ -1181,6 +1202,25 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             DynamicResponse = create_model("LabelsResponse", facts=(list[DynamicFact], ...))  # type: ignore[valid-type]
             response_schema = DynamicResponse
 
+    # Keep the facts array below the output-token ceiling when the configured
+    # structured-output backend accepts JSON Schema maxItems. The saturation
+    # check in _extract_facts_from_chunk remains authoritative for providers
+    # that do not enforce this schema keyword.
+    if getattr(config, "llm_supports_max_items", True):
+        facts_field = response_schema.model_fields["facts"]
+        response_schema = create_model(
+            "BoundedFactExtractionResponse",
+            __base__=response_schema,
+            facts=(
+                facts_field.annotation,
+                Field(
+                    ...,
+                    max_length=resolve_facts_saturation_limit(config),
+                    description=facts_field.description,
+                ),
+            ),
+        )
+
     return prompt, response_schema
 
 
@@ -1452,6 +1492,11 @@ async def _extract_facts_from_chunk(
             extraction_response_json = coerced_response_json
 
             raw_facts = extraction_response_json.get("facts", [])
+            saturation_limit = resolve_facts_saturation_limit(config)
+            if isinstance(raw_facts, list) and len(raw_facts) >= saturation_limit:
+                raise OutputTooLongError(
+                    f"Fact extraction reached the {saturation_limit}-fact saturation limit; input must be split."
+                )
 
             if not raw_facts:
                 logger.debug(
@@ -1729,6 +1774,9 @@ async def _extract_facts_with_auto_split(
 
     Returns:
         Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
+
+    Raises:
+        RuntimeError: If output is too long and the chunk cannot be split further.
     """
     import logging
 
@@ -1747,7 +1795,7 @@ async def _extract_facts_with_auto_split(
             agent_name=agent_name,
             metadata=metadata,
         )
-    except OutputTooLongError:
+    except OutputTooLongError as exc:
         # Output exceeded token limits - split the chunk and retry. Conversation
         # chunks are JSON arrays, so preserve array/turn boundaries when possible.
         logger.warning(
@@ -1757,11 +1805,15 @@ async def _extract_facts_with_auto_split(
 
         split_chunks = _split_chunk_for_output_retry(chunk)
         if split_chunks is None:
-            logger.warning(
-                f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
-                f"({len(chunk)} chars); dropping this sub-chunk."
+            error_message = (
+                f"Fact extraction cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
+                f"({len(chunk)} chars) after the output limit was reached; refusing to drop this sub-chunk."
             )
-            return [], TokenUsage()
+            logger.error(
+                f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
+                f"({len(chunk)} chars); failing retain instead of dropping this sub-chunk."
+            )
+            raise RuntimeError(error_message) from exc
 
         first_half, second_half = split_chunks
 
@@ -1795,14 +1847,33 @@ async def _extract_facts_with_auto_split(
             ),
         ]
 
-        sub_results = await asyncio.gather(*sub_tasks)
+        # return_exceptions so one unsplittable half cannot discard facts the other
+        # half extracted successfully. Losing good data is the failure mode this
+        # path exists to prevent, so salvage what succeeded and only fail when the
+        # split produced nothing at all.
+        sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
 
         # Combine results from both halves
         all_facts = []
         total_usage = TokenUsage()
-        for sub_facts, sub_usage in sub_results:
+        failures: list[BaseException] = []
+        for sub_result in sub_results:
+            if isinstance(sub_result, BaseException):
+                failures.append(sub_result)
+                continue
+            sub_facts, sub_usage = sub_result
             all_facts.extend(sub_facts)
             total_usage = total_usage + sub_usage
+
+        if failures and not all_facts:
+            raise failures[0]
+
+        if failures:
+            logger.error(
+                f"Chunk {chunk_index + 1}/{total_chunks}: {len(failures)} of {len(sub_results)} sub-chunks "
+                f"failed after splitting; keeping {len(all_facts)} facts from the sub-chunks that succeeded. "
+                f"First failure: {failures[0]}"
+            )
 
         logger.info(f"Successfully extracted {len(all_facts)} facts from split chunk {chunk_index + 1}")
 

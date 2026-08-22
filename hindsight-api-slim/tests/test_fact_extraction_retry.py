@@ -106,8 +106,8 @@ def test_output_retry_split_drops_subchunk_below_minimum_floor():
 
 
 @pytest.mark.asyncio
-async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
-    """If a chunk cannot be reduced further, auto-split exits gracefully."""
+async def test_output_too_long_fails_unsplittable_subchunk_without_recursing():
+    """If a chunk cannot be reduced further, auto-split fails without dropping it."""
     from hindsight_api.engine.llm_wrapper import OutputTooLongError
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_with_auto_split
 
@@ -118,8 +118,49 @@ async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
         "hindsight_api.engine.retain.fact_extraction._extract_facts_from_chunk",
         side_effect=OutputTooLongError("too long"),
     ) as extract:
-        facts, usage = await _extract_facts_with_auto_split(
-            chunk="x",
+        with pytest.raises(RuntimeError, match="refusing to drop this sub-chunk"):
+            await _extract_facts_with_auto_split(
+                chunk="x",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
+
+    assert extract.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_output_too_long_keeps_facts_from_sibling_when_one_half_fails():
+    """One unsplittable half must not discard facts the other half extracted."""
+    from hindsight_api.engine.llm_wrapper import OutputTooLongError
+    from hindsight_api.engine.retain.fact_extraction import TokenUsage, _extract_facts_with_auto_split
+
+    long_turn = {"role": "user", "content": "alpha " * 300}
+    tiny_turn = {"role": "assistant", "content": "b"}
+    chunk = json.dumps([long_turn, tiny_turn])
+
+    async def _extract(*, chunk: str, **_kwargs):
+        # Only the half holding solely the user turn succeeds. Anything still
+        # carrying the assistant turn overflows, so the whole chunk splits first
+        # and the tiny assistant half then fails unsplittably. Keyed on content,
+        # not call order, so gather scheduling cannot flip the test.
+        if "assistant" not in chunk:
+            return [{"fact": "kept"}], TokenUsage()
+        raise OutputTooLongError("too long")
+
+    config = _make_config(llm_max_retries=0)
+    llm_config = _make_llm_config(mock_response={})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._extract_facts_from_chunk",
+        side_effect=_extract,
+    ):
+        facts, _usage = await _extract_facts_with_auto_split(
+            chunk=chunk,
             chunk_index=0,
             total_chunks=1,
             event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
@@ -129,8 +170,7 @@ async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
             agent_name="agent",
         )
 
-    assert facts == []
-    assert extract.call_count == 1
+    assert facts == [{"fact": "kept"}]
 
 
 def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = None):
@@ -542,6 +582,111 @@ def test_build_request_body_retain_strict_false_overrides_global_true():
     assert body["response_format"]["json_schema"]["strict"] is False
 
 
+@pytest.mark.asyncio
+async def test_fact_saturation_boundary_allows_fifteen_facts():
+    """A response below the saturation boundary remains a normal success."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk, resolve_facts_saturation_limit
+
+    config = _make_config(llm_max_retries=0)
+    fact_count = resolve_facts_saturation_limit(config) - 1
+    llm_config = _make_llm_config(mock_response={"facts": [{"what": f"fact {index}"} for index in range(fact_count)]})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="A normal chunk.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="agent",
+        )
+
+    assert len(facts) == fact_count
+    assert llm_config.call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fact_saturation_boundary_raises_output_too_long():
+    """A response at the saturation boundary must enter the split path."""
+    from hindsight_api.engine.llm_wrapper import OutputTooLongError
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk, resolve_facts_saturation_limit
+
+    config = _make_config(llm_max_retries=0)
+    saturation_limit = resolve_facts_saturation_limit(config)
+    llm_config = _make_llm_config(
+        mock_response={"facts": [{"what": f"fact {index}"} for index in range(saturation_limit)]}
+    )
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        with pytest.raises(OutputTooLongError, match="saturation limit"):
+            await _extract_facts_from_chunk(
+                chunk="A dense chunk.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
+
+    assert llm_config.call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fact_saturation_uses_auto_split_and_returns_subchunk_facts():
+    """Saturation must split the chunk and return facts from both sub-chunks."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain.fact_extraction import (
+        _extract_facts_with_auto_split,
+        resolve_facts_saturation_limit,
+    )
+
+    config = _make_config(llm_max_retries=0)
+    llm_config = _make_llm_config(mock_response=None)
+    llm_config.call = AsyncMock(
+        side_effect=[
+            (
+                {
+                    "facts": [
+                        {"what": f"saturated fact {index}"} for index in range(resolve_facts_saturation_limit(config))
+                    ]
+                },
+                TokenUsage(),
+            ),
+            ({"facts": [{"what": "left fact"}]}, TokenUsage()),
+            ({"facts": [{"what": "right fact"}]}, TokenUsage()),
+        ]
+    )
+    chunk = "A sentence that needs extraction. " * 40
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_with_auto_split(
+            chunk=chunk,
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="agent",
+        )
+
+    assert [fact.fact for fact in facts] == ["left fact", "right fact"]
+    assert llm_config.call.call_count == 3
+
+
 # --- Retry budget semantics (issue #2731) -----------------------------------
 #
 # A retry BUDGET of N means N retries *after* the initial request — the meaning
@@ -665,3 +810,32 @@ async def test_malformed_response_still_attempts_then_fails_loudly(retain_config
 
     assert llm.call.call_count == expected_calls
     assert "after 0 attempts" not in str(exc.value)
+
+
+def test_facts_saturation_limit_scales_with_output_budget():
+    """The saturation bound tracks the configured output ceiling."""
+    from hindsight_api.engine.retain.fact_extraction import (
+        RETAIN_FACTS_SATURATION_FLOOR,
+        resolve_facts_saturation_limit,
+    )
+
+    small = MagicMock()
+    small.retain_max_completion_tokens = 4096
+    large = MagicMock()
+    large.retain_max_completion_tokens = 65536
+
+    assert resolve_facts_saturation_limit(small) < resolve_facts_saturation_limit(large)
+    assert resolve_facts_saturation_limit(small) >= RETAIN_FACTS_SATURATION_FLOOR
+
+
+def test_facts_saturation_limit_falls_back_to_floor_without_budget():
+    """An unset or non-numeric ceiling falls back to the conservative floor."""
+    from hindsight_api.engine.retain.fact_extraction import (
+        RETAIN_FACTS_SATURATION_FLOOR,
+        resolve_facts_saturation_limit,
+    )
+
+    unset = MagicMock()
+    unset.retain_max_completion_tokens = None
+
+    assert resolve_facts_saturation_limit(unset) == RETAIN_FACTS_SATURATION_FLOOR
