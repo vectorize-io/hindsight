@@ -3389,13 +3389,23 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             payload_bytes = str(raw_payload).encode()
 
-        headers: dict[str, str] = {
-            "Content-Type": "application/json",
-            "X-Hindsight-Event": event_type,
-            **http_config.headers,
-        }
-        if secret and self._webhook_manager:
-            headers["X-Hindsight-Signature"] = self._webhook_manager._sign_payload(secret, payload_bytes)
+        is_get = http_config.method.upper() == "GET"
+        if is_get:
+            # GET has no body, so Content-Type and X-Hindsight-Signature are
+            # meaningless (the signature would be over bytes the receiver never
+            # gets). Send only the event header plus any caller-supplied headers.
+            headers: dict[str, str] = {
+                "X-Hindsight-Event": event_type,
+                **http_config.headers,
+            }
+        else:
+            headers = {
+                "Content-Type": "application/json",
+                "X-Hindsight-Event": event_type,
+                **http_config.headers,
+            }
+            if secret and self._webhook_manager:
+                headers["X-Hindsight-Signature"] = self._webhook_manager._sign_payload(secret, payload_bytes)
 
         if self._http_client is None:
             raise RuntimeError("HTTP client not initialized")
@@ -3407,7 +3417,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "params": http_config.params if http_config.params else None,
                 "timeout": http_config.timeout_seconds,
             }
-            if http_config.method.upper() == "GET":
+            if is_get:
                 response = await self._http_client.get(url, **request_kwargs)
             else:
                 response = await self._http_client.post(url, content=payload_bytes, **request_kwargs)

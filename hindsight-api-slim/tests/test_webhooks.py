@@ -1920,3 +1920,105 @@ def test_memory_defense_hit_rejects_missing_preview() -> None:
         MemoryDefenseHit(detector="GitHub Token")  # type: ignore[call-arg]
     with pytest.raises(Exception):
         MemoryDefenseHit(preview="ghp_AAAA...BBBB")  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# Honest-GET header tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetWebhookHeaders:
+    """GET deliveries must not send Content-Type or X-Hindsight-Signature.
+
+    A GET request has no body, so the HMAC signature is computed over bytes
+    the receiver never sees, and Content-Type: application/json is equally
+    misleading. Both headers are suppressed for GET; POST keeps them.
+    """
+
+    def _make_get_task(self, secret: str | None = "s3cr3t") -> dict:
+        return {
+            "type": "webhook_delivery",
+            "bank_id": "bank-1",
+            "url": "https://example.com/hook",
+            "secret": secret,
+            "event_type": "consolidation.completed",
+            "payload": '{"event":"consolidation.completed"}',
+            "webhook_id": None,
+            "_retry_count": 0,
+            "http_config": {"method": "GET", "timeout_seconds": 30, "headers": {}, "params": {}},
+        }
+
+    def _make_post_task(self, secret: str | None = "s3cr3t") -> dict:
+        return {
+            "type": "webhook_delivery",
+            "bank_id": "bank-1",
+            "url": "https://example.com/hook",
+            "secret": secret,
+            "event_type": "consolidation.completed",
+            "payload": '{"event":"consolidation.completed"}',
+            "webhook_id": None,
+            "_retry_count": 0,
+            "http_config": {"method": "POST", "timeout_seconds": 30, "headers": {}, "params": {}},
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_omits_content_type_and_signature(self, memory: MemoryEngine) -> None:
+        """GET delivery must not include Content-Type or X-Hindsight-Signature."""
+        captured: dict = {}
+
+        async def fake_get(url: str, **kwargs: object) -> object:
+            captured.update(kwargs)
+            mock = MagicMock()
+            mock.raise_for_status = MagicMock()
+            mock.status_code = 200
+            mock.text = ""
+            return mock
+
+        with patch.object(memory._http_client, "get", side_effect=fake_get):
+            await memory._handle_webhook_delivery(self._make_get_task())
+
+        sent_headers: dict[str, str] = captured.get("headers", {})
+        assert "Content-Type" not in sent_headers, "GET must not send Content-Type"
+        assert "X-Hindsight-Signature" not in sent_headers, "GET must not send X-Hindsight-Signature"
+        assert sent_headers.get("X-Hindsight-Event") == "consolidation.completed"
+
+    @pytest.mark.asyncio
+    async def test_get_without_secret_also_omits_signature(self, memory: MemoryEngine) -> None:
+        """Even with no secret configured, GET must not send signature or Content-Type."""
+        captured: dict = {}
+
+        async def fake_get(url: str, **kwargs: object) -> object:
+            captured.update(kwargs)
+            mock = MagicMock()
+            mock.raise_for_status = MagicMock()
+            mock.status_code = 200
+            mock.text = ""
+            return mock
+
+        with patch.object(memory._http_client, "get", side_effect=fake_get):
+            await memory._handle_webhook_delivery(self._make_get_task(secret=None))
+
+        sent_headers: dict[str, str] = captured.get("headers", {})
+        assert "Content-Type" not in sent_headers
+        assert "X-Hindsight-Signature" not in sent_headers
+
+    @pytest.mark.asyncio
+    async def test_post_still_includes_content_type_and_signature(self, memory: MemoryEngine) -> None:
+        """POST delivery must still send Content-Type and X-Hindsight-Signature."""
+        captured: dict = {}
+
+        async def fake_post(url: str, **kwargs: object) -> object:
+            captured.update(kwargs)
+            mock = MagicMock()
+            mock.raise_for_status = MagicMock()
+            mock.status_code = 200
+            mock.text = ""
+            return mock
+
+        with patch.object(memory._http_client, "post", side_effect=fake_post):
+            await memory._handle_webhook_delivery(self._make_post_task())
+
+        sent_headers: dict[str, str] = captured.get("headers", {})
+        assert sent_headers.get("Content-Type") == "application/json"
+        assert "X-Hindsight-Signature" in sent_headers
+        assert sent_headers["X-Hindsight-Signature"].startswith("sha256=")
