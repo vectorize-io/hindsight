@@ -8620,6 +8620,30 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
+
+            # Drop this bank's per-bank vector indexes BEFORE the delete
+            # transaction (issue #3485): at the lock-table wall, planning any
+            # DML against memory_units fails, while DROP INDEX — a utility
+            # statement — still works, and each drop frees lock-table space for
+            # the delete that follows. The drop runs CONCURRENTLY, which cannot
+            # run inside a transaction, so it belongs on this autocommit
+            # connection. Only the full-delete path drops indexes; internal_id
+            # is kept for the idempotent re-drop after commit.
+            if not fact_type and delete_bank_profile:
+                internal_id = await conn.fetchval(
+                    f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
+                )
+                if internal_id:
+                    bank_internal_id = str(internal_id)
+                    # Retry the transient deadlock a concurrent index
+                    # build/drop on the shared memory_units table can still
+                    # trigger (sqlstate 40P01 / ORA-00060).
+                    await retry_with_backoff(
+                        lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops),
+                        max_retries=7,
+                        max_delay=10.0,
+                    )
+
             async with conn.transaction():
                 try:
                     if fact_type:
@@ -8770,29 +8794,26 @@ class MemoryEngine(MemoryEngineInterface):
                         }
 
                         if delete_bank_profile:
-                            # Delete the bank profile and retrieve internal_id for HNSW index cleanup
-                            internal_id = await conn.fetchval(
-                                f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1 RETURNING internal_id", bank_id
+                            # RETURNING internal_id so the post-commit drop
+                            # names the row actually deleted — a bank (re)created
+                            # since the pre-drop SELECT would otherwise leave its
+                            # indexes orphaned.
+                            deleted_internal_id = await conn.fetchval(
+                                f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1 RETURNING internal_id",
+                                bank_id,
                             )
-                            if internal_id:
-                                bank_internal_id = str(internal_id)
+                            if deleted_internal_id:
+                                bank_internal_id = str(deleted_internal_id)
                             result["bank_deleted"] = True
 
                 except Exception as e:
                     raise Exception(f"Failed to delete agent data: {str(e)}")
 
-            # Drop per-bank vector indexes AFTER the transaction commits: the
-            # drop runs CONCURRENTLY (see ops.drop_bank_vector_indexes), which
-            # cannot run inside a transaction block. Same-process drops are
-            # serialized by the ops-level DDL lock; retry_with_backoff absorbs
-            # the residual cross-process deadlock a concurrent index build/drop
-            # on the shared memory_units table can still trigger (sqlstate
-            # 40P01 / ORA-00060) so a delete is never lost to a transient lock
-            # cycle. Sized well above the defaults: a many-process delete storm
-            # (CI teardown ran 8 workers' drops at once) drains at roughly one
-            # deadlock victim per deadlock_timeout (1s), so the default ~2.4s
-            # of backoff lost every retry; ~30s of jittered backoff outlasts
-            # any realistic pile-up.
+            # Idempotent re-drop after commit: maintenance can rebuild the
+            # indexes between the pre-drop and this commit (its plan saw the
+            # bank row still there). This covers a rebuild that finished before
+            # commit; apply_bank_index_plan's post-build re-check covers one
+            # that finishes after.
             if bank_internal_id:
                 await retry_with_backoff(
                     lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops),

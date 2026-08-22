@@ -323,6 +323,10 @@ async def apply_bank_index_plan(
     ``CREATE INDEX CONCURRENTLY IF NOT EXISTS`` guarded by a valid/ready health
     check and every drop is ``DROP INDEX CONCURRENTLY IF EXISTS``, so a second
     concurrent run is a no-op on work the first already did.
+
+    After each successful build the bank row is re-checked: a bank deleted (or
+    recreated under a fresh ``internal_id``) mid-build leaves an orphan index
+    ``delete_bank`` cannot name, so the build drops its own index instead.
     """
     result = BankIndexResult(bank_id=plan.bank_id, already_present=plan.already_present)
     qschema = _quote_identifier(schema)
@@ -356,12 +360,13 @@ async def apply_bank_index_plan(
         # The bank was deleted between planning and applying; delete_bank has
         # already dropped its indexes and there is nothing left to name.
         return result
+    internal_id_str = str(internal_id)
 
     for fact_type in plan.to_build:
         if dry_run:
             result.skipped += 1
             continue
-        qindex = _quote_identifier(_bank_index_name(fact_type, str(internal_id)))
+        qindex = _quote_identifier(_bank_index_name(fact_type, internal_id_str))
         qualified = f"{qschema}.{qindex}"
 
         async def _rebuild(qindex: str = qindex, qualified: str = qualified, fact_type: str = fact_type) -> None:
@@ -383,8 +388,6 @@ async def apply_bank_index_plan(
             # That is transient — Postgres aborts one side to break the cycle —
             # so retry the drop+build before recording a permanent failure.
             await retry_with_backoff(_rebuild)
-            result.created += 1
-            logger.info("Built vector index %s (bank=%s, fact_type=%s)", qualified, plan.bank_id, fact_type)
         except Exception as exc:  # noqa: BLE001 — one failed index must not abort the rest
             result.failed += 1
             result.failed_indexes.append(qualified)
@@ -402,6 +405,32 @@ async def apply_bank_index_plan(
                 await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified}")
             except Exception as cleanup_exc:  # noqa: BLE001
                 logger.warning("Cleanup DROP INDEX for %s also failed: %s", qualified, cleanup_exc)
+        else:
+            # Re-check the bank after the build: if it was deleted (or
+            # recreated under a fresh internal_id) while CREATE INDEX
+            # CONCURRENTLY was running, the index just built is an orphan that
+            # delete_bank's post-commit drop could not name. Drop it, don't
+            # count it, and stop — the remaining fact_types would only build
+            # more orphans.
+            still = await conn.fetchval(
+                f"SELECT internal_id FROM {qschema}.banks WHERE bank_id = $1",  # noqa: S608 — quoted identifier
+                plan.bank_id,
+            )
+            if still is None or str(still) != internal_id_str:
+                try:
+                    await retry_with_backoff(
+                        lambda qualified=qualified: conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified}")
+                    )
+                except Exception as cleanup_exc:  # noqa: BLE001
+                    logger.warning(
+                        "Bank %s was deleted during build of %s; orphan drop failed: %s",
+                        plan.bank_id,
+                        qualified,
+                        cleanup_exc,
+                    )
+                break
+            result.created += 1
+            logger.info("Built vector index %s (bank=%s, fact_type=%s)", qualified, plan.bank_id, fact_type)
 
     return result
 
