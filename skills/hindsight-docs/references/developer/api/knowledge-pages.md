@@ -191,7 +191,8 @@ When `trigger` is omitted, the page is created with a document-oriented configur
   "mode": "delta",
   "fact_types": ["observation"],
   "exclude_mental_models": true,
-  "refresh_after_consolidation": true
+  "refresh_after_consolidation": true,
+  "tags_match": "all"
 }
 ```
 
@@ -203,6 +204,7 @@ This makes the page a living document built from consolidated observations only,
 | `exclude_mental_models: true` | A page never reflects on sibling pages. Without this, pages would cite each other and drift into a feedback loop where one wrong claim propagates across the knowledge base. |
 | `mode: "delta"` | Each refresh edits the existing document with what is new since the last refresh instead of regenerating it, so hand-tuned structure and wording survive. See [Refresh Mode](./mental-models#refresh-mode). |
 | `refresh_after_consolidation: true` | The page rewrites itself whenever consolidation produces new knowledge in its scope — gated by the same [staleness check](./mental-models#staleness-gating) as any mental model, so unrelated bank activity doesn't trigger rebuilds. |
+| `tags_match: "all"` | Page tags remain an AND filter for tagged memories, while untagged observations remain visible as bank-wide knowledge. |
 
 ### Page Lifecycle
 
@@ -216,7 +218,10 @@ Observations are what a page is *built from*, but it can still inspect the evide
 
 > **🚨 Caution**
 >
-A supplied `trigger` **replaces** these defaults, it does not merge with them. Sending `{"trigger": {"mode": "full"}}` also resets `fact_types` to all types, `exclude_mental_models` to `false`, and `refresh_after_consolidation` to `false`. Repeat the fields you want to keep.
+A supplied `trigger` patches these defaults: fields you omit keep their page defaults. Sending
+`{"trigger": {"mode": "full"}}` changes only the refresh mode; it keeps observation-only
+retrieval, page isolation, automatic refresh, and the non-strict tag matching unless you override
+those fields explicitly.
 Every [mental model trigger setting](./mental-models#trigger-settings) is accepted here — including `refresh_cron` for scheduled rebuilds instead of consolidation-driven ones, and `tag_groups` for compound tag scoping.
 
 ---

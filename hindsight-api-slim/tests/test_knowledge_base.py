@@ -266,6 +266,7 @@ class TestTree:
         trigger = roots["Loose"]["trigger"]
         assert trigger["mode"] == "delta"
         assert trigger["fact_types"] == ["observation"]
+        assert trigger["tags_match"] == "all"
         assert trigger["exclude_mental_models"] is True
         assert trigger["refresh_after_consolidation"] is True
         # A folder has no backing mental model, so it has no refresh policy either —
@@ -310,19 +311,18 @@ class TestTree:
             )
 
     @pytest.mark.memory_backend_incompatible
-    async def test_tree_staleness_ignores_writes_outside_a_page_scope(self, api_client, memory, kb_bank):
-        """A write nowhere near a page's tags does not flag that page.
+    async def test_tree_staleness_includes_global_observations_in_every_page(self, api_client, memory, kb_bank):
+        """An untagged observation is global knowledge for every page.
 
-        The tree used to answer from one bank-wide watermark, so *any* write
-        flagged *every* page that had not read it — and since only an in-scope
-        write can move a page's own watermark, a page whose scope stayed quiet
-        stayed flagged forever while the refresh gate correctly refused to
-        refresh it (#3291). Each page is now asked about its own scope.
+        The tree and refresh gate resolve each page's own scope. The page default
+        deliberately keeps untagged observations in that scope, because those
+        rows represent bank-wide knowledge rather than a separate tag partition.
+        Tagged writes still only flag pages whose tag set contains them (#3291).
         """
         bank_id, ids = kb_bank
-        # Untagged: in scope for the untagged page (which defaults to tags_match
-        # "any" and so matches everything), out of scope for every tagged page
-        # (which default to all_strict).
+        # Untagged observations are global bank knowledge. They are in scope for
+        # every page, while tagged observations still need to satisfy a page's
+        # configured tag set.
         await self._insert_memory(memory, bank_id, [])
 
         resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
@@ -332,15 +332,15 @@ class TestTree:
         billing = next(c for c in roots["Policies"]["children"] if c["name"] == "Billing")
 
         assert roots["Loose"]["is_stale"] is True, "an untagged page sees every memory in the bank"
-        assert orders["is_stale"] is False, "the write carried none of Orders' tags"
-        assert billing["is_stale"] is False, "the write carried none of Billing's tags"
+        assert orders["is_stale"] is True, "pages include untagged bank observations"
+        assert billing["is_stale"] is True, "pages include untagged bank observations"
 
     @pytest.mark.memory_backend_incompatible
     async def test_tree_flags_the_page_whose_own_scope_changed(self, api_client, memory, kb_bank):
-        """Only the page the write actually belongs to is flagged."""
+        """A tagged write flags its matching page, while the global page sees every write."""
         bank_id, ids = kb_bank
-        # Carries all of Orders' tags (all_strict is a superset test) and only one
-        # of Billing's, so it is in scope for Orders and not for Billing.
+        # Carries all of Orders' tags and only one of Billing's, so it is in scope
+        # for Orders and not for Billing.
         await self._insert_memory(memory, bank_id, ["type:runbook", "sales", "revenue"])
 
         resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
@@ -496,6 +496,7 @@ class TestPageDefaults:
             "fact_types": ["observation"],
             "exclude_mental_models": True,
             "refresh_after_consolidation": True,
+            "tags_match": "all",
         }
         assert mm["max_tokens"] == 4096
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -540,6 +541,7 @@ class TestPageDefaults:
             "fact_types": ["world", "experience", "observation"],
             "exclude_mental_models": True,
             "refresh_after_consolidation": True,
+            "tags_match": "all",
         }
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -585,6 +587,7 @@ class TestPageDefaults:
         assert mm["trigger"]["mode"] == "delta"
         assert mm["trigger"]["fact_types"] == ["observation"]
         assert mm["trigger"]["exclude_mental_models"] is True
+        assert mm["trigger"]["tags_match"] == "all"
         # Moving onto a schedule clears the auto-refresh it was created with, in the
         # direction the create path never had to handle.
         assert "refresh_after_consolidation" not in mm["trigger"]
@@ -600,6 +603,7 @@ class TestPageDefaults:
         assert mm["trigger"]["refresh_after_consolidation"] is True
         assert "refresh_cron" not in mm["trigger"]
         assert mm["trigger"]["mode"] == "delta"
+        assert mm["trigger"]["tags_match"] == "all"
         await memory.delete_bank(bank_id, request_context=request_context)
 
     async def test_update_without_a_trigger_leaves_it_alone(self, memory: MemoryEngine, request_context):

@@ -15262,6 +15262,9 @@ class MemoryEngine(MemoryEngineInterface):
         "fact_types": ["observation"],
         "exclude_mental_models": True,
         "refresh_after_consolidation": True,
+        # Preserve AND filtering for tagged memories while keeping global (untagged)
+        # observations visible to pages.
+        "tags_match": "all",
     }
 
     def _merge_page_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
