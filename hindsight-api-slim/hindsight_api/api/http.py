@@ -3891,6 +3891,9 @@ def create_app(
                 max_slots=config.worker_max_slots,
                 slot_reservations=config.worker_slot_reservations,
                 consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
+                max_retries=config.worker_max_retries,
+                heartbeat_interval_seconds=config.worker_heartbeat_interval_seconds,
+                stale_task_timeout_seconds=config.worker_stale_task_timeout_seconds,
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")

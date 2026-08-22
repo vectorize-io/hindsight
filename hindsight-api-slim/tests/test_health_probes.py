@@ -166,6 +166,7 @@ async def test_poll_age_is_stamped_by_the_claim_loop():
 
     poller = WorkerPoller(backend=MagicMock(), worker_id="w-test", executor=AsyncMock(), poll_interval_ms=1)
     poller.recover_own_tasks = AsyncMock()
+    poller.recover_stale_tasks = AsyncMock()
     poller.claim_batch = AsyncMock(return_value=[])
     poller._log_progress_if_due = AsyncMock()
 

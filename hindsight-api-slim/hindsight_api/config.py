@@ -737,6 +737,8 @@ ENV_WORKER_ID = "HINDSIGHT_API_WORKER_ID"
 ENV_WORKER_POLL_INTERVAL_MS = "HINDSIGHT_API_WORKER_POLL_INTERVAL_MS"
 ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
 ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS = "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS"
+ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS = "HINDSIGHT_API_WORKER_HEARTBEAT_INTERVAL_SECONDS"
+ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS = "HINDSIGHT_API_WORKER_STALE_TASK_TIMEOUT_SECONDS"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
 ENV_OPERATION_RETENTION_DAYS = "HINDSIGHT_API_OPERATION_RETENTION_DAYS"
@@ -1381,6 +1383,10 @@ DEFAULT_WORKER_ID = None  # Will use hostname if not specified
 DEFAULT_WORKER_POLL_INTERVAL_MS = 500  # Poll database every 500ms
 DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on transient task failure
+# Lease maintenance for processing operations. The heartbeat is deliberately much
+# shorter than the stale timeout so a healthy slow task is not reclaimed.
+DEFAULT_WORKER_HEARTBEAT_INTERVAL_SECONDS = 30
+DEFAULT_WORKER_STALE_TASK_TIMEOUT_SECONDS = 300
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 # Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
@@ -2802,6 +2808,11 @@ class HindsightConfig:
     operation_cleanup_interval_seconds: int = DEFAULT_OPERATION_CLEANUP_INTERVAL_SECONDS
     maintenance_start_jitter_seconds: int = DEFAULT_MAINTENANCE_START_JITTER_SECONDS
 
+    # Worker lease settings were added after the original worker fields. Keep
+    # defaults here so direct HindsightConfig(...) callers remain compatible.
+    worker_heartbeat_interval_seconds: int = DEFAULT_WORKER_HEARTBEAT_INTERVAL_SECONDS
+    worker_stale_task_timeout_seconds: int = DEFAULT_WORKER_STALE_TASK_TIMEOUT_SECONDS
+
     # Class-level sets for configuration categorization
 
     # CREDENTIAL_FIELDS: Never exposed via API, never configurable per-tenant/bank
@@ -3202,6 +3213,18 @@ class HindsightConfig:
                 f"Sum of per-operation slot reservations ({total_reserved}: {reservation_details}) "
                 f"exceeds worker_max_slots ({self.worker_max_slots}). "
                 f"Reduce reservations or increase HINDSIGHT_API_WORKER_MAX_SLOTS."
+            )
+
+        if self.worker_heartbeat_interval_seconds <= 0:
+            raise ValueError(
+                f"{ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS} must be > 0, got {self.worker_heartbeat_interval_seconds}"
+            )
+        if self.worker_stale_task_timeout_seconds <= self.worker_heartbeat_interval_seconds:
+            raise ValueError(
+                f"{ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS} must be greater than "
+                f"{ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS} "
+                f"({self.worker_heartbeat_interval_seconds}), "
+                f"got {self.worker_stale_task_timeout_seconds}"
             )
 
         if self.operation_retention_days < 0:
@@ -3972,6 +3995,18 @@ class HindsightConfig:
                 os.getenv(
                     ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS,
                     str(DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS),
+                )
+            ),
+            worker_heartbeat_interval_seconds=int(
+                os.getenv(
+                    ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS,
+                    str(DEFAULT_WORKER_HEARTBEAT_INTERVAL_SECONDS),
+                )
+            ),
+            worker_stale_task_timeout_seconds=int(
+                os.getenv(
+                    ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS,
+                    str(DEFAULT_WORKER_STALE_TASK_TIMEOUT_SECONDS),
                 )
             ),
             worker_http_port=int(os.getenv(ENV_WORKER_HTTP_PORT, str(DEFAULT_WORKER_HTTP_PORT))),

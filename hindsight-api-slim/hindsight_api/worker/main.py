@@ -240,6 +240,8 @@ def main():
     print(f"Starting Hindsight Worker: {worker_id}")
     print(f"  Poll interval: {args.poll_interval}ms")
     print(f"  Max retries: {args.max_retries}")
+    print(f"  Lease heartbeat: {config.worker_heartbeat_interval_seconds}s")
+    print(f"  Stale task timeout: {config.worker_stale_task_timeout_seconds}s")
     print(f"  Max slots: {config.worker_max_slots}")
     reservations = config.worker_slot_reservations
     reservations_str = ", ".join(f"{k}={v}" for k, v in reservations.items()) if reservations else "none"
@@ -319,6 +321,8 @@ def main():
             slot_reservations=config.worker_slot_reservations,
             consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
             max_retries=config.worker_max_retries,
+            heartbeat_interval_seconds=config.worker_heartbeat_interval_seconds,
+            stale_task_timeout_seconds=config.worker_stale_task_timeout_seconds,
         )
 
         # Create the HTTP app for metrics/health

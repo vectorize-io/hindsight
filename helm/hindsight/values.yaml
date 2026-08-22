@@ -169,6 +169,10 @@ worker:
     HINDSIGHT_API_WORKER_BATCH_SIZE: "10"
     # Max retries before marking a task as failed
     HINDSIGHT_API_WORKER_MAX_RETRIES: "3"
+    # Refresh active leases every 30 seconds.
+    HINDSIGHT_API_WORKER_HEARTBEAT_INTERVAL_SECONDS: "30"
+    # Reclaim a processing operation after five minutes without a heartbeat.
+    HINDSIGHT_API_WORKER_STALE_TASK_TIMEOUT_SECONDS: "300"
     # HTTP port for metrics/health (matches service.targetPort)
     HINDSIGHT_API_WORKER_HTTP_PORT: "8889"
 

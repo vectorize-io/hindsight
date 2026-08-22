@@ -977,3 +977,44 @@ def test_worker_reserved_and_legacy_both_set_is_rejected(monkeypatch):
 
     with pytest.raises(ValueError, match="RESERVED_SLOTS"):
         HindsightConfig.from_env()
+
+
+def test_worker_lease_defaults_and_env_overrides(monkeypatch):
+    from hindsight_api.config import (
+        DEFAULT_WORKER_HEARTBEAT_INTERVAL_SECONDS,
+        DEFAULT_WORKER_STALE_TASK_TIMEOUT_SECONDS,
+        ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS,
+        ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS,
+        HindsightConfig,
+    )
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    monkeypatch.delenv(ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS, raising=False)
+    monkeypatch.delenv(ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS, raising=False)
+    defaults = HindsightConfig.from_env()
+    assert defaults.worker_heartbeat_interval_seconds == DEFAULT_WORKER_HEARTBEAT_INTERVAL_SECONDS
+    assert defaults.worker_stale_task_timeout_seconds == DEFAULT_WORKER_STALE_TASK_TIMEOUT_SECONDS
+
+    monkeypatch.setenv(ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS, "7")
+    monkeypatch.setenv(ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS, "21")
+    overridden = HindsightConfig.from_env()
+    assert overridden.worker_heartbeat_interval_seconds == 7
+    assert overridden.worker_stale_task_timeout_seconds == 21
+
+
+@pytest.mark.parametrize(
+    ("heartbeat", "stale", "message"),
+    [("0", "300", "HEARTBEAT_INTERVAL"), ("30", "30", "STALE_TASK_TIMEOUT")],
+)
+def test_worker_lease_settings_reject_unsafe_values(monkeypatch, heartbeat, stale, message):
+    from hindsight_api.config import (
+        ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS,
+        ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS,
+        HindsightConfig,
+    )
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    monkeypatch.setenv(ENV_WORKER_HEARTBEAT_INTERVAL_SECONDS, heartbeat)
+    monkeypatch.setenv(ENV_WORKER_STALE_TASK_TIMEOUT_SECONDS, stale)
+    with pytest.raises(ValueError, match=message):
+        HindsightConfig.from_env()

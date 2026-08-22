@@ -231,8 +231,8 @@ class TestWorkerMarkCompleted:
 
         query, args = conn.execute_calls[0]
         assert "status = 'completed'" in query
-        assert "WHERE operation_id = $1 AND status = 'processing'" in query
-        assert args == ("op-1",)
+        assert "WHERE operation_id = $1 AND status = 'processing' AND worker_id = $2" in query
+        assert args == ("op-1", "w-test")
         poller._maybe_update_parent_operation.assert_awaited_once_with("op-1", None, conn)
 
     @pytest.mark.asyncio
@@ -1668,6 +1668,229 @@ class TestWorkerRecovery:
             parent_id,
         )
         assert parent_row["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_recover_stale_tasks_reclaims_expired_leases_but_keeps_fresh_tasks(
+        self, pool, backend, clean_operations
+    ):
+        """A replacement worker reclaims dead leases without duplicating live work."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        stale_id = uuid.uuid4()
+        same_worker_stale_id = uuid.uuid4()
+        fresh_id = uuid.uuid4()
+        stale_payload = json.dumps({"type": "test_task", "bank_id": bank_id, "which": "stale"})
+        fresh_payload = json.dumps({"type": "test_task", "bank_id": bank_id, "which": "fresh"})
+
+        # Backdate updated_at to model a worker that stopped heartbeating.
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'dead-container',
+                    now() - interval '2 days', now() - interval '2 days')
+            """,
+            stale_id,
+            bank_id,
+            stale_payload,
+        )
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'replacement-worker',
+                    now() - interval '1 hour', now() - interval '1 hour')
+            """,
+            same_worker_stale_id,
+            bank_id,
+            stale_payload,
+        )
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'live-worker', now(), now() + interval '5 minutes')
+            """,
+            fresh_id,
+            bank_id,
+            fresh_payload,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="replacement-worker",
+            executor=lambda _task: None,
+            max_retries=3,
+            heartbeat_interval_seconds=60,
+            stale_task_timeout_seconds=3600,
+        )
+        assert await poller.recover_stale_tasks() >= 1
+
+        stale_row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at, retry_count FROM async_operations WHERE operation_id = $1",
+            stale_id,
+        )
+        assert stale_row["status"] == "pending"
+        assert stale_row["worker_id"] is None
+        assert stale_row["claimed_at"] is None
+        assert stale_row["retry_count"] == 1
+
+        fresh_row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            fresh_id,
+        )
+        assert fresh_row["status"] == "processing"
+        assert fresh_row["worker_id"] == "live-worker"
+
+        same_worker_row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            same_worker_stale_id,
+        )
+        assert same_worker_row["status"] == "pending"
+        assert same_worker_row["worker_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_stale_recovery_moves_retry_exhausted_task_to_failed(self, pool, backend, clean_operations):
+        """Lease recovery respects the same retry cap as startup recovery."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, retry_count, claimed_at, updated_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'dead-container', 3,
+                    now() - interval '2 days', now() - interval '2 days')
+            """,
+            op_id,
+            bank_id,
+            json.dumps({"type": "test_task", "bank_id": bank_id}),
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="replacement-worker",
+            executor=lambda _task: None,
+            max_retries=3,
+            heartbeat_interval_seconds=60,
+            stale_task_timeout_seconds=3600,
+        )
+        await poller.recover_stale_tasks()
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, completed_at, error_message FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "failed"
+        assert row["worker_id"] is None
+        assert row["completed_at"] is not None
+        assert "stale worker lease expired" in row["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_refreshes_primary_and_folded_operations(self, pool, backend, clean_operations):
+        """Every operation in a folded execution receives the lease heartbeat."""
+        from hindsight_api.worker import WorkerPoller
+        from hindsight_api.worker.poller import ClaimedTask
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        primary_id = uuid.uuid4()
+        peer_id = uuid.uuid4()
+        for op_id in (primary_id, peer_id):
+            await pool.execute(
+                """
+                INSERT INTO async_operations
+                    (operation_id, bank_id, operation_type, status, task_payload,
+                     worker_id, claimed_at, updated_at)
+                VALUES ($1, $2, 'retain', 'processing', $3::jsonb, 'heartbeat-worker',
+                        now(), now() - interval '1 hour')
+                """,
+                op_id,
+                bank_id,
+                json.dumps({"type": "retain", "bank_id": bank_id}),
+            )
+
+        gate = asyncio.Event()
+
+        async def executor(_task):
+            await gate.wait()
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="heartbeat-worker",
+            executor=executor,
+            heartbeat_interval_seconds=60,
+            stale_task_timeout_seconds=300,
+        )
+        task = ClaimedTask(
+            operation_id=str(primary_id),
+            folded_operation_ids=[str(peer_id)],
+            task_dict={"type": "retain", "operation_type": "retain", "bank_id": bank_id},
+            schema=None,
+        )
+        await poller.execute_task(task)
+        await poller._heartbeat_active_tasks()
+
+        rows = await pool.fetch(
+            "SELECT operation_id, updated_at FROM async_operations WHERE operation_id = ANY($1::uuid[])",
+            [primary_id, peer_id],
+        )
+        assert len(rows) == 2
+        assert all(row["updated_at"] > datetime.now(UTC) - timedelta(minutes=1) for row in rows)
+
+        gate.set()
+        assert await poller.wait_for_active_tasks(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_old_worker_cannot_overwrite_reclaimed_operation(self, pool, backend, clean_operations):
+        """A late terminal write from a dead worker must not win after reclaim."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'dead-container',
+                    now() - interval '2 days', now() - interval '2 days')
+            """,
+            op_id,
+            bank_id,
+            json.dumps({"type": "test_task", "bank_id": bank_id}),
+        )
+
+        replacement = WorkerPoller(
+            backend=backend,
+            worker_id="replacement-worker",
+            executor=lambda _task: None,
+            max_retries=3,
+            heartbeat_interval_seconds=60,
+            stale_task_timeout_seconds=3600,
+        )
+        await replacement.recover_stale_tasks()
+
+        old_worker = WorkerPoller(backend=backend, worker_id="dead-container", executor=lambda _task: None)
+        await old_worker._mark_failed(str(op_id), "late failure", schema=None)
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, retry_count, error_message FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+        assert row["retry_count"] == 1
+        assert row["error_message"] is None
 
 
 class TestTaskReleaseOnStop:
@@ -3276,19 +3499,21 @@ class TestMarkFailedParentPropagation:
         operation_type: str,
         status: str,
         result_metadata: dict | None = None,
+        worker_id: str | None = None,
     ) -> None:
         meta_json = json.dumps(result_metadata if result_metadata is not None else {})
         await pool.execute(
             """
             INSERT INTO async_operations
-                (operation_id, bank_id, operation_type, status, result_metadata)
-            VALUES ($1, $2, $3, $4, $5::jsonb)
+                (operation_id, bank_id, operation_type, status, result_metadata, worker_id)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
             """,
             op_id,
             bank_id,
             operation_type,
             status,
             meta_json,
+            worker_id,
         )
 
     @pytest.mark.asyncio
@@ -3324,6 +3549,7 @@ class TestMarkFailedParentPropagation:
             operation_type="retain",
             status="processing",
             result_metadata={"parent_operation_id": str(parent_id)},
+            worker_id="test-worker-1",
         )
 
         poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
@@ -3371,6 +3597,7 @@ class TestMarkFailedParentPropagation:
             operation_type="retain",
             status="processing",
             result_metadata={"parent_operation_id": str(parent_id)},
+            worker_id="test-worker-1",
         )
 
         poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
@@ -3403,6 +3630,7 @@ class TestMarkFailedParentPropagation:
             operation_type="retain",
             status="processing",
             result_metadata={"parent_operation_id": str(parent_id)},
+            worker_id="test-worker-1",
         )
         # child2 is still pending — not done yet
         await self._insert_op(
@@ -3436,7 +3664,14 @@ class TestMarkFailedParentPropagation:
         await _ensure_bank(pool, bank_id)
 
         op_id = uuid.uuid4()
-        await self._insert_op(pool, op_id=op_id, bank_id=bank_id, operation_type="retain", status="processing")
+        await self._insert_op(
+            pool,
+            op_id=op_id,
+            bank_id=bank_id,
+            operation_type="retain",
+            status="processing",
+            worker_id="test-worker-1",
+        )
 
         poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
         # Must not raise
@@ -3466,6 +3701,7 @@ class TestMarkFailedParentPropagation:
             operation_type="retain",
             status="processing",
             result_metadata={"parent_operation_id": str(parent_id)},
+            worker_id="test-worker-1",
         )
 
         async def crashing_executor(task_dict):

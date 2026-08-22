@@ -1959,6 +1959,8 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_POLL_INTERVAL_MS` | Database polling interval in milliseconds | `500` |
 | `HINDSIGHT_API_WORKER_MAX_RETRIES` | Max retries before marking task failed | `3` |
 | `HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS` | Seconds between retries on transient task failure | `60` |
+| `HINDSIGHT_API_WORKER_HEARTBEAT_INTERVAL_SECONDS` | How often a worker refreshes `updated_at` for its active processing operations. This is the lease heartbeat, independent of task progress checkpoints. | `30` |
+| `HINDSIGHT_API_WORKER_STALE_TASK_TIMEOUT_SECONDS` | How long a processing operation may go without a heartbeat before another worker returns it to `pending` (or marks it failed when the retry budget is exhausted). Must be greater than the heartbeat interval. | `300` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
 | `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker (total across all operation types) | `10` |
 | `HINDSIGHT_API_OPERATION_RETENTION_DAYS` | Static server-wide retention window for completed, failed, and cancelled operation rows, including their task payload and result metadata. `0` (the default) keeps them indefinitely; set a positive number of days to enable automatic pruning. | `0` |
