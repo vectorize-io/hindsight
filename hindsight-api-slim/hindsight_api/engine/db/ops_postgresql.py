@@ -5,6 +5,7 @@ efficient batch operations.
 """
 
 import asyncio
+import logging
 from datetime import datetime
 
 from .base import DatabaseConnection
@@ -17,6 +18,8 @@ from .ops import (
     graph_maintenance_bank_serialization_sql,
 )
 from .result import ResultRow
+
+logger = logging.getLogger(__name__)
 
 
 def pg_search_vector_expr(
@@ -936,8 +939,22 @@ class PostgreSQLOps(DataAccessOps):
         # grow hubs far past that, re-measure before assuming this is still the
         # right shape.
 
-        entity_rows = await conn.fetch(
-            f"""
+        # Unlike _expand_combined()'s entity CTE (link_expansion_retrieval.py),
+        # this query has no caller-side asyncio.wait_for/fallback guard, so a
+        # slow run on a large/dense bank (very high entity fanout even under
+        # per_entity_limit, see issue #3510's notes above) propagates a raw
+        # TimeoutError all the way up and fails the entire recall() call
+        # instead of degrading to semantic+causal results the sibling path
+        # already falls back to. Apply the same guard here, scoped to just
+        # this query, so an observation-fact-type recall degrades the same
+        # way a non-observation one does.
+        from ...config import get_config
+
+        config = get_config()
+        try:
+            entity_rows = await asyncio.wait_for(
+                conn.fetch(
+                    f"""
             WITH seed_sources AS (
                 SELECT DISTINCT unnest(source_memory_ids) AS source_id
                 FROM {mu_table}
@@ -999,10 +1016,18 @@ class PostgreSQLOps(DataAccessOps):
             ORDER BY sc.score DESC
             LIMIT $2
             """,
-            seed_ids,
-            budget,
-            *window.params,
-        )
+                    seed_ids,
+                    budget,
+                    *window.params,
+                ),
+                timeout=config.link_expansion_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[ExpandObservations] Entity expansion timed out after "
+                f"{config.link_expansion_timeout}s, falling back to semantic+causal only"
+            )
+            entity_rows = []
 
         # Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
         # DISTINCT ON for causal, hardcoded to fact_type='observation'.
