@@ -201,8 +201,11 @@ hindsight memory recall my-bank "How are Alice and Bob connected?" --budget high
 
 ### max_tokens
 
-The maximum number of tokens the returned facts can collectively occupy. Defaults to `4096`. Only the `text` field of each fact is counted toward this budget — metadata, tags, entities, and other fields are not included. After reranking, facts are included in relevance order until this budget is exhausted — so you always get the most relevant memories that fit. Hindsight is designed for agents, which think in tokens rather than result counts: set `max_tokens` to however much of your context window you want to allocate to memories.
+The maximum number of tokens the returned facts can collectively occupy. Defaults to `4096`. Only the `text` field of each fact is counted toward this budget — metadata, tags, entities, and other fields are not included. After reranking, facts are included in relevance order until this budget is exhausted — so you always get the most relevant memories that fit. A fact too long for the remaining budget is skipped rather than ending the selection, so shorter facts ranked behind it still come back. Hindsight is designed for agents, which think in tokens rather than result counts: set `max_tokens` to however much of your context window you want to allocate to memories.
 
+> **📝 Note**
+>
+A query that matched something never comes back empty: if not even the top fact fits the budget, it is returned whole and over budget rather than clipped mid-sentence, because an empty result list would read as "this bank has no such memory". Whenever the budget dropped facts the response sets `results_truncated: true`, so you can tell a budget-limited answer from an empty bank. The one exception is `max_tokens=0`, which means "no facts" on purpose — it is how you ask for chunks alone.
 ### Python
 
 ```python
@@ -738,6 +741,10 @@ Each field is also a valid [`min_scores`](#min_scores) floor.
 ### source_facts
 
 A dict keyed by fact ID containing full `RecallResult` objects for the source facts that contributed to observation results. Only present when `include.source_facts` is enabled. Facts are deduplicated — if two observations share a source fact, it appears once.
+
+### results_truncated
+
+Whether the [`max_tokens`](#max_tokens) budget dropped facts from `results`. When `true`, the bank held more relevant facts than the budget could carry, so a short — or single-fact — result list is the budget's doing rather than an empty bank. Raise `max_tokens` to see the rest.
 
 ### source_facts_truncated
 

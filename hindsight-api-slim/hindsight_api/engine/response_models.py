@@ -404,6 +404,14 @@ class RecallResult(BaseModel):
             "references are not dangling. Only set when source facts were requested."
         ),
     )
+    results_truncated: bool = Field(
+        False,
+        description=(
+            "Whether the max_tokens budget dropped ranked facts from results. When true, the bank had "
+            "more relevant facts than the budget could carry — an empty or short result list is the "
+            "budget's doing, not an empty bank. Raise max_tokens to see the rest."
+        ),
+    )
 
 
 class ReflectResult(BaseModel):

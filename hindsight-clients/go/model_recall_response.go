@@ -27,6 +27,8 @@ type RecallResponse struct {
 	Chunks map[string]ChunkData `json:"chunks,omitempty"`
 	SourceFacts map[string]RecallResult `json:"source_facts,omitempty"`
 	SourceFactsTruncated NullableBool `json:"source_facts_truncated,omitempty"`
+	// Whether the max_tokens budget dropped ranked facts from results. When true, the bank had more relevant facts than the budget could carry — an empty or short result list is the budget's doing, not an empty bank. Raise max_tokens to see the rest.
+	ResultsTruncated *bool `json:"results_truncated,omitempty"`
 }
 
 type _RecallResponse RecallResponse
@@ -38,6 +40,8 @@ type _RecallResponse RecallResponse
 func NewRecallResponse(results []RecallResult) *RecallResponse {
 	this := RecallResponse{}
 	this.Results = results
+	var resultsTruncated bool = false
+	this.ResultsTruncated = &resultsTruncated
 	return &this
 }
 
@@ -46,6 +50,8 @@ func NewRecallResponse(results []RecallResult) *RecallResponse {
 // but it doesn't guarantee that properties required by API are set
 func NewRecallResponseWithDefaults() *RecallResponse {
 	this := RecallResponse{}
+	var resultsTruncated bool = false
+	this.ResultsTruncated = &resultsTruncated
 	return &this
 }
 
@@ -247,6 +253,38 @@ func (o *RecallResponse) UnsetSourceFactsTruncated() {
 	o.SourceFactsTruncated.Unset()
 }
 
+// GetResultsTruncated returns the ResultsTruncated field value if set, zero value otherwise.
+func (o *RecallResponse) GetResultsTruncated() bool {
+	if o == nil || IsNil(o.ResultsTruncated) {
+		var ret bool
+		return ret
+	}
+	return *o.ResultsTruncated
+}
+
+// GetResultsTruncatedOk returns a tuple with the ResultsTruncated field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *RecallResponse) GetResultsTruncatedOk() (*bool, bool) {
+	if o == nil || IsNil(o.ResultsTruncated) {
+		return nil, false
+	}
+	return o.ResultsTruncated, true
+}
+
+// HasResultsTruncated returns a boolean if a field has been set.
+func (o *RecallResponse) HasResultsTruncated() bool {
+	if o != nil && !IsNil(o.ResultsTruncated) {
+		return true
+	}
+
+	return false
+}
+
+// SetResultsTruncated gets a reference to the given bool and assigns it to the ResultsTruncated field.
+func (o *RecallResponse) SetResultsTruncated(v bool) {
+	o.ResultsTruncated = &v
+}
+
 func (o RecallResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -272,6 +310,9 @@ func (o RecallResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.SourceFactsTruncated.IsSet() {
 		toSerialize["source_facts_truncated"] = o.SourceFactsTruncated.Get()
+	}
+	if !IsNil(o.ResultsTruncated) {
+		toSerialize["results_truncated"] = o.ResultsTruncated
 	}
 	return toSerialize, nil
 }

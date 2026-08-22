@@ -13854,6 +13854,12 @@
             ],
             "title": "Source Facts Truncated",
             "description": "Whether the source_facts map was cut short by the token budget. When true, some IDs in results[].source_fact_ids have no entry in source_facts \u2014 the budget ran out, the references are not dangling. Only set when source facts were requested."
+          },
+          "results_truncated": {
+            "type": "boolean",
+            "title": "Results Truncated",
+            "description": "Whether the max_tokens budget dropped ranked facts from results. When true, the bank had more relevant facts than the budget could carry \u2014 an empty or short result list is the budget's doing, not an empty bank. Raise max_tokens to see the rest.",
+            "default": false
           }
         },
         "type": "object",

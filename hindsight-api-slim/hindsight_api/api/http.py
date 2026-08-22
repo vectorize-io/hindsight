@@ -623,6 +623,14 @@ class RecallResponse(BaseModel):
             "references are not dangling. Only set when source facts were requested."
         ),
     )
+    results_truncated: bool = Field(
+        default=False,
+        description=(
+            "Whether the max_tokens budget dropped ranked facts from results. When true, the bank had "
+            "more relevant facts than the budget could carry — an empty or short result list is the "
+            "budget's doing, not an empty bank. Raise max_tokens to see the rest."
+        ),
+    )
 
 
 class EntityInput(BaseModel):
@@ -4874,6 +4882,7 @@ def _register_routes(app: FastAPI):
                 chunks=chunks_response,
                 source_facts=source_facts_response,
                 source_facts_truncated=core_result.source_facts_truncated,
+                results_truncated=core_result.results_truncated,
             )
 
             handler_duration = time.time() - handler_start

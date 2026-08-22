@@ -2993,7 +2993,7 @@ export type MemoryItem = {
    *
    * When the content occurred. Accepts an ISO 8601 datetime string (e.g. '2024-01-15T10:30:00Z'), null/omitted (defaults to now), or the special string 'unset' to explicitly store without any timestamp (use this for timeless content such as fictional documents or static reference material).
    */
-  timestamp?: string | string | null;
+  timestamp?: string | null;
   /**
    * Context
    */
@@ -4246,6 +4246,12 @@ export type RecallResponse = {
    * Whether the source_facts map was cut short by the token budget. When true, some IDs in results[].source_fact_ids have no entry in source_facts — the budget ran out, the references are not dangling. Only set when source facts were requested.
    */
   source_facts_truncated?: boolean | null;
+  /**
+   * Results Truncated
+   *
+   * Whether the max_tokens budget dropped ranked facts from results. When true, the bank had more relevant facts than the budget could carry — an empty or short result list is the budget's doing, not an empty bank. Raise max_tokens to see the rest.
+   */
+  results_truncated?: boolean;
 };
 
 /**

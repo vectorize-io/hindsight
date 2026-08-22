@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.chunk_data import ChunkData
 from hindsight_client_api.models.entity_state_response import EntityStateResponse
@@ -35,7 +35,8 @@ class RecallResponse(BaseModel):
     chunks: Optional[Dict[str, ChunkData]] = None
     source_facts: Optional[Dict[str, RecallResult]] = None
     source_facts_truncated: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["results", "trace", "entities", "chunks", "source_facts", "source_facts_truncated"]
+    results_truncated: Optional[StrictBool] = Field(default=False, description="Whether the max_tokens budget dropped ranked facts from results. When true, the bank had more relevant facts than the budget could carry — an empty or short result list is the budget's doing, not an empty bank. Raise max_tokens to see the rest.")
+    __properties: ClassVar[List[str]] = ["results", "trace", "entities", "chunks", "source_facts", "source_facts_truncated", "results_truncated"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -161,7 +162,8 @@ class RecallResponse(BaseModel):
             )
             if obj.get("source_facts") is not None
             else None,
-            "source_facts_truncated": obj.get("source_facts_truncated")
+            "source_facts_truncated": obj.get("source_facts_truncated"),
+            "results_truncated": obj.get("results_truncated") if obj.get("results_truncated") is not None else False
         })
         return _obj
 
