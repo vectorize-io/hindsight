@@ -33,6 +33,8 @@ _TEXT_EXTENSIONS = {
     ".html",
     ".htm",
 }
+_PDF_EXTENSION = ".pdf"
+_PDF_OCR_DPI = 200
 
 
 @dataclass(frozen=True)
@@ -165,17 +167,38 @@ class MarkitdownParser(FileParser):
             tmp.write(file_data)
             tmp_path = tmp.name
 
+        pdf_ocr_attempted = False
         try:
             # Parse using markitdown, passing an explicit charset hint for text
             # files to avoid markitdown's sample-based (and crash-prone) detection.
             result = self._markitdown.convert(tmp_path, stream_info=self._utf8_stream_info(file_data, filename))
 
-            if not result or not result.text_content:
+            if (
+                not result
+                or not result.text_content
+                or (Path(filename).suffix.lower() == _PDF_EXTENSION and not result.text_content.strip())
+            ):
+                if Path(filename).suffix.lower() == _PDF_EXTENSION:
+                    pdf_ocr_attempted = True
+                    return self._ocr_pdf_sync(file_data, filename)
                 raise RuntimeError(f"No content extracted from '{filename}'")
 
             return result.text_content
 
         except Exception as e:
+            if Path(filename).suffix.lower() == _PDF_EXTENSION and not pdf_ocr_attempted:
+                # Some PDF converters raise instead of returning an empty result
+                # for image-only PDFs; give the OCR fallback the same opportunity.
+                try:
+                    return self._ocr_pdf_sync(file_data, filename)
+                except Exception as ocr_error:
+                    logger.error(
+                        "MarkItDown PDF parsing and OCR failed for %s: %s; OCR error: %s",
+                        filename,
+                        e,
+                        ocr_error,
+                    )
+                    raise RuntimeError(f"{e}; PDF OCR fallback failed: {ocr_error}") from ocr_error
             logger.error(f"Markitdown parsing failed for {filename}: {e}")
             raise RuntimeError(f"Failed to parse '{filename}': {e}") from e
 
@@ -185,6 +208,55 @@ class MarkitdownParser(FileParser):
                 Path(tmp_path).unlink()
             except Exception:
                 pass
+
+    def _ocr_pdf_sync(self, file_data: bytes, filename: str) -> str:
+        """Render an image-only PDF page-by-page and run the configured image OCR."""
+        if not self._ocr_enabled:
+            raise RuntimeError(
+                f"PDF '{filename}' appears to be scanned images without selectable text. "
+                "Configure MarkItDown OCR or choose an OCR-capable parser."
+            )
+
+        import pypdfium2 as pdfium
+
+        page_text: list[str] = []
+        try:
+            document = pdfium.PdfDocument(bytes(file_data))
+            try:
+                for page_number, page in enumerate(document):
+                    bitmap = page.render(scale=_PDF_OCR_DPI / 72)
+                    with tempfile.NamedTemporaryFile(suffix=f"-{page_number + 1}.png", delete=False) as tmp:
+                        image_path = tmp.name
+                    try:
+                        bitmap.to_pil().save(image_path, format="PNG")
+                        try:
+                            result = self._markitdown.convert(image_path)
+                            text = result.text_content if result else ""
+                            if text and text.strip():
+                                page_text.append(text.strip())
+                        except Exception as page_error:
+                            # A damaged page should not discard useful OCR from the rest
+                            # of the document. If every page fails, the empty-result error
+                            # below advances the configured parser fallback chain.
+                            logger.warning(
+                                "MarkItDown OCR failed for page %d of '%s': %s",
+                                page_number + 1,
+                                filename,
+                                page_error,
+                            )
+                    finally:
+                        try:
+                            Path(image_path).unlink()
+                        except OSError:
+                            pass
+            finally:
+                document.close()
+        except Exception as e:
+            raise RuntimeError(f"OCR failed for scanned PDF '{filename}': {e}") from e
+
+        if not page_text:
+            raise RuntimeError(f"No OCR content extracted from scanned PDF '{filename}'")
+        return "\n\n".join(page_text)
 
     @staticmethod
     def _utf8_stream_info(file_data: bytes, filename: str) -> "StreamInfo | None":

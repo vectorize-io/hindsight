@@ -1598,7 +1598,7 @@ Local file-to-markdown conversion using [Microsoft's markitdown](https://github.
 
 For image workloads, MarkItDown can optionally use an OpenAI-compatible OCR/vision endpoint. This is disabled by default. Without it, image uploads fail with an actionable configuration error instead of low-level parser output. When enabled, configure the MarkItDown OCR API key, base URL, and model explicitly; they do not inherit from `HINDSIGHT_API_LLM_*` because MarkItDown uses the OpenAI SDK directly. The selected endpoint must implement OpenAI Chat Completions and the selected model must support image input.
 
-This OCR path uses MarkItDown's image converter hook. It applies to image inputs such as JPG and PNG (and image handling inside converters that consume MarkItDown's `llm_client`), but it does not rasterize scanned PDF pages into images. Scanned PDFs with no text layer may still extract poorly through the default PDF converter. For scanned PDFs or complex document layouts, use an OCR-capable document parser such as `iris` or `llama_parse`, or configure a parser fallback chain like `llama_parse,markitdown`.
+This OCR path uses MarkItDown's image converter hook. It applies directly to image inputs such as JPG and PNG. When normal PDF extraction returns no text, Hindsight also renders PDF pages at 200 DPI and sends each page through the same OCR hook. If PDF OCR is unavailable or produces no content, the configured parser fallback chain continues to the next parser. For more complex document layouts, use an OCR-capable document parser such as `iris` or `llama_parse`, or configure a chain such as `markitdown,llama_parse`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|

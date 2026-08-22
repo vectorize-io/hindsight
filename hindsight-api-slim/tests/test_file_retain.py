@@ -5,6 +5,7 @@ End-to-end tests for file retain (upload, convert, retain) functionality.
 import asyncio
 import io
 import json
+import sys
 from datetime import datetime, timezone
 
 import pytest
@@ -517,6 +518,271 @@ async def test_markitdown_image_without_ocr_has_actionable_error(monkeypatch):
     parser = MarkitdownParser()
     with pytest.raises(RuntimeError, match="Image OCR is not enabled for the markitdown parser"):
         await parser.convert(b"\x89PNG\r\n\x1a\n", "screenshot.png")
+
+
+@pytest.mark.asyncio
+async def test_markitdown_scanned_pdf_uses_page_ocr(monkeypatch):
+    """An empty PDF conversion is rasterized and OCR'd one page at a time."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    class FakeResult:
+        def __init__(self, text_content):
+            self.text_content = text_content
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            self.calls = []
+
+        def convert(self, path, **kwargs):
+            self.calls.append(path)
+            return FakeResult("" if path.endswith(".pdf") else f"OCR {len(self.calls)}")
+
+    class FakeBitmap:
+        def to_pil(self):
+            return type("Image", (), {"save": lambda self, path, format: None})()
+
+    class FakePage:
+        def render(self, **kwargs):
+            assert kwargs == {"scale": 200 / 72}
+            return FakeBitmap()
+
+    class FakeDocument:
+        def __iter__(self):
+            return iter([FakePage(), FakePage()])
+
+        def close(self):
+            pass
+
+    class FakePdfium:
+        @staticmethod
+        def PdfDocument(file_data):
+            assert file_data == b"pdf"
+            return FakeDocument()
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+    monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium)
+
+    parser = MarkitdownParser(
+        ocr_enabled=True, ocr_api_key="key", ocr_base_url="https://example.test/v1", ocr_model="vision"
+    )
+    assert await parser.convert(b"pdf", "scan.pdf") == "OCR 2\n\nOCR 3"
+
+
+@pytest.mark.asyncio
+async def test_markitdown_pdf_parse_error_uses_page_ocr(monkeypatch):
+    """A PDF converter exception still gets an OCR fallback attempt."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    class FakeResult:
+        def __init__(self, text_content):
+            self.text_content = text_content
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            self.image_calls = 0
+
+        def convert(self, path, **kwargs):
+            if path.endswith(".pdf"):
+                raise RuntimeError("pdf text extraction failed")
+            self.image_calls += 1
+            return FakeResult("Recovered from OCR")
+
+    class FakePage:
+        def render(self, **kwargs):
+            return type(
+                "Bitmap", (), {"to_pil": lambda self: type("Image", (), {"save": lambda self, path, format: None})()}
+            )()
+
+    class FakeDocument:
+        def __iter__(self):
+            return iter([FakePage()])
+
+        def close(self):
+            pass
+
+    class FakePdfium:
+        @staticmethod
+        def PdfDocument(file_data):
+            return FakeDocument()
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+    monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium)
+
+    parser = MarkitdownParser(
+        ocr_enabled=True,
+        ocr_api_key="key",
+        ocr_base_url="https://example.test/v1",
+        ocr_model="vision",
+    )
+    assert await parser.convert(b"pdf", "scan.pdf") == "Recovered from OCR"
+
+
+@pytest.mark.asyncio
+async def test_markitdown_scanned_pdf_without_ocr_has_actionable_error(monkeypatch):
+    """A scanned PDF without OCR explains the remediation and can trigger outer fallback."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    class FakeResult:
+        text_content = ""
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            pass
+
+        def convert(self, path, **kwargs):
+            return FakeResult()
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+    parser = MarkitdownParser()
+    with pytest.raises(RuntimeError, match="scanned images without selectable text"):
+        await parser.convert(b"pdf", "scan.pdf")
+
+
+@pytest.mark.asyncio
+async def test_markitdown_scanned_pdf_skips_failed_ocr_page(monkeypatch):
+    """One damaged page does not discard OCR content extracted from other pages."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    class FakeResult:
+        def __init__(self, text_content):
+            self.text_content = text_content
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            self.image_calls = 0
+
+        def convert(self, path, **kwargs):
+            if path.endswith(".pdf"):
+                return FakeResult("")
+            self.image_calls += 1
+            if self.image_calls == 1:
+                raise RuntimeError("damaged page")
+            return FakeResult("Recovered page")
+
+    class FakePage:
+        def render(self, **kwargs):
+            return type(
+                "Bitmap", (), {"to_pil": lambda self: type("Image", (), {"save": lambda self, path, format: None})()}
+            )()
+
+    class FakeDocument:
+        def __iter__(self):
+            return iter([FakePage(), FakePage()])
+
+        def close(self):
+            pass
+
+    class FakePdfium:
+        @staticmethod
+        def PdfDocument(file_data):
+            return FakeDocument()
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+    monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium)
+
+    parser = MarkitdownParser(
+        ocr_enabled=True,
+        ocr_api_key="key",
+        ocr_base_url="https://example.test/v1",
+        ocr_model="vision",
+    )
+    assert await parser.convert(b"pdf", "scan.pdf") == "Recovered page"
+
+
+@pytest.mark.asyncio
+async def test_markitdown_scanned_pdf_ocr_runs_once_on_failure(monkeypatch):
+    """A failed PDF OCR fallback is not retried by the parser's error wrapper."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    class FakeResult:
+        text_content = ""
+
+    pdf_calls = 0
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            pass
+
+        def convert(self, path, **kwargs):
+            if path.endswith(".pdf"):
+                nonlocal pdf_calls
+                pdf_calls += 1
+                return FakeResult()
+            raise RuntimeError("OCR unavailable")
+
+    class FakePage:
+        def render(self, **kwargs):
+            return type(
+                "Bitmap", (), {"to_pil": lambda self: type("Image", (), {"save": lambda self, path, format: None})()}
+            )()
+
+    class FakeDocument:
+        def __iter__(self):
+            return iter([FakePage()])
+
+        def close(self):
+            pass
+
+    class FakePdfium:
+        @staticmethod
+        def PdfDocument(file_data):
+            return FakeDocument()
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+    monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium)
+
+    parser = MarkitdownParser(
+        ocr_enabled=True,
+        ocr_api_key="key",
+        ocr_base_url="https://example.test/v1",
+        ocr_model="vision",
+    )
+    with pytest.raises(RuntimeError, match="Failed to parse"):
+        await parser.convert(b"pdf", "scan.pdf")
+    assert pdf_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_scanned_pdf_ocr_failure_advances_parser_chain():
+    """A failed MarkItDown PDF OCR attempt advances to the next configured parser."""
+    from hindsight_api.engine.parsers import FileParserRegistry
+    from hindsight_api.engine.parsers.base import FileParser
+
+    class EmptyMarkitdownParser(FileParser):
+        async def convert(self, file_data: bytes, filename: str) -> str:
+            raise RuntimeError("No OCR content extracted from scanned PDF")
+
+        def name(self) -> str:
+            return "markitdown"
+
+    class OcrFallbackParser(FileParser):
+        async def convert(self, file_data: bytes, filename: str) -> str:
+            return "Fallback OCR text"
+
+        def name(self) -> str:
+            return "llama_parse"
+
+    registry = FileParserRegistry()
+    registry.register(EmptyMarkitdownParser())
+    registry.register(OcrFallbackParser())
+
+    result = await registry.convert_with_fallback(
+        parsers=["markitdown", "llama_parse"],
+        file_data=b"pdf",
+        filename="scan.pdf",
+    )
+    assert result.content == "Fallback OCR text"
+    assert result.parser_name == "llama_parse"
 
 
 def test_markitdown_converter_can_enable_ocr(monkeypatch):
