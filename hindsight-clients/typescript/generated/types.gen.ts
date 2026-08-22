@@ -3034,12 +3034,7 @@ export type MemoryItem = {
    * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. 'shared' runs a single pass over one global, untagged scope, so memories consolidate together regardless of their tags — useful for deduplicating across volatile per-call provenance tags (e.g. per-session ids) while keeping those tags on the source facts. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.
    */
   observation_scopes?:
-    | "per_tag"
-    | "combined"
-    | "all_combinations"
-    | "shared"
-    | Array<Array<string>>
-    | null;
+    "per_tag" | "combined" | "all_combinations" | "shared" | Array<Array<string>> | null;
   /**
    * Strategy
    *
@@ -5522,6 +5517,263 @@ export type WebhookResponse = {
    */
   updated_at?: string | null;
 };
+
+/**
+ * ConsolidationCompletedWebhookEvent
+ */
+export type ConsolidationCompletedWebhookEvent = {
+  /**
+   * ConsolidationCompletedWebhookEventType
+   */
+  event: "consolidation.completed";
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status: string;
+  /**
+   * Timestamp
+   */
+  timestamp: string;
+  data: ConsolidationEventData;
+  [key: string]: unknown;
+};
+
+/**
+ * ConsolidationEventData
+ */
+export type ConsolidationEventData = {
+  /**
+   * Observations Created
+   */
+  observations_created?: number;
+  /**
+   * Observations Updated
+   */
+  observations_updated?: number;
+  /**
+   * Observations Deleted
+   */
+  observations_deleted?: number;
+  /**
+   * Error Message
+   */
+  error_message?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * MemoryDefenseEventData
+ *
+ * Payload for a memory_defense.triggered event (one item, one non-allow decision).
+ *
+ * The four base fields (``action``/``detector``/``document_id``/``message``)
+ * plus ``matched_types`` are populated by every implementation including OSS's
+ * built-in regex defense. The remaining fields are optional SIEM-enrichment
+ * surfaces that downstream extensions (e.g. hindsight-cloud) populate when
+ * they have richer per-decision context — severity classification, the API
+ * key that submitted the retain, fingerprinted hit previews for SIEM
+ * correlation, and pointers into the audit trail. OSS leaves them ``None``;
+ * receivers should treat absence as "not provided" rather than "no match".
+ */
+export type MemoryDefenseEventData = {
+  /**
+   * Action
+   */
+  action: string;
+  /**
+   * Detector
+   */
+  detector?: string;
+  /**
+   * Document Id
+   */
+  document_id?: string;
+  /**
+   * Matched Types
+   */
+  matched_types?: Array<string>;
+  /**
+   * Message
+   */
+  message?: string;
+  /**
+   * Severity
+   */
+  severity?: string;
+  /**
+   * Api Key Name
+   */
+  api_key_name?: string;
+  /**
+   * Hits
+   */
+  hits?: Array<MemoryDefenseHit>;
+  /**
+   * Memory Unit Id
+   */
+  memory_unit_id?: string;
+  /**
+   * Receipt Uri
+   */
+  receipt_uri?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * MemoryDefenseHit
+ *
+ * A single secret match inside a non-allow decision.
+ *
+ * ``preview`` is a fingerprinted, redaction-identifiable rendering of the
+ * matched value (e.g. ``ghp_AAAA...BBBB``) so SIEM operators can correlate
+ * against their credential inventory WITHOUT the raw secret crossing the
+ * network. Implementations must never put the raw value here.
+ */
+export type MemoryDefenseHit = {
+  /**
+   * Detector
+   */
+  detector: string;
+  /**
+   * Preview
+   */
+  preview: string;
+  [key: string]: unknown;
+};
+
+/**
+ * MemoryDefenseTriggeredWebhookEvent
+ */
+export type MemoryDefenseTriggeredWebhookEvent = {
+  /**
+   * MemoryDefenseTriggeredWebhookEventType
+   */
+  event: "memory_defense.triggered";
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status: string;
+  /**
+   * Timestamp
+   */
+  timestamp: string;
+  data: MemoryDefenseEventData;
+  [key: string]: unknown;
+};
+
+/**
+ * RetainCompletedWebhookEvent
+ */
+export type RetainCompletedWebhookEvent = {
+  /**
+   * RetainCompletedWebhookEventType
+   */
+  event: "retain.completed";
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status: string;
+  /**
+   * Timestamp
+   */
+  timestamp: string;
+  data: RetainEventData;
+  [key: string]: unknown;
+};
+
+/**
+ * RetainEventData
+ */
+export type RetainEventData = {
+  /**
+   * Document Id
+   */
+  document_id?: string;
+  /**
+   * Tags
+   */
+  tags?: Array<string>;
+  /**
+   * Memory Unit Count
+   *
+   * Memory units the document owns after this retain (the same number the Documents API reports). 0 means fact extraction returned nothing, so the document is stored but unreachable through recall/reflect until it is reprocessed. Null when the retain carried no document_id, since there is then no document to count against.
+   */
+  memory_unit_count?: number;
+  [key: string]: unknown;
+};
+
+/**
+ * WebhookEventEnvelope
+ *
+ * Forward-compatible envelope used when an SDK receives an unknown event.
+ */
+export type WebhookEventEnvelope = {
+  /**
+   * Event
+   */
+  event: string;
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status: string;
+  /**
+   * Timestamp
+   */
+  timestamp: string;
+  /**
+   * Data
+   */
+  data: {
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+/**
+ * WebhookEvent
+ */
+export type WebhookEvent =
+  | ({
+      event: "consolidation.completed";
+    } & ConsolidationCompletedWebhookEvent)
+  | ({
+      event: "retain.completed";
+    } & RetainCompletedWebhookEvent)
+  | ({
+      event: "memory_defense.triggered";
+    } & MemoryDefenseTriggeredWebhookEvent);
 
 export type HealthEndpointHealthGetData = {
   body?: never;

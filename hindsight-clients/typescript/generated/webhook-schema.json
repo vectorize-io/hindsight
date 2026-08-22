@@ -1,0 +1,313 @@
+{
+  "openapi": "3.1.0",
+  "components": {
+    "schemas": {
+      "WebhookEventEnvelope": {
+        "additionalProperties": true,
+        "description": "Forward-compatible envelope used when an SDK receives an unknown event.",
+        "properties": {
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          }
+        },
+        "required": ["event", "bank_id", "operation_id", "status", "timestamp", "data"],
+        "title": "WebhookEventEnvelope",
+        "type": "object"
+      },
+      "WebhookEvent": {
+        "discriminator": {
+          "mapping": {
+            "consolidation.completed": "#/components/schemas/ConsolidationCompletedWebhookEvent",
+            "memory_defense.triggered": "#/components/schemas/MemoryDefenseTriggeredWebhookEvent",
+            "retain.completed": "#/components/schemas/RetainCompletedWebhookEvent"
+          },
+          "propertyName": "event"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ConsolidationCompletedWebhookEvent"
+          },
+          {
+            "$ref": "#/components/schemas/RetainCompletedWebhookEvent"
+          },
+          {
+            "$ref": "#/components/schemas/MemoryDefenseTriggeredWebhookEvent"
+          }
+        ],
+        "title": "WebhookEvent"
+      },
+      "ConsolidationCompletedWebhookEvent": {
+        "additionalProperties": true,
+        "properties": {
+          "event": {
+            "title": "ConsolidationCompletedWebhookEventType",
+            "type": "string",
+            "enum": ["consolidation.completed"]
+          },
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConsolidationEventData"
+          }
+        },
+        "required": ["event", "bank_id", "operation_id", "status", "timestamp", "data"],
+        "title": "ConsolidationCompletedWebhookEvent",
+        "type": "object"
+      },
+      "ConsolidationEventData": {
+        "additionalProperties": true,
+        "properties": {
+          "observations_created": {
+            "default": null,
+            "title": "Observations Created",
+            "type": "integer",
+            "nullable": true
+          },
+          "observations_updated": {
+            "default": null,
+            "title": "Observations Updated",
+            "type": "integer",
+            "nullable": true
+          },
+          "observations_deleted": {
+            "default": null,
+            "title": "Observations Deleted",
+            "type": "integer",
+            "nullable": true
+          },
+          "error_message": {
+            "default": null,
+            "title": "Error Message",
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "title": "ConsolidationEventData",
+        "type": "object"
+      },
+      "RetainCompletedWebhookEvent": {
+        "additionalProperties": true,
+        "properties": {
+          "event": {
+            "title": "RetainCompletedWebhookEventType",
+            "type": "string",
+            "enum": ["retain.completed"]
+          },
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RetainEventData"
+          }
+        },
+        "required": ["event", "bank_id", "operation_id", "status", "timestamp", "data"],
+        "title": "RetainCompletedWebhookEvent",
+        "type": "object"
+      },
+      "RetainEventData": {
+        "additionalProperties": true,
+        "properties": {
+          "document_id": {
+            "default": null,
+            "title": "Document Id",
+            "type": "string",
+            "nullable": true
+          },
+          "tags": {
+            "default": null,
+            "title": "Tags",
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "nullable": true
+          },
+          "memory_unit_count": {
+            "default": null,
+            "description": "Memory units the document owns after this retain (the same number the Documents API reports). 0 means fact extraction returned nothing, so the document is stored but unreachable through recall/reflect until it is reprocessed. Null when the retain carried no document_id, since there is then no document to count against.",
+            "title": "Memory Unit Count",
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "title": "RetainEventData",
+        "type": "object"
+      },
+      "MemoryDefenseTriggeredWebhookEvent": {
+        "additionalProperties": true,
+        "properties": {
+          "event": {
+            "title": "MemoryDefenseTriggeredWebhookEventType",
+            "type": "string",
+            "enum": ["memory_defense.triggered"]
+          },
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MemoryDefenseEventData"
+          }
+        },
+        "required": ["event", "bank_id", "operation_id", "status", "timestamp", "data"],
+        "title": "MemoryDefenseTriggeredWebhookEvent",
+        "type": "object"
+      },
+      "MemoryDefenseEventData": {
+        "additionalProperties": true,
+        "description": "Payload for a memory_defense.triggered event (one item, one non-allow decision).\n\nThe four base fields (``action``/``detector``/``document_id``/``message``)\nplus ``matched_types`` are populated by every implementation including OSS's\nbuilt-in regex defense. The remaining fields are optional SIEM-enrichment\nsurfaces that downstream extensions (e.g. hindsight-cloud) populate when\nthey have richer per-decision context — severity classification, the API\nkey that submitted the retain, fingerprinted hit previews for SIEM\ncorrelation, and pointers into the audit trail. OSS leaves them ``None``;\nreceivers should treat absence as \"not provided\" rather than \"no match\".",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "detector": {
+            "default": null,
+            "title": "Detector",
+            "type": "string",
+            "nullable": true
+          },
+          "document_id": {
+            "default": null,
+            "title": "Document Id",
+            "type": "string",
+            "nullable": true
+          },
+          "matched_types": {
+            "default": null,
+            "title": "Matched Types",
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "nullable": true
+          },
+          "message": {
+            "default": null,
+            "title": "Message",
+            "type": "string",
+            "nullable": true
+          },
+          "severity": {
+            "default": null,
+            "title": "Severity",
+            "type": "string",
+            "nullable": true
+          },
+          "api_key_name": {
+            "default": null,
+            "title": "Api Key Name",
+            "type": "string",
+            "nullable": true
+          },
+          "hits": {
+            "default": null,
+            "title": "Hits",
+            "items": {
+              "$ref": "#/components/schemas/MemoryDefenseHit"
+            },
+            "type": "array",
+            "nullable": true
+          },
+          "memory_unit_id": {
+            "default": null,
+            "title": "Memory Unit Id",
+            "type": "string",
+            "nullable": true
+          },
+          "receipt_uri": {
+            "default": null,
+            "title": "Receipt Uri",
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": ["action"],
+        "title": "MemoryDefenseEventData",
+        "type": "object"
+      },
+      "MemoryDefenseHit": {
+        "additionalProperties": true,
+        "description": "A single secret match inside a non-allow decision.\n\n``preview`` is a fingerprinted, redaction-identifiable rendering of the\nmatched value (e.g. ``ghp_AAAA...BBBB``) so SIEM operators can correlate\nagainst their credential inventory WITHOUT the raw secret crossing the\nnetwork. Implementations must never put the raw value here.",
+        "properties": {
+          "detector": {
+            "title": "Detector",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          }
+        },
+        "required": ["detector", "preview"],
+        "title": "MemoryDefenseHit",
+        "type": "object"
+      }
+    }
+  }
+}

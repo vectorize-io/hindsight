@@ -1,0 +1,5 @@
+{
+  "secret": "whsec_test_secret",
+  "raw_body": "{\"event\":\"retain.completed\",\"bank_id\":\"bank-1\",\"operation_id\":\"op-1\",\"status\":\"completed\",\"timestamp\":\"2026-08-11T09:30:00Z\",\"data\":{\"document_id\":\"doc-1\",\"tags\":[\"sdk\"],\"memory_unit_count\":1}}",
+  "signature": "sha256=0d4dd8a287faec1abd8a187aac800487be4ca88ce7ae8789dbdeea8b4effd8a1"
+}

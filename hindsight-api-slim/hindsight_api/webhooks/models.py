@@ -2,8 +2,9 @@
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WebhookEventType(StrEnum):
@@ -12,14 +13,20 @@ class WebhookEventType(StrEnum):
     MEMORY_DEFENSE_TRIGGERED = "memory_defense.triggered"
 
 
-class ConsolidationEventData(BaseModel):
+class WebhookModel(BaseModel):
+    """Base for webhook wire models that must tolerate additive fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ConsolidationEventData(WebhookModel):
     observations_created: int | None = None
     observations_updated: int | None = None
     observations_deleted: int | None = None
     error_message: str | None = None
 
 
-class RetainEventData(BaseModel):
+class RetainEventData(WebhookModel):
     document_id: str | None = None
     tags: list[str] | None = None
     memory_unit_count: int | None = Field(
@@ -34,7 +41,7 @@ class RetainEventData(BaseModel):
     )
 
 
-class MemoryDefenseHit(BaseModel):
+class MemoryDefenseHit(WebhookModel):
     """A single secret match inside a non-allow decision.
 
     ``preview`` is a fingerprinted, redaction-identifiable rendering of the
@@ -47,7 +54,7 @@ class MemoryDefenseHit(BaseModel):
     preview: str  # fingerprinted value, never the raw secret
 
 
-class MemoryDefenseEventData(BaseModel):
+class MemoryDefenseEventData(WebhookModel):
     """Payload for a memory_defense.triggered event (one item, one non-allow decision).
 
     The four base fields (``action``/``detector``/``document_id``/``message``)
@@ -73,13 +80,45 @@ class MemoryDefenseEventData(BaseModel):
     receipt_uri: str | None = None  # storage pointer for the audit trail entry
 
 
-class WebhookEvent(BaseModel):
-    event: WebhookEventType
+class WebhookEventEnvelope(WebhookModel):
+    """Forward-compatible envelope used when an SDK receives an unknown event."""
+
+    event: str
     bank_id: str
     operation_id: str
-    status: str  # "completed"/"failed" for retain/consolidation; the action ("redact"/"block") for memory_defense
+    status: str
     timestamp: datetime
+    data: dict[str, Any]
+
+
+class WebhookEvent(WebhookEventEnvelope):
+    """Internal emitter model retained for callers that select an event dynamically."""
+
+    event: WebhookEventType
     data: ConsolidationEventData | RetainEventData | MemoryDefenseEventData
+
+
+class ConsolidationCompletedWebhookEvent(WebhookEvent):
+    event: Literal["consolidation.completed"]
+    data: ConsolidationEventData
+
+
+class RetainCompletedWebhookEvent(WebhookEvent):
+    event: Literal["retain.completed"]
+    data: RetainEventData
+
+
+class MemoryDefenseTriggeredWebhookEvent(WebhookEvent):
+    event: Literal["memory_defense.triggered"]
+    data: MemoryDefenseEventData
+
+
+# Keep the discriminator on the wire field so every generated SDK binds an
+# event name to the matching data model instead of accepting an ambiguous union.
+KnownWebhookEvent = Annotated[
+    ConsolidationCompletedWebhookEvent | RetainCompletedWebhookEvent | MemoryDefenseTriggeredWebhookEvent,
+    Field(discriminator="event"),
+]
 
 
 class WebhookHttpConfig(BaseModel):

@@ -74,6 +74,7 @@ class WebhookManager:
         # OSS leaves SIEM-enrichment fields (severity, api_key_name, etc.) None
         # because it doesn't have the data; cloud populates them when it does.
         payload_str = event.model_dump_json(exclude_none=True)
+        event_type = str(event.event)
 
         try:
             async with self._backend.acquire() as conn:
@@ -102,7 +103,7 @@ class WebhookManager:
                 for webhook in all_webhooks:
                     if not webhook.enabled:
                         continue
-                    if event.event.value not in webhook.event_types:
+                    if event_type not in webhook.event_types:
                         continue
 
                     operation_id = uuid.uuid4()
@@ -115,7 +116,7 @@ class WebhookManager:
                             "bank_id": event.bank_id,
                             "url": webhook.url,
                             "secret": webhook.secret,
-                            "event_type": event.event.value,
+                            "event_type": event_type,
                             "payload": payload_str,
                             "webhook_id": webhook_id,
                             "http_config": webhook.http_config.model_dump(),
@@ -157,6 +158,7 @@ class WebhookManager:
         # OSS leaves SIEM-enrichment fields (severity, api_key_name, etc.) None
         # because it doesn't have the data; cloud populates them when it does.
         payload_str = event.model_dump_json(exclude_none=True)
+        event_type = str(event.event)
 
         try:
             rows = await self._backend.ops.get_webhooks_for_dispatch(
@@ -184,7 +186,7 @@ class WebhookManager:
             for webhook in all_webhooks:
                 if not webhook.enabled:
                     continue
-                if event.event.value not in webhook.event_types:
+                if event_type not in webhook.event_types:
                     continue
 
                 operation_id = uuid.uuid4()
@@ -197,7 +199,7 @@ class WebhookManager:
                         "bank_id": event.bank_id,
                         "url": webhook.url,
                         "secret": webhook.secret,
-                        "event_type": event.event.value,
+                        "event_type": event_type,
                         "payload": payload_str,
                         "webhook_id": webhook_id,
                         "http_config": webhook.http_config.model_dump(),

@@ -47,6 +47,8 @@ hindsight_client_api/models/chunk_data.py
 hindsight_client_api/models/chunk_include_options.py
 hindsight_client_api/models/chunk_response.py
 hindsight_client_api/models/clear_memory_observations_response.py
+hindsight_client_api/models/consolidation_completed_webhook_event.py
+hindsight_client_api/models/consolidation_event_data.py
 hindsight_client_api/models/consolidation_request.py
 hindsight_client_api/models/consolidation_response.py
 hindsight_client_api/models/create_bank_request.py
@@ -107,6 +109,9 @@ hindsight_client_api/models/llm_request_token_sums.py
 hindsight_client_api/models/map_field_input.py
 hindsight_client_api/models/map_field_output.py
 hindsight_client_api/models/memories_timeseries_response.py
+hindsight_client_api/models/memory_defense_event_data.py
+hindsight_client_api/models/memory_defense_hit.py
+hindsight_client_api/models/memory_defense_triggered_webhook_event.py
 hindsight_client_api/models/memory_item.py
 hindsight_client_api/models/memory_timeseries_bucket.py
 hindsight_client_api/models/mental_model_delta_operations.py
@@ -150,6 +155,8 @@ hindsight_client_api/models/reflect_tool_call.py
 hindsight_client_api/models/reflect_trace.py
 hindsight_client_api/models/refresh_mental_model_operation_details.py
 hindsight_client_api/models/reprocess_document_response.py
+hindsight_client_api/models/retain_completed_webhook_event.py
+hindsight_client_api/models/retain_event_data.py
 hindsight_client_api/models/retain_request.py
 hindsight_client_api/models/retain_response.py
 hindsight_client_api/models/retry_operation_response.py
@@ -179,6 +186,8 @@ hindsight_client_api/models/validation_error_loc_inner.py
 hindsight_client_api/models/version_response.py
 hindsight_client_api/models/webhook_delivery_list_response.py
 hindsight_client_api/models/webhook_delivery_response.py
+hindsight_client_api/models/webhook_event.py
+hindsight_client_api/models/webhook_event_envelope.py
 hindsight_client_api/models/webhook_http_config.py
 hindsight_client_api/models/webhook_list_response.py
 hindsight_client_api/models/webhook_response.py

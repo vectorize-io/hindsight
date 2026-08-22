@@ -18,14 +18,12 @@ export function mockClient(recall?: RecallResponse): HindsightClient {
           ],
         }
     ),
-    retain: vi.fn(
-      async (bankId: string): Promise<RetainResponse> => ({
-        success: true,
-        bank_id: bankId,
-        items_count: 1,
-        async: true,
-      })
-    ),
+    retain: vi.fn(async (bankId: string): Promise<RetainResponse> => ({
+      success: true,
+      bank_id: bankId,
+      items_count: 1,
+      async: true,
+    })),
   };
 }
 

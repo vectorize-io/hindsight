@@ -56,6 +56,19 @@ from hindsight_client_api.models.retain_response import RetainResponse
 from hindsight_client_api.models.version_response import VersionResponse
 
 from .hindsight_client import Hindsight
+from .webhooks import (
+    ConsolidationCompletedWebhookEvent,
+    ConsumedWebhookEvent,
+    MemoryDefenseTriggeredWebhookEvent,
+    RetainCompletedWebhookEvent,
+    WebhookError,
+    WebhookEventEnvelope,
+    WebhookPayloadError,
+    WebhookSignatureError,
+    construct_event,
+    parse_event,
+    verify_signature,
+)
 
 
 # Add cleaner __repr__ and __iter__ for REPL usability
@@ -161,4 +174,16 @@ __all__ = [
     "BankProfileResponse",
     "DispositionTraits",
     "VersionResponse",
+    # Webhook consumer helpers
+    "ConsolidationCompletedWebhookEvent",
+    "ConsumedWebhookEvent",
+    "MemoryDefenseTriggeredWebhookEvent",
+    "RetainCompletedWebhookEvent",
+    "WebhookError",
+    "WebhookEventEnvelope",
+    "WebhookPayloadError",
+    "WebhookSignatureError",
+    "construct_event",
+    "parse_event",
+    "verify_signature",
 ]

@@ -60,23 +60,11 @@ import { LlmHealthDialog } from "@/components/llm-health-dialog";
 import { ExtractDialog } from "@/components/extract-dialog";
 
 type NavItem =
-  | "home"
-  | "recall"
-  | "reflect"
-  | "data"
-  | "documents"
-  | "entities"
-  | "knowledge"
-  | "profile";
+  "home" | "recall" | "reflect" | "data" | "documents" | "entities" | "knowledge" | "profile";
 type DataSubTab = "world" | "experience" | "observations";
 type KnowledgeTab = "pages" | "models";
 type BankConfigTab =
-  | "general"
-  | "memory-defense"
-  | "configuration"
-  | "webhooks"
-  | "audit-logs"
-  | "llm-requests";
+  "general" | "memory-defense" | "configuration" | "webhooks" | "audit-logs" | "llm-requests";
 
 export default function BankPage() {
   const params = useParams();

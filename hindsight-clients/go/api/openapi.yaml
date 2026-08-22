@@ -10650,6 +10650,231 @@ components:
       - id
       - url
       title: WebhookResponse
+    ConsolidationCompletedWebhookEvent:
+      additionalProperties: {}
+      properties:
+        event:
+          enum:
+          - consolidation.completed
+          title: ConsolidationCompletedWebhookEventType
+        bank_id:
+          title: Bank Id
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          title: Status
+        timestamp:
+          format: date-time
+          title: Timestamp
+        data:
+          $ref: '#/components/schemas/ConsolidationEventData'
+      required:
+      - bank_id
+      - data
+      - event
+      - operation_id
+      - status
+      - timestamp
+      title: ConsolidationCompletedWebhookEvent
+    ConsolidationEventData:
+      additionalProperties: {}
+      properties:
+        observations_created:
+          title: Observations Created
+          nullable: true
+        observations_updated:
+          title: Observations Updated
+          nullable: true
+        observations_deleted:
+          title: Observations Deleted
+          nullable: true
+        error_message:
+          title: Error Message
+          nullable: true
+      title: ConsolidationEventData
+    MemoryDefenseEventData:
+      additionalProperties: {}
+      description: |-
+        Payload for a memory_defense.triggered event (one item, one non-allow decision).
+
+        The four base fields (``action``/``detector``/``document_id``/``message``)
+        plus ``matched_types`` are populated by every implementation including OSS's
+        built-in regex defense. The remaining fields are optional SIEM-enrichment
+        surfaces that downstream extensions (e.g. hindsight-cloud) populate when
+        they have richer per-decision context — severity classification, the API
+        key that submitted the retain, fingerprinted hit previews for SIEM
+        correlation, and pointers into the audit trail. OSS leaves them ``None``;
+        receivers should treat absence as "not provided" rather than "no match".
+      properties:
+        action:
+          title: Action
+        detector:
+          title: Detector
+          nullable: true
+        document_id:
+          title: Document Id
+          nullable: true
+        matched_types:
+          items:
+            nullable: true
+            type: string
+          title: Matched Types
+          nullable: true
+        message:
+          title: Message
+          nullable: true
+        severity:
+          title: Severity
+          nullable: true
+        api_key_name:
+          title: Api Key Name
+          nullable: true
+        hits:
+          items:
+            $ref: '#/components/schemas/MemoryDefenseHit'
+          title: Hits
+          nullable: true
+        memory_unit_id:
+          title: Memory Unit Id
+          nullable: true
+        receipt_uri:
+          title: Receipt Uri
+          nullable: true
+      required:
+      - action
+      title: MemoryDefenseEventData
+    MemoryDefenseHit:
+      additionalProperties: {}
+      description: |-
+        A single secret match inside a non-allow decision.
+
+        ``preview`` is a fingerprinted, redaction-identifiable rendering of the
+        matched value (e.g. ``ghp_AAAA...BBBB``) so SIEM operators can correlate
+        against their credential inventory WITHOUT the raw secret crossing the
+        network. Implementations must never put the raw value here.
+      properties:
+        detector:
+          title: Detector
+        preview:
+          title: Preview
+      required:
+      - detector
+      - preview
+      title: MemoryDefenseHit
+    MemoryDefenseTriggeredWebhookEvent:
+      additionalProperties: {}
+      properties:
+        event:
+          enum:
+          - memory_defense.triggered
+          title: MemoryDefenseTriggeredWebhookEventType
+        bank_id:
+          title: Bank Id
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          title: Status
+        timestamp:
+          format: date-time
+          title: Timestamp
+        data:
+          $ref: '#/components/schemas/MemoryDefenseEventData'
+      required:
+      - bank_id
+      - data
+      - event
+      - operation_id
+      - status
+      - timestamp
+      title: MemoryDefenseTriggeredWebhookEvent
+    RetainCompletedWebhookEvent:
+      additionalProperties: {}
+      properties:
+        event:
+          enum:
+          - retain.completed
+          title: RetainCompletedWebhookEventType
+        bank_id:
+          title: Bank Id
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          title: Status
+        timestamp:
+          format: date-time
+          title: Timestamp
+        data:
+          $ref: '#/components/schemas/RetainEventData'
+      required:
+      - bank_id
+      - data
+      - event
+      - operation_id
+      - status
+      - timestamp
+      title: RetainCompletedWebhookEvent
+    RetainEventData:
+      additionalProperties: {}
+      properties:
+        document_id:
+          title: Document Id
+          nullable: true
+        tags:
+          items: {}
+          title: Tags
+          nullable: true
+        memory_unit_count:
+          description: "Memory units the document owns after this retain (the same\
+            \ number the Documents API reports). 0 means fact extraction returned\
+            \ nothing, so the document is stored but unreachable through recall/reflect\
+            \ until it is reprocessed. Null when the retain carried no document_id,\
+            \ since there is then no document to count against."
+          title: Memory Unit Count
+          nullable: true
+      title: RetainEventData
+    WebhookEventEnvelope:
+      additionalProperties: {}
+      description: Forward-compatible envelope used when an SDK receives an unknown
+        event.
+      properties:
+        event:
+          title: Event
+        bank_id:
+          title: Bank Id
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          title: Status
+        timestamp:
+          format: date-time
+          title: Timestamp
+        data:
+          additionalProperties: {}
+          title: Data
+      required:
+      - bank_id
+      - data
+      - event
+      - operation_id
+      - status
+      - timestamp
+      title: WebhookEventEnvelope
+    WebhookEvent:
+      discriminator:
+        mapping:
+          consolidation.completed: '#/components/schemas/ConsolidationCompletedWebhookEvent'
+          memory_defense.triggered: '#/components/schemas/MemoryDefenseTriggeredWebhookEvent'
+          retain.completed: '#/components/schemas/RetainCompletedWebhookEvent'
+        propertyName: event
+      oneOf:
+      - $ref: '#/components/schemas/ConsolidationCompletedWebhookEvent'
+      - $ref: '#/components/schemas/RetainCompletedWebhookEvent'
+      - $ref: '#/components/schemas/MemoryDefenseTriggeredWebhookEvent'
+      title: WebhookEvent
     Observation_Scopes:
       anyOf:
       - type: string

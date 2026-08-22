@@ -20,7 +20,53 @@ A delivery is considered failed if your endpoint returns a non-2xx status code o
 
 > **ℹ️ At-least-once delivery**
 >
-Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — use the `operation_id` field to deduplicate if needed.
+Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once**. Make the handler idempotent, but do not treat `operation_id` alone as a unique event key: a batch retain emits one event per item with the same operation ID. For exact deduplication under the current protocol, persist a digest of the verified raw body.
+## Verify and Parse with an SDK
+
+When a webhook has a secret, Hindsight sends `X-Hindsight-Signature: sha256=<hex>`. The digest is HMAC-SHA256 over the **exact raw POST body**. Read the body as bytes, pass those unchanged bytes to the SDK, and only decode JSON after verification. Parsing and re-serializing JSON first changes the signed bytes.
+
+### Python
+
+```python
+from hindsight_client.webhooks import construct_event
+
+raw_body = await request.body()
+event = construct_event(raw_body, request.headers, webhook_secret)
+```
+
+### TypeScript
+
+```typescript
+
+const rawBody = new Uint8Array(await request.arrayBuffer());
+const event = await constructWebhookEvent(rawBody, request.headers, webhookSecret);
+```
+
+### Go
+
+```go
+rawBody, err := io.ReadAll(request.Body)
+if err != nil {
+	return err
+}
+event, err := hindsight.ConstructWebhookEvent(rawBody, request.Header, webhookSecret)
+```
+
+### Rust
+
+```rust
+use hindsight_client::webhooks::construct_event;
+
+let event = construct_event(raw_body.as_ref(), request.headers(), webhook_secret)?;
+```
+
+The combined helpers verify before parsing, use constant-time HMAC verification, return generated types for known events, and return a forward-compatible envelope for an unknown event name. Each SDK also exposes separate `verify` and `parse` helpers for lower-level integrations; use the parse-only helper explicitly for a webhook configured without a secret.
+
+`X-Hindsight-Event` is useful for inspection but is not part of the signature. The helpers dispatch from the signed `event` field in the body instead. The current protocol has no signed delivery timestamp or replay window, so the SDK does not perform freshness validation. Make processing idempotent and allow legitimate delayed retries. Stable event and delivery IDs are not part of this contract yet.
+
+> **⚠️ POST consumer contract**
+>
+These helpers cover the documented POST delivery body. The existing custom `http_config.method: GET` behavior has no request body and is unchanged; it cannot be consumed through this raw-body contract.
 ## Event Types
 
 ### `consolidation.completed`

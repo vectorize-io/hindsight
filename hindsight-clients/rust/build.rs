@@ -7,10 +7,88 @@ fn convert_31_to_30(spec: &mut serde_json::Value) {
     // Change version from 3.1.x to 3.0.3
     if let Some(obj) = spec.as_object_mut() {
         obj.insert("openapi".to_string(), serde_json::json!("3.0.3"));
+        // OpenAPI 3.0 has no top-level `webhooks`; the referenced component
+        // schemas remain available to progenitor after this documentation-only
+        // keyword is removed.
+        obj.remove("webhooks");
     }
 
     // Recursively convert anyOf with null to nullable
     convert_anyof_to_nullable(spec);
+    convert_const_to_enum(spec);
+}
+
+/// Convert JSON Schema `const` to the single-value enum supported by OpenAPI 3.0.
+fn convert_const_to_enum(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(obj) => {
+            if let Some(constant) = obj.remove("const") {
+                obj.insert("enum".to_string(), serde_json::json!([constant]));
+            }
+            for child in obj.values_mut() {
+                convert_const_to_enum(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                convert_const_to_enum(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Make webhook objects retain additive fields in the generated Rust models.
+///
+/// Typify intentionally ignores `additionalProperties: true` because that is
+/// the common case for API response objects. An explicit empty schema has the
+/// same JSON Schema meaning here, but makes Typify generate a flattened map so
+/// webhook consumers can inspect fields added by a newer server.
+fn preserve_webhook_additional_properties(spec: &mut serde_json::Value) {
+    const WEBHOOK_SCHEMAS: [&str; 9] = [
+        "ConsolidationCompletedWebhookEvent",
+        "ConsolidationEventData",
+        "MemoryDefenseEventData",
+        "MemoryDefenseHit",
+        "MemoryDefenseTriggeredWebhookEvent",
+        "RetainCompletedWebhookEvent",
+        "RetainEventData",
+        "WebhookEventEnvelope",
+        "WebhookEvent",
+    ];
+
+    let Some(schemas) = spec
+        .get_mut("components")
+        .and_then(|components| components.get_mut("schemas"))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for name in WEBHOOK_SCHEMAS {
+        if let Some(schema) = schemas.get_mut(name) {
+            replace_permissive_additional_properties(schema);
+        }
+    }
+}
+
+fn replace_permissive_additional_properties(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(obj) => {
+            if obj.get("additionalProperties") == Some(&serde_json::Value::Bool(true)) {
+                obj.insert("additionalProperties".to_string(), serde_json::json!({}));
+            }
+            for child in obj.values_mut() {
+                replace_permissive_additional_properties(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                replace_permissive_additional_properties(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Remove paths with multipart/form-data content type (not supported by progenitor)
@@ -177,6 +255,8 @@ fn main() {
             convert_31_to_30(&mut spec_json);
         }
     }
+
+    preserve_webhook_additional_properties(&mut spec_json);
 
     // Collapse anyOf-of-only-strings into a plain string. Must run AFTER the
     // 3.1→3.0 nullable pass so we see `anyOf: [datetime, string]` without the

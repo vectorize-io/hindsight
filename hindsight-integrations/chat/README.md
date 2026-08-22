@@ -22,9 +22,7 @@ import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
 
 const chat = new Chat({
-  connectors: [
-    /* your connectors */
-  ],
+  connectors: [/* your connectors */],
 });
 const hindsight = new HindsightClient({ apiKey: process.env.HINDSIGHT_API_KEY });
 

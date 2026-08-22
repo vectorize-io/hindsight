@@ -22,6 +22,8 @@
 // Include the generated client code (which already exports Error and ResponseValue)
 include!(concat!(env!("OUT_DIR"), "/hindsight_client_generated.rs"));
 
+pub mod webhooks;
+
 /// Semantic version of this Rust client, kept in sync with the other language
 /// wrappers when a coordinated release is cut.
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");

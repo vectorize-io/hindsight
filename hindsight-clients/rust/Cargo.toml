@@ -21,6 +21,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Error handling
 thiserror = "1.0"
+# Webhook signature verification
+hmac = "0.12"
+sha2 = "0.10"
 # Progenitor client support
 progenitor-client = "0.11"
 # Additional types

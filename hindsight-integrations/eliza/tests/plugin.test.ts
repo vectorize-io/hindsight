@@ -12,22 +12,18 @@ const USER_ID = "00000000-0000-0000-0000-0000000000u5" as const;
 
 function mockClient(): HindsightClient {
   return {
-    recall: vi.fn(
-      async (): Promise<RecallResponse> => ({
-        results: [
-          { id: "1", text: "User prefers dark mode" },
-          { id: "2", text: "User lives in Berlin" },
-        ],
-      })
-    ),
-    retain: vi.fn(
-      async (bankId: string): Promise<RetainResponse> => ({
-        success: true,
-        bank_id: bankId,
-        items_count: 1,
-        async: true,
-      })
-    ),
+    recall: vi.fn(async (): Promise<RecallResponse> => ({
+      results: [
+        { id: "1", text: "User prefers dark mode" },
+        { id: "2", text: "User lives in Berlin" },
+      ],
+    })),
+    retain: vi.fn(async (bankId: string): Promise<RetainResponse> => ({
+      success: true,
+      bank_id: bankId,
+      items_count: 1,
+      async: true,
+    })),
   };
 }
 

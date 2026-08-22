@@ -35,6 +35,25 @@ fi
 echo "✓ OpenAPI spec found"
 echo ""
 
+# Client generators either do not support the OpenAPI 3.1 top-level webhooks
+# keyword or incorrectly turn an outbound webhook into a callable API method.
+# Generate from a temporary copy without that keyword; all webhook component
+# schemas remain in the copy and are still emitted as SDK types.
+GENERATOR_SPEC_DIR="$(mktemp -d -t hindsight-client-openapi.XXXXXX)"
+GENERATOR_OPENAPI_SPEC="$GENERATOR_SPEC_DIR/openapi.json"
+GEN_TMP_DIR=""
+cleanup() {
+    if [ -n "$GENERATOR_SPEC_DIR" ]; then
+        rm -rf "$GENERATOR_SPEC_DIR"
+    fi
+    if [ -n "$GEN_TMP_DIR" ]; then
+        rm -rf "$GEN_TMP_DIR"
+    fi
+}
+trap cleanup EXIT
+
+python3 "$SCRIPT_DIR/build-client-spec.py" "$OPENAPI_SPEC" "$GENERATOR_OPENAPI_SPEC"
+
 # Check for Docker (we'll use Docker to run openapi-generator)
 if ! command -v docker &> /dev/null; then
     echo "❌ Error: Docker not found. Please install Docker"
@@ -113,7 +132,6 @@ cd "$PYTHON_CLIENT_DIR"
 # (which Docker Desktop handles via a separate driver) and rsync'ing avoids
 # the issue without changing what we ship.
 GEN_TMP_DIR="$(mktemp -d -t hindsight-py-gen.XXXXXX)"
-trap 'rm -rf "$GEN_TMP_DIR"' EXIT
 
 # Run openapi-generator via Docker (pinned version for reproducibility)
 # Use --platform linux/amd64 to ensure identical output on both macOS (arm64) and Linux CI (amd64)
@@ -124,7 +142,7 @@ trap 'rm -rf "$GEN_TMP_DIR"' EXIT
 docker run --rm \
     --platform linux/amd64 \
     --user "$(id -u):$(id -g)" \
-    -v "$OPENAPI_SPEC:/local/openapi.json" \
+    -v "$GENERATOR_OPENAPI_SPEC:/local/openapi.json" \
     -v "$GEN_TMP_DIR:/local/out" \
     -v "$PYTHON_CLIENT_DIR/openapi-generator-config.yaml:/local/config.yaml" \
     "openapitools/openapi-generator-cli:${OPENAPI_GENERATOR_VERSION}" generate \
@@ -138,6 +156,17 @@ if [ ! -f "$GEN_TMP_DIR/hindsight_client_api/api_client.py" ]; then
     echo "❌ Error: Python client generation failed - api_client.py not found"
     exit 1
 fi
+for model in \
+    consolidation_completed_webhook_event.py \
+    memory_defense_triggered_webhook_event.py \
+    retain_completed_webhook_event.py \
+    webhook_event.py \
+    webhook_event_envelope.py; do
+    if [ ! -f "$GEN_TMP_DIR/hindsight_client_api/models/$model" ]; then
+        echo "❌ Error: Python client generation failed - missing $model"
+        exit 1
+    fi
+done
 
 # Sync the generated tree into the client dir. We only copy the things the
 # generator owns so maintained files (pyproject.toml, hindsight_client/,
@@ -364,9 +393,14 @@ rm -f "$TYPESCRIPT_CLIENT_DIR/index.ts"
 # Generate new client using @hey-api/openapi-ts
 # Use npm run generate to use the locally installed version (pinned in package.json)
 # instead of npx --yes which would fetch the latest version
-echo "Generating from $OPENAPI_SPEC..."
+echo "Generating from $GENERATOR_OPENAPI_SPEC..."
 cd "$TYPESCRIPT_CLIENT_DIR"
-npm run generate
+HINDSIGHT_OPENAPI_SPEC="$GENERATOR_OPENAPI_SPEC" npm run generate
+
+# Keep TypeScript runtime validation on the same OpenAPI source as its types.
+# This must run after the generated directory is recreated above.
+python3 "$SCRIPT_DIR/generate-webhook-schema.py" "$OPENAPI_SPEC" \
+    "$TYPESCRIPT_CLIENT_DIR/generated/webhook-schema.json"
 
 # Patch client.gen.ts for Deno compatibility.
 # Deno's Request constructor rejects a 'client' field in RequestInit because
@@ -447,7 +481,7 @@ else
     docker run --rm \
         --platform linux/amd64 \
         --user "$(id -u):$(id -g)" \
-        -v "$OPENAPI_SPEC:/local/openapi.json" \
+        -v "$GENERATOR_OPENAPI_SPEC:/local/openapi.json" \
         -v "$GO_CLIENT_DIR:/local/out" \
         "openapitools/openapi-generator-cli:${OPENAPI_GENERATOR_VERSION}" generate \
         -i /local/openapi.json \

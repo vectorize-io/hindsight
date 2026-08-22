@@ -15,15 +15,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 import pytest_asyncio
+from pydantic import TypeAdapter, ValidationError
 
 from hindsight_api import LLMConfig
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
 from hindsight_api.webhooks.models import (
+    ConsolidationCompletedWebhookEvent,
     ConsolidationEventData,
+    KnownWebhookEvent,
     MemoryDefenseEventData,
     MemoryDefenseHit,
+    MemoryDefenseTriggeredWebhookEvent,
+    RetainCompletedWebhookEvent,
     RetainEventData,
     WebhookConfig,
     WebhookEvent,
@@ -37,7 +42,7 @@ from hindsight_api.worker.exceptions import RetryTaskAt
 
 
 def _make_event(bank_id: str = "bank-1") -> WebhookEvent:
-    return WebhookEvent(
+    return ConsolidationCompletedWebhookEvent(
         event=WebhookEventType.CONSOLIDATION_COMPLETED,
         bank_id=bank_id,
         operation_id=uuid.uuid4().hex,
@@ -111,6 +116,51 @@ class TestHmacSigning:
         sig1 = manager._sign_payload("secret", b"payload-one")
         sig2 = manager._sign_payload("secret", b"payload-two")
         assert sig1 != sig2
+
+
+class TestWebhookEventContract:
+    def test_discriminator_selects_data_model_and_preserves_additive_fields(self):
+        event = TypeAdapter(KnownWebhookEvent).validate_python(
+            {
+                "event": "retain.completed",
+                "bank_id": "bank-1",
+                "operation_id": "op-1",
+                "status": "completed",
+                "timestamp": "2026-08-11T09:30:00Z",
+                "data": {"document_id": "doc-1", "future_data_field": True},
+                "future_envelope_field": "kept",
+            }
+        )
+
+        assert isinstance(event, RetainCompletedWebhookEvent)
+        assert event.data.document_id == "doc-1"
+        assert event.data.model_extra == {"future_data_field": True}
+        assert event.model_extra == {"future_envelope_field": "kept"}
+
+    def test_discriminator_validates_the_selected_data_model(self):
+        with pytest.raises(ValidationError):
+            TypeAdapter(KnownWebhookEvent).validate_python(
+                {
+                    "event": "memory_defense.triggered",
+                    "bank_id": "bank-1",
+                    "operation_id": "op-1",
+                    "status": "redact",
+                    "timestamp": "2026-08-11T09:30:00Z",
+                    "data": {"document_id": "doc-1"},
+                }
+            )
+
+    def test_specific_event_serializes_with_its_literal_name(self):
+        event = MemoryDefenseTriggeredWebhookEvent(
+            event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
+            bank_id="bank-1",
+            operation_id="op-1",
+            status="block",
+            timestamp=datetime.now(timezone.utc),
+            data=MemoryDefenseEventData(action="block"),
+        )
+
+        assert event.model_dump(mode="json")["event"] == "memory_defense.triggered"
 
 
 class TestRetryConstants:

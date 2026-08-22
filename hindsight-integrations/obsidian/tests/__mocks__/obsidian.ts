@@ -19,13 +19,11 @@ export interface RequestUrlResponse {
   json: unknown;
 }
 
-export const requestUrl = vi.fn(
-  async (_param: RequestUrlParam): Promise<RequestUrlResponse> => ({
-    status: 200,
-    text: "{}",
-    json: {},
-  })
-);
+export const requestUrl = vi.fn(async (_param: RequestUrlParam): Promise<RequestUrlResponse> => ({
+  status: 200,
+  text: "{}",
+  json: {},
+}));
 
 export class Notice {
   constructor(_message?: string) {}

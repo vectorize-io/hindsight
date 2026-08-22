@@ -21,12 +21,10 @@ function createMockProvider(): OAuthHelpers & {
   completeAuthorization: ReturnType<typeof vi.fn>;
 } {
   return {
-    parseAuthRequest: vi.fn(
-      async (): Promise<OAuthReqInfo> => ({
-        clientId: "test-client",
-        scope: "mcp:full",
-      })
-    ),
+    parseAuthRequest: vi.fn(async (): Promise<OAuthReqInfo> => ({
+      clientId: "test-client",
+      scope: "mcp:full",
+    })),
     completeAuthorization: vi.fn(async () => ({
       redirectTo: "https://claude.ai/oauth/callback?code=abc",
     })),

@@ -125,7 +125,7 @@ async def _fire_memory_defense_webhook(
         from ...webhooks import (
             MemoryDefenseEventData,
             MemoryDefenseHit,
-            WebhookEvent,
+            MemoryDefenseTriggeredWebhookEvent,
             WebhookEventType,
         )
 
@@ -146,7 +146,7 @@ async def _fire_memory_defense_webhook(
             if h.get("detector") and h.get("preview")
         ] or None
 
-        event = WebhookEvent(
+        event = MemoryDefenseTriggeredWebhookEvent(
             event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
             bank_id=bank_id,
             operation_id=operation_id or "",

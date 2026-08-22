@@ -57,9 +57,7 @@ export function fingerprintTurns(turns: TransportTurn[], count: number): string 
 }
 
 export type RetainPlan =
-  | { mode: "replace" }
-  | { mode: "append"; fromTurn: number }
-  | { mode: "skip" };
+  { mode: "replace" } | { mode: "append"; fromTurn: number } | { mode: "skip" };
 
 /**
  * Decide how to write `turns` given what we last wrote. See the module doc for why every uncertain
