@@ -1,5 +1,6 @@
 """Unit tests for pg0 URL parsing and MemoryEngine startup."""
 
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -140,3 +141,81 @@ async def test_memory_engine_forwards_pg0_credentials(
             username=expected_username,
             password=expected_password,
         )
+
+
+@pytest.mark.asyncio
+async def test_memory_engine_warns_when_unset_database_url_creates_pg0(monkeypatch, caplog) -> None:
+    """A new default pg0 instance must identify itself instead of looking like an existing DB."""
+    from hindsight_api.config import clear_config_cache
+
+    monkeypatch.delenv("HINDSIGHT_API_DATABASE_URL", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "none")
+    clear_config_cache()
+
+    try:
+        with patch("hindsight_api.engine.memory_engine.EmbeddedPostgres") as embedded_postgres:
+            pg0 = embedded_postgres.return_value
+            pg0.is_running = AsyncMock(return_value=False)
+            pg0.ensure_running = AsyncMock(return_value="postgresql://hindsight:hindsight@127.0.0.1:5433/hindsight")
+
+            engine = MemoryEngine(
+                memory_llm_provider="none",
+                memory_llm_model="none",
+                embeddings=_NoopEmbeddings(),
+                cross_encoder=_NoopCrossEncoder(),
+                query_analyzer=_NoopQueryAnalyzer(),
+                run_migrations=False,
+                task_backend=SyncTaskBackend(),
+                skip_llm_verification=True,
+            )
+            assert engine._backend is not None
+            engine._backend.initialize = AsyncMock(side_effect=_StopInitialization)  # type: ignore[method-assign]
+
+            with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.memory_engine"):
+                with pytest.raises(_StopInitialization):
+                    await engine.initialize()
+
+        messages = [record.getMessage() for record in caplog.records]
+        warning = next(message for message in messages if "started a NEW embedded pg0" in message)
+        assert "127.0.0.1:5433/hindsight" in warning
+        assert "hindsight:hindsight" not in warning
+        assert "HINDSIGHT_API_DATABASE_URL" in warning
+    finally:
+        clear_config_cache()
+
+
+@pytest.mark.asyncio
+async def test_memory_engine_does_not_warn_when_default_pg0_is_reused(monkeypatch, caplog) -> None:
+    """Reusing an intentional local instance is not the silent-new-database case."""
+    from hindsight_api.config import clear_config_cache
+
+    monkeypatch.delenv("HINDSIGHT_API_DATABASE_URL", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "none")
+    clear_config_cache()
+
+    try:
+        with patch("hindsight_api.engine.memory_engine.EmbeddedPostgres") as embedded_postgres:
+            pg0 = embedded_postgres.return_value
+            pg0.is_running = AsyncMock(return_value=True)
+            pg0.ensure_running = AsyncMock(return_value="postgresql://hindsight:hindsight@127.0.0.1:5433/hindsight")
+
+            engine = MemoryEngine(
+                memory_llm_provider="none",
+                memory_llm_model="none",
+                embeddings=_NoopEmbeddings(),
+                cross_encoder=_NoopCrossEncoder(),
+                query_analyzer=_NoopQueryAnalyzer(),
+                run_migrations=False,
+                task_backend=SyncTaskBackend(),
+                skip_llm_verification=True,
+            )
+            assert engine._backend is not None
+            engine._backend.initialize = AsyncMock(side_effect=_StopInitialization)  # type: ignore[method-assign]
+
+            with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.memory_engine"):
+                with pytest.raises(_StopInitialization):
+                    await engine.initialize()
+
+        assert not any("started a NEW embedded pg0" in record.getMessage() for record in caplog.records)
+    finally:
+        clear_config_cache()

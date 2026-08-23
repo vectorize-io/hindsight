@@ -17,6 +17,7 @@ import functools
 import inspect
 import json
 import logging
+import os
 import random
 import sys
 import time
@@ -39,12 +40,14 @@ from .._vector_index import (
 )
 from ..cancellation import OperationCancelledError
 from ..config import (
+    DEFAULT_DATABASE_URL,
     DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS,
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
     DEFAULT_STORE_DOCUMENT_TEXT,
+    ENV_DATABASE_URL,
     ENV_MODEL_INIT_TIMEOUT,
     HindsightConfig,
     LLMMemberConfig,
@@ -1805,6 +1808,14 @@ class MemoryEngine(MemoryEngineInterface):
         # Apply optimization flags from config if not explicitly provided
         self._skip_llm_verification = (
             skip_llm_verification if skip_llm_verification is not None else config.skip_llm_verification
+        )
+
+        # Keep the source of the database URL separate from its parsed value. An omitted URL
+        # intentionally selects the local pg0 default, but pg0 auto-selects a port and can
+        # therefore create a second database (possibly empty) beside an existing PostgreSQL instance
+        # (#3728). Explicit ``pg0`` configuration remains silent and opt-in.
+        self._database_url_was_unset = (
+            db_url is None and config.database_url == DEFAULT_DATABASE_URL and ENV_DATABASE_URL not in os.environ
         )
 
         # Apply defaults from config
@@ -4012,6 +4023,14 @@ class MemoryEngine(MemoryEngineInterface):
                 # Check if pg0 is already running before we start it
                 was_already_running = await pg0.is_running()
                 self.db_url = await pg0.ensure_running()
+                if self._database_url_was_unset and not was_already_running:
+                    logger.warning(
+                        "HINDSIGHT_API_DATABASE_URL is unset; started a NEW embedded pg0 instance at %s. "
+                        "It may be a separate, empty database from an existing PostgreSQL server. If you "
+                        "expected an existing memory bank, set HINDSIGHT_API_DATABASE_URL to its PostgreSQL "
+                        "connection URL.",
+                        mask_network_location(self.db_url),
+                    )
                 # Only track pg0 (to stop later) if WE started it
                 if not was_already_running:
                     self._pg0 = pg0
