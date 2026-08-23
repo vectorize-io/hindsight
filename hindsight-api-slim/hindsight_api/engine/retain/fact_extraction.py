@@ -170,6 +170,14 @@ class Fact(BaseModel):
     entities: list[str] | None = None
     causal_relations: list["CausalRelation"] | None = None
 
+    @field_validator("fact")
+    @classmethod
+    def sanitize_fact_text(cls, value: str) -> str:
+        # Structured JSON parsing turns a model's ``\udXXX`` escape into a
+        # surrogate only after raw-output cleanup, so scrub the final text at
+        # the shared immediate/batch extraction boundary before storage or embedding (#3729).
+        return _sanitize_text(value) or ""
+
 
 class CausalRelation(BaseModel):
     """Causal relationship from this fact to a previous fact (stored format)."""
