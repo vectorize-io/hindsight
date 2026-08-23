@@ -1611,7 +1611,12 @@ class OpenAICompatibleLLM(LLMInterface):
         if self.api_key and self.api_key != "local":
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # The native path must honour the configured timeout like every other
+        # path does. A literal here silently caps ENV_LLM_TIMEOUT: on a CPU
+        # ollama host a single fact-extraction prompt can need longer than
+        # 300 s just to be ingested, and the call is aborted mid-prompt with a
+        # bare "Ollama connection error" that no configuration can fix.
+        async with httpx.AsyncClient(timeout=self.timeout or 300.0) as client:
             for attempt in range(max_retries + 1):
                 try:
                     async with attempt_context() if attempt_context is not None else nullcontext():
