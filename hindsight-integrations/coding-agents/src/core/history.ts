@@ -50,9 +50,9 @@ export interface HistoryImport {
   unattributed?: number;
 }
 
-/** Claude encodes a project directory as its absolute path with separators replaced by `-`. */
+/** Claude encodes a project directory as its absolute path with separators and underscores replaced by `-`. */
 export function claudeProjectDir(repoDir: string, home = homedir()): string {
-  return join(home, ".claude", "projects", repoDir.replace(/[/.]/g, "-"));
+  return join(home, ".claude", "projects", repoDir.replace(/[/._]/g, "-"));
 }
 
 /** Is `dir` the repo itself or somewhere inside it? */

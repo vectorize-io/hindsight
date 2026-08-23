@@ -47,6 +47,20 @@ describe("local history import", () => {
     expect(JSON.stringify(r.sessions)).not.toContain("unrelated");
   });
 
+  it("reads Claude sessions when the repository path contains underscores", () => {
+    const h = newHome();
+    const repo = "/Users/x/dev/my_project";
+    // Claude Code replaces underscores as well as path separators in its project directory names.
+    const dir = join(h, ".claude", "projects", "-Users-x-dev-my-project");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), `${claudeLine("user", "underscore repo", repo)}\n`);
+
+    const r = importLocalHistory("claude-code", repo, h);
+
+    expect(r.sessions).toHaveLength(1);
+    expect(JSON.stringify(r.sessions)).toContain("underscore repo");
+  });
+
   it("matches Codex rollouts by the cwd in their session_meta header", () => {
     const h = newHome();
     const day = join(h, ".codex", "sessions", "2026", "08", "03");
