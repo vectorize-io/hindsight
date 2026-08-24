@@ -1403,7 +1403,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_WALL_TIMEOUT` | Wall-clock ceiling in seconds for one retain task in the worker. A retain that blocks indefinitely (lock contention, an unreachable LLM endpoint) is cancelled and marked `failed` instead of holding its worker slot until the process restarts, so it can be retried. Set well above your slowest healthy retain; `0` disables. | `3600` |
 | `HINDSIGHT_API_RETAIN_BATCH_TOKENS` | Max characters per sub-batch for async retain auto-splitting | `10000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE` | Max chunks per streaming batch when retain ingests long documents. Each chunk produces roughly 17 facts, so the default 100 chunks ≈ 1700 facts per batch. Lower to cap memory/LLM pressure on large documents; raise for smaller chunks. Configurable per bank. | `100` |
-| `HINDSIGHT_API_RETAIN_ENTITY_LOOKUP` | Entity lookup method during retain: `full` (exact match) or `trigram` (fuzzy trigram matching) | `trigram` |
+| `HINDSIGHT_API_RETAIN_ENTITY_LOOKUP` | How retain finds *candidate* existing entities for an extracted name: `trigram` probes the pg_trgm index for similar names, `full` loads every entity in the bank and keeps the ones whose name is an exact or substring match. Both then run the same scoring pass (see [How entity resolution decides](#how-entity-resolution-decides)) — so this is not only a performance choice, it changes which names can merge at all. | `trigram` |
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` | Max candidates scored per entity mention. The fuzzy lookup keeps only this many best matches per name (ranked by trigram / Jaro-Winkler similarity) before the scoring pass. On banks holding thousands of near-identical names an uncapped candidate set turns one retain into minutes of CPU, which stalls the worker's health checks; matches ranked below the first ~100 never win anyway. Raise only if entities that should merge are being duplicated. | `200` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
@@ -1435,6 +1435,59 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 ```
 
 > **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](/developer/api/memory-banks#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](/developer/retain#entity-labels) for details.
+
+#### How entity resolution decides
+
+Resolving an extracted name against the entities already in a bank happens in **two
+stages, and each stage uses a different measure of similarity**. That distinction matters
+before you tune any of the thresholds above: the number that is easiest to compute by
+hand is not the number that decides the match.
+
+**Stage 1 — which existing entities are considered.** With `trigram` (the default),
+Postgres returns entities whose lowercased canonical name is trigram-similar to the
+extracted name, gated by
+[`HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD`](#database-connection-pool) — **`0.15`**,
+which is deliberately looser than pg_trgm's own `0.3` default. At most
+`HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` survive, ranked by that
+similarity. With `full`, candidates are instead the entities whose name is an exact or
+substring match. Label entities never enter this stage; they resolve by exact match only.
+
+**Stage 2 — whether one of them is reused.** Each candidate is scored, and the best one
+is reused if it clears **`0.6`**. Otherwise a new entity is created.
+
+| Signal | Weight | What it measures |
+|--------|--------|------------------|
+| Name similarity | up to **0.5** | A character-sequence ratio between the two lowercased names (Python's `difflib.SequenceMatcher`) — **not** the trigram similarity from stage 1 |
+| Co-occurring entities | up to **0.3** | The fraction of the *other* entities extracted from the same fact that this candidate already co-occurs with |
+| Temporal proximity | up to **0.2** | How close the fact's date is to the candidate's `last_seen`, decaying linearly to zero at 7 days |
+
+Two consequences are worth knowing about:
+
+- **There is no minimum name similarity that rejects a candidate.** Name similarity is
+  capped at `0.5` of the `0.6` needed, so a name never merges on its own — but
+  co-occurrence and recency are worth `0.5` between them, so a *weak* name match can be
+  carried over the line by the bank's history alone. On a mature bank this is easy to
+  hit: an entity such as `user` co-occurs with nearly every fact, so it contributes
+  co-occurrence overlap that carries little actual information.
+- **The two stages can disagree, and short names disagree the most.** The sequence ratio
+  rewards a shared run of characters relative to the length of the names, so short names
+  score far higher on it than on trigram similarity. `Tigran` and `Iran` are trigram-similar
+  at `0.20` (barely admitted at stage 1) but sequence-similar at `0.80`, which is `0.40` of
+  the `0.6` threshold before any other signal is counted.
+
+**If unrelated entities are merging,** raise
+`HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` — it is the only threshold exposed, and
+it works by keeping the candidate out of stage 2 entirely. `0.25` is a reasonable first
+step: it excludes coincidental pairs like the one above while genuine surface variants of
+the same name, which typically sit between `0.4` and `0.7`, still match. Note that it is
+applied as a Postgres session setting on every pool connection, so it is server-wide and
+cannot be overridden per bank. For names that must never be fuzzy-matched at all, model
+them as [entity labels](/developer/retain#entity-labels), or pass them yourself with
+[`resolve_entities: false`](/developer/api/retain#resolve_entities).
+
+**If variants that should merge are staying separate,** lower that threshold, and check
+that `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` is not truncating the right
+candidate away on a bank with many similar names.
 
 #### Skip storing raw document text
 
