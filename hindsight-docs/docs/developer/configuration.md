@@ -519,7 +519,13 @@ The indexed members are credential fields — never returned by the bank-config 
 
 ### Built-in llama.cpp
 
-The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB). Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB) into `~/.hindsight/models`. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+
+:::warning Not available in the Docker image
+The published `ghcr.io/vectorize-io/hindsight` image deliberately leaves llama.cpp out, so `HINDSIGHT_API_LLM_PROVIDER=llamacpp` cannot run there — it fails immediately with a message telling you so.
+
+For local inference in Docker, run llama.cpp as its own container and point Hindsight at its OpenAI-compatible API with `HINDSIGHT_API_LLM_PROVIDER=openai` and `HINDSIGHT_API_LLM_BASE_URL`. A ready-to-run setup is in [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm).
+:::
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -545,6 +551,8 @@ export HINDSIGHT_API_LLAMACPP_EXTRA_ARGS="--n_threads 8"
 
 :::note
 The llama.cpp server is shared across all LLM operations (retain, reflect, consolidation). Set `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` to allow retain and consolidation to run concurrently without blocking each other.
+
+Auto-downloaded models land in `~/.hindsight/models`. Keep that directory on persistent storage — if it is discarded between restarts, every restart re-downloads the full model.
 :::
 
 ### Per-Operation LLM Configuration
@@ -1255,6 +1263,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_LOG_JSON_FIELDS` | Comma-separated allowlist of JSON log fields to emit (e.g. `severity,message,tenant`). Available: `severity`, `message`, `timestamp`, `logger`, `tenant`, `exception`. Empty = all fields. | `""` (all) |
 | `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
 | `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Increase if a legitimate first-time model download needs more time. | `300` |
+| `HINDSIGHT_API_STARTUP_WAIT_SECONDS` | **Docker image only.** How long the container waits for the API to answer `/health` before it stops and restarts. Raising `HINDSIGHT_API_MODEL_INIT_TIMEOUT` above the default raises this wait too, so a slow first-time model download is not cut short; set this to override the wait on its own. | `300`, or `HINDSIGHT_API_MODEL_INIT_TIMEOUT` + 30s when that is longer |
 
 ### Retrieval
 

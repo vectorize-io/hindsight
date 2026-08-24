@@ -87,6 +87,40 @@ check_pg0_writable() {
     return 1
 }
 
+# =============================================================================
+# API startup wait (#3733)
+#
+# This wrapper kills the container when the API has not answered /health in
+# time. That wait is a separate timer from the API's own initialization cap
+# (HINDSIGHT_API_MODEL_INIT_TIMEOUT) — the knob the docs point at when a
+# first-time model download legitimately needs longer. Raising only the
+# documented knob used to have no effect in Docker: the wrapper still killed
+# the container at its own default, so the download restarted from scratch on
+# every boot. Follow the API's cap when it is the longer of the two.
+# =============================================================================
+DEFAULT_API_STARTUP_WAIT_SECONDS=300
+API_STARTUP_WAIT_GRACE_SECONDS=30
+
+resolve_api_startup_wait_seconds() {
+    # An explicit wrapper setting always wins.
+    if [ -n "${HINDSIGHT_API_STARTUP_WAIT_SECONDS:-}" ]; then
+        echo "${HINDSIGHT_API_STARTUP_WAIT_SECONDS}"
+        return 0
+    fi
+
+    # The API reads its cap as a float, so tolerate values like "7200.0".
+    local model_init="${HINDSIGHT_API_MODEL_INIT_TIMEOUT:-}"
+    model_init="${model_init%%.*}"
+    if [[ "$model_init" =~ ^[0-9]+$ ]] && [ "$model_init" -gt "$DEFAULT_API_STARTUP_WAIT_SECONDS" ]; then
+        # Grace period so the API surfaces its own timeout error before the
+        # wrapper gives up on it.
+        echo "$((model_init + API_STARTUP_WAIT_GRACE_SECONDS))"
+        return 0
+    fi
+
+    echo "$DEFAULT_API_STARTUP_WAIT_SECONDS"
+}
+
 if [ "${HINDSIGHT_START_ALL_SOURCE_ONLY:-false}" = "true" ]; then
     return 0 2>/dev/null || exit 0
 fi
@@ -228,7 +262,7 @@ PIDS=()
 if [ "$ENABLE_API" = "true" ]; then
     cd /app/api
     API_HEALTH_URL="${HINDSIGHT_API_HEALTH_URL:-http://localhost:${HINDSIGHT_API_PORT:-8888}/health}"
-    API_STARTUP_WAIT_SECONDS="${HINDSIGHT_API_STARTUP_WAIT_SECONDS:-300}"
+    API_STARTUP_WAIT_SECONDS="$(resolve_api_startup_wait_seconds)"
 
     # Run API directly - Python's PYTHONUNBUFFERED=1 handles output buffering
     hindsight-api &
@@ -251,6 +285,9 @@ if [ "$ENABLE_API" = "true" ]; then
 
     if [ "$api_ready" != "true" ]; then
         echo "❌ API did not become healthy within ${API_STARTUP_WAIT_SECONDS}s"
+        echo "   If a legitimate first-time model download needs longer, raise"
+        echo "   HINDSIGHT_API_MODEL_INIT_TIMEOUT (this wait follows it) or set"
+        echo "   HINDSIGHT_API_STARTUP_WAIT_SECONDS to override this wait directly."
         exit 1
     fi
 else

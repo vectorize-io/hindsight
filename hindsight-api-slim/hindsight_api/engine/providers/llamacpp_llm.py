@@ -12,6 +12,7 @@ Usage:
 """
 
 import asyncio
+import importlib.util
 import logging
 import os
 import signal
@@ -47,6 +48,26 @@ def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _require_llama_cpp() -> None:
+    """Fail fast when the `local-llm` extra is missing.
+
+    Without it, `python -m llama_cpp.server` exits immediately with
+    ModuleNotFoundError, which the caller only ever sees as a connection error
+    against a port nothing listens on. Checked before the model download so a
+    ~3.5 GB fetch is not spent on a server that cannot start (issue #3733).
+    """
+    if importlib.util.find_spec("llama_cpp") is None:
+        raise RuntimeError(
+            "HINDSIGHT_API_LLM_PROVIDER=llamacpp needs the 'local-llm' extra, which is not "
+            "installed (no module named 'llama_cpp').\n"
+            "  • pip install 'hindsight-api-slim[local-llm]'\n"
+            "  • The published Docker image (ghcr.io/vectorize-io/hindsight) deliberately omits "
+            "llama-cpp-python. For Docker, run llama.cpp as a sidecar and point Hindsight at it "
+            "with HINDSIGHT_API_LLM_PROVIDER=openai + HINDSIGHT_API_LLM_BASE_URL: see "
+            "docker/docker-compose/local-llm/ in the repository."
+        )
 
 
 def _download_default_model() -> Path:
@@ -312,13 +333,16 @@ class LlamaCppLLM(LLMInterface):
 
         async with _shared_server_lock:
             if _shared_server is None:
+                # Refuse before downloading gigabytes for a server we cannot run.
+                _require_llama_cpp()
+
                 # Resolve and potentially download the model
                 model_path = _resolve_model_path(self._model_path_str)
                 logger.info(f"Using GGUF model: {model_path}")
 
                 # Start the shared llama.cpp server
                 port = _find_free_port()
-                _shared_server = LlamaCppServer(
+                server = LlamaCppServer(
                     model_path=model_path,
                     port=port,
                     gpu_layers=self._gpu_layers,
@@ -326,7 +350,20 @@ class LlamaCppLLM(LLMInterface):
                     chat_format=self._chat_format,
                     extra_args=self._extra_args,
                 )
-                await _shared_server.start()
+                # Publish only once the process is actually serving. Assigning
+                # first left a dead server installed for the lifetime of the
+                # process: every later call skipped startup and talked to a port
+                # nothing listens on, so the real failure surfaced once and then
+                # masqueraded as endless connection errors (issue #3733).
+                try:
+                    await server.start()
+                except BaseException:
+                    # A start that timed out can leave the subprocess alive and
+                    # holding the model in memory; reap it so a retry does not
+                    # stack another one on top.
+                    await server.stop()
+                    raise
+                _shared_server = server
 
         self._server = _shared_server
 
