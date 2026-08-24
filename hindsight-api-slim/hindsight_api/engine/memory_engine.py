@@ -7910,7 +7910,14 @@ class MemoryEngine(MemoryEngineInterface):
             # A waterfall that does not add up sends the reader looking for the missing time in the
             # wrong layer, which is exactly what happened here.
             if tracer:
-                phases = [(m.phase_name, m.duration_seconds) for m in getattr(tracer, "phase_metrics", []) or []]
+                # Diagnostics are SUBSETS of other phases (store_recall sits inside
+                # parallel_retrieval, the pool waits overlap it), so summing them double-counts --
+                # it read "accounted=549ms of 306ms", which is worse than printing no total.
+                phases = [
+                    (m.phase_name, m.duration_seconds)
+                    for m in getattr(tracer, "phase_metrics", []) or []
+                    if not (m.details or {}).get("diagnostic")
+                ]
                 if phases:
                     accounted = sum(d for _, d in phases)
                     slowest = sorted(phases, key=lambda kv: -kv[1])[:4]
