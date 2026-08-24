@@ -1494,92 +1494,21 @@ async def test_deleting_a_bank_drops_its_storage(memory, request_context, restor
 # ---------------------------------------------------------------------------
 
 
-def test_a_store_owned_bank_takes_the_separate_store_path_without_a_write_group():
-    """The regression this exists for: a store-owned bank whose `Retain` was never called.
+def test_every_bank_deltas_on_the_first_sub_batch():
+    """Delta is not gated on the store any more.
 
-    `store_owned_retain` and a Protocol-B write-group handle are INDEPENDENT reasons to leave the
-    Postgres path. While every separate-system store implemented both, gating on the handle alone
-    gave the right answer by coincidence. A store that owns its whole retain has no write group to
-    mint — one atomic server-side call needs nothing tied to a Postgres commit — so `mint_txn`
-    returns None, the handle-only gate said "Postgres", and every write took the Postgres path
-    while `store_owned_retain_for()` went on answering True.
-
-    That failure is silent by construction: the data still lands (the fact write routes through the
-    provider either way), so nothing errors — the bank just quietly stops using the RPC it
-    advertises, and resolves entities against Postgres instead of its own registry.
-    """
-    from hindsight_api.engine.retain.orchestrator import uses_separate_store_write_path
-
-    class StoreOwnedNoWriteGroup(InMemoryMemories):
-        name = "store-owned"
-        store_owned_retain = True
-        # mint_txn is deliberately NOT overridden: the base answers None.
-
-    store = StoreOwnedNoWriteGroup({})
-    assert store.store_owned_retain_for("any-bank") is True
-    assert uses_separate_store_write_path(store, "any-bank", None) is True, (
-        "a store that owns its retain must take the separate-store path even though it mints no write-group handle"
-    )
-
-    # The Protocol-B store is the other reason, and still works.
-    plain = InMemoryMemories({})
-    assert plain.store_owned_retain_for("any-bank") is False
-    assert uses_separate_store_write_path(plain, "any-bank", object()) is True
-
-    # Neither reason: Postgres single-transaction path.
-    assert uses_separate_store_write_path(plain, "any-bank", None) is False
-
-
-def test_delta_is_gated_on_the_capability_not_on_being_store_owned():
-    """A store-owned bank may delta once it can SCOPE a replace to named chunks, and not before.
-
-    The two are separate questions, and conflating them has failed in both directions here: a store
-    can own its whole retain and still only replace a document wholesale, in which case a delta
-    would delete every chunk it deliberately did not re-send. Asking what the store CAN do is what
-    keeps the gate matching reality — the same routing decision written as "is it store-owned"
-    stopped being true the moment a store-owned retain could express the scope.
-    """
-    from hindsight_api.engine.retain.orchestrator import attempts_delta_retain
-
-    class ScopedReplace(InMemoryMemories):
-        name = "store-owned-scoped"
-        store_owned_retain = True
-        supports_chunk_scoped_replace = True
-
-    class WholesaleOnly(InMemoryMemories):
-        name = "store-owned-wholesale"
-        store_owned_retain = True
-        # supports_chunk_scoped_replace stays False: its only replace is the whole document.
-
-    assert attempts_delta_retain(ScopedReplace({}), "b", True) is True
-    assert attempts_delta_retain(WholesaleOnly({}), "b", True) is False, (
-        "a store that cannot scope a replace must not delta — it would delete the chunks the delta was preserving"
-    )
-    # Postgres is unaffected either way, and delta still runs only on the first sub-batch.
-    plain = InMemoryMemories({})
-    assert attempts_delta_retain(plain, "b", True) is True
-    assert attempts_delta_retain(plain, "b", False) is False
-    assert attempts_delta_retain(ScopedReplace({}), "b", False) is False
-
-
-def test_a_store_owned_bank_never_takes_the_delta_path():
-    """A store-owned bank has exactly ONE retain write path, `provider.retain()`.
-
-    Delta cannot be expressed as a Retain — Retain replaces a document wholesale, delta rewrites
-    only the chunks that changed — so a store-owned delta had to write with `Write` and tombstone
-    separately. That was the second retain operation. It also took its document lock on a Postgres
-    `documents` row a store-owned bank no longer has, so its stale-chunk guard could never fire.
+    A store-owned bank's delta is one `retain` whose replace names the chunks that moved, so there
+    is nothing left for a store to be unable to express. What remains is the sub-batch rule: delta
+    runs on the FIRST sub-batch only, because the caller keeps one result list per sub-batch item
+    and advances `chunk_index_offset` by the splitter's per-slice count rather than by what a delta
+    wrote.
     """
     from hindsight_api.engine.retain.orchestrator import attempts_delta_retain
 
     class StoreOwned(InMemoryMemories):
-        name = "store-owned-delta"
+        name = "store-owned"
         store_owned_retain = True
-        # No chunk-scoped replace: wholesale is all it can say.
 
-    assert attempts_delta_retain(StoreOwned({}), "sob-bank", True) is False
-
-    # Postgres still deltas, and only on the first sub-batch.
-    plain = InMemoryMemories({})
-    assert attempts_delta_retain(plain, "pg-bank", True) is True
-    assert attempts_delta_retain(plain, "pg-bank", False) is False
+    for store in (InMemoryMemories({}), StoreOwned({})):
+        assert attempts_delta_retain(store, "b", True) is True
+        assert attempts_delta_retain(store, "b", False) is False

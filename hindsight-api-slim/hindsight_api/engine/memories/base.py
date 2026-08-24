@@ -530,24 +530,6 @@ class MemoriesExtension(Extension, ABC):
     #: :meth:`store_owned_retain_for`.
     store_owned_retain: bool = False
 
-    #: Whether this store's :meth:`retain` can scope its replace to NAMED CHUNKS of a document
-    #: rather than the whole thing (``replace_chunk_ids`` / ``replace_keep_chunk_ids``).
-    #:
-    #: This is what makes a delta re-ingest possible for a store-owned bank. Without it the only
-    #: replace is wholesale, so a re-ingest must re-send every fact of the document — and therefore
-    #: re-extract them, which in an LLM extraction mode is the dominant cost of a re-ingest.
-    #:
-    #: Separate from :attr:`store_owned_retain` because they are separate questions: a store can own
-    #: its whole retain and still only be able to replace a document wholesale. Gating delta on the
-    #: capability rather than on "is it store-owned" is what keeps a store that cannot express the
-    #: scope from silently deleting the chunks a delta meant to preserve.
-    supports_chunk_scoped_replace: bool = False
-
-    def supports_chunk_scoped_replace_for(self, bank_id: str) -> bool:
-        """Per-bank form of :attr:`supports_chunk_scoped_replace`, for a router whose banks live in
-        different backends. Defaults to the class attribute."""
-        return self.supports_chunk_scoped_replace
-
     def store_owned_retain_for(self, bank_id: str) -> bool:
         """Per-bank form of :attr:`store_owned_retain`. Defaults to the class attribute; a router
         that keeps some banks in a store-owned backend and others in SQL overrides it to answer PER
@@ -585,9 +567,9 @@ class MemoriesExtension(Extension, ABC):
         most of a large document cannot name the changed chunks under such a cap, but naming the few
         that survive is the same replace. Pass whichever side is smaller; passing both is an error.
 
-        Only meaningful to a store answering :meth:`supports_chunk_scoped_replace_for`. A store that
-        does not must ignore them rather than silently widening to a wholesale replace: the chunks
-        the caller did not name are exactly the ones it is trying to keep."""
+        A store that cannot scope a replace must ignore these rather than silently widening to a
+        wholesale one: the chunks the caller did not name are exactly the ones it is trying to
+        keep."""
         raise NotImplementedError("this store does not support a store-owned retain")
 
     def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
