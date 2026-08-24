@@ -3364,6 +3364,103 @@ def _set_chunk_batch_size(memory: MemoryEngine, batch_size: int) -> None:
     memory._config_resolver._global_config.retain_chunk_batch_size = batch_size
 
 
+def _set_retain_memory_budget_mb(memory: MemoryEngine, budget_mb: int) -> None:
+    """Set retain_memory_budget_mb on the config resolver's global config."""
+    memory._config_resolver._global_config.retain_memory_budget_mb = budget_mb
+
+
+@pytest.mark.asyncio
+async def test_streaming_retain_under_a_tiny_memory_budget_keeps_every_fact(memory_mock_llm, request_context):
+    """A budget too small for one chunk must throttle the pipeline, never drop from it.
+
+    ``retain_chunk_batch_size`` bounds how many chunks are in flight; it cannot bound what
+    they weigh, so since #3756 the consumer also flushes on a byte budget and the producer
+    waits when the pipeline is full. Both are new places a chunk could be lost or a retain
+    could wedge, and neither shows up in a unit test of the budget object.
+
+    A 1 MB budget against a document whose facts exceed it forces every path at once: the
+    producer blocks on nearly every chunk, the consumer flushes on bytes rather than on its
+    chunk count, and the oversized-chunk escape hatch admits work an empty pipeline could
+    not otherwise take. The document must still arrive whole.
+    """
+    memory = memory_mock_llm
+    # A chunk count far larger than the document, so the byte budget is what decides every
+    # flush — the count trigger can never fire and cannot mask a broken budget.
+    _set_chunk_batch_size(memory, 10_000)
+    _set_retain_memory_budget_mb(memory, 1)
+    bank_id = f"test_budget_{uuid.uuid4().hex[:8]}"
+    document_id = f"budget_doc_{uuid.uuid4().hex[:8]}"
+
+    content = _generate_chunky_content(num_chunks=12, chunk_size=3000)
+    mock_llm_call = _make_mock_llm_call()
+
+    try:
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+            result = await asyncio.wait_for(
+                memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=[
+                        {
+                            "content": content,
+                            "context": "memory budget test",
+                            "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                        }
+                    ],
+                    document_id=document_id,
+                    request_context=request_context,
+                ),
+                # A budget that never hands room back deadlocks rather than failing, so the
+                # test has to time out instead of hanging the suite.
+                timeout=180,
+            )
+
+        unit_ids = result[0] if result else []
+        assert len(unit_ids) > 0, "a throttled retain must still produce facts"
+
+        stored = await memory.list_memory_units(bank_id, limit=1000, request_context=request_context)
+        assert stored["total"] == len(unit_ids), (
+            f"budget throttling lost facts: {stored['total']} stored, {len(unit_ids)} returned"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_streaming_retain_with_the_budget_disabled_matches_the_budgeted_run(memory_mock_llm, request_context):
+    """Turning the budget off changes throughput, not what gets stored.
+
+    ``0`` restores the pre-#3756 chunk-count-only bound, which deployments that tuned that
+    count deliberately will use. The two configurations must be indistinguishable in what
+    they write, or the budget is not a bound but a behaviour change.
+    """
+    memory = memory_mock_llm
+    _set_chunk_batch_size(memory, 3)
+    content = _generate_chunky_content(num_chunks=8, chunk_size=3000)
+    mock_llm_call = _make_mock_llm_call()
+
+    counts = []
+    bank_ids = [f"test_budget_off_{uuid.uuid4().hex[:8]}", f"test_budget_on_{uuid.uuid4().hex[:8]}"]
+    try:
+        for bank_id, budget_mb in zip(bank_ids, [0, 1]):
+            _set_retain_memory_budget_mb(memory, budget_mb)
+            with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+                await memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=[{"content": content, "context": "budget parity test"}],
+                    document_id=f"parity_doc_{uuid.uuid4().hex[:8]}",
+                    request_context=request_context,
+                )
+            stored = await memory.list_memory_units(bank_id, limit=1000, request_context=request_context)
+            counts.append(stored["total"])
+
+    finally:
+        for bank_id in bank_ids:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    assert counts[0] == counts[1], f"budget off stored {counts[0]} facts, budget on stored {counts[1]}"
+    assert counts[0] > 0
+
+
 @pytest.mark.asyncio
 async def test_every_streaming_batch_survives_the_next_one(memory_mock_llm, request_context):
     """A streaming retain must keep every batch's facts, not just the last one's.

@@ -29,6 +29,7 @@ from ..retain.types import (
     ExtractedFact,
     ProcessedFact,
     RetainContent,
+    pack_embedding,
 )
 from ..schema import fq_table
 from .schema import (
@@ -980,7 +981,7 @@ async def _import_observations(
         ProcessedFact(
             fact_text=obs.text,
             fact_type="observation",
-            embedding=embedding,
+            embedding=pack_embedding(embedding),
             occurred_start=obs.occurred_start,
             occurred_end=obs.occurred_end,
             mentioned_at=_observation_mentioned_at(obs),

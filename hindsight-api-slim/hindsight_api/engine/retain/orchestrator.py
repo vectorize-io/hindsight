@@ -282,6 +282,7 @@ from . import (
     fact_storage,
     link_creation,
 )
+from .memory_budget import RetainMemoryBudget, estimate_chunk_bytes
 from .types import (
     CausalRelation,
     ChunkMetadata,
@@ -1362,6 +1363,7 @@ async def retain_batch(
     outbox_callback_factory: RetainOutboxCallbackFactory | None = None,
     db_semaphore: "asyncio.Semaphore | None" = None,
     document_body_override: str | None = None,
+    document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     webhook_manager: Any = None,
@@ -1819,13 +1821,16 @@ async def retain_batch(
     all_pre_chunks: list[str] = []
     chunk_to_content: list[int] = []  # maps chunk index -> index into contents
     for content_idx, content in enumerate(contents):
-        content_chunks = fact_extraction.chunk_text(
+        # Streamed, not materialised per content: `iter_chunks` yields each chunk as it is
+        # cut, so the peak here is one chunk rather than the intermediate splits an eager
+        # chunker builds for the whole body (a 45 MB one cost ~130 MB live before #3756).
+        for chunk in fact_extraction.iter_chunks(
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-        )
-        all_pre_chunks.extend(content_chunks)
-        chunk_to_content.extend([content_idx] * len(content_chunks))
+        ):
+            all_pre_chunks.append(chunk)
+            chunk_to_content.append(content_idx)
 
     # Memory: after chunking, the original content bodies in RetainContent are
     # no longer needed (all_pre_chunks holds the working set). Clear them so
@@ -1867,6 +1872,7 @@ async def retain_batch(
         outbox_callback=outbox_callback,
         db_semaphore=db_semaphore,
         document_body_override=document_body_override,
+        document_body_hash=document_body_hash,
         chunk_index_offset=chunk_index_offset,
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
@@ -2093,6 +2099,7 @@ async def _streaming_retain_batch(
     outbox_callback: Callable[["asyncpg.Connection"], Awaitable[None]] | None = None,
     db_semaphore: "asyncio.Semaphore | None" = None,
     document_body_override: str | None = None,
+    document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
@@ -2145,11 +2152,22 @@ async def _streaming_retain_batch(
     # Clear them from the dicts to release the per-item copies (can be multi-MB each).
     for d in contents_dicts:
         d.pop("content", None)
-    # Sanitize before hashing to match what handle_document_tracking stores
-    sanitized_content = fact_extraction._sanitize_text(combined_content) or ""
-    new_content_hash = hashlib.sha256(sanitized_content.encode()).hexdigest()
-    # Memory: sanitized_content is only needed for the hash; free it immediately.
-    sanitized_content = ""
+    # Sanitize before hashing to match what handle_document_tracking stores.
+    #
+    # `document_body_hash` is that same hash, already computed by the caller that screened
+    # the body. Taking it skips the one remaining piece of retain work that scaled with
+    # (sub-batches x document size): every slice of an oversized item carries the identical
+    # body, so each one re-sanitized and re-hashed the whole document to derive a value the
+    # slice before it had already derived — ~0.9s per slice on a 45 MB body, and such a body
+    # splits into ~1,200 slices (#3756). Recomputed here only when no caller supplied it
+    # (the un-sliced path, where the body is this submission's own content).
+    if document_body_hash is not None:
+        new_content_hash = document_body_hash
+    else:
+        sanitized_content = fact_extraction._sanitize_text(combined_content) or ""
+        new_content_hash = hashlib.sha256(sanitized_content.encode()).hexdigest()
+        # Memory: sanitized_content is only needed for the hash; free it immediately.
+        sanitized_content = ""
     is_recovery = False
 
     try:
@@ -2232,11 +2250,25 @@ async def _streaming_retain_batch(
     # ---------------------------------------------------------------------------
     # Producer-consumer pipeline: LLM extraction runs concurrently with DB writes
     # ---------------------------------------------------------------------------
-    num_batches = (total_chunks + chunk_batch_size - 1) // chunk_batch_size
+    # How many batches the consumer actually wrote. Counted rather than derived from
+    # `total_chunks / chunk_batch_size`: since #3756 the consumer also flushes when the open
+    # batch grows past its memory budget, so the chunk count only ever gives a lower bound.
+    batches_written = [0]
 
     # Queue for enriched chunks (extracted facts + embeddings).
     # Buffer up to 2x batch_size items so the producer can stay ahead of the consumer.
     chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=chunk_batch_size * 2)
+
+    # ...and a bound on what those items WEIGH, which the queue's item count cannot express:
+    # a chunk carries as many facts as the extractor found in it, so "2x batch_size chunks"
+    # is anywhere between a few hundred KB and a few hundred MB. The producer reserves a
+    # chunk's estimated cost before queueing it and the consumer releases it once written,
+    # which is what makes the pipeline's peak a number a worker can be sized against
+    # regardless of the document (#3756).
+    memory_budget = RetainMemoryBudget(limit_bytes=config.retain_memory_budget_mb * 1024 * 1024)
+    # What each queued chunk reserved, so the consumer gives back exactly that. Keyed by the
+    # chunk's global index because completion order is not queue order.
+    reserved_by_chunk: dict[int, int] = {}
 
     # Shared mutable state for the producer to report skipped chunks and usage
     producer_error: list[BaseException] = []
@@ -2313,6 +2345,12 @@ async def _streaming_retain_batch(
                 )
             finally:
                 reset_call_metadata(meta_token)
+            # Reserve before queueing, so a producer running ahead of a slow write path
+            # waits here instead of piling extracted facts up behind the queue. Extraction
+            # for chunks already in flight continues; only the handover is throttled.
+            chunk_bytes = estimate_chunk_bytes(processed, extracted, chunk_meta)
+            await memory_budget.reserve(chunk_bytes)
+            reserved_by_chunk[global_idx] = chunk_bytes
             await chunk_queue.put((global_idx, content, extracted, processed, chunk_meta, usage))
             # Memory: release the chunk text from the shared list now that it's
             # been extracted and queued. The queued RetainContent holds its own copy.
@@ -2358,8 +2396,20 @@ async def _streaming_retain_batch(
     # Phase 1 (entity resolution) -> Phase 2 (write txn) -> Phase 3 (ANN fire-and-forget).
     async def _db_consumer() -> None:
         batch: list[tuple] = []
+        batch_bytes = 0
         consumer_batch_idx = 0
         chunks_committed = 0
+
+        def _release_batch(written: list[tuple]) -> None:
+            """Hand the budget back what ``written`` reserved, now that it is committed.
+
+            Released after the batch is written and dropped rather than as each item leaves
+            the queue: until then the facts are still resident, and giving the producer room
+            to extract more against memory that is still in use is exactly the accounting
+            error the budget exists to prevent.
+            """
+            for global_idx, *_rest in written:
+                memory_budget.release(reserved_by_chunk.pop(global_idx, 0))
 
         # Best-effort durable progress: how many chunks of this document have been
         # extracted+committed so far. Written per consumer batch so an operator polling
@@ -2391,18 +2441,28 @@ async def _streaming_retain_batch(
                     )
                     chunks_committed += len(batch)
                     await _emit_chunk_progress()
+                _release_batch(batch)
+                batch = []
+                batch_bytes = 0
                 break
 
             batch.append(item)
+            batch_bytes += reserved_by_chunk.get(item[0], 0)
 
-            if len(batch) >= chunk_batch_size:
+            # Write on whichever comes first: the configured chunk count, or an open batch
+            # heavy enough that holding more would crowd out the producer (#3756). The
+            # count alone let a batch of fact-dense chunks grow far past any memory a
+            # worker was sized for.
+            if len(batch) >= chunk_batch_size or memory_budget.should_flush(batch_bytes):
                 if pipeline_aborted[0]:
                     # Another request took over the document — discard this batch
                     log_buffer.append(
                         f"[streaming] Consumer: discarding batch of {len(batch)} chunks "
                         f"(pipeline aborted due to concurrent takeover)"
                     )
+                    _release_batch(batch)
                     batch = []
+                    batch_bytes = 0
                     continue
                 await _process_db_batch(
                     batch,
@@ -2412,7 +2472,9 @@ async def _streaming_retain_batch(
                 consumer_batch_idx += 1
                 chunks_committed += len(batch)
                 await _emit_chunk_progress()
+                _release_batch(batch)
                 batch = []
+                batch_bytes = 0
 
     async def _process_db_batch(
         batch: list[tuple],
@@ -2423,6 +2485,7 @@ async def _streaming_retain_batch(
         # Allow clearing combined_content after the no-facts skip path runs
         # doc tracking — see the assignment further below.
         nonlocal combined_content
+        batches_written[0] += 1
         # Combine results from individual chunk extractions
         batch_contents: list[RetainContent] = []
         batch_extracted: list = []
@@ -3113,7 +3176,7 @@ async def _streaming_retain_batch(
         )
     else:
         log_buffer.append(
-            f"STREAMING RETAIN COMPLETE: {len(all_unit_ids)} units across {num_batches} batches in {total_time:.3f}s"
+            f"STREAMING RETAIN COMPLETE: {len(all_unit_ids)} units across {batches_written[0]} batches in {total_time:.3f}s"
         )
     log_buffer.append(f"Document: {effective_doc_id}")
     log_buffer.append(f"{'=' * 60}")

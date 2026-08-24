@@ -400,7 +400,10 @@ def build_fact_records(
             FactRecord(
                 unit_id=str(unit_id),
                 text=fact.fact_text,
-                embedding=fact.embedding,
+                # Unpacked here on purpose: `FactRecord` is the contract every store
+                # implementation reads, and retain's packed `array("f")` is an internal
+                # carrying format (#3756). The list exists only for the record.
+                embedding=list(fact.embedding),
                 fact_type=fact.fact_type,
                 tags=fact.tags or [],
                 context=fact.context,

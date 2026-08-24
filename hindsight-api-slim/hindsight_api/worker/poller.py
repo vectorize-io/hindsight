@@ -653,7 +653,7 @@ class WorkerPoller:
 
         try:
             from ..config import get_config
-            from ..engine.memory_engine import count_tokens
+            from ..engine.token_encoding import count_tokens_windowed
 
             peer_rows = await self._backend.ops.fetch_foldable_retain_peers(
                 conn,
@@ -687,7 +687,7 @@ class WorkerPoller:
                 peers,
                 max_peers=max_peers,
                 token_budget=get_config().retain_batch_tokens,
-                count_tokens=count_tokens,
+                count_tokens=count_tokens_windowed,
             )
             if not plan.peer_ids:
                 return []

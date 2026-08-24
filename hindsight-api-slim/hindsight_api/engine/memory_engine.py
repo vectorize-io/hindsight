@@ -14,6 +14,7 @@ import contextvars
 import copy
 import difflib
 import functools
+import hashlib
 import inspect
 import json
 import logging
@@ -21,7 +22,7 @@ import random
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
@@ -571,7 +572,7 @@ from .task_backend import TaskBackend
 #                     arm's top hits a slot (used by consolidation dedup recall, where RRF
 #                     buried the near-identical twin below budget). See interleave_fusion.
 RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
-from .token_encoding import get_token_encoding
+from .token_encoding import count_tokens_windowed, get_token_encoding
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
@@ -795,26 +796,29 @@ class _RetainChunkingConfig:
     structured_chunk_size: int | None
 
 
-def _pack_native_chunks(chunks: list[str], tokens_per_batch: int) -> list[list[str]]:
+def _pack_native_chunks(chunks: Iterable[str], tokens_per_batch: int) -> Iterator[list[str]]:
     """Group consecutive native chunks into runs of at most ``tokens_per_batch``.
 
     A single chunk over the budget becomes a run of its own: the native chunk is
     the atom of the retain pipeline and must never be cut (see
     ``_split_contents_into_sub_batches``).
+
+    Takes and yields lazily so an oversized item is packed a run at a time. Holding
+    every chunk of a document at once is what made retain's memory scale with the
+    document rather than with a working set (#3756); a run is bounded by
+    ``tokens_per_batch``, so this holds one sub-batch's worth at a time instead.
     """
-    runs: list[list[str]] = []
     current: list[str] = []
     current_tokens = 0
     for chunk in chunks:
         chunk_tokens = count_tokens(chunk)
         if current and current_tokens + chunk_tokens > tokens_per_batch:
-            runs.append(current)
+            yield current
             current, current_tokens = [], 0
         current.append(chunk)
         current_tokens += chunk_tokens
     if current:
-        runs.append(current)
-    return runs
+        yield current
 
 
 def _rejoin_native_chunks(
@@ -857,27 +861,51 @@ def _rejoin_native_chunks(
     return None
 
 
+@dataclass(frozen=True)
+class ScreenedDocumentBody:
+    """A document body that has been Memory Defense screened and content-hashed once.
+
+    ``content_hash`` is ``sha256`` of the sanitized ``text`` — byte-identical to what
+    ``handle_document_tracking`` stores on the ``documents`` row, so the retain path can
+    take it as given instead of recomputing it. That recomputation was the one piece of
+    work that still scaled with (sub-batches x document size): every slice of an oversized
+    item carries the same body, and each one re-sanitized and re-hashed the whole thing.
+    On a 45 MB body split into ~1,200 sub-batches that is ~0.9s of work repeated 1,200
+    times — about 18 minutes spent proving the same hash (#3756).
+    """
+
+    text: str
+    content_hash: str
+
+
 def _screen_document_body_overrides(
     overrides: list[str | None],
     config: HindsightConfig,
-) -> list[str | None]:
-    """Memory Defense screen each distinct document body override once.
+) -> list[ScreenedDocumentBody | None]:
+    """Memory Defense screen and content-hash each distinct document body override once.
 
     The splitter hands every slice of an oversized item the same body, so
     screening it inside the retain path would rescan the whole document once
     per sub-batch (issue #3282). Screen here instead — the orchestrator takes
-    an override as already screened (see ``redact_document_body``).
+    an override as already screened (see ``redact_document_body``) and already
+    hashed (see ``ScreenedDocumentBody``).
     """
+    from .retain.fact_extraction import _sanitize_text
     from .retain.orchestrator import redact_document_body
 
-    screened: dict[str, str] = {}
-    result: list[str | None] = []
+    screened: dict[str, ScreenedDocumentBody] = {}
+    result: list[ScreenedDocumentBody | None] = []
     for body in overrides:
         if body is None:
             result.append(None)
             continue
         if body not in screened:
-            screened[body] = redact_document_body(body, config)
+            redacted = redact_document_body(body, config)
+            sanitized = _sanitize_text(redacted) or ""
+            screened[body] = ScreenedDocumentBody(
+                text=redacted,
+                content_hash=hashlib.sha256(sanitized.encode()).hexdigest(),
+            )
         result.append(screened[body])
     return result
 
@@ -926,8 +954,8 @@ def _split_contents_into_sub_batches(
     """
     from .retain import fact_extraction
 
-    def _chunks_of(text: str) -> list[str]:
-        return fact_extraction.chunk_text(text, chunk_size, structured_chunk_size=structured_chunk_size)
+    def _chunks_of(text: str) -> Iterator[str]:
+        return fact_extraction.iter_chunks(text, chunk_size, structured_chunk_size=structured_chunk_size)
 
     sub_batches: list[list[RetainContentDict]] = []
     origin_indices: list[list[int]] = []
@@ -952,7 +980,7 @@ def _split_contents_into_sub_batches(
 
     for original_idx, item in enumerate(contents):
         content_str = item.get("content", "") or ""
-        item_tokens = count_tokens(content_str)
+        item_tokens = count_tokens_windowed(content_str)
 
         if item_tokens > tokens_per_batch:
             # Oversized single item: flush anything in flight, then emit runs of
@@ -981,7 +1009,7 @@ def _split_contents_into_sub_batches(
         current_batch.append(item)
         current_batch_origins.append(original_idx)
         current_batch_tokens += item_tokens
-        current_batch_chunks += len(_chunks_of(content_str))
+        current_batch_chunks += sum(1 for _ in _chunks_of(content_str))
 
     _flush()
     return _SubBatchSplit(
@@ -1000,7 +1028,7 @@ def _split_contents_into_async_children(
 
     Unlike ``_split_contents_into_sub_batches`` (used by the in-process
     path), this NEVER fragments a single input item across multiple
-    children. Items where ``count_tokens(content) > tokens_per_batch``
+    children. Items where ``count_tokens_windowed(content) > tokens_per_batch``
     are emitted as their own single-item child holding the FULL
     un-chunked content; the in-process ``retain_batch_async`` then
     re-chunks them SEQUENTIALLY inside one worker slot with correct
@@ -1033,7 +1061,7 @@ def _split_contents_into_async_children(
             current_tokens = 0
 
     for item in contents:
-        item_tokens = count_tokens(item.get("content", "") or "")
+        item_tokens = count_tokens_windowed(item.get("content", "") or "")
 
         if item_tokens > tokens_per_batch:
             # Oversized: flush in-flight items into their own child,
@@ -5163,7 +5191,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Auto-chunk large batches by token count to avoid timeouts and memory issues
         # Calculate total token count
-        total_tokens = sum(count_tokens(item.get("content", "")) for item in contents)
+        total_tokens = sum(count_tokens_windowed(item.get("content", "")) for item in contents)
         total_usage = TokenUsage()
         # Aggregate "content tokens that actually went through extraction after
         # chunk-level dedup" across sub-batches. ``None`` in any sub-batch
@@ -5321,7 +5349,12 @@ class MemoryEngine(MemoryEngineInterface):
                     # webhook delivery row is committed atomically with the final retain data.
                     outbox_callback=outbox_callback if i == len(sub_batches) else None,
                     outbox_callback_factory=outbox_callback_factory if i == len(sub_batches) else None,
-                    document_body_override=document_body_overrides[i - 1],
+                    document_body_override=(
+                        document_body_overrides[i - 1].text if document_body_overrides[i - 1] else None
+                    ),
+                    document_body_hash=(
+                        document_body_overrides[i - 1].content_hash if document_body_overrides[i - 1] else None
+                    ),
                     chunk_index_offset=sub_offset,
                 )
 
@@ -5396,6 +5429,7 @@ class MemoryEngine(MemoryEngineInterface):
         outbox_callback_factory: RetainOutboxCallbackFactory | None = None,
         strategy: str | None = None,
         document_body_override: str | None = None,
+        document_body_hash: str | None = None,
         chunk_index_offset: int = 0,
     ) -> tuple[list[list[str]], "TokenUsage", int | None]:
         """
@@ -5459,6 +5493,7 @@ class MemoryEngine(MemoryEngineInterface):
                 outbox_callback_factory=outbox_callback_factory,
                 db_semaphore=self._put_semaphore,
                 document_body_override=document_body_override,
+                document_body_hash=document_body_hash,
                 chunk_index_offset=chunk_index_offset,
                 # Stream chunk-level "storing N/total" progress to the operation row as
                 # the document's chunks commit (more useful than the coarse sub-batch tick).
@@ -17907,7 +17942,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         # Calculate total token count and determine if we need to split
-        total_tokens = sum(count_tokens(item.get("content", "")) for item in contents)
+        total_tokens = sum(count_tokens_windowed(item.get("content", "")) for item in contents)
         config = get_config()
         tokens_per_batch = config.retain_batch_tokens
 

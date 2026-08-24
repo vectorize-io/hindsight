@@ -6,6 +6,8 @@ from content input to fact storage.
 """
 
 import logging
+from array import array
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, TypedDict
@@ -14,6 +16,42 @@ from uuid import UUID
 from ..metadata_utils import drop_null_values
 
 logger = logging.getLogger(__name__)
+
+# An embedding, packed. ``array("f")`` stores the vector as a contiguous block of C floats
+# instead of one boxed ``PyFloat`` per dimension: a 384-dim vector measures 1,616 bytes
+# packed against 12,344 bytes as ``list[float]``, a 7.6x difference that scales with the
+# number of facts a retain batch holds at once (#3756).
+#
+# "f" (float32) is the width pgvector's ``vector`` column stores anyway, so nothing is lost
+# on the way to the database — the rounding that used to happen at the INSERT now happens
+# one step earlier, and the stored bytes are the same.
+# Unparameterised on purpose: `array.array` is only generic in the type stubs, so
+# `array[float]` raises TypeError at import time on CPython.
+PackedEmbedding = array
+
+
+def pack_embedding(values: Sequence[float]) -> PackedEmbedding:
+    """Pack an embedding vector for carrying through the retain pipeline."""
+    return array("f", values)
+
+
+# What a function that merely carries or renders an embedding should accept. Retain holds the
+# packed form; imports and re-embeds hold a plain float list; a few paths hold a rendered
+# pgvector literal already. All three reach the same link/ANN helpers.
+EmbeddingLike = PackedEmbedding | Sequence[float] | str
+
+
+def embedding_to_pgvector(embedding: EmbeddingLike) -> str:
+    """Render an embedding as the ``'[0.1,0.2,...]'`` literal asyncpg binds to ``vector``.
+
+    Handles every form a caller may hold: the packed array retain carries, a plain float
+    list (imports, re-embeds), or a literal that was already rendered. ``str()`` on the
+    packed form would produce ``array('f', [...])``, which is not a vector literal — this
+    exists so no call site has to remember that.
+    """
+    if isinstance(embedding, str):
+        return embedding
+    return "[" + ",".join(repr(float(value)) for value in embedding) + "]"
 
 
 class RetainContentDict(TypedDict, total=False):
@@ -176,7 +214,9 @@ class ProcessedFact:
     # Core fact data
     fact_text: str
     fact_type: str
-    embedding: list[float]
+    # Packed, not ``list[float]`` — see ``PackedEmbedding``. Render it for SQL with
+    # ``embedding_to_pgvector``; ``list(...)`` recovers the plain float list.
+    embedding: PackedEmbedding
 
     # Temporal data
     occurred_start: datetime | None
@@ -253,7 +293,7 @@ class ProcessedFact:
 
     @staticmethod
     def from_extracted_fact(
-        extracted_fact: "ExtractedFact", embedding: list[float], chunk_id: str | None = None
+        extracted_fact: "ExtractedFact", embedding: Sequence[float], chunk_id: str | None = None
     ) -> "ProcessedFact | None":
         """
         Create ProcessedFact from ExtractedFact.
@@ -286,7 +326,7 @@ class ProcessedFact:
         return ProcessedFact(
             fact_text=fact_text,
             fact_type=extracted_fact.fact_type,
-            embedding=embedding,
+            embedding=pack_embedding(embedding),
             occurred_start=occurred_start,
             occurred_end=occurred_end,
             mentioned_at=mentioned_at,
