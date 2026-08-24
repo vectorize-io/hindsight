@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { client, type KnowledgeNode } from "@/lib/api";
-import { bankRoute } from "@/lib/bank-url";
+import { client, type KnowledgeNode, type MentalModel } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +54,7 @@ import { CompactMarkdown } from "./compact-markdown";
 import { StalenessBadge } from "./staleness-badge";
 import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import { UpdateMentalModelDialog } from "./mental-models-view";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
 
@@ -77,7 +77,6 @@ export function KnowledgeBaseView() {
   const t = useTranslations("knowledgeBase");
   const { currentBank } = useBank();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const pageParam = searchParams.get("page");
 
   const [roots, setRoots] = useState<KnowledgeNode[]>([]);
@@ -103,6 +102,12 @@ export function KnowledgeBaseView() {
   const [selectedMmId, setSelectedMmId] = useState<string | null>(null);
   // Non-null while the provenance dialog (the backing model's based_on) is open.
   const [provenanceMmId, setProvenanceMmId] = useState<string | null>(null);
+  // Non-null while the page's backing model is open on its configuration, and
+  // then while its options are being edited. Kept in this view rather than
+  // linking across to the Mental Models tab: changing a page's scope is part of
+  // working on the page, and navigating away loses the page you were reading.
+  const [optionsMmId, setOptionsMmId] = useState<string | null>(null);
+  const [optionsModel, setOptionsModel] = useState<MentalModel | null>(null);
   // Mirror of open tabs for the auto-refresh interval / openPage without re-arming.
   const tabsRef = useRef<PageDetail[]>([]);
   useEffect(() => {
@@ -119,7 +124,7 @@ export function KnowledgeBaseView() {
   const [deleting, setDeleting] = useState(false);
 
   // Editing the open page's options (name / source query). Tags and the rest of
-  // the retrieval scope live on the backing mental model — see openAdvancedOptions.
+  // the retrieval scope live on the backing mental model — see optionsMmId.
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", sourceQuery: "" });
   const [savingEdit, setSavingEdit] = useState(false);
@@ -328,23 +333,6 @@ export function KnowledgeBaseView() {
       return next;
     });
   }, []);
-
-  // Hand the page's backing mental model to the Mental Models tab, which owns the
-  // full options editor (scope tags + tags_match + tag_groups, fact types, refresh
-  // schedule). Deep-linked rather than duplicated so there is one form to keep
-  // correct, and so the URL is shareable.
-  const openAdvancedOptions = useCallback(
-    (mentalModelId: string) => {
-      if (!currentBank) return;
-      router.push(
-        bankRoute(
-          currentBank,
-          `?view=knowledge&knowledgeTab=models&mentalModel=${encodeURIComponent(mentalModelId)}`
-        )
-      );
-    },
-    [currentBank, router]
-  );
 
   const openCreate = (kind: "folder" | "page", parentId = "") => {
     setForm({ name: "", sourceQuery: "", parentId });
@@ -592,7 +580,7 @@ export function KnowledgeBaseView() {
                     the page links to the one editor that owns the whole scope. */}
                 {selectedMmId && (
                   <button
-                    onClick={() => openAdvancedOptions(selectedMmId)}
+                    onClick={() => setOptionsMmId(selectedMmId)}
                     className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
                   >
                     <SlidersHorizontal className="w-3 h-3" />
@@ -796,6 +784,38 @@ export function KnowledgeBaseView() {
         <MentalModelDetailModal
           mentalModelId={provenanceMmId}
           onClose={() => setProvenanceMmId(null)}
+        />
+      )}
+
+      {/* The page's backing model, opened on its configuration. `onEdit` hands off
+          to the very same dialog the Mental Models tab uses, so the scope controls
+          (tags + tags_match + tag_groups, fact types, schedule) have one
+          implementation rather than a partial copy living on the page (#3687). */}
+      {optionsMmId && (
+        <MentalModelDetailModal
+          mentalModelId={optionsMmId}
+          initialTab="configuration"
+          onClose={() => setOptionsMmId(null)}
+          onEdit={(m) => setOptionsModel(m)}
+        />
+      )}
+
+      {optionsModel && (
+        <UpdateMentalModelDialog
+          open
+          mentalModel={optionsModel}
+          onClose={() => setOptionsModel(null)}
+          onUpdated={async () => {
+            setOptionsModel(null);
+            setOptionsMmId(null);
+            // Tags and trigger drive the tree's chips and freshness line, so pull
+            // the page back in rather than leaving the reader looking at stale scope.
+            await loadTree();
+            if (selected) {
+              const p = await client.getKnowledgePage(currentBank!, selected.id);
+              setTabs((prev) => prev.map((x) => (x.id === p.id ? p : x)));
+            }
+          }}
         />
       )}
     </div>
