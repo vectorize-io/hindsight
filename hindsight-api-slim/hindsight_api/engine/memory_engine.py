@@ -6766,6 +6766,21 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
             step_duration = time.time() - step_start
+            # The store call is the one term inside this block that IS measured. Showing it next to
+            # the block total is what separates "the store is slow" from "we are slow around it" --
+            # the per-arm numbers cannot, because a store-owned recall returns them all from one
+            # call and reports 0.0 for each.
+            _store_recall = aggregated_timings.get("store_recall", 0.0)
+            _store_recall_info = f" | store={_store_recall:.3f}s" if _store_recall else ""
+            if tracer and _store_recall:
+                # Diagnostic: it is a SUBSET of parallel_retrieval, not a sibling of it, so it must
+                # not be summed with the partitioning phases.
+                tracer.add_phase_metric(
+                    "store_recall",
+                    _store_recall,
+                    {"diagnostic": True, "note": "subset of parallel_retrieval"},
+                )
+
             # Format per-method timings
             timing_parts = [
                 f"semantic={len(semantic_results)}({aggregated_timings['semantic']:.3f}s)",
@@ -6780,7 +6795,8 @@ class MemoryEngine(MemoryEngineInterface):
                 timing_parts.append(f"temporal={temporal_count}({aggregated_timings['temporal']:.3f}s)")
                 temporal_info = f" | temporal_range={start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
             log_buffer.append(
-                f"  [2] Parallel retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {parallel_duration:.3f}s{temporal_info}"
+                f"  [2] Parallel retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)}"
+                f"{_store_recall_info} in {parallel_duration:.3f}s{temporal_info}"
             )
 
             # Log graph retriever timing breakdown if available
