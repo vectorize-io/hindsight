@@ -469,12 +469,27 @@ class VerbatimFactExtractionResponse(BaseModel):
 # this bound is sent through the existing split/retry path, so it can never
 # silently truncate a degenerate or excessively dense chunk.
 #
-# The bound is derived from the configured output budget rather than fixed, so a
-# deployment with a large ceiling is not forced into constant splitting. A fact
-# object costs roughly this many output tokens; halving the budget keeps the item
-# bound biting before the token limit rather than at the same point.
-RETAIN_FACTS_SATURATION_FLOOR = 16
+# The bound has to sit in a window with a floor and a ceiling:
+#
+#   above legitimate density, or dense chunks are split for no reason. Field data
+#   from 168 single-chunk extractions: median 2 facts, p95 10, max 29. A measured
+#   worst case on a deliberately dense ~2 kB chunk produced 21-22 facts.
+#
+#   below the output-token ceiling, or the schema bound never gets to stop the
+#   array and the response comes back truncated at finish_reason=length instead.
+#   At a 4096-token budget that ceiling is around 48 facts.
+#
+# So the bound is three quarters of the token-limited count, not half the budget:
+# an earlier revision halved it and produced 24 at a 4096-token budget, below the
+# observed maximum of 29, so it would have forced splits on honest input.
+#
+# The per-fact cost is measured, not assumed. Against a strict json_schema — the
+# shape retain actually sends — four runs across two models gave 80.1, 82.1, 89.5
+# and 101.5 output tokens per fact, so 85 is a central estimate rather than a
+# guess. Modes that emit fewer fields are cheaper and simply bind later.
+RETAIN_FACTS_SATURATION_FLOOR = 32
 _APPROX_OUTPUT_TOKENS_PER_FACT = 85
+_SATURATION_BUDGET_SHARE = 3, 4  # numerator, denominator
 
 
 def resolve_facts_saturation_limit(config) -> int:
@@ -484,8 +499,15 @@ def resolve_facts_saturation_limit(config) -> int:
     # which subclasses AttributeError, so a default would silently substitute the
     # global value for the bank's resolved one (#3610). The field is required and
     # validated positive by validate_retain_completion_token_budget.
-    derived = config.retain_max_completion_tokens // (2 * _APPROX_OUTPUT_TOKENS_PER_FACT)
-    return max(RETAIN_FACTS_SATURATION_FLOOR, derived)
+    budget = config.retain_max_completion_tokens
+    numerator, denominator = _SATURATION_BUDGET_SHARE
+    derived = budget * numerator // (denominator * _APPROX_OUTPUT_TOKENS_PER_FACT)
+    # Never advertise a bound the budget cannot reach. Below roughly 2.7k output
+    # tokens the floor would exceed the token-limited count, putting a maxItems
+    # in the schema that the response can never hit — the array would run to
+    # finish_reason=length instead, which is the path this bound exists to avoid.
+    reachable_floor = min(RETAIN_FACTS_SATURATION_FLOOR, budget // _APPROX_OUTPUT_TOKENS_PER_FACT)
+    return max(reachable_floor, derived)
 
 
 # Separators for sentence-aware recursive text splitting, ordered most- to

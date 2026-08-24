@@ -586,7 +586,7 @@ def test_build_request_body_retain_strict_false_overrides_global_true():
 
 
 @pytest.mark.asyncio
-async def test_fact_saturation_boundary_allows_fifteen_facts():
+async def test_fact_saturation_boundary_allows_a_response_below_the_bound():
     """A response below the saturation boundary remains a normal success."""
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk, resolve_facts_saturation_limit
 
@@ -813,6 +813,46 @@ async def test_malformed_response_still_attempts_then_fails_loudly(retain_config
 
     assert llm.call.call_count == expected_calls
     assert "after 0 attempts" not in str(exc.value)
+
+
+def test_facts_saturation_limit_stays_inside_the_calibration_window():
+    """The bound must clear real density and still land under the token ceiling.
+
+    Both edges have bitten. An earlier revision halved the budget and produced 24
+    at a 4096-token ceiling, below the 29 facts seen in the field, so honest input
+    was split for nothing. Going the other way and exceeding the token-limited
+    count makes the schema bound unreachable, leaving the array to run to
+    finish_reason=length — the case the bound exists to prevent.
+    """
+    from hindsight_api.engine.retain.fact_extraction import (
+        _APPROX_OUTPUT_TOKENS_PER_FACT,
+        resolve_facts_saturation_limit,
+    )
+
+    OBSERVED_MAX_FACTS = 29
+
+    for budget in (4096, 8192, 16384, 65536):
+        config = MagicMock()
+        config.retain_max_completion_tokens = budget
+        limit = resolve_facts_saturation_limit(config)
+        assert limit > OBSERVED_MAX_FACTS, f"budget {budget} would split honest input at {limit} facts"
+        assert limit <= budget // _APPROX_OUTPUT_TOKENS_PER_FACT, f"budget {budget} advertises an unreachable bound"
+
+
+def test_facts_saturation_limit_never_exceeds_a_small_budget():
+    """A budget too small for the floor gets the token-limited count, not the floor."""
+    from hindsight_api.engine.retain.fact_extraction import (
+        _APPROX_OUTPUT_TOKENS_PER_FACT,
+        RETAIN_FACTS_SATURATION_FLOOR,
+        resolve_facts_saturation_limit,
+    )
+
+    config = MagicMock()
+    config.retain_max_completion_tokens = 1024
+    limit = resolve_facts_saturation_limit(config)
+
+    assert limit < RETAIN_FACTS_SATURATION_FLOOR
+    assert limit == 1024 // _APPROX_OUTPUT_TOKENS_PER_FACT
 
 
 def test_facts_saturation_limit_scales_with_output_budget():
