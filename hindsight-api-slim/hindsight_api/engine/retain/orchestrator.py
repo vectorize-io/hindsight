@@ -542,7 +542,6 @@ async def _insert_facts_and_links(
     skip_semantic_links: bool = False,
     outbox_callback=None,
     ops=None,
-    txn=None,
 ) -> list[list[str]]:
     """
     Phase 2 of the retain pipeline: insert facts and retrieval-critical links.
@@ -555,7 +554,7 @@ async def _insert_facts_and_links(
     memory_links here.
     """
     set_stage("retain.phase2.insert_facts")
-    unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed_facts, ops=ops, txn=txn)
+    unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed_facts, ops=ops)
     step_start = time.time()
     log_buffer.append(f"  Insert facts: {len(unit_ids)} units in {time.time() - step_start:.3f}s")
 
@@ -629,14 +628,6 @@ async def _insert_facts_and_links(
     return result_unit_ids
 
 
-@dataclass
-class _ExtStreamingWriteResult:
-    """Outcome of :func:`_streaming_batch_write_ext`."""
-
-    aborted: bool
-    batch_result_ids: list[list[str]]
-
-
 def attempts_delta_retain(provider, bank_id: str, is_first_batch: bool) -> bool:
     """Whether this bank may take the delta path (rewrite only the chunks that changed).
 
@@ -645,267 +636,6 @@ def attempts_delta_retain(provider, bank_id: str, is_first_batch: bool) -> bool:
     delta is one `retain` whose replace names the chunks that moved.
     """
     return is_first_batch
-
-
-async def _streaming_batch_write_ext(
-    *,
-    provider,
-    ext_txn,
-    pool,
-    bank_id: str,
-    fq_table,
-    entity_resolver,
-    phase1,
-    batch_contents: list,
-    batch_extracted: list,
-    batch_processed: list,
-    batch_chunk_meta: list,
-    effective_doc_id: str,
-    config,
-    log_buffer: list[str],
-    is_recovery: bool,
-    is_first_batch: bool,
-    is_last: bool,
-    doc_tracking_done: list[bool],
-    doc_replace_done: list[bool],
-    pipeline_aborted: list[bool],
-    append_base_hash,
-    new_content_hash,
-    combined_content: str,
-    retain_params,
-    merged_tags,
-    outbox_callback,
-    assert_append_base_unchanged,
-    p2_start: float,
-) -> _ExtStreamingWriteResult:
-    """Streaming batch write for a store that OWNS its memory rows in a SEPARATE system.
-
-    Unlike the Postgres path (one long transaction that also carries the memory write), this
-    NEVER holds the data-plane connection across the object-store write. It runs in two phases:
-
-    1. STORE PHASE — no connection. Mint ids and stage the memory records (facts + causal edges,
-       then a re-write carrying the resolved entity ids) to the object store, each tagged with
-       ``ext_txn`` so they stay INVISIBLE until :meth:`decide_txn`. Co-occurrence only accumulates
-       in memory (flushed post-batch). No Postgres transaction is open.
-    2. CONNECTION PHASE — a SHORT transaction: the document/chunk metadata rows, the entity
-       registry reassert, the transactional-outbox row, and finally the commit witness. On commit
-       the witness is the group's proof; ``decide_txn(commit=True)`` (a connection-free object-store
-       marker) then publishes it. A crash before the witness commits leaves the staged writes for
-       the recovery sweep to abort; a crash after leaves them for the sweep to commit.
-
-    The PG link writers are intentionally skipped: temporal/semantic links would touch zero rows
-    (no ``memory_units`` for this org), and causal edges already travel on the memory record —
-    writing them to PG ``memory_links`` would violate its deferrable FK to ``memory_units``.
-
-    ``aborted`` in the result is True when a later batch lost the document to a concurrent
-    takeover (the staged write is discarded); the call may also raise
-    :class:`ConcurrentAppendConflict` for a lost append race, exactly like the Postgres path —
-    the staged writes are discarded on that path too.
-    """
-    # A store that resolves entities and commits the whole retain atomically in one server-side
-    # call (``store_owned``) takes the PG-free path: no connection phase at all, no
-    # write-group witness, one server-side retain. Everything below (the two-phase Protocol-B
-    # dance) is for a store whose memory rows live elsewhere but whose metadata still lands in
-    # Postgres.
-    if provider.store_owned_for(bank_id):
-        return await _streaming_store_owned_retain(
-            provider=provider,
-            pool=pool,
-            bank_id=bank_id,
-            batch_contents=batch_contents,
-            batch_extracted=batch_extracted,
-            batch_processed=batch_processed,
-            batch_chunk_meta=batch_chunk_meta,
-            effective_doc_id=effective_doc_id,
-            config=config,
-            log_buffer=log_buffer,
-            is_first_batch=is_first_batch,
-            append_base_hash=append_base_hash,
-            ext_txn=ext_txn,
-            doc_tracking_done=doc_tracking_done,
-            doc_replace_done=doc_replace_done,
-            p2_start=p2_start,
-        )
-
-    # ---- STORE PHASE (no connection held) ----
-    # Chunk ids are a deterministic function of identity (mirrors chunk_storage.store_chunks_batch),
-    # so facts can be tagged with document_id + chunk_id before the metadata rows are written.
-    chunk_id_by_index = {}
-    if batch_chunk_meta:
-        chunk_id_by_index = {
-            cm.chunk_index: f"{bank_id}_{effective_doc_id}_{cm.chunk_index}" for cm in batch_chunk_meta
-        }
-    for fact, processed_fact in zip(batch_extracted, batch_processed):
-        processed_fact.document_id = effective_doc_id
-        if batch_chunk_meta and fact.chunk_index is not None:
-            cid = chunk_id_by_index.get(fact.chunk_index)
-            if cid:
-                processed_fact.chunk_id = cid
-
-    # Mint the unit ids WITHOUT writing (defer_index): entities can only be resolved onto real ids
-    # after they exist, so we write the memories to the store ONCE below — with their entity ids
-    # already attached — instead of writing them here and then re-upserting each one with entities.
-    # That reattach cost a SECOND full object-store write per memory (plus a read-back of the just-
-    # written records), doubling the store round-trips on the slow path. Connection-free either way.
-    unit_ids = await fact_storage.insert_facts_batch(
-        None, bank_id, batch_processed, ops=pool.ops, txn=ext_txn, defer_index=True
-    )
-    batch_result_ids = _map_results_to_contents(batch_contents, batch_processed, unit_ids if unit_ids else [])
-
-    if unit_ids:
-        # Remap Phase-1 placeholder ids onto the real unit ids.
-        resolved_entity_ids = [entity.entity_id for entity in phase1.entities.resolved_entities]
-        remapped_entity_to_unit, _remapped_unit_to_entity_ids, _remapped_semantic = _remap_phase1_results(
-            resolved_entity_ids, phase1.entities.entity_to_unit, phase1.entities.unit_to_entity_ids, [], unit_ids
-        )
-        unit_entity_pairs = [
-            (unit_id, resolved_entity_ids[idx], fact_date)
-            for idx, (unit_id, _local_idx, fact_date) in enumerate(remapped_entity_to_unit)
-        ]
-        # The single, entity-bearing store write — connection-free, and tagged with ext_txn so it
-        # commits (and becomes visible) atomically with the rest of the write-group. This replaces
-        # the earlier insert-then-reattach pair with one write.
-        unit_entity_ids: dict[str, list[str]] = {}
-        for unit_id, entity_id, _fd in unit_entity_pairs:
-            unit_entity_ids.setdefault(unit_id, []).append(entity_id)
-        await fact_storage.index_facts(
-            bank_id,
-            unit_ids,
-            batch_processed,
-            document_id=effective_doc_id,
-            unit_entity_ids=unit_entity_ids,
-            txn=ext_txn,
-        )
-        # The store row was just written with its entities inline, so skip the (now redundant)
-        # second store write and keep ONLY the co-occurrence accumulation the entity graph needs.
-        # No txn to enrol: with `store_write=False` this touches only the Postgres co-occurrence
-        # accumulation, and the store write it would otherwise do already rode `ext_txn` above.
-        await entity_resolver.record_unit_entity_postings(unit_entity_pairs, bank_id=bank_id, store_write=False)
-
-    # ---- CONNECTION PHASE (short transaction: local metadata + commit witness) ----
-    # [PG-PROFILE] sub-step timing to find where retain wall-time goes (Phase 0 of PG-free retain).
-    _pt = {"c0": time.time()}
-    try:
-        async with acquire_with_retry(pool) as conn:
-            _pt["acq"] = time.time()
-            async with conn.transaction():
-                # Ownership gate: lock the document row (serializes concurrent same-document
-                # writers) and read its pre-existing hash for the takeover check.
-                existing_hash = await pool.ops.lock_document_for_write(
-                    conn, fq_table("documents"), effective_doc_id, bank_id
-                )
-                _pt["lock"] = time.time()
-
-                if not doc_tracking_done[0]:
-                    # Append compare-and-swap under the row lock (same as the Postgres path).
-                    assert_append_base_unchanged(existing_hash)
-                    if is_recovery:
-                        await fact_storage.upsert_document_metadata(
-                            conn,
-                            bank_id,
-                            effective_doc_id,
-                            combined_content,
-                            retain_params,
-                            merged_tags,
-                            store_document_text=config.store_document_text,
-                        )
-                        log_buffer.append(
-                            f"[streaming] Document {effective_doc_id} updated (recovery, preserving existing chunks)"
-                        )
-                    else:
-                        await fact_storage.handle_document_tracking(
-                            conn,
-                            bank_id,
-                            effective_doc_id,
-                            combined_content,
-                            is_first_batch,
-                            retain_params,
-                            merged_tags,
-                            ops=pool.ops,
-                            store_document_text=config.store_document_text,
-                            txn=ext_txn,
-                        )
-                        log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
-                    doc_tracking_done[0] = True
-                else:
-                    # Later batches: verify we still own the document.
-                    if existing_hash is not None and existing_hash != new_content_hash:
-                        log_buffer.append(
-                            f"[streaming] Document {effective_doc_id} taken over by "
-                            f"concurrent request (hash mismatch) — aborting remaining batches"
-                        )
-                        logger.info("\n" + "\n".join(log_buffer) + "\n")
-                        if append_base_hash is not None:
-                            # The BaseException handler below discards the staged writes.
-                            raise ConcurrentAppendConflict(
-                                f"Document {effective_doc_id} was taken over by a concurrent "
-                                f"retain while this append was storing its batches"
-                            )
-                        # Discard the staged store writes rather than leave them for the sweep.
-                        await provider.decide_txn(ext_txn, commit=False)
-                        pipeline_aborted[0] = True
-                        return _ExtStreamingWriteResult(aborted=True, batch_result_ids=batch_result_ids)
-
-                _pt["track"] = time.time()
-                # Chunk metadata rows (bulky bodies were already stored before this call).
-                if batch_chunk_meta:
-                    await chunk_storage.store_chunks_batch(
-                        conn,
-                        bank_id,
-                        effective_doc_id,
-                        batch_chunk_meta,
-                        ops=pool.ops,
-                        store_document_text=config.store_document_text,
-                    )
-                _pt["chunks"] = time.time()
-
-                # Entity registry reassert (Postgres `entities`): re-create the resolved parents
-                # this txn so a concurrent prune can't leave the postings dangling (#2662).
-                if unit_ids:
-                    await entity_resolver.reassert_entities_batch(bank_id, phase1.entities.resolved_entities, conn=conn)
-                _pt["entities"] = time.time()
-
-                # Transactional-outbox row — must ride this Postgres transaction.
-                if is_last and outbox_callback is not None:
-                    await outbox_callback(conn)
-
-                # The commit witness: its presence at commit is what the recovery sweep consults.
-                await provider.write_txn_witness(ext_txn, conn=conn, fq_table=fq_table)
-                _pt["witness"] = time.time()
-
-            _pt["commit"] = time.time()
-            # Postgres committed the witness: publish the write-group (object-store marker, no conn).
-            await provider.decide_txn(ext_txn, commit=True)
-            _pt["decide"] = time.time()
-
-            def _d(a, b):
-                return int((_pt.get(b, _pt["c0"]) - _pt.get(a, _pt["c0"])) * 1000)
-
-            logger.info(
-                "[PG-PROFILE] total=%dms acquire=%d lock=%d doctrack=%d chunks=%d entities=%d "
-                "witness+outbox=%d pg_commit=%d decide=%d",
-                int((_pt["decide"] - _pt["c0"]) * 1000),
-                _d("c0", "acq"),
-                _d("acq", "lock"),
-                _d("lock", "track"),
-                _d("track", "chunks"),
-                _d("chunks", "entities"),
-                _d("entities", "witness"),
-                _d("witness", "commit"),
-                _d("commit", "decide"),
-            )
-            logger.info(f"[streaming] Phase 2 (ext write txn): {time.time() - p2_start:.3f}s")
-    except BaseException:
-        # The witness never committed (this also covers a lost-append ConcurrentAppendConflict)
-        # → make sure the staged store writes don't linger; the recovery sweep is the backstop
-        # if this best-effort abort also fails.
-        try:
-            await provider.decide_txn(ext_txn, commit=False)
-        except Exception:
-            logger.warning(f"[streaming] best-effort abort of ext txn for {effective_doc_id} failed", exc_info=True)
-        raise
-
-    return _ExtStreamingWriteResult(aborted=False, batch_result_ids=batch_result_ids)
 
 
 async def _streaming_store_owned_retain(
@@ -922,11 +652,10 @@ async def _streaming_store_owned_retain(
     log_buffer: list[str],
     is_first_batch: bool,
     append_base_hash,
-    ext_txn,
     doc_tracking_done: list[bool],
     doc_replace_done: list[bool],
     p2_start: float,
-) -> _ExtStreamingWriteResult:
+) -> list[list[str]]:
     """The PG-free retain write for a store that owns entity resolution + atomicity.
 
     ONE server-side retain does everything the old two-phase path split across an object-store
@@ -939,11 +668,10 @@ async def _streaming_store_owned_retain(
     * on the document's first batch, tombstones the prior version of the document in the SAME atomic
       entry (a re-retain replaces; the same-entry upserts are spared).
 
-    No connection is acquired, no ``documents``/``chunks``/``entities`` rows, no commit witness, no
-    ``decide_txn`` — the store's single write is already atomic, so Protocol B has nothing left to
-    make atomic *together*. Document/chunk BODIES were already sent to the store's document store by
-    ``_store_document_bodies`` (``store_owned``); the small Postgres metadata rows that the
-    Protocol-B path still wrote are simply gone.
+    No connection is acquired and no ``documents``/``chunks``/``entities`` rows are written — the
+    store's single write is already atomic, so there is nothing for a second store to be atomic
+    *with*. Document/chunk BODIES were already sent to the store's document store by
+    ``_store_document_bodies`` (``store_owned``).
 
     Known gaps, tracked for the follow-on phases:
     * Concurrent same-document ownership/takeover is no longer serialized by a Postgres row lock;
@@ -953,8 +681,8 @@ async def _streaming_store_owned_retain(
     * The transactional-outbox (webhook delivery) is not emitted here; the intended design is
       at-least-once emission from the store, which replaces the Postgres outbox row.
     """
-    # Tag each fact with its document + deterministic chunk id (mirrors the Protocol-B store phase
-    # and chunk_storage.store_chunks_batch, so a fact's chunk_id matches its chunk metadata).
+    # Tag each fact with its document + deterministic chunk id (mirrors
+    # chunk_storage.store_chunks_batch, so a fact's chunk_id matches its chunk metadata).
     chunk_id_by_index = {}
     if batch_chunk_meta:
         chunk_id_by_index = {
@@ -969,9 +697,7 @@ async def _streaming_store_owned_retain(
 
     # Mint the unit ids WITHOUT writing (defer_index) — connection-free and Postgres-free; the
     # single server-side retain below is the only write.
-    unit_ids = await fact_storage.insert_facts_batch(
-        None, bank_id, batch_processed, ops=pool.ops, txn=ext_txn, defer_index=True
-    )
+    unit_ids = await fact_storage.insert_facts_batch(None, bank_id, batch_processed, ops=pool.ops, defer_index=True)
     batch_result_ids = _map_results_to_contents(batch_contents, batch_processed, unit_ids if unit_ids else [])
 
     if unit_ids:
@@ -1037,11 +763,11 @@ async def _streaming_store_owned_retain(
     # whose store.delete_document tombstones by document_id — which, landing at a LATER seq than this
     # retain, would delete the very memories we just wrote (the same-entry sparing only protects the
     # replace inside the store's atomic retain, not a later separate tombstone). The atomic retain
-    # above is the whole write, so tracking is complete here. Set it even when there were 0 units,
-    # matching the Protocol-B path which marks the document tracked regardless of extraction results.
+    # above is the whole write, so tracking is complete here. Set it even when there were 0 units:
+    # the document is tracked regardless of what extraction produced.
     doc_tracking_done[0] = True
     logger.info(f"[streaming] Phase 2 (pg-free retain): {time.time() - p2_start:.3f}s")
-    return _ExtStreamingWriteResult(aborted=False, batch_result_ids=batch_result_ids)
+    return batch_result_ids
 
 
 async def _delta_store_owned_write(
@@ -1069,9 +795,8 @@ async def _delta_store_owned_write(
 ) -> "tuple[bool, list]":
     """A store-owned bank's delta write: ONE `retain`, scoped to the chunks that moved.
 
-    Separate from `_try_delta_retain` so the contract can be tested directly, which is the same
-    reason its Protocol-B predecessor was: what matters here is not only the result but that NO
-    Postgres connection is held across it. The store write and the retain are both slow and both
+    Separate from `_try_delta_retain` so the contract can be tested directly: what matters here is
+    not only the result but that NO Postgres connection is held across it. The store write and the retain are both slow and both
     connection-free; a delta that quietly took a connection would serialise every concurrent retain
     on the pool.
 
@@ -1761,12 +1486,12 @@ async def retain_batch(
     # retain operation being removed here: two RPCs, non-atomic, and bypassing the server-side
     # entity resolution that owning the retain is for.
     #
-    # It had also stopped working. The store-owned delta write was reached only when
-    # `provider.mint_txn()` returned a handle, and since write-group transactions were removed
-    # nothing implements `mint_txn` — the base returns None. So a store-owned bank fell through to
-    # the Postgres branch below, which resolves entities against Postgres and takes its document
-    # lock on a `documents` row that store-owned banks no longer have: `current_hash` comes back
-    # None, the stale-chunk guard never fires, and delta ran with no concurrency control at all.
+    # It had also stopped working. The store-owned delta write was reached only when the store
+    # minted a cross-store write-group handle, and a store whose single write is already atomic
+    # mints none. So a store-owned bank fell through to the Postgres branch below, which resolves
+    # entities against Postgres and takes its document lock on a `documents` row that store-owned
+    # banks no longer have: `current_hash` comes back None, the stale-chunk guard never fires, and
+    # delta ran with no concurrency control at all.
     from ..memories import get_memories as _get_memories_delta
 
     _delta_provider = _get_memories_delta()
@@ -2535,7 +2260,7 @@ async def _streaming_retain_batch(
 
     # ---- DB Consumer ----
     # Drains enriched chunks from the queue in batches and runs
-    # Phase 1 (entity resolution) -> Phase 2 (write txn) -> Phase 3 (ANN fire-and-forget).
+    # Phase 1 (entity resolution) -> Phase 2 (write transaction) -> Phase 3 (ANN fire-and-forget).
     async def _db_consumer() -> None:
         batch: list[tuple] = []
         batch_bytes = 0
@@ -2691,15 +2416,12 @@ async def _streaming_retain_batch(
                 from ..memories import get_memories
 
                 _edge_provider = get_memories()
-                _edge_txn = None
                 if _edge_provider.store_owned_for(bank_id):
                     # Store-owned 0-fact (re-)ingest: the document's bodies are already in the store
                     # (via _store_document_bodies) and there are no new memories. A re-ingest that now
                     # yields 0 facts must drop the document's PRIOR memories — ONE plain store-side
-                    # delete-by-document. No Postgres documents row, no lock, no write-group (there is
-                    # no SQL witness to decide), so nothing is left undecided to stall the store's
-                    # indexer. This
-                    # is the 0-fact analogue of the fact-bearing PG-free path's replace-tombstone.
+                    # delete-by-document. No Postgres documents row and no lock — this is the
+                    # 0-fact analogue of the fact-bearing PG-free path's replace-tombstone.
                     await _edge_provider.delete_document(
                         conn=None, fq_table=fq_table, bank_id=bank_id, document_id=effective_doc_id
                     )
@@ -2737,11 +2459,8 @@ async def _streaming_retain_batch(
                                 store_document_text=config.store_document_text,
                             )
                         else:
-                            # A 0-fact re-ingest still deletes the outgoing memories — tag that
-                            # tombstone with a write-group so it commits atomically with the doc row.
-                            _edge_txn = await _edge_provider.begin_txn(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True
-                            )
+                            # A 0-fact re-ingest still deletes the outgoing memories, in the same
+                            # transaction as the document row.
                             await fact_storage.handle_document_tracking(
                                 conn,
                                 bank_id,
@@ -2752,20 +2471,13 @@ async def _streaming_retain_batch(
                                 merged_tags,
                                 ops=pool.ops,
                                 store_document_text=config.store_document_text,
-                                txn=_edge_txn,
                             )
-                            # Re-record the witness now that the group's writes have happened, so
-                            # the row carries what they actually wrote. `begin_txn` recorded it
-                            # before any write existed; the upsert widens rather than replaces.
-                            await _edge_provider.write_txn_witness(_edge_txn, conn=conn, fq_table=fq_table)
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted; release
                         # it now so the rest of the consumer loop doesn't pin
                         # a multi-MB string. Nothing reads it after tracking.
                         combined_content = ""
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (0 facts in first batch)")
-                if _edge_txn is not None:
-                    await _edge_provider.decide_txn(_edge_txn, commit=True)
             log_buffer.append(
                 f"[streaming] Consumer batch {consumer_batch_idx + 1}: "
                 f"0 facts extracted from {len(batch)} chunks, skipping"
@@ -2829,31 +2541,25 @@ async def _streaming_retain_batch(
             p2_start = time.time()
             batch_result_ids = None
 
-            # A store whose memory rows live in a SEPARATE system must NOT hold the data-plane
-            # connection across the object-store write, so it runs a distinct connection-management
-            # path. Postgres falls through to the single-transaction path below, unchanged.
+            # A store that owns its whole retain writes the batch in ONE server-side call and
+            # holds no data-plane connection at all, so it takes its own path. Postgres falls
+            # through to the single-transaction path below, unchanged.
             #
-            # The gate is the store's CAPABILITY, not a write-group handle. It used to be
-            # `mint_txn() is not None`, which was the same question only while every separate-system
-            # store implemented Protocol B. A store that owns its whole retain has no write group to
-            # mint — one WAL entry is already atomic — so once memlake dropped `mint_txn` the handle
-            # came back None and this branch stopped being taken: store-owned banks fell
-            # through to the Postgres path below and their `Retain` RPC was never called at all,
-            # while `store_owned_retain_for()` went on reporting True. Asking what the store CAN do
-            # cannot drift out of sync with what it does; asking whether it minted a handle can.
+            # The gate is the store's CAPABILITY. It was once "did the store mint a cross-store
+            # write-group handle", which asked the same question only while every non-SQL store
+            # ran that commit protocol; a store whose single write is already atomic mints
+            # nothing, so the handle came back None, this branch stopped being taken, and
+            # store-owned banks silently fell through to the Postgres path with their `Retain`
+            # RPC never called while `store_owned_for()` went on reporting True. Asking what the
+            # store CAN do cannot drift out of sync with what it does.
             from ..memories import get_memories
 
             _ext_provider = get_memories()
-            _ext_txn = await _ext_provider.mint_txn(bank_id=bank_id, mutating=True)
-            if _ext_provider.store_owned_for(bank_id) or _ext_txn is not None:
-                ext_result = await _streaming_batch_write_ext(
+            if _ext_provider.store_owned_for(bank_id):
+                ext_result_ids = await _streaming_store_owned_retain(
                     provider=_ext_provider,
-                    ext_txn=_ext_txn,
                     pool=pool,
                     bank_id=bank_id,
-                    fq_table=fq_table,
-                    entity_resolver=entity_resolver,
-                    phase1=phase1,
                     batch_contents=batch_contents,
                     batch_extracted=batch_extracted,
                     batch_processed=batch_processed,
@@ -2861,39 +2567,29 @@ async def _streaming_retain_batch(
                     effective_doc_id=effective_doc_id,
                     config=config,
                     log_buffer=log_buffer,
-                    is_recovery=is_recovery,
                     is_first_batch=is_first_batch,
-                    is_last=is_last,
+                    append_base_hash=append_base_hash,
                     doc_tracking_done=doc_tracking_done,
                     doc_replace_done=doc_replace_done,
-                    pipeline_aborted=pipeline_aborted,
-                    append_base_hash=append_base_hash,
-                    new_content_hash=new_content_hash,
-                    combined_content=combined_content,
-                    retain_params=retain_params,
-                    merged_tags=merged_tags,
-                    outbox_callback=outbox_callback,
-                    assert_append_base_unchanged=_assert_append_base_unchanged,
                     p2_start=p2_start,
                 )
                 # Doc-tracking consumed combined_content on the first batch; release it (mirrors
                 # the Postgres path's first-batch reset).
                 combined_content = ""
-                if not ext_result.aborted:
-                    # The short txn above committed the transactional-outbox row; record it so
-                    # the post-loop fallback doesn't queue a duplicate delivery.
-                    if is_last and outbox_callback is not None:
-                        outbox_fired[0] = True
-                    # Deferred-stats flush + unit collection — mirrors the shared tail the Postgres
-                    # path reaches after its connection block exits.
-                    try:
-                        await entity_resolver.flush_pending_stats()
-                    except Exception:
-                        logger.warning(
-                            f"Entity stats flush (consumer batch {consumer_batch_idx + 1}) failed", exc_info=True
-                        )
-                    for content_ids in ext_result.batch_result_ids:
-                        all_unit_ids.extend(content_ids)
+                # `outbox_fired` is deliberately NOT set: this path writes no transactional-outbox
+                # row (there is no Postgres transaction to put one in), so the post-loop fallback
+                # is what delivers the webhook. Marking it fired here would drop the delivery.
+                #
+                # Deferred-stats flush + unit collection — mirrors the shared tail the Postgres
+                # path reaches after its connection block exits.
+                try:
+                    await entity_resolver.flush_pending_stats()
+                except Exception:
+                    logger.warning(
+                        f"Entity stats flush (consumer batch {consumer_batch_idx + 1}) failed", exc_info=True
+                    )
+                for content_ids in ext_result_ids:
+                    all_unit_ids.extend(content_ids)
                 return
 
             async with acquire_with_retry(pool) as conn:
@@ -2914,23 +2610,12 @@ async def _streaming_retain_batch(
                         bank_id,
                     )
 
-                    # Append compare-and-swap, under the row lock and before any
-                    # write-group opens: an append that lost its read-modify-write
-                    # race must abort here rather than commit over the winner.
                     if not doc_tracking_done[0]:
+                        # Append compare-and-swap, under the row lock and before any write: an
+                        # append that lost its read-modify-write race must abort here rather than
+                        # commit over the winner.
                         _assert_append_base_unchanged(existing_hash)
 
-                    # Open the cross-store write-group txn INSIDE this batch's transaction,
-                    # before the first-batch replace deletes any outgoing memories: the delete
-                    # and this batch's writes must ride the same txn so they commit together.
-                    # Streaming is per-batch atomic (each batch its own PG txn), so each batch
-                    # is its own write-group — matching the existing transactional granularity.
-                    from ..memories import get_memories
-
-                    _provider = get_memories()
-                    _group_txn = await _provider.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
-
-                    if not doc_tracking_done[0]:
                         # --- First batch: document tracking (atomic with chunk write) ---
                         if is_recovery:
                             await fact_storage.upsert_document_metadata(
@@ -2957,7 +2642,6 @@ async def _streaming_retain_batch(
                                 merged_tags,
                                 ops=pool.ops,
                                 store_document_text=config.store_document_text,
-                                txn=_group_txn,
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
                         doc_tracking_done[0] = True
@@ -2975,10 +2659,6 @@ async def _streaming_retain_batch(
                                 f"concurrent request (hash mismatch) — aborting remaining batches"
                             )
                             logger.info("\n" + "\n".join(log_buffer) + "\n")
-                            # Abort the write-group we just opened rather than leaving it for the
-                            # recovery sweep — we wrote nothing this batch and are bailing. No-op for
-                            # the Postgres store (begin_txn returned None).
-                            await _provider.decide_txn(_group_txn, commit=False)
                             # Discarding the rest is only acceptable under replace
                             # semantics, where the winner's content supersedes ours.
                             # An append's remaining batches carry content nobody
@@ -3034,19 +2714,9 @@ async def _streaming_retain_batch(
                         skip_semantic_links=True,
                         outbox_callback=outbox_callback if is_last else None,
                         ops=pool.ops,
-                        txn=_group_txn,
                     )
 
-                    # Last thing inside the transaction: re-record the witness now that this
-                    # batch's writes have happened, so the row carries what they actually wrote.
-                    # `begin_txn` above recorded it before any write existed; the upsert widens.
-                    await _provider.write_txn_witness(_group_txn, conn=conn, fq_table=fq_table)
-
-                # Postgres committed this batch: publish its write-group. If it had aborted,
-                # this is skipped and the recovery sweep resolves the undecided txn (spec §5).
-                await _provider.decide_txn(_group_txn, commit=True)
-
-                logger.info(f"[streaming] Phase 2 (write txn): {time.time() - p2_start:.3f}s")
+                logger.info(f"[streaming] Phase 2 (write transaction): {time.time() - p2_start:.3f}s")
 
                 # The write TXN above committed the transactional-outbox row in the
                 # same transaction as this batch's facts. Record it so the post-loop
@@ -3177,16 +2847,13 @@ async def _streaming_retain_batch(
             from ..memories import get_memories
 
             _edge_provider = get_memories()
-            _edge_txn = None
             if _edge_provider.store_owned_for(bank_id):
                 # Store-owned zero-batch retain — the post-loop analogue of the per-batch 0-fact
                 # PG-free branch above. Reached when NO batch ran at all (empty/gibberish content,
                 # or a recovery where every chunk was already committed as a prior attempt). The
                 # document's bodies are already in the store (via _store_document_bodies); a
                 # re-ingest that yields no facts must still drop the document's PRIOR memories —
-                # ONE plain store-side delete-by-document. No Postgres documents row, no
-                # write-group (store-only), so nothing is left undecided to stall the store's
-                # indexer.
+                # ONE plain store-side delete-by-document, with no Postgres documents row.
                 await _edge_provider.delete_document(
                     conn=None, fq_table=fq_table, bank_id=bank_id, document_id=effective_doc_id
                 )
@@ -3219,11 +2886,8 @@ async def _streaming_retain_batch(
                                 store_document_text=config.store_document_text,
                             )
                         else:
-                            # A no-facts re-ingest still deletes the outgoing memories — tag that
-                            # tombstone with a write-group so it commits atomically with the doc row.
-                            _edge_txn = await _edge_provider.begin_txn(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True
-                            )
+                            # A no-facts re-ingest still deletes the outgoing memories, in the same
+                            # transaction as the document row.
                             await fact_storage.handle_document_tracking(
                                 conn,
                                 bank_id,
@@ -3234,19 +2898,12 @@ async def _streaming_retain_batch(
                                 merged_tags,
                                 ops=pool.ops,
                                 store_document_text=config.store_document_text,
-                                txn=_edge_txn,
                             )
-                            # Re-record the witness now that the group's writes have happened, so the
-                            # row carries what they actually wrote. `begin_txn` recorded it before any
-                            # write existed; the upsert widens rather than replaces.
-                            await _edge_provider.write_txn_witness(_edge_txn, conn=conn, fq_table=fq_table)
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted and won't be
                         # read again — release the per-document text now.
                         combined_content = ""
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (no facts extracted)")
-                if _edge_txn is not None:
-                    await _edge_provider.decide_txn(_edge_txn, commit=True)
 
         # Transactional-outbox fallback. The in-TXN fire only runs on a final
         # facts-bearing batch (is_last=True). When the committed-chunk count lands
@@ -3835,16 +3492,6 @@ async def _try_delta_retain(
                 )
                 log_buffer.append(f"  Document metadata update in {time.time() - step_start:.3f}s")
 
-                # Open the cross-store write-group txn INSIDE this transaction, BEFORE the
-                # tombstones below: a re-ingest deletes the old memories and writes new ones,
-                # and both must ride the same txn so they become visible together — an aborted
-                # re-ingest must not drop the old without landing the new. The witness row is
-                # the commit proof the recovery sweep consults.
-                from ..memories import get_memories
-
-                _provider = get_memories()
-                _group_txn = await _provider.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
-
                 # Delete changed and removed chunks (cascades to memory_units and links)
                 step_start = time.time()
                 chunks_to_delete = [
@@ -3853,7 +3500,7 @@ async def _try_delta_retain(
                     if idx in existing_by_index
                 ]
                 invalidated_obs = await chunk_storage.delete_chunks_by_ids(
-                    conn, chunks_to_delete, bank_id, txn=_group_txn, ops=pool.ops
+                    conn, chunks_to_delete, bank_id, ops=pool.ops
                 )
                 log_buffer.append(
                     f"  Deleted {len(chunks_to_delete)} chunks "
@@ -3932,19 +3579,7 @@ async def _try_delta_retain(
                     semantic_ann_links=phase1.semantic_ann_links,
                     outbox_callback=outbox_callback,
                     ops=pool.ops,
-                    txn=_group_txn,
                 )
-
-                # Last thing inside the transaction: re-record the witness now that the group's
-                # writes have happened, so the row carries what they actually wrote. `begin_txn`
-                # above recorded it before any write existed; the upsert widens rather than
-                # replaces.
-                await _provider.write_txn_witness(_group_txn, conn=conn, fq_table=fq_table)
-
-            # Postgres has committed: publish the write-group so its writes become visible.
-            # If the transaction had aborted instead, this line is skipped and the recovery
-            # sweep resolves the undecided txn against the (absent) witness row (spec §5).
-            await _provider.decide_txn(_group_txn, commit=True)
 
             total_time = time.time() - start_time
             log_buffer.append(f"{'=' * 60}")

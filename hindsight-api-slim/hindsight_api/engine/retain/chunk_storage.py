@@ -105,17 +105,12 @@ async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> lis
     return unit_ids
 
 
-async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None, txn=None, ops=None) -> int:
+async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None, ops=None) -> int:
     """
     Delete specific chunks by their IDs.
 
     This cascades to memory_units (via FK with CASCADE delete)
     and their links.
-
-    ``txn`` carries a cross-store write-group handle when this delete is part of a re-ingest:
-    the store's tombstones must ride the same txn as the replacement writes so they commit
-    (become visible) together — otherwise an aborted re-ingest could drop the old memories
-    without landing the new ones.
 
     ``ops`` is the backend-specific DataAccessOps the observation sweep below needs to choose
     the PG (native array) vs Oracle (junction table) read path — pass ``pool.ops``.
@@ -165,13 +160,13 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     _store = get_memories()
     if bank_id and _store.store_owned_for(bank_id):
         for _cid in chunk_ids:
-            await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}), txn=txn)
+            await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}))
 
     # PostgreSQL's FK cascade deletes child memory_links in executor-chosen
     # order. Concurrent chunk deletes for the same bank can then lock overlapping
     # memory_links in opposite orders and deadlock. Delete links explicitly in a
     # total order before deleting chunks so every writer takes row locks the same
-    # way; the FK cascade still handles anything inserted later in this txn.
+    # way; the FK cascade still handles anything inserted later in this transaction.
     #
     # ``matched_links`` collects the endpoints as a UNION of two single-column joins
     # rather than the one ``tu.id = ml.from_unit_id OR tu.id = ml.to_unit_id`` predicate

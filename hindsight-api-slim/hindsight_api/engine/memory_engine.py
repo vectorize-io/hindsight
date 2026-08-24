@@ -1808,7 +1808,7 @@ class _MemoryEditPlan:
     edit_entity_ids: list[str] | None
     entity_date: datetime | None
     # Canonical entity names the embedding was built from. Re-read under the Phase-2 write lock; a
-    # mismatch (a concurrent entity-only edit landed between the phases) triggers a bounded in-txn
+    # mismatch (a concurrent entity-only edit landed between the phases) triggers a bounded in-transaction
     # re-embed so the stored vector stays consistent with the committed entity set.
     names: list[str]
     # The raw entity names to hand a store that owns its entity registry (it resolves + mints them
@@ -8126,7 +8126,6 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
-        _del_txn = None
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 # Get memory unit IDs before deletion (for observation cleanup). A store that
@@ -8188,57 +8187,34 @@ class MemoryEngine(MemoryEngineInterface):
                     # A store-owned (PG-free) bank writes NO Postgres documents row, so the DELETE
                     # above is a no-op and `deleted` is None — the deletion must be DRIVEN off the
                     # store, not gated on the SQL result (otherwise a store-owned document could never
-                    # be deleted at all). The memory tombstone-by-document and the doc-record delete
-                    # are the only writes, both in the store, so no write-group is needed — nothing in
-                    # Postgres to be atomic with. (The legacy path that DID write a documents row for
-                    # such a store still tagged a txn; that row no longer exists under PG-free retain.)
-                    had_memories = bool(unit_ids) or units_count > 0
-                    if _store.store_owned_for(bank_id):
-                        # Whether the RECORD existed has to be established before deleting it, and it
-                        # cannot be inferred from `store_owned_for` — that is a capability of
-                        # the store, true for every bank it serves, so using it here reported a
-                        # successful deletion for a document that never existed and turned the 404
-                        # this endpoint promises into a 200.
-                        doc_existed = (
-                            await _store.document_content_hash(bank_id=bank_id, document_id=document_id) is not None
-                            if _store.store_owned_for(bank_id)
-                            else False
-                        )
-                        await _store.delete_document(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
-                        )
-                        if _store.store_owned_for(bank_id):
-                            await _store.delete_document_record(bank_id=bank_id, document_id=document_id)
-                        # Report the deletion off the store's own state (SQL `deleted` is None here).
-                        #
-                        # When the store owns the document store its RECORD is the authority, and
-                        # the memory count is deliberately not consulted: "document not found" is a
-                        # statement about the document, and a document with no memories still
-                        # exists. It also cannot be trusted here — the per-document count is a
-                        # per-segment tally that does not subtract a delete still sitting in the
-                        # un-folded tail, so straight after a delete it reports the pre-delete
-                        # number and a second delete of the same document would report success. That
-                        # made the endpoint's 404 depend on how far behind the indexer happened to
-                        # be, which is why it passed alone and failed under load.
-                        if doc_existed if _store.store_owned_for(bank_id) else had_memories:
-                            deleted = deleted or document_id
-                    elif deleted:
-                        # Legacy store-outside-SQL that still writes a Postgres documents row: keep
-                        # the write-group so the store tombstone commits atomically with the SQL delete.
-                        _del_txn = await _store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
-                        await _store.delete_document(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, txn=_del_txn
-                        )
-                        # A store that owns the document store also drops the document RECORD (its
-                        # extracted text + chunk bodies; the orphan sweep reclaims the blobs), under
-                        # the same write-group. This is the EXPLICIT deletion — distinct from the
-                        # re-ingest facts-delete above.
-                        if _store.store_owned_for(bank_id):
-                            await _store.delete_document_record(bank_id=bank_id, document_id=document_id, txn=_del_txn)
-                        # Re-record the witness now that the group's writes have happened, so the row
-                        # carries what they actually wrote. `begin_txn` recorded it before any write
-                        # existed; the upsert widens rather than replaces.
-                        await _store.write_txn_witness(_del_txn, conn=conn, fq_table=fq_table)
+                    # be deleted at all).
+                    #
+                    # Whether the RECORD existed has to be established before deleting it, and it
+                    # cannot be inferred from `store_owned_for` — that is a capability of the store,
+                    # true for every bank it serves, so using it here reported a successful deletion
+                    # for a document that never existed and turned the 404 this endpoint promises
+                    # into a 200.
+                    doc_existed = (
+                        await _store.document_content_hash(bank_id=bank_id, document_id=document_id) is not None
+                    )
+                    await _store.delete_document(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
+                    # A store that owns the document store also drops the document RECORD (its
+                    # extracted text + chunk bodies; the orphan sweep reclaims the blobs). This is
+                    # the EXPLICIT deletion — distinct from the re-ingest facts-delete above.
+                    await _store.delete_document_record(bank_id=bank_id, document_id=document_id)
+                    # Report the deletion off the store's own state (SQL `deleted` is None here).
+                    #
+                    # When the store owns the document store its RECORD is the authority, and
+                    # the memory count is deliberately not consulted: "document not found" is a
+                    # statement about the document, and a document with no memories still
+                    # exists. It also cannot be trusted here — the per-document count is a
+                    # per-segment tally that does not subtract a delete still sitting in the
+                    # un-folded tail, so straight after a delete it reports the pre-delete
+                    # number and a second delete of the same document would report success. That
+                    # made the endpoint's 404 depend on how far behind the indexer happened to
+                    # be, which is why it passed alone and failed under load.
+                    if doc_existed:
+                        deleted = deleted or document_id
 
                 # Invalidate observations referencing these (now-deleted) memories
                 if unit_ids:
@@ -8248,11 +8224,6 @@ class MemoryEngine(MemoryEngineInterface):
                     "document_deleted": 1 if deleted else 0,
                     "memory_units_deleted": units_count if deleted else 0,
                 }
-
-        # Postgres committed the delete: publish the store's tombstone write-group (no-op if
-        # nothing was deleted or the store keeps memories in SQL).
-        if _del_txn is not None:
-            await _store.decide_txn(_del_txn, commit=True)
 
         # Drop any cached stats for this bank — deleting the document changed
         # the document count and (via cascade) the memory-unit/link counts
@@ -8541,7 +8512,6 @@ class MemoryEngine(MemoryEngineInterface):
         invalidated_obs = 0
         bank_id_for_consolidation: str | None = None
         bank_id_for_graph_maintenance: str | None = None
-        _del_txn = None
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 # Get bank_id and fact_type before deletion. A SQL store discovers the bank from
@@ -8592,24 +8562,11 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     deleted = unit_id if fact_type is not None else None
                     if deleted:
-                        if _store.store_owned_for(bank_id):
-                            # Store-owned: the tombstone is the ONLY write here (the relink/prune
-                            # enqueues above join memory_units/unit_entities, which this store keeps
-                            # no rows in — so they touch nothing; stale-observation cleanup routes to
-                            # the store and is not part of this txn either). One store-side delete needs
-                            # no write-group — a plain, immediately-durable tombstone leaves no witness
-                            # to go undecided (a store-owned retain creates none of these either).
-                            await _store.delete_facts(bank_id, [unit_id])
-                        else:
-                            # Tag the store tombstone so it commits atomically with this transaction.
-                            _del_txn = await _store.begin_txn(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True
-                            )
-                            await _store.delete_facts(bank_id, [unit_id], txn=_del_txn)
-                            # Re-record the witness now that the group's write has happened, so the
-                            # row carries what it actually wrote. `begin_txn` recorded it before any
-                            # write existed; the upsert widens rather than replaces.
-                            await _store.write_txn_witness(_del_txn, conn=conn, fq_table=fq_table)
+                        # The store tombstone is the ONLY write here: the relink/prune enqueues
+                        # above join memory_units/unit_entities, which a store-owned bank keeps no
+                        # rows in, and stale-observation cleanup routes to the store as well. So
+                        # nothing in this Postgres transaction has to be atomic with it.
+                        await _store.delete_facts(bank_id, [unit_id])
 
                 # Invalidate observations referencing this (now-deleted) source memory
                 if bank_id and fact_type in ("experience", "world"):
@@ -8630,11 +8587,6 @@ class MemoryEngine(MemoryEngineInterface):
                     if deleted
                     else "Memory unit not found",
                 }
-
-        # Postgres committed: publish the store's tombstone write-group (no-op if nothing was
-        # deleted or the store keeps memories in SQL).
-        if _del_txn is not None:
-            await _store.decide_txn(_del_txn, commit=True)
 
         # Drop any cached stats for this bank — the deleted unit (and its
         # cascaded links/entities) changed the counts get_bank_stats reports,
@@ -9753,13 +9705,12 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         # -- Phase 2: short write transaction -- all visible mutations atomic --
-        _curation_txn = None
         phase2_committed = False
         edit_applied = False
         try:
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
-                    # Re-read under the write txn: moving the embed out widened the read→write
+                    # Re-read under the write transaction: moving the embed out widened the read→write
                     # window, so re-validate existence and skip cleanly if the row was concurrently
                     # moved or deleted between the phases.
                     live_batch2 = await store.get_memories(
@@ -9775,23 +9726,6 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                     if live2 is None and archived2 is None:
                         return None
-
-                    # One cross-store write-group for this curation edit/invalidate/revert: the
-                    # store's writes below are tagged so they commit together with this Postgres
-                    # transaction; decided (published) after it commits.
-                    #
-                    # A store that owns the whole retain keeps the edited MEMORY in the store (its
-                    # apply_edit / invalidate / restore below), and its one write is atomic on its own —
-                    # there is nothing to make atomic with a Postgres witness. Skip the write-group
-                    # (``_curation_txn = None`` → the store writes are plain, immediately visible), so
-                    # curation leaves no undecided txn to stall the store's indexer (same reasoning as
-                    # consolidation). The Postgres entity/posting writes below become plain best-effort
-                    # rows the store's reads no longer consult.
-                    _curation_txn = (
-                        None
-                        if store.store_owned_for(bank_id)
-                        else await store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
-                    )
 
                     # --- Apply edit (live rows only) ---
                     if edit_plan is not None and live2:
@@ -9831,7 +9765,7 @@ class MemoryEngine(MemoryEngineInterface):
                             # names. Re-read them under the write lock — a concurrent entity-only
                             # edit between the phases could have changed the set, leaving the
                             # embedding naming stale entities. Only on that (rare) mismatch do we
-                            # re-embed in-txn, keeping the stored vector consistent with the links.
+                            # re-embed in-transaction, keeping the stored vector consistent with the links.
                             emap2 = await store.entity_map_for_units(
                                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                             )
@@ -9865,7 +9799,6 @@ class MemoryEngine(MemoryEngineInterface):
                             mentioned_at=edit_plan.mentioned_at,
                             entity_ids=edit_plan.edit_entity_ids,
                             entity_names=edit_plan.entity_names_for_store,
-                            txn=_curation_txn,
                         )
                         if edit_embedding is not None:
                             await store.set_memory_embedding(
@@ -9874,7 +9807,6 @@ class MemoryEngine(MemoryEngineInterface):
                                 bank_id=bank_id,
                                 unit_id=str(memory_uuid),
                                 embedding=edit_embedding,
-                                txn=_curation_txn,
                             )
                         await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                         need_consolidation = True
@@ -9893,7 +9825,6 @@ class MemoryEngine(MemoryEngineInterface):
                             bank_id=bank_id,
                             unit_id=str(memory_uuid),
                             reason=reason,
-                            txn=_curation_txn,
                         )
                         # Sweep after the move, so a racing observation insert is caught too.
                         await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
@@ -9908,12 +9839,12 @@ class MemoryEngine(MemoryEngineInterface):
                     # --- Revert: move archive → live ---
                     elif do_revert and archived2 and revert_plan is not None:
                         restored = await store.restore_memory(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), txn=_curation_txn
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                         )
                         if restored is not None:
                             # The Phase-1 embedding used the archive snapshot's entity names. If the
                             # restored (surviving) entity set differs — some pruned as orphans after
-                            # the original move — re-embed in-txn so the stored vector matches.
+                            # the original move — re-embed in-transaction so the stored vector matches.
                             emap2 = await store.entity_map_for_units(
                                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                             )
@@ -9934,22 +9865,10 @@ class MemoryEngine(MemoryEngineInterface):
                                     bank_id=bank_id,
                                     unit_id=str(memory_uuid),
                                     embedding=revert_embedding,
-                                    txn=_curation_txn,
                                 )
                         need_consolidation = True
                         need_graph = True
 
-                    # Last thing inside the transaction: re-record the witness now that the
-                    # group's writes have happened, so the row carries what they actually wrote.
-                    # `begin_txn` above recorded it before any write existed; the upsert widens
-                    # rather than replaces.
-                    await store.write_txn_witness(_curation_txn, conn=conn, fq_table=fq_table)
-
-                # Postgres committed the curation change: publish the store's write-group. On a
-                # crash before here the writes stay invisible and the recovery sweep resolves them.
-                # No-op for a store-owned edit (no write-group; its store writes were already visible).
-                if _curation_txn is not None:
-                    await store.decide_txn(_curation_txn, commit=True)
                 phase2_committed = True
         finally:
             # Entities were resolved (and possibly autocommitted) in Phase 1 but the edit did not

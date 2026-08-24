@@ -84,7 +84,7 @@ class InMemoryMemories(MemoriesExtension):
 
     # -- writes --------------------------------------------------------------
 
-    async def insert_facts(self, *, conn, ops, bank_id, facts, document_id=None, defer_index=False, txn=None):
+    async def insert_facts(self, *, conn, ops, bank_id, facts, document_id=None, defer_index=False):
         self.calls.append("insert_facts")
         unit_ids = self.allocate_unit_ids(len(facts))
         if not defer_index:
@@ -127,7 +127,7 @@ class InMemoryMemories(MemoriesExtension):
         self.calls.append("retain")
         return None
 
-    async def index_facts(self, bank_id, unit_ids, facts, document_id=None, unit_entity_ids=None, txn=None):
+    async def index_facts(self, bank_id, unit_ids, facts, document_id=None, unit_entity_ids=None):
         self.calls.append("index_facts")
         for unit_id, fact in zip(unit_ids, facts):
             self.rows[unit_id] = StoredMemory(
@@ -139,17 +139,17 @@ class InMemoryMemories(MemoriesExtension):
                 created_at=datetime.now(timezone.utc),
             )
 
-    async def delete_facts(self, bank_id, unit_ids, *, txn=None):
+    async def delete_facts(self, bank_id, unit_ids):
         self.calls.append("delete_facts")
         for unit_id in unit_ids:
             self.rows.pop(str(unit_id), None)
 
-    async def delete_document(self, *, conn, fq_table, bank_id, document_id, txn=None):
+    async def delete_document(self, *, conn, fq_table, bank_id, document_id):
         self.calls.append("delete_document")
         for unit_id in [k for k, v in self.rows.items() if v.document_id == document_id]:
             del self.rows[unit_id]
 
-    async def delete_observations(self, *, conn, fq_table, bank_id, txn=None):
+    async def delete_observations(self, *, conn, fq_table, bank_id):
         self.calls.append("delete_observations")
         for unit_id in [k for k, v in self.rows.items() if v.fact_type == "observation"]:
             del self.rows[unit_id]
@@ -312,7 +312,7 @@ class InMemoryMemories(MemoriesExtension):
             out = [r for r in out if set(scope_tags).issubset(set(r.tags))]
         return out[:limit]
 
-    async def mark_consolidated(self, *, conn, fq_table, bank_id, unit_ids, when, failed=False, txn=None):
+    async def mark_consolidated(self, *, conn, fq_table, bank_id, unit_ids, when, failed=False):
         for unit_id in unit_ids:
             row = self.rows.get(str(unit_id))
             if row is not None:
@@ -408,7 +408,7 @@ class InMemoryMemories(MemoriesExtension):
     async def get_archived_memory(self, *, conn, fq_table, bank_id, unit_id):
         return self.archive.get(str(unit_id))
 
-    async def invalidate_memory(self, *, conn, fq_table, bank_id, unit_id, reason, txn=None):
+    async def invalidate_memory(self, *, conn, fq_table, bank_id, unit_id, reason):
         row = self.rows.pop(str(unit_id), None)
         if row is None:
             return False
@@ -419,7 +419,7 @@ class InMemoryMemories(MemoriesExtension):
     async def set_invalidation_reason(self, *, conn, fq_table, bank_id, unit_id, reason):
         self.invalidation_reason[str(unit_id)] = reason
 
-    async def restore_memory(self, *, conn, fq_table, bank_id, unit_id, txn=None):
+    async def restore_memory(self, *, conn, fq_table, bank_id, unit_id):
         row = self.archive.pop(str(unit_id), None)
         if row is None:
             return None
@@ -427,7 +427,7 @@ class InMemoryMemories(MemoriesExtension):
         self.invalidation_reason.pop(str(unit_id), None)
         return row
 
-    async def set_memory_embedding(self, *, conn, fq_table, bank_id, unit_id, embedding, txn=None):
+    async def set_memory_embedding(self, *, conn, fq_table, bank_id, unit_id, embedding):
         self.embeddings[str(unit_id)] = embedding
 
     async def list_entities(self, *, conn, fq_table, bank_id, search=None, limit=100, offset=0):
@@ -455,7 +455,7 @@ class InMemoryMemories(MemoriesExtension):
         self.ensured.discard(bank_id)
         self.rows = {k: v for k, v in self.rows.items() if False}
 
-    async def delete_where(self, bank_id, predicate, txn=None):
+    async def delete_where(self, bank_id, predicate):
         self.calls.append("delete_where")
         self.predicates.append(predicate)
         if predicate.delete_all:
@@ -477,7 +477,7 @@ class InMemoryMemories(MemoriesExtension):
             del self.rows[uid]
         return len(victims)
 
-    async def update_memories(self, bank_id, patches, txn=None):
+    async def update_memories(self, bank_id, patches):
         self.calls.append("update_memories")
         for patch in patches:
             row = self.rows.get(str(patch.unit_id))
@@ -510,7 +510,6 @@ class InMemoryMemories(MemoriesExtension):
         mentioned_at,
         entity_ids,
         entity_names=None,
-        txn=None,
     ):
         self.calls.append("apply_edit")
         row = self.rows.get(str(unit_id))
@@ -526,7 +525,7 @@ class InMemoryMemories(MemoriesExtension):
         if entity_ids is not None:
             row.entity_ids = list(entity_ids)
 
-    async def upsert_observation(self, *, conn, bank_id, record, txn=None):
+    async def upsert_observation(self, *, conn, bank_id, record):
         self.calls.append("upsert_observation")
         self.rows[str(record.unit_id)] = StoredMemory(
             unit_id=str(record.unit_id),
@@ -554,7 +553,6 @@ class InMemoryMemories(MemoriesExtension):
         file_bytes=None,
         file_content_type="",
         file_original_name="",
-        txn=None,
         expect_watermark=None,
     ):
         self.calls.append("put_document")
@@ -599,7 +597,7 @@ class InMemoryMemories(MemoriesExtension):
         doc = self.documents.get(str(document_id))
         return len(doc["chunk_texts"]) if doc else 0
 
-    async def delete_document_record(self, *, bank_id, document_id, txn=None):
+    async def delete_document_record(self, *, bank_id, document_id):
         self.calls.append("delete_document_record")
         self.documents.pop(str(document_id), None)
 
@@ -793,8 +791,8 @@ def test_a_store_answers_capabilities_per_bank():
 
     class PerBankStore(InMemoryMemories):
         name = "per-bank"
-        # The loop-level class attr stays False so cross-store txn recovery still runs; the
-        # per-bank answer is what every bank-scoped site consults.
+        # The process-level class attr stays False; the per-bank answer is what every
+        # bank-scoped site consults.
         store_owned = False
 
         def __init__(self, config=None):
@@ -904,7 +902,7 @@ def test_stub_instantiates_all_abstract_methods_present():
 def test_stub_answers_every_interface_method(method_name):
     """The stub must not fall through to a ``NotImplementedError`` default for any method — a
     store that owns its rows has to answer them all. The interface's *safe* defaults (the no-op
-    txn / maintenance / lifecycle hooks that return None/0/{}) may be inherited; a method the
+    maintenance / lifecycle hooks that return None/0/{}) may be inherited; a method the
     interface leaves as ``raise NotImplementedError`` must be implemented here. Add such a method
     to the interface and this surfaces it, instead of a real provider discovering it in production."""
     if method_name in vars(InMemoryMemories):

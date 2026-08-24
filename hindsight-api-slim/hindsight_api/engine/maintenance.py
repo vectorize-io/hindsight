@@ -74,15 +74,6 @@ logger = logging.getLogger(__name__)
 
 # Short tick so jobs with different cadences share one loop without per-job tasks.
 _TICK_SECONDS = 60
-# Cross-store txn recovery (only when the memories store keeps its rows outside SQL): a backstop
-# for a writer that crashed between its external writes and the decide. The happy path decides
-# inline after commit, so this rarely finds work; five minutes bounds how long a crashed txn stalls
-# its namespace's fold.
-_TXN_RECOVERY_INTERVAL_SECONDS = 300
-# A pending txn is left alone for this long from first sighting before the sweep aborts an
-# unwitnessed one — the writer may still be mid-flight (PendingTxn carries no timestamp).
-_TXN_RECOVERY_GRACE_SECONDS = 300
-
 # ── retention sweep pacing ────────────────────────────────────────────────────
 # Retention used to issue one unbounded `DELETE FROM <table> WHERE started_at <
 # cutoff` per schema. On a table with a real backlog that is a single statement
@@ -121,9 +112,6 @@ class MaintenanceLoop:
         self._stop = asyncio.Event()
         # Monotonic timestamps of the last run per job, keyed by job name.
         self._last_run: dict[str, float] = {}
-        # Cross-store txn recovery: first-sighting time per pending txn_id, so an unwitnessed
-        # txn gets a grace period before the sweep aborts it. Persists across ticks.
-        self._txn_first_seen: dict[str, float] = {}
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -169,30 +157,7 @@ class MaintenanceLoop:
         llm_on = sweep_on and cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
         mm_refresh_on = cfg.mental_model_refresh_tick_seconds > 0
         op_cleanup_on = cfg.operation_cleanup_interval_seconds > 0 and cfg.operation_retention_days > 0
-        return (
-            reconcile_on
-            or audit_on
-            or llm_on
-            or mm_refresh_on
-            or op_cleanup_on
-            or MaintenanceLoop._cross_store_recovery_enabled()
-        )
-
-    @staticmethod
-    def _cross_store_recovery_enabled() -> bool:
-        """True when the memories store keeps memories outside SQL and therefore has
-        cross-store write-group txns a crashed writer could leave undecided.
-
-        Deliberately reads the PROCESS-LEVEL class attribute, not the per-bank
-        ``store_owned_for(bank_id)`` — this only decides whether the recovery LOOP
-        needs to run at all. A store that routes some banks outside SQL keeps the class attribute
-        False so the loop runs, then ``recover_pending_txns`` is bank-scoped inside it."""
-        try:
-            from .memories import get_memories
-
-            return get_memories().store_owned
-        except Exception:
-            return False
+        return reconcile_on or audit_on or llm_on or mm_refresh_on or op_cleanup_on
 
     # ── loop ───────────────────────────────────────────────────────────────
 
@@ -256,8 +221,6 @@ class MaintenanceLoop:
             and self._is_due("operation_cleanup", cleanup_interval)
         ):
             await self._run_timed("operation cleanup", self._run_operation_cleanup(cfg))
-        if self._cross_store_recovery_enabled() and self._is_due("txn_recovery", _TXN_RECOVERY_INTERVAL_SECONDS):
-            await self._run_timed("cross-store txn recovery", self._run_txn_recovery())
 
     async def _run_timed(self, name: str, coro: Coroutine[Any, Any, None]) -> None:
         """Run a maintenance job and emit one timing line for it.
@@ -439,51 +402,6 @@ class MaintenanceLoop:
                 _current_schema.reset(token)
         if pruned:
             logger.info(f"Operation cleanup: pruned {pruned} operation(s) total")
-
-    # ── cross-store txn recovery ─────────────────────────────────────────────
-
-    async def _run_txn_recovery(self) -> None:
-        """Resolve write-group txns a crashed writer left undecided, for a store that keeps its
-        rows outside SQL.
-
-        For each bank, the store lists its namespace's pending txns and decides each against the
-        Postgres witness table (present ⇒ commit, absent past the grace ⇒ abort — never on
-        assumption), then reaps expired witness rows. A no-op for the SQL stores. Best-effort: a
-        failure here only delays a stalled fold until the next tick.
-        """
-        from .memories import get_memories
-
-        store = get_memories()
-        if not store.store_owned:
-            return
-        # Best-effort includes not having an engine to ask: the loop can be constructed without one
-        # (see `__init__`), and this reap is explicitly allowed to be skipped. Only a store-owned
-        # deployment reaches this line — the SQL stores return above — where it would otherwise
-        # raise AttributeError. `_run` catches per tick and this reap is the tick's last job, so the
-        # cost was a logged traceback rather than lost work; it is still noise standing in for a
-        # condition the code should simply state.
-        engine = self._engine
-        if engine is None:
-            return
-        backend = engine._backend
-        try:
-            async with acquire_with_retry(backend, max_retries=1) as conn:
-                bank_ids = [r[0] for r in await conn.fetch(f"SELECT bank_id FROM {fq_table('banks')}")]
-                if not bank_ids:
-                    return
-                decided = await store.recover_pending_txns(
-                    conn=conn,
-                    fq_table=fq_table,
-                    bank_ids=bank_ids,
-                    first_seen=self._txn_first_seen,
-                    now=time.monotonic(),
-                    grace_seconds=_TXN_RECOVERY_GRACE_SECONDS,
-                )
-        except Exception as e:
-            logger.warning(f"Cross-store txn recovery failed: {e}")
-            return
-        if decided:
-            logger.info(f"Cross-store txn recovery: decided {decided} undecided txn(s)")
 
     # ── consolidation reconcile ──────────────────────────────────────────────
 

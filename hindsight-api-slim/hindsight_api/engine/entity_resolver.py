@@ -308,7 +308,7 @@ def _canonical_cooccurrence_pairs(entity_list: list[str]) -> Iterator[tuple[str,
 
 @dataclass
 class _CooccurrencePair:
-    """A (entity_id_1, entity_id_2) pair observed in a retain batch (for post-txn flush)."""
+    """A (entity_id_1, entity_id_2) pair observed in a retain batch (for the post-commit flush)."""
 
     entity_id_1: str
     entity_id_2: str
@@ -1327,7 +1327,7 @@ class EntityResolver:
                         pending.append(_EntityStat(entity_id=str(entity_id), event_date=g.event_date))
 
         # Accumulate into the resolver's pending list; the orchestrator flushes
-        # these with await entity_resolver.flush_pending_stats() after the txn.
+        # these with await entity_resolver.flush_pending_stats() after the transaction.
         key = self._task_key()
         self._pending_stats.setdefault(key, []).extend(pending)
 
@@ -1422,7 +1422,6 @@ class EntityResolver:
         unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
         bank_id: str | None = None,
         store_write: bool = True,
-        txn=None,
     ):
         """Store-owned variant of :meth:`link_units_to_entities_batch` that touches NO
         Postgres connection.
@@ -1441,11 +1440,6 @@ class EntityResolver:
         write-then-reattach) — so the store row is already correct and a second store write would
         be redundant. Co-occurrence still runs: it references only ``entities`` and is needed by the
         entity-graph endpoint and resolution's disambiguation signal regardless of who wrote the row.
-
-        ``txn`` is the caller's write-group handle. For a store that keeps the posting on the
-        memory, this re-writes rows the same write-group just created, so it belongs to that
-        group — see :meth:`MemoriesExtension.record_unit_entities`. It is only consulted when the
-        store write actually happens: under ``store_write=False`` there is no write to enrol.
         """
         if not unit_entity_pairs:
             return
@@ -1454,9 +1448,7 @@ class EntityResolver:
             (t[0], t[1], t[2] if len(t) >= 3 else None)  # type: ignore[misc]
             for t in unit_entity_pairs
         ]
-        return await self._link_units_to_entities_batch_impl(
-            None, normalized, bank_id, store_write=store_write, txn=txn
-        )
+        return await self._link_units_to_entities_batch_impl(None, normalized, bank_id, store_write=store_write)
 
     async def _link_units_to_entities_batch_impl(
         self,
@@ -1464,7 +1456,6 @@ class EntityResolver:
         unit_entity_pairs: list[tuple[str, str, datetime | None]],
         bank_id: str | None = None,
         store_write: bool = True,
-        txn=None,
     ):
         # Sorted bulk insert to prevent deadlocks from inconsistent lock ordering
         # across concurrent transactions on the unit_entities unique index.
@@ -1488,7 +1479,6 @@ class EntityResolver:
                 bank_id=bank_id,
                 unit_ids=unit_ids,
                 entity_ids=entity_ids,
-                txn=txn,
             )
 
         # Build maps keyed by unit_id:

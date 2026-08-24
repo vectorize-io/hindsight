@@ -50,19 +50,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..search.retrieval import GraphRetriever
 
 
-class MemoryTxn:
-    """Opaque token for a cross-store write-group transaction, threaded from
-    :meth:`MemoriesExtension.begin_txn` through the write calls to
-    :meth:`MemoriesExtension.decide_txn`.
-
-    A store that keeps memories in the same database as the caller's transaction has nothing
-    to coordinate and returns ``None`` from ``begin_txn`` — the write methods then receive
-    ``txn=None`` and behave exactly as before. A store that writes memories to a *separate*
-    system subclasses this to carry whatever it needs to defer the writes'
-    visibility until the caller's transaction is known to have committed. The base is
-    deliberately empty: only the store that minted a handle interprets it."""
-
-
 class StoreWriteUnavailable(RuntimeError):
     """The store cannot accept writes for this bank *right now*, but will shortly.
 
@@ -613,60 +600,6 @@ class MemoriesExtension(Extension, ABC):
 
     # ------------------------------------------------------------------ writes
 
-    async def begin_txn(self, *, conn, fq_table, bank_id: str, mutating: bool) -> "MemoryTxn | None":
-        """Open a cross-store write-group transaction around a unit of work, or ``None``.
-
-        Called INSIDE the caller's database transaction, before the writes that belong to it.
-        The returned handle is threaded (as ``txn=``) into every write of the unit and finally
-        into :meth:`decide_txn` once the caller's transaction has settled.
-
-        Default is ``None``: a store whose memories live in the caller's own database needs no
-        cross-store coordination — its writes are already covered by that transaction, and the
-        ``txn`` kwarg is ignored everywhere. A store that writes to a *separate* system returns
-        a handle so those writes can be held invisible until the transaction is known to have
-        committed. ``mutating`` distinguishes a unit that only creates new memories (safe to
-        write plainly and compensate on abort) from one that changes or removes existing ones
-        (whose previous value only deferred visibility can preserve)."""
-        return None
-
-    async def decide_txn(self, txn: "MemoryTxn | None", *, commit: bool) -> None:
-        """Resolve a handle from :meth:`begin_txn` after its transaction settled.
-
-        ``commit=True`` once the caller's transaction has COMMITTED, ``commit=False`` if it
-        aborted. A no-op for ``None``. For a separate-store implementation this is where the
-        held writes are made visible (commit) or discarded/compensated (abort)."""
-        return None
-
-    async def mint_txn(self, *, bank_id: str, mutating: bool) -> "MemoryTxn | None":
-        """Mint a write-group handle WITHOUT opening a database transaction — the split form of
-        :meth:`begin_txn` for a unit of work (consolidation) that runs slow work between its
-        writes and must not hold a transaction across it. Tag the writes with the handle, then
-        :meth:`write_txn_witness` + commit in one short transaction at the end, then
-        :meth:`decide_txn`. Default ``None`` (no cross-store coordination)."""
-        return None
-
-    async def write_txn_witness(self, txn: "MemoryTxn | None", *, conn, fq_table) -> None:
-        """Record a :meth:`mint_txn` handle's commit witness in the caller's transaction, just
-        before it commits. No-op for ``None``."""
-        return None
-
-    async def recover_pending_txns(
-        self,
-        *,
-        conn,
-        fq_table,
-        bank_ids: list[str],
-        first_seen: dict[str, float],
-        now: float,
-        grace_seconds: float = 300.0,
-        witness_ttl_seconds: float = 3600.0,
-    ) -> int:
-        """Backstop for a crashed writer: resolve each bank's undecided write-group txns against
-        the witness table. Only a store that keeps memory rows outside SQL has cross-store txns to
-        recover; the default (Postgres) has none, and the maintenance loop skips it. Returns the
-        number of txns decided."""
-        return 0
-
     @abstractmethod
     async def insert_facts(
         self,
@@ -677,7 +610,6 @@ class MemoriesExtension(Extension, ABC):
         facts: list,
         document_id: str | None = None,
         defer_index: bool = False,
-        txn: "MemoryTxn | None" = None,
     ) -> list[str]:
         """Store a batch of extracted facts and return their unit ids, in order.
 
@@ -698,7 +630,6 @@ class MemoriesExtension(Extension, ABC):
         facts: list,
         document_id: str | None = None,
         unit_entity_ids: dict[str, list[str]] | None = None,
-        txn: "MemoryTxn | None" = None,
     ) -> None:
         """Index facts whose ids came from a deferred :meth:`insert_facts`.
 
@@ -708,10 +639,10 @@ class MemoriesExtension(Extension, ABC):
         """
 
     @abstractmethod
-    async def delete_facts(self, bank_id: str, unit_ids: list[str], *, txn: "MemoryTxn | None" = None) -> None:
+    async def delete_facts(self, bank_id: str, unit_ids: list[str]) -> None:
         """Remove units. Safe to call for ids that were never written."""
 
-    async def delete_where(self, bank_id: str, predicate: DeletePredicate, txn=None) -> int:
+    async def delete_where(self, bank_id: str, predicate: DeletePredicate) -> int:
         """Remove every memory matching ``predicate``. Returns the count when known.
 
         May be implemented lazily (recording the delete and materializing it
@@ -720,9 +651,7 @@ class MemoriesExtension(Extension, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_document(
-        self, *, conn, fq_table, bank_id: str, document_id: str, txn: "MemoryTxn | None" = None
-    ) -> None:
+    async def delete_document(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
         """Remove every memory belonging to ``document_id``.
 
         Called when a document is replaced, so it races the replacement's writes:
@@ -752,12 +681,11 @@ class MemoriesExtension(Extension, ABC):
         file_bytes: "bytes | None" = None,
         file_content_type: str = "",
         file_original_name: str = "",
-        txn: "MemoryTxn | None" = None,
         expect_watermark: "int | None" = None,
     ) -> None:
         """Store (or replace) a document's bodies: its extracted text, its ordered chunk texts, and
         optionally the original uploaded file. Idempotent by content — re-ingest re-uploads only
-        what changed. Under a ``txn`` the record commits atomically with the retain's facts.
+        what changed.
 
         ``chunk_texts`` REPLACES the document's chunk list, so a caller holding only part of a
         document (a retain sub-batch) must send the whole list, not its slice — see
@@ -922,7 +850,7 @@ class MemoriesExtension(Extension, ABC):
         the browser a week later."""
         raise NotImplementedError
 
-    async def delete_document_record(self, *, bank_id: str, document_id: str, txn: "MemoryTxn | None" = None) -> None:
+    async def delete_document_record(self, *, bank_id: str, document_id: str) -> None:
         """Delete a document's RECORD and bodies from the document store — an EXPLICIT document
         deletion, distinct from :meth:`delete_document` (which drops only the document's facts on
         re-ingest and must not touch the record, since the replacement's ``put_document`` overwrites
@@ -935,11 +863,11 @@ class MemoriesExtension(Extension, ABC):
         A no-op for Postgres, where deleting the bank cascades to its rows.
         """
 
-    async def delete_observations(self, *, conn, fq_table, bank_id: str, txn=None) -> None:
+    async def delete_observations(self, *, conn, fq_table, bank_id: str) -> None:
         """Remove every observation in a bank, leaving the facts behind it."""
         raise NotImplementedError
 
-    async def update_memories(self, bank_id: str, patches: list[MemoryPatch], txn=None) -> None:
+    async def update_memories(self, bank_id: str, patches: list[MemoryPatch]) -> None:
         """Apply partial updates. Only the fields set on each patch change."""
         raise NotImplementedError
 
@@ -1127,7 +1055,6 @@ class MemoriesExtension(Extension, ABC):
         unit_ids: list[str],
         when: datetime | None,
         failed: bool = False,
-        txn: "MemoryTxn | None" = None,
     ) -> None:
         """Stamp (or clear, with ``when=None``) the consolidated marker on sources.
 
@@ -1359,9 +1286,7 @@ class MemoriesExtension(Extension, ABC):
         """
 
     @abstractmethod
-    async def invalidate_memory(
-        self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None, txn=None
-    ) -> bool:
+    async def invalidate_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> bool:
         """Move a live memory into the archive, out of every recall surface.
 
         Returns ``True`` if it was live and is now archived, ``False`` if there was
@@ -1375,7 +1300,7 @@ class MemoriesExtension(Extension, ABC):
         """Update the recorded reason on a memory that is already archived."""
 
     @abstractmethod
-    async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, txn=None) -> StoredMemory | None:
+    async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
         """Move an archived memory back to the live set, restoring its entity postings.
 
         Returns the restored memory (so the caller can recompute its embedding —
@@ -1386,7 +1311,7 @@ class MemoriesExtension(Extension, ABC):
         """
 
     @abstractmethod
-    async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding, txn=None) -> None:
+    async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
         """Write a memory's embedding, recomputed by the caller.
 
         Its own method because the general :meth:`update_memories` is a no-op for
@@ -1422,7 +1347,6 @@ class MemoriesExtension(Extension, ABC):
         mentioned_at,
         entity_ids: list[str] | None,
         entity_names: list[str] | None = None,
-        txn=None,
     ) -> None:
         """Apply a curation field edit to a live memory.
 
@@ -1497,9 +1421,7 @@ class MemoriesExtension(Extension, ABC):
 
     # ------------------------------------------------------------------ observations
 
-    async def upsert_observation(
-        self, *, conn, bank_id: str, record: FactRecord, txn: "MemoryTxn | None" = None
-    ) -> None:
+    async def upsert_observation(self, *, conn, bank_id: str, record: FactRecord) -> None:
         """Write an observation, replacing any earlier one with the same id."""
         raise NotImplementedError
 
@@ -1533,7 +1455,6 @@ class MemoriesExtension(Extension, ABC):
         bank_id: str | None = None,
         unit_ids: list[Any],
         entity_ids: list[Any],
-        txn: "MemoryTxn | None" = None,
     ) -> None:
         """Record the unit→entity postings for a batch of memories.
 
@@ -1545,13 +1466,9 @@ class MemoriesExtension(Extension, ABC):
         namespace the units live in — the Postgres join is keyed by global unit id
         and ignores it.
 
-        ``txn`` is the caller's write-group handle. For a store that keeps the
-        posting ON the memory this call is a re-write of rows the same write-group
-        already created, so it belongs to that group: passing the handle keeps the
-        two writes atomic together and — for a store that records what its groups
-        wrote — keeps this write inside the group's accounting. Ignored by the
-        Postgres store, whose posting is an ordinary row in the caller's own
-        transaction.
+        For a store that keeps the posting ON the memory this call re-writes rows
+        an earlier :meth:`insert_facts` created, so it must be idempotent: it is
+        reached again whenever a retain re-resolves the same batch's entities.
         """
 
     async def enqueue_relink_victims(
@@ -1611,7 +1528,6 @@ __all__ = [
     "FactRecord",
     "MemoriesExtension",
     "MemoryPatch",
-    "MemoryTxn",
     "RelinkPassResult",
     "ScanPage",
     "StoredMemory",

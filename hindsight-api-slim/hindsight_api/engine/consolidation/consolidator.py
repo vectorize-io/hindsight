@@ -1499,7 +1499,7 @@ async def _run_consolidation_job(
             # witness row + decide happen in ONE short transaction at the end (below) — we must not
             # hold a Postgres transaction across the LLM calls in the sub-batch loop.
             #
-            # A store that owns its writes (store_owned) keeps ALL of this batch's memory
+            # A store that owns the whole retain (store_owned_retain) keeps ALL of this batch's memory
             # writes — observation upserts/deletes and the mark_consolidated stamps — in ITS store, not
             # Postgres, so there is nothing to make atomic with a Postgres witness. Skip the write-group
             # entirely (``_batch_txn = None`` → the writes below are plain, immediately-visible writes).
