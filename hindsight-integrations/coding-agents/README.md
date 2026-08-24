@@ -14,6 +14,8 @@ in front of the agent at the moment it starts working, and keeps a curated set o
 
 ## Install
 
+<!-- skill:begin title="Install / update" -->
+
 ```bash
 npx @vectorize-io/hindsight-coding-agents install all          # every detected agent, wired natively
 npx @vectorize-io/hindsight-coding-agents install claude-code  # or just one
@@ -22,7 +24,10 @@ npx @vectorize-io/hindsight-coding-agents uninstall all        # removes exactly
 
 `install` takes an explicit target — `all`, or one or more harness names. A bare
 `npx @vectorize-io/hindsight-coding-agents install` changes nothing and prints the choice, so wiring every agent on
-the machine is never something that happens by accident.
+the machine is never something that happens by accident. **Updating is the same `install`
+command again** — it re-copies the runtime in place.
+
+<!-- skill:end -->
 
 On a terminal it also asks **where memory should live** — Hindsight Cloud, a server you run, or a
 local daemon on this machine (see [Where memory lives](#where-memory-lives)). Scripted installs pass
@@ -263,6 +268,8 @@ Nothing to sign up for and nothing to host — memory runs on your machine. The 
   otherwise the first of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`;
   otherwise the Claude Code CLI, which needs no key. `install` tells you which it found.
 
+<!-- skill:begin title="Local daemon settings (daemon mode)" -->
+
 Daemon settings keep the names the old per-agent Claude Code plugin used, so an existing
 environment carries over unchanged:
 
@@ -278,6 +285,10 @@ environment carries over unchanged:
 Any `HINDSIGHT_API_*` variable you export is forwarded to the daemon, so server-side settings need
 no equivalent here.
 
+<!-- skill:end -->
+
+<!-- skill:begin -->
+
 ## Configuration
 
 Configuration is **one JSON file**: `~/.hindsight/coding-agent.json`. Layering, later wins per field:
@@ -287,13 +298,21 @@ Configuration is **one JSON file**: `~/.hindsight/coding-agent.json`. Layering, 
    (`HINDSIGHT_<FIELD_IN_CAPS>`), for containers and CI that inject config rather than write a file
 3. the file's top level
 4. its `harnesses.<name>` section — per-agent override
+5. its `banks.<resolvedBankId>` section — per-repo override, applied after the bank is resolved
+   (see [Per-repo opt-in/out](#per-repo-opt-inout--banksbankid))
 
 Environment variables are a **fallback**: the file wins wherever it sets a value, so adding env to
-an existing setup changes nothing. `retainTags` takes a comma-separated list
-(`HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work"`); entries are trimmed and blanks dropped.
+an existing setup changes nothing. The two list-valued settings, `retainTags` and `optInPaths`, take
+a comma-separated value (`HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work"`); entries are
+trimmed and blanks dropped.
 The map-valued settings (`mapPathToBank`, `harnesses`, `banks`, `retainMetadata`) are file-only —
 per-key branching doesn't survive flattening into one variable. `maxParallelRetains` is available
 as `HINDSIGHT_MAX_PARALLEL_RETAINS` for containers and CI.
+
+`HINDSIGHT_CONFIG` moves the file itself — point it at another path for a container or a test
+harness where `$HOME` is not the right anchor. It is still exactly one file; only its location
+changes. (The other variables that are not settings are `HINDSIGHT_LOG_FILE`, `HINDSIGHT_DIAG_FILE`
+and `HINDSIGHT_LOG_LEVEL` — see [Diagnostics & logging](#diagnostics--logging).)
 
 ### When a change takes effect
 
@@ -377,6 +396,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `reflectTimeoutMs`      | `120000`                             | **automatic** session-reflect timeout (hook harnesses additionally cap it at 25s to fit the host's hook window); on timeout the session runs without reflect (recorded)                                                                                                                                                                                                                                                                           |
 | `reflectToolTimeoutMs`  | `330000`                             | timeout for the agent-invoked `hindsight_reflect` tool — a call the agent waits on, whose high-budget synthesis on a populated bank runs for minutes. Defaults above the server's own reflect wall timeout (`HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, 300s) so the server decides when to give up. Unset, it inherits an explicitly raised `reflectTimeoutMs`, but a short one never lowers it                                                        |
 | `reflectBudget`         | `"high"`                             | reflect budget for the `hindsight_reflect` tool: `"low"`, `"mid"` or `"high"`. Drop it on a large bank where high-budget synthesis exceeds the server's wall timeout. The automatic session-start reflect always uses `"low"` to fit its hook window and is unaffected                                                                                                                                                                            |
+| `autoReflect`           | `true`                               | inject a one-time reflect synthesis on the session's **first prompt**. `false` = tool-only reflect: nothing is injected, and the tool guide instead tells the agent to call `hindsight_reflect` itself when it starts a new goal                                                                                                                                                                                                                  |
 | `pageRefreshEveryTurns` | `10`                                 | refetch the knowledge pages and re-inject the page roster + tool guide every N user turns                                                                                                                                                                                                                                                                                                                                                         |
 | `pageTriggerType`       | `"auto-refresh"`                     | when NEW knowledge pages refresh, i.e. what keeping them current costs — `"auto-refresh"` after every consolidation that produced new material, `"cron"` on `pageTriggerCron` only, `"manual"` never on their own. Auto-refresh is the most current and the most expensive: one synthesis per page per consolidation. Maps to the page's `trigger.refresh_after_consolidation` in the Hindsight API (`true` for auto-refresh, `false` for manual) |
 | `pageTriggerCron`       | —                                    | schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. `"0 3 * * *"`. Sets the page's `trigger.refresh_cron`, which the API treats as mutually exclusive with `refresh_after_consolidation`; a scheduled refresh is skipped when nothing changed                                                                                                                                                                               |
@@ -385,6 +405,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `codebaseSurvey`        | `true`                               | SessionStart: headless survey of a cold repo's structure, run under the current harness's own CLI (claude/codex/antigravity/opencode), falling back to any available agent                                                                                                                                                                                                                                                                        |
 | `surveyModel`           | `haiku`                              | model for the survey — Claude recipe only (`claude -p --model`); other agents use their configured default                                                                                                                                                                                                                                                                                                                                        |
 | `surveyBudgetUsd`       | `2`                                  | survey spend cap — Claude recipe only (`claude -p --max-budget-usd`); other agents rely on their read-only sandbox                                                                                                                                                                                                                                                                                                                                |
+| `surveyRefreshCommits`  | `20`                                 | re-run the survey at SessionStart once this many commits have accrued since the last one, so the structural pages track an architecture that keeps moving (`0` = survey a cold repo only, never again)                                                                                                                                                                                                                                            |
 | `retainSessions`        | `true`                               | session write-back, honored by every harness: hook harnesses write the transcript on Stop, plugin harnesses (opencode, Kilo) upsert it every turn plus an idle flush that captures the reply the per-turn pass can't see. Set `false` — globally, per harness, or per bank — to stop writing transcripts (the background history import stops with it) while recall, git ingest and the memory tools keep working                                 |
 | `maxParallelRetains`    | `10`                                 | cap on concurrent retain-related requests: drain()'s per-op polls plus deepen's chat/git retain pools. The API rate-limits bursts, not single requests — if you see 429s, lower this rather than raising it                                                                                                                                                                                                                                       |
 | `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                                                                                                                                                                                                                                        |
@@ -528,6 +549,8 @@ declares the scopes literally. `HINDSIGHT_OBSERVATION_SCOPES` sets the scalar mo
 file-only. Changing this does not rewrite observations already consolidated under the old scoping —
 they stay where they were built, and new work accrues under the new setting.
 
+<!-- skill:end -->
+
 ## Ingestion internals (no CLI)
 
 There is no user-facing ingest command — the deepen engine (`dist/deepen.js`) is spawned by every
@@ -549,6 +572,27 @@ docker run -d -p 8888:8888 -p 9999:9999 -e HINDSIGHT_API_LLM_PROVIDER=gemini \
   -e HINDSIGHT_API_LLM_API_KEY=$GEMINI_API_KEY -e HINDSIGHT_API_LLM_MODEL=gemini-2.5-flash \
   ghcr.io/vectorize-io/hindsight:latest
 ```
+
+## Companion skill (generated)
+
+Every skills-capable host gets `skill/SKILL.md`, which teaches the agent what this integration does
+and how to configure it. **It is generated — do not edit it.** This file is the single source: the
+regions between `<!-- skill:begin -->` and `<!-- skill:end -->` are copied into the skill (a region
+that starts mid-section names itself with `title="…"`, and heading levels are normalised so a marked
+`###` becomes the skill's `##`). Only the agent-facing half — which tools to call, crediting memory,
+correcting a wrong memory — lives outside it, in `skill-src/preamble.md`.
+
+```bash
+npm run skill:build   # after editing this README or the preamble
+```
+
+`src/docs-freshness.test.ts` fails when the skill is stale, and when a field of `RawConfig` is
+readable from a config file but named nowhere in this README — the drift that produced #3735, where
+the skill and the README each documented a different subset of the same settings. The docs site page
+is generated from this file too (`node hindsight-docs/scripts/sync-coding-agents-doc.mjs`), which
+drops the markers along with the contributor-only sections.
+
+<!-- skill:begin -->
 
 ## Diagnostics & logging
 
@@ -577,3 +621,39 @@ as a JSON line to `/tmp/hindsight-plugin.log` (override with `HINDSIGHT_DIAG_FIL
 `reflect_failed` / `pages_failed` record the error; if you're comparing memory-on vs memory-off,
 check this file — a run whose reflects failed is a no-memory run. Seed starts are logged as
 `seed_started`.
+
+### Is the memory ready yet?
+
+`hindsight_sync_status` — the agent-facing tool, `dist/status.js` for scripts — answers exactly
+that: `"synced": true` means the seeded memory is queryable. It also reports gitlog freshness, how
+far per-commit deepening has got, the codebase survey's state (`surveyBaseline` is the HEAD the last
+survey started from, `surveyDocs` counts the findings documents that have landed, 0–4 — a baseline
+with no findings retries automatically), and the extraction operations still in flight.
+
+### Resetting a repo's memory
+
+Delete its bank on the server. The bank is the **only** state this integration keeps, so the next
+session in that repo is a true first open — seed and survey run again from scratch. There are no
+client-side files to clean up.
+
+### Marker documents you may notice
+
+Two document ids exist for the machinery's own bookkeeping. Both are safe to ignore and safe to
+delete:
+
+- `survey-baseline:<sha>` — reads "🛰️ researching…" while a codebase survey runs and flips to
+  "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
+  rule extracts **nothing** from a status marker, and it drives the re-survey cadence
+  (`surveyRefreshCommits`) and `surveyBaseline` in sync status.
+- `gitlog:<repo>` — the aggregated commit-message seed document, re-upserted rather than duplicated
+  when the seed runs again.
+
+### When memory seems to be missing
+
+Failures never break the agent: a reflect, page fetch or retain that fails degrades to an ordinary
+memoryless turn and is recorded in the logs. "No memory" is therefore a log question — check the
+diag file for whether `session_start` and `deepen_started` ever fired for that bank. A session that
+was already running when the plugin was installed has no SessionStart behind it; its first prompt
+after the install self-heals.
+
+<!-- skill:end -->

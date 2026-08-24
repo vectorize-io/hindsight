@@ -66,8 +66,9 @@
   },
   "scripts": {
     "build": "tsup",
+    "skill:build": "node scripts/build-skill.mjs",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build",
+    "prepublishOnly": "npm run clean && npm run skill:build && npm run build",
     "test": "vitest run --exclude '**/*.e2e.test.ts'",
     "test:harness-e2e": "npm run build && HINDSIGHT_HARNESS_E2E=1 vitest run src/harness.e2e.test.ts"
   },

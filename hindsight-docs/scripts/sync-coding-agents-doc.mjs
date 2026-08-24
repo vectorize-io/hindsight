@@ -15,6 +15,9 @@
  *     so images render on npm and GitHub, but on the docs site those same URLs pin every image to
  *     PRODUCTION — so a new asset shows as broken locally and in previews until it is deployed,
  *     which is exactly when you are trying to look at it.
+ *   - The `skill:begin` / `skill:end` markers are dropped. They tell the integration's
+ *     scripts/build-skill.mjs which regions the companion skill copies; MDX has no HTML comments,
+ *     so leaving them in would fail the docs build outright.
  *
  * Run: node hindsight-docs/scripts/sync-coding-agents-doc.mjs [--check]
  * `--check` fails when the doc page is out of date instead of writing it (for CI).
@@ -40,7 +43,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 `;
 
 /** Sections that only make sense inside the repo (contributor-facing), dropped from the doc page. */
-const DROP_SECTIONS = ['Layout', 'Ingestion internals (no CLI)'];
+const DROP_SECTIONS = ['Layout', 'Ingestion internals (no CLI)', 'Companion skill (generated)'];
 
 function build() {
   const src = readFileSync(readme, 'utf8');
@@ -59,6 +62,9 @@ function build() {
   }
   const body = out
     .join('\n')
+    // Region markers for the companion-skill generator — invalid syntax in MDX, and meaningless
+    // to a reader of the docs site either way.
+    .replace(/^<!--\s*skill:(?:begin|end)[^>]*-->\n?/gm, '')
     // Repo-relative links 404 on the docs site; keep the label, drop the link.
     .replace(/\[([^\]]+)\]\((?!https?:|\/)[^)]+\)/g, '$1')
     // Our own absolute URLs -> site-relative. Assets so the page uses THIS build's static
