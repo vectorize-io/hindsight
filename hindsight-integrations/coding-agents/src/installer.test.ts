@@ -21,6 +21,7 @@ const homes: string[] = [];
 
 function makeCtx(): InstallCtx & {
   claudeMcp: ReturnType<typeof vi.fn>;
+  qwenMcp: ReturnType<typeof vi.fn>;
   clinePlugin: ReturnType<typeof vi.fn>;
   nodeSqlite: ReturnType<typeof vi.fn>;
 } {
@@ -32,6 +33,9 @@ function makeCtx(): InstallCtx & {
     pkgRoot,
     dist: join(pkgRoot, "dist"),
     claudeMcp: vi.fn(() => true),
+    // qwen-code registers through the `qwen` CLI, exactly as claude-code does through `claude`.
+    // Stub it for the same reason: the suite must never execute a real host CLI.
+    qwenMcp: vi.fn(() => true),
     clinePlugin: vi.fn(() => true),
     // Stubbed like the CLI seams above, so the suite never depends on the Node running it.
     nodeSqlite: vi.fn(() => true),
@@ -167,6 +171,70 @@ describe("claude-code installer", () => {
     run(["install", "claude-code"], ctx);
     run(["uninstall", "claude-code"], ctx);
     expect(readJson(settingsPath(ctx)).hooks).toBeUndefined();
+  });
+});
+
+describe("qwen-code installer", () => {
+  it("install writes the 3 hook events with our dist commands and timeouts 30000/30000/60000", () => {
+    // NOT 30/30/60. Qwen reads this field as MILLISECONDS, so the seconds values every other
+    // harness uses would register 30ms/60ms hooks — dead before Node starts, and masked because
+    // Qwen kills only the direct child so the orphaned work still completes.
+    const ctx = makeCtx();
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    const hooks = JSON.parse(
+      readFileSync(join(ctx.home, ".qwen", "settings.json"), "utf8")
+    ).hooks;
+    const entry = (ev: string) => hooks[ev][0].hooks[0];
+    expect(entry("SessionStart").timeout).toBe(30_000);
+    expect(entry("UserPromptSubmit").timeout).toBe(30_000);
+    expect(entry("Stop").timeout).toBe(60_000);
+    for (const ev of ["SessionStart", "UserPromptSubmit", "Stop"]) {
+      expect(entry(ev).command).toContain(ctx.dist);
+      expect(entry(ev).type).toBe("command");
+    }
+  });
+
+  it("registers the MCP server through the qwen CLI, user scope", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    const argv = ctx.qwenMcp.mock.calls.map((c) => c[0].join(" "));
+    expect(argv.some((a) => a.startsWith("mcp remove"))).toBe(true);
+    expect(
+      argv.some((a) => a.includes("mcp add") && a.includes("HINDSIGHT_MCP_HARNESS=qwen-code"))
+    ).toBe(true);
+  });
+
+  it("preserves pre-existing foreign hook entries and appends ours", () => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ".qwen", "settings.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "their-tool", timeout: 5000 }] }] },
+      })
+    );
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    const stop = JSON.parse(readFileSync(path, "utf8")).hooks.Stop;
+    expect(JSON.stringify(stop)).toContain("their-tool");
+    expect(JSON.stringify(stop)).toContain("qwen-stop-hook.js");
+  });
+
+  it("uninstall strips our entries and keeps foreign ones", () => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ".qwen", "settings.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "their-tool", timeout: 5000 }] }] },
+      })
+    );
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    expect(run(["uninstall", "qwen-code"], ctx)).toBe(0);
+    const after = readFileSync(path, "utf8");
+    expect(after).toContain("their-tool");
+    expect(after).not.toContain("qwen-stop-hook.js");
   });
 });
 
@@ -711,6 +779,7 @@ describe("run() CLI behavior", () => {
       "cursor-cli",
       "copilot-cli",
       "grok-build",
+      "qwen-code",
       "cline-cli",
       "dsh",
     ]);
@@ -747,9 +816,10 @@ describe("MCP registrations name the calling harness", () => {
     const registrations = [
       ...filesUnder(ctx.home)
         .map((f) => readFileSync(f, "utf8"))
-        // claude-code registers through the `claude` CLI instead of a file we write, so its
-        // registration is the argv we handed the mock.
+        // claude-code and qwen-code register through their host CLI instead of a file we write,
+        // so their registration is the argv we handed the mock.
         .concat(ctx.claudeMcp.mock.calls.map((c) => c[0].join(" ")))
+        .concat(ctx.qwenMcp.mock.calls.map((c) => c[0].join(" ")))
         .filter((text) => text.includes("mcp-server.js")),
     ];
     expect(registrations.length).toBeGreaterThan(0);

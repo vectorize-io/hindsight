@@ -93,6 +93,20 @@ npx @vectorize-io/hindsight-coding-agents install grok-build
 
 Native hooks and MCP in `~/.grok/config.toml`, plus the companion skill.
 
+#### <img src="https://hindsight.vectorize.io/img/harness/qwen-code.svg" alt="" width="20" height="20" /> Qwen Code
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install qwen-code
+```
+
+Native hooks in `~/.qwen/settings.json`, plus MCP and the companion skill.
+
+> Qwen's hook `timeout` is in **milliseconds** (its own docs: "Timeout in milliseconds, default
+> 60000"), unlike every other supported agent, so the installed values are `30000/30000/60000`.
+> Recall fires on genuine submissions only — `UserPromptSubmit` also fires on tool-result
+> continuations, so interactive sessions recall once per prompt while headless (`qwen -p`),
+> `serve`, SDK and ACP sessions seed and retain but do not recall.
+
 #### <img src="https://hindsight.vectorize.io/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
 
 ```bash

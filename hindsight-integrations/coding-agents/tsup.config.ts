@@ -25,6 +25,9 @@ export default defineConfig({
     // Prime Agent loads this module as an extension (default export) by absolute path from its
     // settings.json `extensions` array, so it must be self-contained like the hook bins.
     "prime-agent": "src/prime-agent.ts",
+    "qwen-hook": "src/qwen-hook.ts",
+    "qwen-sessionstart-hook": "src/qwen-sessionstart-hook.ts",
+    "qwen-stop-hook": "src/qwen-stop-hook.ts",
     "grok-hook": "src/grok-hook.ts",
     "grok-sessionstart-hook": "src/grok-sessionstart-hook.ts",
     "grok-stop-hook": "src/grok-stop-hook.ts",

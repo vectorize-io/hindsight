@@ -17,9 +17,10 @@ describe("HARNESS_NAMES", () => {
         "devin-cli",
         "copilot-cli",
         "grok-build",
+        "qwen-code",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(12);
+    expect(HARNESS_NAMES).toHaveLength(13);
   });
 });
 
@@ -71,6 +72,18 @@ describe("registry covers every installable harness", () => {
   it("has no harness the installer wires but the registry rejects", async () => {
     const { INSTALLERS } = await import("../installer");
     const missing = INSTALLERS.map((i) => i.name).filter((n) => !HARNESS_NAMES.includes(n));
+    expect(missing).toEqual([]);
+  });
+
+  // The check above is DIRECTIONAL, and the other direction is just as broken: a harness in the
+  // registry with no installer is advertised by the README and rejected by `install <name>` with
+  // "unknown harness". Every hook harness must be installable — the plugin harnesses are wired by
+  // their own entrypoints and are exempt only because they still carry an INSTALLERS entry.
+  it("has no hook harness the registry names but the installer cannot wire", async () => {
+    const { INSTALLERS } = await import("../installer");
+    const { HOOK_HARNESSES } = await import("./hook-lifecycle");
+    const installable = new Set(INSTALLERS.map((i) => i.name));
+    const missing = Object.keys(HOOK_HARNESSES).filter((n) => !installable.has(n));
     expect(missing).toEqual([]);
   });
 });

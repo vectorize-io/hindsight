@@ -8,6 +8,7 @@ const HOOK_HARNESS_NAMES: HookHarnessName[] = [
   "cursor-cli",
   "copilot-cli",
   "grok-build",
+  "qwen-code",
 ];
 
 describe("HOOK_HARNESSES lifecycle contract", () => {
@@ -83,5 +84,36 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
         additionalContext: "context",
       },
     });
+  });
+
+  // The prompt hook must outlive the once-per-session reflect, or the FIRST prompt of every
+  // session is killed mid-flight and recall silently degrades to nothing. Nothing coupled these
+  // two numbers before: qwen-code's timeouts are MILLISECONDS while every other harness's are
+  // SECONDS, so a bare `>= 25_000` would pass vacuously for the seven seconds-based harnesses and
+  // a bare `>= 25` would pass vacuously for qwen. Normalising through the declared unit is what
+  // makes this catch a mutation in EITHER direction.
+  it("gives every prompt hook a budget above the once-per-session reflect cap", () => {
+    const HOOK_REFLECT_CAP_MS = 25_000;
+    for (const harness of HOOK_HARNESS_NAMES) {
+      const spec = HOOK_HARNESSES[harness];
+      const raw = spec.install.prompt.timeout;
+      if (raw === undefined) continue; // cursor-cli deliberately omits it — the host default applies
+      const ms = spec.timeoutUnit === "milliseconds" ? raw : raw * 1000;
+      expect(ms, `${harness} prompt timeout (${raw} ${spec.timeoutUnit ?? "seconds"})`).toBeGreaterThan(
+        HOOK_REFLECT_CAP_MS
+      );
+    }
+  });
+
+  // hostTimeoutSec is SECONDS for every harness, including qwen-code where the installed values
+  // are milliseconds. They describe the same budget, so they must agree once normalised.
+  it("keeps the installed stop timeout consistent with hostTimeoutSec", () => {
+    for (const harness of HOOK_HARNESS_NAMES) {
+      const spec = HOOK_HARNESSES[harness];
+      const raw = spec.install.stop.timeout;
+      if (raw === undefined) continue;
+      const ms = spec.timeoutUnit === "milliseconds" ? raw : raw * 1000;
+      expect(ms, `${harness} stop timeout vs hostTimeoutSec`).toBe(spec.retain.hostTimeoutSec * 1000);
+    }
   });
 });

@@ -87,6 +87,7 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
   "grok-build": { id: "grok-build", label: "Grok Build", src: "/img/harness/grok-build.svg" },
   kilo: { id: "kilo", label: "Kilo CLI", src: "/img/harness/kilo.svg" },
   opencode: { id: "opencode", label: "OpenCode", src: "/img/harness/opencode.png" },
+  "qwen-code": { id: "qwen-code", label: "Qwen Code", src: "/img/harness/qwen-code.svg" },
   "prime-agent": {
     id: "prime-agent",
     label: "Prime Agent",

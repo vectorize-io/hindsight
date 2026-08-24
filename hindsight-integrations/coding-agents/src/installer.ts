@@ -62,6 +62,8 @@ export interface InstallCtx {
   dist: string; // built entry points
   /** Runs `claude mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
   claudeMcp?: (args: string[]) => boolean;
+  /** Runs `qwen mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
+  qwenMcp?: (args: string[]) => boolean;
   /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
   clinePlugin?: (args: string[]) => boolean;
   /** Reports whether `node:sqlite` works in the node that runs hooks; injectable for tests. */
@@ -1207,6 +1209,70 @@ const dsh: HarnessInstaller = {
   },
 };
 
+const qwen: HarnessInstaller = {
+  name: "qwen-code",
+  detect: (c) => onPath("qwen") || existsSync(join(c.home, ".qwen")),
+  install(c) {
+    const path = join(c.home, ".qwen", "settings.json");
+    const settings = readJson(path);
+    settings.hooks = settings.hooks ?? {};
+    // Qwen's settings.json hook shape is Claude Code's, so the shared nested writer applies —
+    // the ONLY difference is the unit of `timeout`, which HOOK_HARNESSES already carries in ms.
+    mergeHarnessHooks(settings.hooks, "qwen-code", c.dist);
+    writeJson(path, settings);
+    c.log?.(`qwen-code: hooks merged into ${path}`);
+    installSkill(c, "qwen-code", join(c.home, ".qwen", "skills"));
+    const mcp = c.qwenMcp ?? defaultQwenMcp;
+    // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
+    // re-install could never repoint a stale server. Remove first (a no-op when absent).
+    mcp(["mcp", "remove", "hindsight"]);
+    if (
+      mcp([
+        "mcp",
+        "add",
+        "-s",
+        "user",
+        "-e",
+        "HINDSIGHT_MCP_HARNESS=qwen-code",
+        "hindsight",
+        "node",
+        join(c.dist, "mcp-server.js"),
+      ])
+    ) {
+      c.log?.("qwen-code: MCP server registered (qwen mcp add, user scope)");
+    } else {
+      c.log?.(
+        `qwen-code: could not run \`qwen mcp add\` — register the tools manually:\n` +
+          `  qwen mcp add -s user -e HINDSIGHT_MCP_HARNESS=qwen-code hindsight node "${join(c.dist, "mcp-server.js")}"`
+      );
+    }
+  },
+  uninstall(c) {
+    const path = join(c.home, ".qwen", "settings.json");
+    if (existsSync(path)) {
+      const settings = readJson(path);
+      if (settings.hooks) {
+        stripHarnessHooks(settings.hooks, "qwen-code");
+        if (!Object.keys(settings.hooks).length) delete settings.hooks;
+        writeJson(path, settings);
+      }
+    }
+    const mcp = c.qwenMcp ?? defaultQwenMcp;
+    mcp(["mcp", "remove", "hindsight"]);
+    uninstallSkill(c, join(c.home, ".qwen", "skills"));
+    c.log?.("qwen-code: hooks + MCP registration + skill removed");
+  },
+};
+
+function defaultQwenMcp(args: string[]): boolean {
+  try {
+    execFileSync("qwen", args, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   kilo,
@@ -1218,6 +1284,7 @@ export const INSTALLERS: HarnessInstaller[] = [
   cursor,
   copilot,
   grok,
+  qwen,
   cline,
   dsh,
 ];

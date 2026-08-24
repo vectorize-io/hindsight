@@ -6,7 +6,7 @@
     "url": "https://github.com/vectorize-io/hindsight.git",
     "directory": "hindsight-integrations/coding-agents"
   },
-  "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, …), with automatic background ingestion (no setup CLI).",
+  "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, \u2026), with automatic background ingestion (no setup CLI).",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,7 +25,10 @@
     "hindsight-codex-hook": "dist/codex-hook.js",
     "hindsight-antigravity-hook": "dist/antigravity-hook.js",
     "hindsight-antigravity-statusline": "dist/antigravity-statusline.js",
-    "hindsight-devin-hook": "dist/devin-hook.js"
+    "hindsight-devin-hook": "dist/devin-hook.js",
+    "hindsight-qwen-hook": "dist/qwen-hook.js",
+    "hindsight-qwen-sessionstart-hook": "dist/qwen-sessionstart-hook.js",
+    "hindsight-qwen-stop-hook": "dist/qwen-stop-hook.js"
   },
   "exports": {
     ".": {

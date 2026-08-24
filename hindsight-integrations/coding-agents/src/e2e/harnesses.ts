@@ -155,6 +155,37 @@ export const grokDockerSetup: HarnessDockerSetup = {
 };
 
 /**
+ * Qwen Code — `-p` runs one prompt and exits.
+ *
+ * Driven through the stub model: Qwen honours the OpenAI-compatible env triple, so no vendor
+ * account has to reach the container. `APPROVAL_MODE=yolo` keeps a tool call from blocking on a
+ * prompt no one is there to answer. Never pass `--safe-mode`: it disables hooks, which is the
+ * entire thing under test.
+ *
+ * RETENTION-ONLY, and for a different reason than grok-build's passive hook. Qwen's prompt spec
+ * keys on `submitted_prompt`, which the host attaches only to a genuine first-turn interactive TUI
+ * submission — `UserPromptSubmit` also fires on tool-result continuations, where `prompt` holds
+ * model-bound tool output, so keying on `prompt` would recall repeatedly against tool results.
+ * Headless `-p` (the only mode this E2E can drive), `serve`, the SDK and ACP carry no
+ * `submitted_prompt`, so runHook's `if (!prompt) return` suppresses recall and no memory block can
+ * reach the model here. Asserting injection would keep this harness permanently red for something
+ * no change on our side can fix. Session seeding, write-back and the MCP tools are still asserted.
+ */
+export const qwenDockerSetup: HarnessDockerSetup = {
+  name: "qwen-code",
+  hindsightHarness: "qwen-code",
+  installCommand: "hindsight-coding-agents install qwen-code",
+  stubModelEnv: (baseUrl) => ({
+    OPENAI_BASE_URL: `${baseUrl}/v1`,
+    OPENAI_API_KEY: "hindsight-e2e",
+    OPENAI_MODEL: "hindsight-e2e-stub",
+    APPROVAL_MODE: "yolo",
+  }),
+  injectsIntoModel: false,
+  command: (prompt) => ["qwen", "-p", prompt],
+};
+
+/**
  * Devin CLI — `-p` takes the prompt inline and exits.
  *
  * Credentials live in `~/.local/share/devin/credentials.toml`, NOT the `~/.config/devin/config.json`
@@ -241,6 +272,7 @@ export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   cursorDockerSetup,
   copilotDockerSetup,
   grokDockerSetup,
+  qwenDockerSetup,
   devinDockerSetup,
   clineDockerSetup,
   primeAgentDockerSetup,
