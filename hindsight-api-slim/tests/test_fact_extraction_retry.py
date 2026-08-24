@@ -869,4 +869,3 @@ def test_facts_saturation_limit_scales_with_output_budget():
 
     assert resolve_facts_saturation_limit(small) < resolve_facts_saturation_limit(large)
     assert resolve_facts_saturation_limit(small) >= RETAIN_FACTS_SATURATION_FLOOR
-
