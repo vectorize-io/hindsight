@@ -102,12 +102,12 @@ async def retry_with_backoff(
                     )
                 else:
                     logger.warning(
-                        f"Database operation failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                        f"Database operation failed (attempt {attempt + 1}/{max_retries + 1}): {e!r}. "
                         f"Retrying in {delay:.1f}s..."
                     )
                 await asyncio.sleep(delay)
             else:
-                logger.error(f"Database operation failed after {max_retries + 1} attempts: {e}")
+                logger.error(f"Database operation failed after {max_retries + 1} attempts: {e!r}")
     raise last_exception
 
 
@@ -152,13 +152,19 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
                         raise
                     if attempt < max_retries:
                         delay = _backoff_delay(attempt, DEFAULT_BASE_DELAY, DEFAULT_MAX_DELAY)
+                        # !r, not str(): asyncpg raises several of these with no
+                        # args, so str(e) is "" and the line renders as
+                        # "Database acquire failed ... : " — the one field that
+                        # says whether this was a dropped connection, a closed
+                        # pool or an acquire timeout. repr() always carries the
+                        # class name.
                         logger.warning(
-                            f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e!r}. "
                             f"Retrying in {delay:.1f}s..."
                         )
                         await asyncio.sleep(delay)
                     else:
-                        logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e}")
+                        logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e!r}")
                         raise
 
             acquire_time = time.time() - start

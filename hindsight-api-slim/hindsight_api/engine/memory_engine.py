@@ -4479,7 +4479,11 @@ class MemoryEngine(MemoryEngineInterface):
             health.update(self._pool_health_stats(backend))
             return health
         except Exception as e:
-            return {"status": "unhealthy", "database": "error", "error": str(e)}
+            # repr, not str: asyncpg raises several connection/pool errors with
+            # no args, and str(e) is "" for those — the probe payload is what an
+            # operator reads first when the database looks down, so it must name
+            # the exception class even when the message is empty.
+            return {"status": "unhealthy", "database": "error", "error": repr(e)}
 
     @staticmethod
     def _pool_health_stats(backend: Any) -> dict:
