@@ -1044,6 +1044,151 @@ async def _streaming_store_owned_retain(
     return _ExtStreamingWriteResult(aborted=False, batch_result_ids=batch_result_ids)
 
 
+async def _delta_store_owned_write(
+    *,
+    provider,
+    pool,
+    bank_id: str,
+    effective_doc_id: str,
+    config,
+    log_buffer: list,
+    entity_resolver,
+    contents_dicts: list,
+    delta_contents: list,
+    document_tags,
+    document_body_override,
+    extracted_facts: list,
+    processed_facts: list,
+    new_chunk_metadata,
+    delta_chunk_map: dict,
+    new_chunks_with_contents: dict,
+    existing_by_index: dict,
+    changed_indices: list,
+    removed_indices: list,
+    doc_watermark_at_load,
+) -> "tuple[bool, list]":
+    """A store-owned bank's delta write: ONE `retain`, scoped to the chunks that moved.
+
+    Separate from `_try_delta_retain` so the contract can be tested directly, which is the same
+    reason its Protocol-B predecessor was: what matters here is not only the result but that NO
+    Postgres connection is held across it. The store write and the retain are both slow and both
+    connection-free; a delta that quietly took a connection would serialise every concurrent retain
+    on the pool.
+
+    Returns `(committed, result_unit_ids)`. `False` means the caller falls back to the streaming
+    retain — the document moved under this write, and the diff it planned is stale.
+    """
+    if document_body_override is not None:
+        combined_content = document_body_override
+    else:
+        combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
+    retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
+
+    # The fence, and it must be this batch's FIRST store write. `expect_watermark` guards on
+    # the namespace's WAL head, and the fact write below MOVES that head — fencing after it
+    # would fence the batch against itself, so a plain sequential append fails with
+    # "required WAL head < 10, but head was 12". Postgres does not need this here because it
+    # locks the `documents` row in PHASE 2; a store-owned bank has no such row, which is why
+    # parallel appends would otherwise plan against the same base and overwrite each other
+    # with every call returning success.
+    try:
+        await _store_document_bodies(
+            bank_id=bank_id,
+            document_id=effective_doc_id,
+            combined_content=combined_content,
+            chunk_texts=[new_chunks_with_contents[i] for i in sorted(new_chunks_with_contents)],
+            merged_tags=merged_tags,
+            config=config,
+            retain_params=retain_params,
+            expect_watermark=doc_watermark_at_load,
+        )
+    except ConcurrentAppendConflict:
+        # `_store_document_bodies` already translates the store's StoreWriteConflict into
+        # this; catching the store exception instead lets it escape to the caller and turns
+        # a losable race into a failed request.
+        log_buffer.append(
+            f"[delta] Document {effective_doc_id} moved under this delta write — "
+            f"falling back to the full streaming retain"
+        )
+        logger.info("\n" + "\n".join(log_buffer) + "\n")
+        return False, []
+
+    # Deterministic chunk ids for the new/changed chunks, after the delta remap, so a fact's
+    # chunk_id matches the chunk that carries it.
+    chunk_id_by_index = {
+        cm.chunk_index: f"{bank_id}_{effective_doc_id}_{cm.chunk_index}" for cm in (new_chunk_metadata or [])
+    }
+    for ef, pf in zip(extracted_facts, processed_facts):
+        pf.document_id = effective_doc_id
+        if ef.chunk_index is not None:
+            original_idx = delta_chunk_map.get(ef.chunk_index, ef.chunk_index)
+            cid = chunk_id_by_index.get(original_idx)
+            if cid:
+                pf.chunk_id = cid
+
+    # The chunks whose prior facts must go: the ones that CHANGED and the ones REMOVED. A
+    # removed chunk has no replacement upsert to supersede it, so naming it is the only
+    # thing that takes it out — the case a "replace only what I re-sent" scope would miss.
+    replace_chunk_ids = [
+        existing_by_index[idx].chunk_id
+        for idx in list(changed_indices) + list(removed_indices)
+        if idx in existing_by_index
+    ]
+
+    # Mint the ids without writing; the retain below is the only fact write.
+    unit_ids = await fact_storage.insert_facts_batch(None, bank_id, processed_facts, ops=pool.ops, defer_index=True)
+    result_unit_ids = _map_results_to_contents(delta_contents, processed_facts, unit_ids if unit_ids else [])
+
+    if unit_ids or replace_chunk_ids:
+        unit_entity_names: dict[str, list[str]] = {}
+        if unit_ids:
+            # Raw entity NAMES, the same merge the Postgres resolver performs — the server
+            # resolves and mints them, which is what owning the retain means.
+            user_entities_per_content = {
+                idx: UserEntities(
+                    entities=content.entities,
+                    resolve=getattr(content, "resolve_entities", True),
+                )
+                for idx, content in enumerate(delta_contents)
+                if getattr(content, "entities", None)
+            }
+            _t, _d, entities_per_fact = entity_processing._prepare_facts_for_entity_processing(
+                processed_facts, user_entities_per_content
+            )
+            unit_entity_names = {
+                unit_ids[i]: [e["text"] for e in entities_per_fact[i]]
+                for i in range(min(len(unit_ids), len(entities_per_fact)))
+            }
+
+        threshold = float(getattr(config, "entity_similarity_threshold", 0.0) or 0.0)
+        resp = await provider.retain(
+            bank_id,
+            unit_ids or [],
+            processed_facts if unit_ids else [],
+            document_id=effective_doc_id,
+            unit_entity_names=unit_entity_names,
+            # Scoped: only the chunks named above are superseded. Empty `replace_chunk_ids`
+            # would be a scope of NOTHING rather than of everything, so when nothing changed
+            # this is a plain append and names no document to replace.
+            replace_document_id=effective_doc_id if replace_chunk_ids else "",
+            replace_chunk_ids=replace_chunk_ids or None,
+            resolve_threshold=threshold,
+        )
+        log_buffer.append(
+            f"[delta] store-owned retain doc={effective_doc_id} units={len(unit_ids or [])} "
+            f"replaced_chunks={len(replace_chunk_ids)} seq={resp.seq} "
+            f"new_entities={resp.new_entities}"
+        )
+
+    log_buffer.append(f"DELTA RETAIN COMPLETE (store-owned): {len(processed_facts)} new units")
+    logger.info("\n" + "\n".join(log_buffer) + "\n")
+    try:
+        await entity_resolver.flush_pending_stats()
+    except Exception:
+        logger.warning("Entity stats flush failed — retrieval unaffected", exc_info=True)
+    return True, result_unit_ids
+
+
 async def _extract_and_embed(
     contents: list[RetainContent],
     llm_config,
@@ -3609,117 +3754,29 @@ async def _try_delta_retain(
         # `current_hash` would come back None, the stale-chunk guard would never fire, and the delta
         # would run with no concurrency control at all.
         if _store_owned_delta:
-            if document_body_override is not None:
-                combined_content = document_body_override
-            else:
-                combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
-            retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
-
-            # The fence, and it must be this batch's FIRST store write. `expect_watermark` guards on
-            # the namespace's WAL head, and the fact write below MOVES that head — fencing after it
-            # would fence the batch against itself, so a plain sequential append fails with
-            # "required WAL head < 10, but head was 12". Postgres does not need this here because it
-            # locks the `documents` row in PHASE 2; a store-owned bank has no such row, which is why
-            # parallel appends would otherwise plan against the same base and overwrite each other
-            # with every call returning success.
-            try:
-                await _store_document_bodies(
-                    bank_id=bank_id,
-                    document_id=effective_doc_id,
-                    combined_content=combined_content,
-                    chunk_texts=[new_chunks_with_contents[i] for i in sorted(new_chunks_with_contents)],
-                    merged_tags=merged_tags,
-                    config=config,
-                    retain_params=retain_params,
-                    expect_watermark=doc_watermark_at_load,
-                )
-            except ConcurrentAppendConflict:
-                # `_store_document_bodies` already translates the store's StoreWriteConflict into
-                # this; catching the store exception instead lets it escape to the caller and turns
-                # a losable race into a failed request.
-                log_buffer.append(
-                    f"[delta] Document {effective_doc_id} moved under this delta write — "
-                    f"falling back to the full streaming retain"
-                )
-                logger.info("\n" + "\n".join(log_buffer) + "\n")
-                return False
-
-            # Deterministic chunk ids for the new/changed chunks, after the delta remap, so a fact's
-            # chunk_id matches the chunk that carries it.
-            chunk_id_by_index = {
-                cm.chunk_index: f"{bank_id}_{effective_doc_id}_{cm.chunk_index}" for cm in (new_chunk_metadata or [])
-            }
-            for ef, pf in zip(extracted_facts, processed_facts):
-                pf.document_id = effective_doc_id
-                if ef.chunk_index is not None:
-                    original_idx = delta_chunk_map.get(ef.chunk_index, ef.chunk_index)
-                    cid = chunk_id_by_index.get(original_idx)
-                    if cid:
-                        pf.chunk_id = cid
-
-            # The chunks whose prior facts must go: the ones that CHANGED and the ones REMOVED. A
-            # removed chunk has no replacement upsert to supersede it, so naming it is the only
-            # thing that takes it out — the case a "replace only what I re-sent" scope would miss.
-            replace_chunk_ids = [
-                existing_by_index[idx].chunk_id
-                for idx in list(changed_indices) + list(removed_indices)
-                if idx in existing_by_index
-            ]
-
-            # Mint the ids without writing; the retain below is the only fact write.
-            unit_ids = await fact_storage.insert_facts_batch(
-                None, bank_id, processed_facts, ops=pool.ops, defer_index=True
+            ok, result_unit_ids = await _delta_store_owned_write(
+                provider=_delta_store,
+                pool=pool,
+                bank_id=bank_id,
+                effective_doc_id=effective_doc_id,
+                config=config,
+                log_buffer=log_buffer,
+                entity_resolver=entity_resolver,
+                contents_dicts=contents_dicts,
+                delta_contents=delta_contents,
+                document_tags=document_tags,
+                document_body_override=document_body_override,
+                extracted_facts=extracted_facts,
+                processed_facts=processed_facts,
+                new_chunk_metadata=new_chunk_metadata,
+                delta_chunk_map=delta_chunk_map,
+                new_chunks_with_contents=new_chunks_with_contents,
+                existing_by_index=existing_by_index,
+                changed_indices=changed_indices,
+                removed_indices=removed_indices,
+                doc_watermark_at_load=doc_watermark_at_load,
             )
-            result_unit_ids = _map_results_to_contents(delta_contents, processed_facts, unit_ids if unit_ids else [])
-
-            if unit_ids or replace_chunk_ids:
-                unit_entity_names: dict[str, list[str]] = {}
-                if unit_ids:
-                    # Raw entity NAMES, the same merge the Postgres resolver performs — the server
-                    # resolves and mints them, which is what owning the retain means.
-                    user_entities_per_content = {
-                        idx: UserEntities(
-                            entities=content.entities,
-                            resolve=getattr(content, "resolve_entities", True),
-                        )
-                        for idx, content in enumerate(delta_contents)
-                        if getattr(content, "entities", None)
-                    }
-                    _t, _d, entities_per_fact = entity_processing._prepare_facts_for_entity_processing(
-                        processed_facts, user_entities_per_content
-                    )
-                    unit_entity_names = {
-                        unit_ids[i]: [e["text"] for e in entities_per_fact[i]]
-                        for i in range(min(len(unit_ids), len(entities_per_fact)))
-                    }
-
-                threshold = float(getattr(config, "entity_similarity_threshold", 0.0) or 0.0)
-                resp = await _delta_store.retain(
-                    bank_id,
-                    unit_ids or [],
-                    processed_facts if unit_ids else [],
-                    document_id=effective_doc_id,
-                    unit_entity_names=unit_entity_names,
-                    # Scoped: only the chunks named above are superseded. Empty `replace_chunk_ids`
-                    # would be a scope of NOTHING rather than of everything, so when nothing changed
-                    # this is a plain append and names no document to replace.
-                    replace_document_id=effective_doc_id if replace_chunk_ids else "",
-                    replace_chunk_ids=replace_chunk_ids or None,
-                    resolve_threshold=threshold,
-                )
-                log_buffer.append(
-                    f"[delta] store-owned retain doc={effective_doc_id} units={len(unit_ids or [])} "
-                    f"replaced_chunks={len(replace_chunk_ids)} seq={resp.seq} "
-                    f"new_entities={resp.new_entities}"
-                )
-
-            log_buffer.append(f"DELTA RETAIN COMPLETE (store-owned): {len(processed_facts)} new units")
-            logger.info("\n" + "\n".join(log_buffer) + "\n")
-            try:
-                await entity_resolver.flush_pending_stats()
-            except Exception:
-                logger.warning("Entity stats flush failed — retrieval unaffected", exc_info=True)
-            return True
+            return ok
 
         # PHASE 2 — Core Write Transaction (atomic)
         # Lock the document row and verify ownership. Delta loaded existing

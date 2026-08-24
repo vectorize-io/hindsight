@@ -106,10 +106,10 @@ class _Provider:
         self.decisions = []
         self.witnesses = []
 
-    def store_owned_retain_for(self, bank_id):
+    def store_owned_for(self, bank_id):
         # False: these tests are about the Protocol-B two-phase write-group — the path for a store
         # whose memory rows live elsewhere but whose document metadata still lands in Postgres. A
-        # store-owned retain skips that dance entirely and has its own tests.
+        # store that owns its writes skips that dance entirely and has its own tests.
         return False
 
     async def write_txn_witness(self, txn, *, conn, fq_table):
@@ -328,7 +328,7 @@ def _delta_kwargs(tracker, provider, er, *, doc_hash_at_load):
         effective_doc_id="doc1",
         config=SimpleNamespace(store_document_text=True),
         log_buffer=[],
-        processed_facts=[SimpleNamespace(document_id=None, chunk_id=None)],
+        processed_facts=[_fact()],
         extracted_facts=[SimpleNamespace(chunk_index=None)],
         delta_contents=[{"content": "c"}],
         contents_dicts=[{"content": "c"}],
@@ -345,42 +345,139 @@ def _delta_kwargs(tracker, provider, er, *, doc_hash_at_load):
     )
 
 
-async def test_delta_store_writes_are_connection_free(monkeypatch):
-    tracker = _ConnTracker(current_hash="SAME")
+async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(monkeypatch):
+    """The store-owned delta: one `retain`, scoped to the chunks that moved, no connection held.
+
+    This replaces the two Protocol-B delta tests that used to live here. That path is gone — it
+    wrote with the plain batch write and tombstoned separately, under a write-group handle nothing
+    mints any more — so its witness/decide/re-posting assertions have nothing left to describe. The
+    contract that survives is the one this file exists for: the slow writes (the document bodies and
+    the retain) must happen with NO Postgres connection checked out, or every concurrent retain
+    serialises on the pool.
+    """
+    tracker = _ConnTracker()
+    saw_open = []
+    retained = {}
+
+    async def _store_bodies(**kw):
+        saw_open.append(tracker.open)
+        return None
+
+    class _StoreOwned:
+        async def retain(self, bank_id, unit_ids, facts, **kw):
+            saw_open.append(tracker.open)
+            retained.update(kw)
+            retained["unit_ids"] = list(unit_ids)
+            return SimpleNamespace(seq=7, new_entities=0)
+
+    async def _insert(*a, **k):
+        saw_open.append(tracker.open)
+        return ["u1"]
+
+    monkeypatch.setattr(orch, "_store_document_bodies", _store_bodies)
+    monkeypatch.setattr(orch.fact_storage, "insert_facts_batch", _insert)
+    monkeypatch.setattr(orch, "acquire_with_retry", lambda *_a, **_k: tracker.acquire())
+
+    ok, unit_ids = await orch._delta_store_owned_write(
+        provider=_StoreOwned(),
+        pool=SimpleNamespace(ops=None),
+        bank_id="b",
+        effective_doc_id="d1",
+        config=SimpleNamespace(entity_similarity_threshold=0.0),
+        log_buffer=[],
+        entity_resolver=SimpleNamespace(flush_pending_stats=_noop_async),
+        contents_dicts=[{"content": "hello"}],
+        delta_contents=[SimpleNamespace(entities=None, resolve_entities=True)],
+        document_tags=[],
+        document_body_override=None,
+        extracted_facts=[SimpleNamespace(chunk_index=0)],
+        processed_facts=[_fact()],
+        new_chunk_metadata=[SimpleNamespace(chunk_index=0)],
+        delta_chunk_map={},
+        new_chunks_with_contents={0: "hello"},
+        existing_by_index={1: SimpleNamespace(chunk_id="b_d1_1")},
+        changed_indices=[1],
+        removed_indices=[],
+        doc_watermark_at_load=5,
+    )
+
+    assert ok is True
+    assert unit_ids == [["u1"]]
+    # Nothing slow ran while a connection was checked out.
+    assert saw_open == [False, False, False], saw_open
+    # And the replace was SCOPED — the changed chunk named, not the whole document blown away.
+    assert retained["replace_document_id"] == "d1"
+    assert retained["replace_chunk_ids"] == ["b_d1_1"]
+
+
+async def test_a_store_owned_delta_falls_back_when_the_document_moved(monkeypatch):
+    """The watermark compare-and-set is the fence, and losing it means falling back.
+
+    `_store_document_bodies` runs FIRST precisely so this is detected before anything is written:
+    it compare-and-sets on the document's watermark, and the fact write would move the WAL head
+    that CAS reads. Fencing after the write would fence the batch against itself.
+    """
     calls = []
-    _make_common_delta(monkeypatch, tracker, calls=calls)
-    # _build_retain_params is a plain module function; keep it real but feed simple dicts.
-    provider, er = _Provider(), _EntityResolver(tracker)
 
-    kw = _delta_kwargs(tracker, provider, er, doc_hash_at_load=None)  # None → hash check can't trip
-    result = await orch._delta_batch_write_ext(**kw)
+    async def _store_bodies(**kw):
+        calls.append("store_bodies")
+        raise ConcurrentAppendConflict("moved")
 
-    assert result.fell_back is False
-    assert result.result_unit_ids == [["u1"]]
-    # Fact write + body store + entity re-posting all happened connection-free. The delta path
-    # still writes-then-reposts (store_write=True) — only the streaming path uses the single write.
-    assert tracker.store_writes_saw_open == [False]
-    assert ("store_document_bodies", False) in calls
-    # The delta path still does the store re-posting, and it rides the same write-group as the
-    # fact write: it re-writes rows that group just created, so a store recording what its groups
-    # wrote must see it as part of the group or a replay loses it.
-    assert er.postings == [([("u1", "e1", None)], True, kw["ext_txn"])]
-    # Witness inside the txn; publish after release.
-    assert len(provider.witnesses) == 1 and provider.witnesses[0][1] is not None
-    assert provider.decisions == [True]
-    assert tracker.open is False
+    async def _insert(*a, **k):
+        calls.append("insert")
+        return ["u1"]
+
+    class _StoreOwned:
+        async def retain(self, *a, **k):
+            calls.append("retain")
+            return SimpleNamespace(seq=1, new_entities=0)
+
+    monkeypatch.setattr(orch, "_store_document_bodies", _store_bodies)
+    monkeypatch.setattr(orch.fact_storage, "insert_facts_batch", _insert)
+
+    ok, unit_ids = await orch._delta_store_owned_write(
+        provider=_StoreOwned(),
+        pool=SimpleNamespace(ops=None),
+        bank_id="b",
+        effective_doc_id="d1",
+        config=SimpleNamespace(entity_similarity_threshold=0.0),
+        log_buffer=[],
+        entity_resolver=SimpleNamespace(flush_pending_stats=_noop_async),
+        contents_dicts=[{"content": "hello"}],
+        delta_contents=[SimpleNamespace(entities=None, resolve_entities=True)],
+        document_tags=[],
+        document_body_override=None,
+        extracted_facts=[SimpleNamespace(chunk_index=0)],
+        processed_facts=[_fact()],
+        new_chunk_metadata=[SimpleNamespace(chunk_index=0)],
+        delta_chunk_map={},
+        new_chunks_with_contents={0: "hello"},
+        existing_by_index={1: SimpleNamespace(chunk_id="b_d1_1")},
+        changed_indices=[1],
+        removed_indices=[],
+        doc_watermark_at_load=5,
+    )
+
+    assert ok is False
+    assert unit_ids == []
+    # Nothing was written: the fence tripped before the fact write, which is the point of it
+    # running first.
+    assert calls == ["store_bodies"], calls
 
 
-async def test_delta_falls_back_when_document_replaced(monkeypatch):
-    tracker = _ConnTracker(current_hash="NEW")  # differs from doc_hash_at_load below
-    calls = []
-    _make_common_delta(monkeypatch, tracker, calls=calls)
-    provider, er = _Provider(), _EntityResolver(tracker)
+async def _noop_async(*a, **k):
+    return None
 
-    result = await orch._delta_batch_write_ext(**_delta_kwargs(tracker, provider, er, doc_hash_at_load="OLD"))
 
-    assert result.fell_back is True
-    # Staged store writes still ran connection-free before the conflict was detected.
-    assert tracker.store_writes_saw_open == [False]
-    # The group was discarded, not committed.
-    assert provider.decisions == [False]
+def _fact():
+    """The fields the entity-name merge reaches for on a processed fact."""
+    return SimpleNamespace(
+        document_id=None,
+        chunk_id=None,
+        content_index=0,
+        fact_text="hello",
+        entities=[],
+        occurred_start=None,
+        occurred_end=None,
+        mentioned_at=None,
+    )
