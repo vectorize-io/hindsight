@@ -1485,3 +1485,66 @@ async def test_deleting_a_bank_drops_its_storage(memory, request_context, restor
 
     assert "drop_bank_storage" in store.calls, "deleting the bank must drop its storage, not orphan it"
     assert "doomed-bank" not in store.ensured
+
+
+# ---------------------------------------------------------------------------
+# Retain routing: which write path a bank takes
+# ---------------------------------------------------------------------------
+
+
+def test_a_store_owned_bank_takes_the_separate_store_path_without_a_write_group():
+    """The regression this exists for: a store-owned bank whose `Retain` was never called.
+
+    `store_owned_retain` and a Protocol-B write-group handle are INDEPENDENT reasons to leave the
+    Postgres path. While every separate-system store implemented both, gating on the handle alone
+    gave the right answer by coincidence. A store that owns its whole retain has no write group to
+    mint — one atomic server-side call needs nothing tied to a Postgres commit — so `mint_txn`
+    returns None, the handle-only gate said "Postgres", and every write took the Postgres path
+    while `store_owned_retain_for()` went on answering True.
+
+    That failure is silent by construction: the data still lands (the fact write routes through the
+    provider either way), so nothing errors — the bank just quietly stops using the RPC it
+    advertises, and resolves entities against Postgres instead of its own registry.
+    """
+    from hindsight_api.engine.retain.orchestrator import uses_separate_store_write_path
+
+    class StoreOwnedNoWriteGroup(InMemoryMemories):
+        name = "store-owned"
+        store_owned_retain = True
+        # mint_txn is deliberately NOT overridden: the base answers None.
+
+    store = StoreOwnedNoWriteGroup({})
+    assert store.store_owned_retain_for("any-bank") is True
+    assert uses_separate_store_write_path(store, "any-bank", None) is True, (
+        "a store that owns its retain must take the separate-store path even though it mints no write-group handle"
+    )
+
+    # The Protocol-B store is the other reason, and still works.
+    plain = InMemoryMemories({})
+    assert plain.store_owned_retain_for("any-bank") is False
+    assert uses_separate_store_write_path(plain, "any-bank", object()) is True
+
+    # Neither reason: Postgres single-transaction path.
+    assert uses_separate_store_write_path(plain, "any-bank", None) is False
+
+
+def test_a_store_owned_bank_never_takes_the_delta_path():
+    """A store-owned bank has exactly ONE retain write path, `provider.retain()`.
+
+    Delta cannot be expressed as a Retain — Retain replaces a document wholesale, delta rewrites
+    only the chunks that changed — so a store-owned delta had to write with `Write` and tombstone
+    separately. That was the second retain operation. It also took its document lock on a Postgres
+    `documents` row a store-owned bank no longer has, so its stale-chunk guard could never fire.
+    """
+    from hindsight_api.engine.retain.orchestrator import attempts_delta_retain
+
+    class StoreOwned(InMemoryMemories):
+        name = "store-owned-delta"
+        store_owned_retain = True
+
+    assert attempts_delta_retain(StoreOwned({}), "sob-bank", True) is False
+
+    # Postgres still deltas, and only on the first sub-batch.
+    plain = InMemoryMemories({})
+    assert attempts_delta_retain(plain, "pg-bank", True) is True
+    assert attempts_delta_retain(plain, "pg-bank", False) is False
