@@ -610,7 +610,7 @@ async def relink_pass(
     bank running, so no need for SKIP LOCKED. Submit-time dedup alone does NOT
     give that — it only inspects 'pending' rows — so the guarantee comes from
     ``claim_tasks``, which refuses to claim a graph_maintenance row for a bank
-    that already has one in flight (``graph_maintenance_bank_serialization_sql``,
+    that already has one in flight (``bank_serialization_sql``,
     #3230). Without it these claims convoy: they lock queue rows ``FOR UPDATE``
     with no ``SKIP LOCKED``, so a second run blocks on the first while holding a
     worker slot.
