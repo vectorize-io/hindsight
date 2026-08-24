@@ -1284,12 +1284,16 @@ class TestWorkerRecovery:
 
         stale_id = uuid.uuid4()
         payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        # Both timestamps stale — this is what a real abandoned row looks like.
+        # The two production corpses had created == updated == the claim instant,
+        # never touched again: no progress heartbeat ever landed.
         await pool.execute(
             """
             INSERT INTO async_operations
-                (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id,
+                 claimed_at, updated_at)
             VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'dead-container-abc123',
-                    now() - interval '50 days')
+                    now() - interval '50 days', now() - interval '50 days')
             """,
             stale_id,
             bank_id,
@@ -1386,6 +1390,56 @@ class TestWorkerRecovery:
             "SELECT status FROM async_operations WHERE operation_id = $1", stale_id
         )
         assert row["status"] == "processing"
+
+    @pytest.mark.asyncio
+    async def test_slow_but_live_job_with_fresh_heartbeat_is_not_reclaimed(
+        self, pool, backend, clean_operations
+    ):
+        """An old claim that is still emitting progress must NOT be reclaimed.
+
+        claimed_at is written once and never refreshed, but long-running jobs
+        bump updated_at via MemoryEngine._write_operation_progress. Consolidation
+        has no wall-clock timeout, so a healthy one can outlive the lease. Keying
+        the sweep on claimed_at alone would reset it to pending mid-flight and let
+        a second worker claim the same bank concurrently — duplicate inference and
+        competing writes. Guards the Strix finding on PR #3779.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        slow_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        # Claimed 50 days ago, but heartbeated seconds ago: slow, not abandoned.
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id,
+                 claimed_at, updated_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'other-live-worker',
+                    now() - interval '50 days', now())
+            """,
+            slow_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="live-worker",
+            executor=lambda x: None,
+            orphan_lease_seconds=86400,
+        )
+
+        assert await poller._reclaim_expired_processing_tasks(None) == 0
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            slow_id,
+        )
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "other-live-worker"
 
     @pytest.mark.asyncio
     async def test_recover_own_tasks_returns_zero_when_no_stale_tasks(self, pool, backend, clean_operations):

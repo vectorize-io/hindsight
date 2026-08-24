@@ -1184,6 +1184,23 @@ class WorkerPoller:
 
             slots=2/4 | reserved: [consolidation=0/2(avail=2)] | shared=2/2(avail=0)
 
+        Liveness is judged on BOTH ``claimed_at`` and ``updated_at``, and this
+        matters: ``claimed_at`` is written once at claim time and never
+        refreshed, but a long-running job does emit progress heartbeats, and
+        those bump ``updated_at`` (``MemoryEngine._write_operation_progress``,
+        called by the consolidator at phase/batch boundaries). Consolidation is
+        not wall-clock bounded — ``_wall_timeout_for`` returns None for
+        everything except retain, and ``CONSOLIDATION_MAX_MEMORIES_PER_ROUND``
+        may be 0 (unlimited) — so a healthy consolidation CAN legitimately
+        outlive the lease. Keying only on ``claimed_at`` would reset such a row
+        to 'pending' while its worker is still executing, and since the claim
+        predicates enforce exclusivity via ``status = 'processing'``, a second
+        worker could then claim the same bank and run it concurrently:
+        duplicate LLM inference and competing writes. Requiring the progress
+        heartbeat to be stale too means a job that is merely slow is never
+        touched — only one that is both old AND silent. (Thanks to the Strix
+        review on PR #3779 for catching this.)
+
         Only rows older than ``orphan_lease_seconds`` are touched (default 24 h —
         far beyond any real task, and the corpses above were 50 days old), and
         this worker's own rows are excluded because the caller above already
@@ -1209,6 +1226,7 @@ class WorkerPoller:
                   AND worker_id <> $1
                   AND claimed_at IS NOT NULL
                   AND claimed_at < now() - make_interval(secs => $2)
+                  AND updated_at < now() - make_interval(secs => $2)
                   AND result_metadata->>'batch_id' IS NULL
                 RETURNING operation_id, worker_id, operation_type
                 """,
