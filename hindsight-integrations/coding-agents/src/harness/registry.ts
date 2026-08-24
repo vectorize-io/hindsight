@@ -58,6 +58,7 @@ export const HARNESS_NAMES = [
   "devin-cli",
   "copilot-cli",
   "grok-build",
+  "qwen-code",
 ];
 
 const HOOK_BINS: Record<string, string> = {
@@ -69,6 +70,7 @@ const HOOK_BINS: Record<string, string> = {
   "devin-cli": "hindsight-devin-hook",
   "copilot-cli": "hindsight-copilot-hook",
   "grok-build": "hindsight-grok-hook",
+  "qwen-code": "hindsight-qwen-hook",
   // more hook harnesses: add a HookSpec entry point (see src/cursor-hook.ts) + a registration here.
 };
 
