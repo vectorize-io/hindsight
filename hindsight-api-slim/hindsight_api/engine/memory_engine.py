@@ -6578,11 +6578,13 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize tracer if requested
         from .search.tracer import SearchTracer
 
-        tracer = (
-            SearchTracer(query, thinking_budget, max_tokens, tags=tags, tags_match=tags_match) if enable_trace else None
-        )
-        if tracer:
-            tracer.start()
+        # Always trace the PHASES; only capture the rest when asked. The phase metrics are a
+        # handful of floats and they are what makes a recall log account for its own duration --
+        # the numbered stages stop at token filtering, so hydration, assembly and entity building
+        # were measured and then thrown away unless someone happened to pass `trace=true`.
+        tracer = SearchTracer(query, thinking_budget, max_tokens, tags=tags, tags_match=tags_match)
+        tracer.phases_only = not enable_trace
+        tracer.start()
 
         backend_acquire_start = time.time()
         backend = await self._get_read_backend()
@@ -7854,7 +7856,10 @@ class MemoryEngine(MemoryEngineInterface):
             # entry, so its own object construction + to_dict() serialization fall outside
             # that total; we still surface the cost as a diagnostic phase (issue #2361).
             trace_dict = None
-            if tracer:
+            # `enable_trace`, NOT `if tracer`: the tracer now always exists so the phase timings
+            # are always collected, but finalizing and returning the trace is still opt-in --
+            # `finalize()` builds the whole candidate/visit payload, which is the expensive part.
+            if enable_trace:
                 from .search.trace import SearchPhaseMetrics
 
                 finalize_start = time.time()
@@ -7880,6 +7885,24 @@ class MemoryEngine(MemoryEngineInterface):
             if max_conn_wait > 0.01:
                 wait_parts.append(f"conn={max_conn_wait:.3f}s")
             wait_info = f" | waits: {', '.join(wait_parts)}" if wait_parts else ""
+
+            # Account for the WHOLE request, not the stages that happen to have a `[n]` line.
+            # The numbered stages above stop at token filtering, and everything after them --
+            # hydration, result assembly, entity building, serialization -- was measured but only
+            # ever reached the trace, which is off unless a caller asks for it. Measured on a plain
+            # recall, that silence hid 42% of the request: the stages summed to 155ms of 268ms.
+            # A waterfall that does not add up sends the reader looking for the missing time in the
+            # wrong layer, which is exactly what happened here.
+            if tracer:
+                phases = [(m.phase_name, m.duration_seconds) for m in getattr(tracer, "phase_metrics", []) or []]
+                if phases:
+                    accounted = sum(d for _, d in phases)
+                    slowest = sorted(phases, key=lambda kv: -kv[1])[:4]
+                    log_buffer.append(
+                        "  [phases] "
+                        + ", ".join(f"{n}={d * 1000:.0f}ms" for n, d in slowest)
+                        + f" | accounted={accounted * 1000:.0f}ms of {total_time * 1000:.0f}ms"
+                    )
             log_buffer.append(
                 f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
             )

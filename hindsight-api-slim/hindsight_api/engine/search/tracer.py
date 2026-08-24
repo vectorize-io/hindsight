@@ -53,6 +53,12 @@ class SearchTracer:
         tags: list[str] | None = None,
         tags_match: str | None = None,
     ):
+        # `phases_only` keeps the timings and drops everything expensive. Phase metrics are a
+        # handful of floats; the rest of a trace is every candidate's text, the query embedding and
+        # the full visit list, which is why tracing is opt-in. Separating them lets the phase
+        # timings be ALWAYS on: without them a recall log accounts for 58% of its own duration and
+        # the reader goes hunting for the rest in the wrong layer.
+        self.phases_only = False
         """
         Initialize tracer.
 
@@ -100,6 +106,8 @@ class SearchTracer:
 
     def record_query_embedding(self, embedding: list[float]):
         """Record the query embedding."""
+        if self.phases_only:
+            return
         self.query_embedding = embedding
 
     def record_temporal_constraint(self, start: datetime | None, end: datetime | None):
@@ -117,6 +125,8 @@ class SearchTracer:
             similarity: Cosine similarity to query
             rank: Rank among entry points (1-based)
         """
+        if self.phases_only:
+            return
         # Clamp similarity to [0.0, 1.0] to handle floating-point precision
         similarity = min(1.0, max(0.0, similarity))
 
@@ -305,6 +315,8 @@ class SearchTracer:
         Args:
             merged_results: List of (doc_id, data, rrf_meta) tuples from RRF merge
         """
+        if self.phases_only:
+            return
         self.rrf_merged = []
         for rank, (doc_id, data, rrf_meta) in enumerate(merged_results, start=1):
             source_ranks = rrf_meta.get("source_ranks")
@@ -328,6 +340,8 @@ class SearchTracer:
             reranked_results: List of result dicts after reranking
             rrf_merged: Original RRF merged results for comparison
         """
+        if self.phases_only:
+            return
         # Build map of node_id -> rrf_rank
         rrf_rank_map = {}
         for item in self.rrf_merged:
