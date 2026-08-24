@@ -511,6 +511,7 @@ from enum import Enum
 
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
+from .fact_budget import select_facts_within_budget
 from .llm_wrapper import ConfiguredLLMProvider, LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
 from .mental_model_refresh import (
     MentalModelDeltaOperations,
@@ -1867,6 +1868,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_statement_timeout = config.db_statement_timeout
         self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
         self._entity_trgm_similarity_threshold = config.entity_trgm_similarity_threshold
+        self._entity_merge_min_similarity = config.entity_merge_min_similarity
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -3677,18 +3679,17 @@ class MemoryEngine(MemoryEngineInterface):
         if not operation_id:
             return
 
-        from .reflect.agent import NO_ANSWER_TEXT
-
         content = refreshed.get("content") or ""
         stripped = content.strip()
         reflect_response = refreshed.get("reflect_response") or {}
         based_on = reflect_response.get("based_on") or {}
         outcome = RefreshMentalModelOutcomeMetadata(
             content_len=len(content),
-            # The no-answer stub and the pending placeholder complete
-            # wire-successful but carry no real synthesis — a length check
-            # alone would read them as populated.
-            populated_content=bool(stripped) and stripped not in (MENTAL_MODEL_PENDING_CONTENT, NO_ANSWER_TEXT),
+            # The pending placeholder completes wire-successful but carries no
+            # real synthesis — a length check alone would read it as populated.
+            # Reflect's own failure stubs are gone: a run with no answer now
+            # raises (#2959), so no refresh reaches here carrying one.
+            populated_content=bool(stripped) and stripped != MENTAL_MODEL_PENDING_CONTENT,
             based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
             delta_ops_applied=len(reflect_response.get("delta_operations_applied") or []),
             delta_ops_skipped=len(reflect_response.get("delta_operations_skipped") or []),
@@ -4320,6 +4321,7 @@ class MemoryEngine(MemoryEngineInterface):
             entity_resolution_batch_size=self._retain_entity_resolution_batch_size,
             intrabatch_merge_similarity=self._entity_intrabatch_merge_similarity,
             entity_resolution_max_candidates=self._retain_entity_resolution_max_candidates,
+            merge_min_similarity=self._entity_merge_min_similarity,
         )
 
         # Initialize config resolver for hierarchical configuration
@@ -7129,24 +7131,34 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 6: Token budget filtering
             step_start = time.time()
 
-            # Convert to dict for token filtering (backward compatibility)
-            top_dicts = [sr.to_dict() for sr in top_scored]
-            filtered_dicts, total_tokens = self._filter_by_token_budget(top_dicts, max_tokens)
-
-            # Convert back to list of IDs and filter scored_results
-            filtered_ids = {d["id"] for d in filtered_dicts}
-            top_scored = [sr for sr in top_scored if sr.id in filtered_ids]
+            encoding = _get_tiktoken_encoding()
+            selection = select_facts_within_budget(
+                fact_ids_ordered=[sr.id for sr in top_scored],
+                text_by_id={sr.id: sr.retrieval.text for sr in top_scored},
+                max_tokens=max_tokens,
+                count_tokens=lambda text: len(encoding.encode(text)),
+            )
+            total_tokens = selection.total_tokens
+            selected_ids = set(selection.ids)
+            top_scored = [sr for sr in top_scored if sr.id in selected_ids]
 
             step_duration = time.time() - step_start
+            truncated_note = " (truncated)" if selection.truncated else ""
             log_buffer.append(
-                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens in {step_duration:.3f}s"
+                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens"
+                f"{truncated_note} in {step_duration:.3f}s"
             )
 
             if tracer:
                 tracer.add_phase_metric(
                     "token_filtering",
                     step_duration,
-                    {"results_selected": len(top_scored), "tokens_used": total_tokens, "max_tokens": max_tokens},
+                    {
+                        "results_selected": len(top_scored),
+                        "tokens_used": total_tokens,
+                        "max_tokens": max_tokens,
+                        "truncated": selection.truncated,
+                    },
                 )
 
             # Record visits + build the JSON-serializable result dicts. Timed as one
@@ -7578,41 +7590,6 @@ class MemoryEngine(MemoryEngineInterface):
             if not quiet:
                 logger.error("\n" + "\n".join(log_buffer), exc_info=True)
             raise RuntimeError(f"Failed to search memories ({type(e).__name__}): {e!r}") from e
-
-    def _filter_by_token_budget(
-        self, results: list[dict[str, Any]], max_tokens: int
-    ) -> tuple[list[dict[str, Any]], int]:
-        """
-        Filter results to fit within token budget.
-
-        Counts tokens only for the 'text' field using tiktoken (cl100k_base encoding).
-        Stops before including a fact that would exceed the budget.
-
-        Args:
-            results: List of search results
-            max_tokens: Maximum tokens allowed
-
-        Returns:
-            Tuple of (filtered_results, total_tokens_used)
-        """
-        encoding = _get_tiktoken_encoding()
-
-        filtered_results = []
-        total_tokens = 0
-
-        for result in results:
-            text = result.get("text", "")
-            text_tokens = len(encoding.encode(text))
-
-            # Check if adding this result would exceed budget
-            if total_tokens + text_tokens <= max_tokens:
-                filtered_results.append(result)
-                total_tokens += text_tokens
-            else:
-                # Stop before including a fact that would exceed limit
-                break
-
-        return filtered_results, total_tokens
 
     def _observations_via_source_match_sql(
         self,
@@ -14916,6 +14893,19 @@ class MemoryEngine(MemoryEngineInterface):
                     else:
                         previous_reflect_response = raw_rr
 
+            # A supplied trigger PATCHES the stored one (see _merge_trigger): callers
+            # send only the fields they set, so the rest have to be read back rather
+            # than defaulted. Only paid for when a trigger is actually being changed.
+            if trigger is not None:
+                trigger_row = await conn.fetchrow(
+                    f"SELECT trigger FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+                trigger = self._merge_trigger(
+                    trigger, base=self._stored_trigger(trigger_row["trigger"]) if trigger_row else {}
+                )
+
             # Build dynamic update
             updates = []
             params: list[Any] = [bank_id, mental_model_id]
@@ -15256,7 +15246,7 @@ class MemoryEngine(MemoryEngineInterface):
     # bank's consolidated **observations** (not raw facts), refreshed incrementally
     # (delta) after each consolidation, and excluding other mental models so a page
     # never reflects on sibling pages. A client's own ``trigger`` MERGES over these
-    # (see ``_merge_page_trigger``), so overriding one field keeps the rest.
+    # (see ``_merge_trigger``), so overriding one field keeps the rest.
     KNOWLEDGE_PAGE_DEFAULT_TRIGGER = {
         "mode": "delta",
         "fact_types": ["observation"],
@@ -15264,11 +15254,11 @@ class MemoryEngine(MemoryEngineInterface):
         "refresh_after_consolidation": True,
     }
 
-    def _merge_page_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Layer the fields a client actually set over ``base``, so a page trigger patches.
+    def _merge_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Layer the fields a client actually set over ``base``, so a trigger patches.
 
         ``base`` is what the unstated fields keep: ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
-        on create, the page's CURRENT trigger on update.
+        when omitted (page creation), otherwise the model's CURRENT trigger.
 
         Both used to be all-or-nothing — a supplied trigger REPLACED whatever was
         there. Since the API model fills every unset field with its own defaults, a
@@ -15278,6 +15268,13 @@ class MemoryEngine(MemoryEngineInterface):
         sibling pages. That is what the coding-agents plugin had been doing to every
         page it created (#3506). The API layer now sends only the fields the client
         actually set (``model_dump(exclude_unset=True)``), and they merge here.
+
+        #3506 fixed only the two page routes, so the same replace-not-merge bug
+        outlived it on ``PATCH /mental-models/{id}`` — which is the route the control
+        plane uses to edit a page's advanced options, and which the MCP
+        ``update_mental_model`` tool drives with a ONE-KEY dict
+        (``{"refresh_after_consolidation": ...}``). Editing one setting there wiped
+        every other one. Hence this is now the shared merge for any mental model.
 
         The two refresh triggers stay mutually exclusive, as ``MentalModelTrigger``
         requires of a stated pair: setting one drops an unstated other rather than
@@ -15473,7 +15470,7 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
         embedding = await self._generate_mental_model_embedding(name, content)
         effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
-        effective_trigger = self._merge_page_trigger(trigger)
+        effective_trigger = self._merge_trigger(trigger)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
         try:
@@ -15822,7 +15819,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             # The page's CURRENT trigger comes back with it: a supplied trigger patches
-            # that rather than replacing it (see _merge_page_trigger).
+            # that rather than replacing it (see _merge_trigger).
             row = await conn.fetchrow(
                 f"SELECT kp.mental_model_id, mm.trigger FROM {fq_table('knowledge_pages')} kp "
                 f"LEFT JOIN {fq_table('mental_models')} mm "
@@ -15834,9 +15831,7 @@ class MemoryEngine(MemoryEngineInterface):
         if row is None or row["mental_model_id"] is None:
             return None
         effective_trigger = (
-            self._merge_page_trigger(trigger, base=self._stored_trigger(row["trigger"]))
-            if trigger is not None
-            else None
+            self._merge_trigger(trigger, base=self._stored_trigger(row["trigger"])) if trigger is not None else None
         )
         # The write is already authorized above; the backing mental-model update
         # runs without re-invoking the validator.

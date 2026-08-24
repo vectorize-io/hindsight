@@ -12,7 +12,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -320,6 +320,77 @@ async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_c
     assert len(chunks) == 1
     assert chunks[0].fact_count == 0
     assert usage.total_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_api_records_schema_drifted_facts_as_extraction_errors(
+    mock_llm_config, test_contents, hindsight_config
+):
+    """Issue #3708.
+
+    A fact object carrying none of the text keys means the model ignored the
+    schema. The batch API cannot re-prompt one request, so the drop has to reach
+    the operation's extraction_errors instead of only the server log. A 'what'
+    that IS present but empty is the model saying "nothing here" — stays quiet.
+    """
+    batch_id = "batch_schema_drift"
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "facts": [
+                                                {"when": "2024", "who": "Alice", "fact_type": "world"},
+                                                {"what": "", "fact_type": "world"},
+                                            ]
+                                        }
+                                    )
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    }
+                },
+            }
+        ]
+    )
+
+    recorded = []
+
+    async def _capture(pool, operation_id, schema, errors):
+        recorded.append(errors)
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._write_batch_extraction_errors",
+        side_effect=_capture,
+    ):
+        facts, chunks, _usage = await extract_facts_from_contents_batch_api(
+            contents=[test_contents[0]],
+            llm_config=mock_llm_config,
+            agent_name="test_agent",
+            config=hindsight_config,
+            pool=None,
+            operation_id=None,
+            schema=None,
+        )
+
+    assert facts == []
+    assert chunks[0].fact_count == 0
+    assert len(recorded) == 1
+    # Only the fact with no text key at all is an error; the empty 'what' is not.
+    assert recorded[0].count == 1
+    assert recorded[0].sample == ["chunk_0: fact 0 has no 'what'/'factual_core'/'text' field"]
 
 
 @pytest.mark.asyncio

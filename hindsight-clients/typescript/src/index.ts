@@ -1145,8 +1145,8 @@ export class HindsightClient {
    * returned `operation_id` to know when the first build has finished.
    *
    * Omit `trigger` to use the page defaults (observation-only, delta mode,
-   * refresh after consolidation); a supplied trigger replaces those defaults
-   * rather than merging with them.
+   * refresh after consolidation); a supplied trigger is applied as a patch over
+   * them, so the fields you leave out keep their defaults.
    */
   async createKnowledgePage(
     bankId: string,
@@ -1154,7 +1154,13 @@ export class HindsightClient {
     sourceQuery: string,
     options?: {
       parentId?: string | null;
-      /** Scopes which memories the page is built from. A `type:<x>` tag also sets the page's rendered type. */
+      /**
+       * Scopes which memories the page is built from — these are a filter, not labels, and a
+       * `type:<x>` tag sets the page's rendered type while still filtering. A tagged page
+       * defaults to `all_strict`: a memory must carry EVERY tag and untagged memories are
+       * excluded, so tags the bank's memories don't carry build an empty page. Pass
+       * `trigger.tagsMatch: "all"` to keep the tags but include untagged memories.
+       */
       tags?: string[];
       maxTokens?: number;
       trigger?: {

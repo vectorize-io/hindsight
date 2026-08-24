@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from hindsight_api.engine import entity_resolver as entity_resolver_module
 from hindsight_api.engine.entity_resolver import EntityResolver
 
 
@@ -55,22 +56,30 @@ def _candidates(count: int, name: str = "Acme Corporation") -> list[tuple]:
 
 @pytest.mark.asyncio
 async def test_scoring_is_capped_at_max_candidates():
-    """Only the top `max_candidates` per mention reach SequenceMatcher."""
+    """Only the top `max_candidates` per mention reach the scoring loop.
+
+    Counted on the word-level check rather than on ``SequenceMatcher``: it runs once per
+    candidate that reaches scoring and is used nowhere else. ``SequenceMatcher`` is no longer
+    one-per-candidate (the word-level check calls it too, and a candidate the trigram gate
+    rejects never reaches the name score), and the trigram helpers are also used by the
+    O(N^2) in-batch pass — so counting either measures the shape of the scoring code rather
+    than the cap this test exists to pin.
+    """
     resolver = _make_resolver(max_candidates=50)
     candidates = _candidates(1000)
     entities_data = [{"text": f"Acme Corporation {i}", "nearby_entities": []} for i in range(4)]
     all_candidates = {e["text"]: candidates for e in entities_data}
 
     with patch(
-        "hindsight_api.engine.entity_resolver.SequenceMatcher",
-        wraps=__import__("difflib").SequenceMatcher,
-    ) as matcher:
+        "hindsight_api.engine.entity_resolver._tokens_are_compatible",
+        wraps=entity_resolver_module._tokens_are_compatible,
+    ) as gate:
         await resolver._resolve_from_candidates(
             _make_conn(), "bank-1", entities_data, datetime.now(UTC), all_candidates, {}, None, None
         )
 
     # 4 mentions x 50 candidates — not 4 x 1000.
-    assert matcher.call_count == 4 * 50
+    assert gate.call_count == 4 * 50
 
 
 @pytest.mark.asyncio

@@ -1209,7 +1209,7 @@ function CreateMentalModelDialog({
   );
 }
 
-function UpdateMentalModelDialog({
+export function UpdateMentalModelDialog({
   open,
   mentalModel,
   onClose,

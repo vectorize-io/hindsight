@@ -1491,12 +1491,18 @@ class Hindsight:
             name: Page name (must be unique within its folder)
             source_query: The question the page answers, re-asked on every refresh
             parent_id: Optional parent folder ID (None creates it at the root)
-            tags: Optional tags scoping which memories the page is built from. A
-                ``type:<x>`` tag also sets the page's rendered type.
+            tags: Optional tags scoping which memories the page is built from —
+                a filter, not labels, and a ``type:<x>`` tag sets the page's
+                rendered type while still filtering. A tagged page defaults to
+                ``all_strict``: a memory must carry EVERY tag and untagged
+                memories are excluded, so tags the bank's memories don't carry
+                build an empty page. Pass ``trigger={"tags_match": "all"}`` to
+                keep the tags but include untagged memories.
             max_tokens: Optional content budget (defaults to 4096 server-side)
             trigger: Optional trigger settings. Omit to use the page defaults
                 (observation-only, delta mode, refresh after consolidation); a
-                supplied trigger replaces those defaults rather than merging.
+                supplied trigger is applied as a patch over them, so the fields
+                you leave out keep their defaults.
 
         Returns:
             CreateKnowledgePageResponse with page_id, mental_model_id and operation_id

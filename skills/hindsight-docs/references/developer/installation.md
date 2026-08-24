@@ -104,10 +104,12 @@ Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_
 
 | Variant | Size (AMD64) | Size (ARM64) | When to use |
 |---------|--------------|--------------|-------------|
-| **Full** (`latest`) | ~9 GB | ~3.7 GB | Default. Works out of the box with no external services except the LLM. |
+| **Full** (`latest`) | ~9 GB | ~3.7 GB | Default. Embeddings and reranking run in the image; the LLM is always external, including for local inference. |
 | **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration#embeddings). |
 
 The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration#embeddings) for external provider options.
+
+Neither image bundles llama.cpp, so the built-in `llamacpp` provider is not available in Docker. To run inference locally, start llama.cpp (or Ollama, LM Studio, vLLM) alongside Hindsight and point `HINDSIGHT_API_LLM_BASE_URL` at it — see [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm) for a working compose file.
 
 ### Bundling Custom Models in a Custom Image
 

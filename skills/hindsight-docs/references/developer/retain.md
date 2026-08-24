@@ -93,6 +93,8 @@ Because resolution keys off name similarity, close variants merge automatically.
 
 **Why it matters:** You can ask "What do I know about Alice?" and get everything, even if she was mentioned as "Alice Chen" in some conversations.
 
+Resolution is a judgement call, so it can go the other way too: on a bank with a lot of history, a short new name that resembles an existing entity — and that turns up alongside entities the existing one is already associated with — can be absorbed into it instead of becoming its own entity. If you see facts about a new person attached to an unrelated entity, [How entity resolution decides](configuration.md#how-entity-resolution-decides) explains what is being compared and which setting makes matching stricter.
+
 ### Context-Aware Disambiguation
 
 If "Alice" appears with "Google" and "Stanford" multiple times, a new "Alice" mentioning those is likely the same person. Hindsight uses co-occurrence patterns to disambiguate common names.

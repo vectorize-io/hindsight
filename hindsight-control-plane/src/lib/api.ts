@@ -797,7 +797,17 @@ export class ControlPlaneClient {
    */
   async createKnowledgePage(
     bankId: string,
-    body: { name: string; source_query: string; parent_id?: string | null; tags?: string[] }
+    body: {
+      name: string;
+      source_query: string;
+      parent_id?: string | null;
+      /** Scopes which memories build the page — see `trigger.tags_match`, which defaults
+       *  to `all_strict` (every tag required, untagged memories excluded). */
+      tags?: string[];
+      /** Refresh settings. Applied as a patch over the knowledge-page defaults, so sending
+       *  one field does not reset the rest. */
+      trigger?: { tags_match?: TagsMatch };
+    }
   ) {
     return this.fetchApi<{ page_id: string; mental_model_id: string; operation_id: string | null }>(
       `/api/knowledge-base/pages?bank_id=${encodeURIComponent(bankId)}`,
@@ -827,6 +837,7 @@ export class ControlPlaneClient {
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
+        tags_match?: TagsMatch;
       };
     }
   ) {

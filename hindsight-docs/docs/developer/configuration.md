@@ -59,6 +59,7 @@ Migrations will automatically create the schema if it doesn't exist and create a
 | `HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE` | Whether the per-connection session settings above (`statement_timeout`, `max_parallel_workers_per_gather`, the trigram threshold, the vector-search tuning, and — on the `vchord` text-search backend — the search path) are re-applied every time a connection is taken from the pool, not only when it is first opened. Keep this on unless the same settings are already pinned on the database role or the database itself (`ALTER ROLE … SET`), because releasing a connection resets it to the server defaults — with the re-apply off and nothing pinned server-side, reused connections quietly run without them, and on `vchord` recall fails outright rather than merely degrading. When they *are* pinned server-side the re-apply changes nothing and only costs a round trip per acquire, which is worth reclaiming on busy deployments behind a transaction-mode connection pooler. `application_name` is always re-applied and is unaffected by this setting. | `true` |
 | `HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` | Postgres `pg_trgm.similarity_threshold` applied to every pool connection, governing how close a name must be for entity resolution's `%` trigram match to treat it as a candidate. Must be between `0` (exclusive) and `1`. Lower catches more substring-ish matches at higher CPU cost on large entity sets; higher is stricter and cheaper. | `0.15` |
 | `HINDSIGHT_API_ENTITY_INTRABATCH_MERGE_SIMILARITY` | Trigram similarity (pg_trgm-equivalent, computed in-memory) at/above which two brand-new names created by the **same** retain are merged into a single entity (in-batch dedup of surface-form variants — e.g. the same name with different emoji/case/suffix). Must be between `0` (exclusive) and `1`. This is a *merge* cutoff, deliberately stricter than the recall-only threshold above; raise it toward `1.0` to merge only near-identical forms. | `0.5` |
+| `HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` | Minimum trigram similarity a name must have with an **existing** entity before that entity can be reused for it, whatever the other resolution signals say. Sits between the recall threshold above (`0.15`, which only decides what is *considered*) and the same-batch fold-in cutoff below (`0.5`). Must be between `0` (exclusive) and `1`. Lower it for corpora of very short names, where trigram similarity is unavoidably low (`Jon`/`John` is `0.29`); raise it to merge only clear surface variants. | `0.3` |
 
 For high-concurrency workloads, increase `DB_POOL_MAX_SIZE`. Each concurrent recall/think operation can use 2-4 connections.
 
@@ -519,7 +520,13 @@ The indexed members are credential fields — never returned by the bank-config 
 
 ### Built-in llama.cpp
 
-The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB). Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB) into `~/.hindsight/models`. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+
+:::warning Not available in the Docker image
+The published `ghcr.io/vectorize-io/hindsight` image deliberately leaves llama.cpp out, so `HINDSIGHT_API_LLM_PROVIDER=llamacpp` cannot run there — it fails immediately with a message telling you so.
+
+For local inference in Docker, run llama.cpp as its own container and point Hindsight at its OpenAI-compatible API with `HINDSIGHT_API_LLM_PROVIDER=openai` and `HINDSIGHT_API_LLM_BASE_URL`. A ready-to-run setup is in [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm).
+:::
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -545,6 +552,8 @@ export HINDSIGHT_API_LLAMACPP_EXTRA_ARGS="--n_threads 8"
 
 :::note
 The llama.cpp server is shared across all LLM operations (retain, reflect, consolidation). Set `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` to allow retain and consolidation to run concurrently without blocking each other.
+
+Auto-downloaded models land in `~/.hindsight/models`. Keep that directory on persistent storage — if it is discarded between restarts, every restart re-downloads the full model.
 :::
 
 ### Per-Operation LLM Configuration
@@ -1255,6 +1264,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_LOG_JSON_FIELDS` | Comma-separated allowlist of JSON log fields to emit (e.g. `severity,message,tenant`). Available: `severity`, `message`, `timestamp`, `logger`, `tenant`, `exception`. Empty = all fields. | `""` (all) |
 | `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
 | `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Increase if a legitimate first-time model download needs more time. | `300` |
+| `HINDSIGHT_API_STARTUP_WAIT_SECONDS` | **Docker image only.** How long the container waits for the API to answer `/health` before it stops and restarts. Raising `HINDSIGHT_API_MODEL_INIT_TIMEOUT` above the default raises this wait too, so a slow first-time model download is not cut short; set this to override the wait on its own. | `300`, or `HINDSIGHT_API_MODEL_INIT_TIMEOUT` + 30s when that is longer |
 
 ### Retrieval
 
@@ -1394,7 +1404,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_WALL_TIMEOUT` | Wall-clock ceiling in seconds for one retain task in the worker. A retain that blocks indefinitely (lock contention, an unreachable LLM endpoint) is cancelled and marked `failed` instead of holding its worker slot until the process restarts, so it can be retried. Set well above your slowest healthy retain; `0` disables. | `3600` |
 | `HINDSIGHT_API_RETAIN_BATCH_TOKENS` | Max characters per sub-batch for async retain auto-splitting | `10000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE` | Max chunks per streaming batch when retain ingests long documents. Each chunk produces roughly 17 facts, so the default 100 chunks ≈ 1700 facts per batch. Lower to cap memory/LLM pressure on large documents; raise for smaller chunks. Configurable per bank. | `100` |
-| `HINDSIGHT_API_RETAIN_ENTITY_LOOKUP` | Entity lookup method during retain: `full` (exact match) or `trigram` (fuzzy trigram matching) | `trigram` |
+| `HINDSIGHT_API_RETAIN_ENTITY_LOOKUP` | How retain finds *candidate* existing entities for an extracted name: `trigram` probes the pg_trgm index for similar names, `full` loads every entity in the bank and keeps the ones whose name is an exact or substring match. Both then run the same scoring pass (see [How entity resolution decides](#how-entity-resolution-decides)) — so this is not only a performance choice, it changes which names can merge at all. | `trigram` |
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` | Max candidates scored per entity mention. The fuzzy lookup keeps only this many best matches per name (ranked by trigram / Jaro-Winkler similarity) before the scoring pass. On banks holding thousands of near-identical names an uncapped candidate set turns one retain into minutes of CPU, which stalls the worker's health checks; matches ranked below the first ~100 never win anyway. Raise only if entities that should merge are being duplicated. | `200` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
@@ -1426,6 +1436,76 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 ```
 
 > **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](/developer/api/memory-banks#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](/developer/retain#entity-labels) for details.
+
+#### How entity resolution decides
+
+Resolving an extracted name against the entities already in a bank happens in **two
+stages, and each stage uses a different measure of similarity**. That distinction matters
+before you tune any of the thresholds above: the number that is easiest to compute by
+hand is not the number that decides the match.
+
+**Stage 1 — which existing entities are considered.** With `trigram` (the default),
+Postgres returns entities whose lowercased canonical name is trigram-similar to the
+extracted name, gated by
+[`HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD`](#database-connection-pool) — **`0.15`**,
+which is deliberately looser than pg_trgm's own `0.3` default. At most
+`HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` survive, ranked by that
+similarity. With `full`, candidates are instead the entities whose name is an exact or
+substring match. Label entities never enter this stage; they resolve by exact match only.
+
+**Stage 2 — whether one of them is reused.** Each candidate is scored, and the best one
+is reused if it clears **`0.6`**. Otherwise a new entity is created.
+
+| Signal | Weight | What it measures |
+|--------|--------|------------------|
+| Name similarity | up to **0.5** | A character-sequence ratio between the two lowercased names (Python's `difflib.SequenceMatcher`) — **not** the trigram similarity from stage 1 |
+| Co-occurring entities | up to **0.3** | How many of the *other* entities extracted from the same fact this candidate already co-occurs with, each weighted by how selective it is |
+| Temporal proximity | up to **0.2** | How close the fact's date is to the candidate's `last_seen`, decaying linearly to zero at 7 days |
+
+Before any of that is counted, the candidate must reach
+`HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` (**`0.3`**) in trigram similarity. That floor
+exists because the two stages measure different things and can disagree, most sharply on
+short names: the sequence ratio rewards any shared run of characters, so `Tigran` and `Iran`
+score `0.80` on it — higher than `Alice`/`Alice Chen` (`0.67`), a merge the resolver exists
+to make — while trigram ranks them correctly at `0.20` and `0.55`. Without the floor, the
+remaining signals are worth `0.5` of the `0.6` needed, so a name that merely resembled an
+existing entity could be merged onto it by the bank's history alone.
+
+Two further checks run before the score. A candidate must **agree word by word**: every word of
+the shorter name has to find a counterpart in the longer one (an equal word, an abbreviation of
+one, or a near-miss spelling). Whole-name similarity otherwise lets a long shared word drown out
+a completely different short one — `John Smith` and `Jane Smith` are `0.47` by trigram and `0.80`
+by sequence ratio, so two people sharing a surname would merge. Single-word names are exempt,
+since with one word the floor above already is the word-level check. And in the other direction,
+a candidate whose trigram set is *identical* to the name's is reused outright, whatever the other
+signals say: pg_trgm builds trigrams per word, so identical sets mean the two forms differ only in
+case, punctuation or decoration (`Wren 🎵` and `Wren`, `GPT-4` and `GPT 4`).
+
+The co-occurrence weighting matters for the same reason. An entity such as `user` co-occurs
+with nearly every fact in a mature bank, so sharing it says almost nothing; each shared
+entity is discounted by how many distinct entities it co-occurs with, and a partner seen
+alongside a hundred others is worth a tenth of one seen alongside a single other.
+
+So there are three thresholds, and they answer different questions:
+
+| Threshold | Default | Question |
+|---|---|---|
+| `ENTITY_TRGM_SIMILARITY_THRESHOLD` | `0.15` | Which existing entities are even looked at? |
+| `ENTITY_MERGE_MIN_SIMILARITY` | `0.3` | Which of them may be merged onto? |
+| `ENTITY_INTRABATCH_MERGE_SIMILARITY` | `0.5` | Which brand-new names in one retain are folded together? |
+
+**If unrelated entities are merging,** raise `HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY`.
+Genuine surface variants of one name usually sit between `0.4` and `0.7`, so there is room
+above the default. For names that must never be fuzzy-matched at all, model them as
+[entity labels](/developer/retain#entity-labels), or pass them yourself with
+[`resolve_entities: false`](/developer/api/retain#resolve_entities).
+
+**If variants that should merge are staying separate,** lower
+`HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` — short names are the usual reason, since
+trigram similarity on them is unavoidably low. If lowering it changes nothing, the candidate
+is not reaching stage 2 at all: lower `HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` too,
+and check that `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` is not truncating the
+right candidate away on a bank with many similar names.
 
 #### Skip storing raw document text
 
