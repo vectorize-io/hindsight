@@ -640,25 +640,25 @@ class _ExtStreamingWriteResult:
 def attempts_delta_retain(provider, bank_id: str, is_first_batch: bool) -> bool:
     """Whether this bank may take the delta path (rewrite only the chunks that changed).
 
-    A store that owns its whole retain must NOT: it has exactly one write path,
-    ``provider.retain()``, and delta cannot be expressed as one. Retain replaces a document
-    wholesale — ``replace_document_id`` tombstones the document's prior-seq facts — whereas delta
-    rewrites a subset of chunks, which the RPC has no way to say. Writing the new facts with
-    ``Write`` and tombstoning the superseded ones separately is what the store-owned delta used to
-    do, and it is the second retain operation this gate removes: two RPCs, not atomic, and
-    bypassing the server-side entity resolution that owning the retain is for.
+    Delta runs only on the FIRST sub-batch; see the call site for why widening that breaks the
+    caller's per-slice bookkeeping.
 
-    It was also unsound. The store-owned delta write was reached only when ``mint_txn`` returned a
-    handle; once nothing minted one it fell through to the Postgres branch, which locks a
-    ``documents`` row a store-owned bank no longer has — ``current_hash`` came back None, so the
-    stale-chunk guard could never fire and delta ran with no concurrency control.
+    Beyond that the question is whether the store can SCOPE a replace to named chunks. A store whose
+    only replace is wholesale must not delta: the write would delete every chunk the delta
+    deliberately did not re-send, which is the opposite of what delta is for. That is a capability,
+    asked as one — a store-owned bank was previously excluded outright, because at the time no
+    store-owned retain could express the scope and the alternative on that path was to write with
+    the plain batch write and tombstone separately, which is neither atomic nor served by the
+    store's own entity resolution.
 
-    Delta also runs only on the FIRST sub-batch; see the call site for why widening that breaks
-    the caller's per-slice bookkeeping.
+    Asking what the store CAN do rather than what it IS keeps this from drifting: the same gate
+    written as "is this Postgres" silently stopped matching reality once a second store could do it.
     """
     if not is_first_batch:
         return False
-    return not provider.store_owned_retain_for(bank_id)
+    if provider.store_owned_retain_for(bank_id):
+        return bool(provider.supports_chunk_scoped_replace_for(bank_id))
+    return True
 
 
 def uses_separate_store_write_path(provider, bank_id: str, ext_txn) -> bool:
@@ -3343,8 +3343,10 @@ async def _try_delta_retain(
     # consolidation — test_delta_retain_orphan_observations.py covers that, and enabling delta
     # without the store-side CAS would have traded it for silent append loss, which is worse. Both
     # directions are covered by tests, so the trade was measurable rather than a matter of opinion.
-    # Only Postgres-backed banks reach here — `attempts_delta_retain` sends a store-owned bank
-    # straight to its single `provider.retain()` path — so the reads below are unconditionally SQL.
+    from ..memories import get_memories as _get_memories_delta
+
+    _delta_store = _get_memories_delta()
+    _store_owned_delta = _delta_store.store_owned_retain_for(bank_id)
 
     # Need a single document_id
     effective_doc_id = document_id
@@ -3358,27 +3360,52 @@ async def _try_delta_retain(
     # outside the write TXN, so a concurrent retain could modify the document
     # between this read and the write. The write TXN verifies the hash hasn't
     # changed; if it has, we fall back to streaming (which has full protection).
-    async with acquire_with_retry(pool) as conn:
-        if document_body_override is not None:
-            doc_row_at_load = await conn.fetchrow(
-                f"SELECT content_hash, original_text FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                effective_doc_id,
-                bank_id,
+    if _store_owned_delta:
+        # The same two reads, asked of the store that actually holds them. A chunk_id is
+        # `{bank_id}_{document_id}_{index}` by construction, so the records carry no separate id,
+        # and the hash is recomputed with the same function that wrote it — the comparison below
+        # is against like. ONE record read, not two: it carries the content hash, the text when
+        # asked for it, and the watermark a write compare-and-sets against. The watermark is not
+        # read out here because nothing consumes it yet — but take it from THIS record, not a
+        # second read: un-pairing it from the hash is what the CAS is there to prevent.
+        record = await _delta_store.get_document_record(
+            bank_id=bank_id,
+            document_id=effective_doc_id,
+            include_text=document_body_override is not None,
+        )
+        doc_hash_at_load = (record or {}).get("content_hash")
+        original_text_at_load = (record or {}).get("original_text") if document_body_override is not None else None
+        _texts = await _delta_store.list_chunk_texts(bank_id=bank_id, document_id=effective_doc_id) or []
+        existing_chunks = [
+            chunk_storage.ExistingChunk(
+                chunk_id=f"{bank_id}_{effective_doc_id}_{index}",
+                chunk_index=index,
+                content_hash=chunk_storage.compute_chunk_hash(text),
             )
-            doc_hash_at_load = doc_row_at_load["content_hash"] if doc_row_at_load else None
-            original_text_at_load = doc_row_at_load["original_text"] if doc_row_at_load else None
-        else:
-            doc_hash_at_load = await conn.fetchval(
-                f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                effective_doc_id,
-                bank_id,
-            )
-            original_text_at_load = None
+            for index, text in enumerate(_texts)
+        ]
+    else:
+        async with acquire_with_retry(pool) as conn:
+            if document_body_override is not None:
+                doc_row_at_load = await conn.fetchrow(
+                    f"SELECT content_hash, original_text FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                    effective_doc_id,
+                    bank_id,
+                )
+                doc_hash_at_load = doc_row_at_load["content_hash"] if doc_row_at_load else None
+                original_text_at_load = doc_row_at_load["original_text"] if doc_row_at_load else None
+            else:
+                doc_hash_at_load = await conn.fetchval(
+                    f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                    effective_doc_id,
+                    bank_id,
+                )
+                original_text_at_load = None
 
-        # Load chunks after the document version. If a concurrent writer commits
-        # between these reads, the hash precondition on metadata-only writes (or
-        # the extraction freshness recheck below) forces a streaming fallback.
-        existing_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
+            # Load chunks after the document version. If a concurrent writer commits
+            # between these reads, the hash precondition on metadata-only writes (or
+            # the extraction freshness recheck below) forces a streaming fallback.
+            existing_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
 
     # For an append, the document this delta plans against must still be the one
     # whose text the append concatenated onto. Every write below is gated on
@@ -3612,6 +3639,33 @@ async def _try_delta_retain(
         phase1 = await _pre_resolve_phase1(
             pool, entity_resolver, bank_id, delta_contents, processed_facts, config, log_buffer
         )
+
+        # A store-owned bank reaches PHASE 2 only while its delta WRITE is still to be built. The
+        # reads above already speak to the store, and `attempts_delta_retain` lets it through on the
+        # strength of `supports_chunk_scoped_replace_for`; what is missing is the write, which is one
+        # `provider.retain(...)` carrying the same memories plus the scope of the replace:
+        #
+        #     replace_document_id = effective_doc_id
+        #     replace_chunk_ids   = [the chunks that CHANGED] + [the chunks REMOVED]
+        #
+        # and a compare-and-set on the document's watermark, taken from the SAME `get_document_record`
+        # above as the content hash — reading it separately re-opens the race the pairing closes.
+        #
+        # (or `replace_keep_chunk_ids` with the survivors, when that side is smaller — a store may
+        # cap how many values a scope can name.) A removed chunk has no replacement upsert to
+        # supersede it, so naming it is the only thing that takes it out.
+        #
+        # Until that exists, PHASE 2 below is the Postgres write, and it must not run for a
+        # store-owned bank: it locks a `documents` row such a bank does not have, so `current_hash`
+        # comes back None, the stale-chunk guard never fires, and the delta would run with no
+        # concurrency control at all. Fall back to the streaming path, which is correct today.
+        if _store_owned_delta:
+            log_buffer.append(
+                f"[delta] {effective_doc_id}: store-owned delta write not implemented yet — "
+                f"falling back to the full streaming retain"
+            )
+            logger.info("\n" + "\n".join(log_buffer) + "\n")
+            return False
 
         # PHASE 2 — Core Write Transaction (atomic)
         # Lock the document row and verify ownership. Delta loaded existing

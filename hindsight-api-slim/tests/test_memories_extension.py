@@ -120,6 +120,8 @@ class InMemoryMemories(MemoriesExtension):
         document_id=None,
         unit_entity_names=None,
         replace_document_id="",
+        replace_chunk_ids=None,
+        replace_keep_chunk_ids=None,
         resolve_threshold=0.0,
     ):
         self.calls.append("retain")
@@ -1528,6 +1530,38 @@ def test_a_store_owned_bank_takes_the_separate_store_path_without_a_write_group(
     assert uses_separate_store_write_path(plain, "any-bank", None) is False
 
 
+def test_delta_is_gated_on_the_capability_not_on_being_store_owned():
+    """A store-owned bank may delta once it can SCOPE a replace to named chunks, and not before.
+
+    The two are separate questions, and conflating them has failed in both directions here: a store
+    can own its whole retain and still only replace a document wholesale, in which case a delta
+    would delete every chunk it deliberately did not re-send. Asking what the store CAN do is what
+    keeps the gate matching reality — the same routing decision written as "is it store-owned"
+    stopped being true the moment a store-owned retain could express the scope.
+    """
+    from hindsight_api.engine.retain.orchestrator import attempts_delta_retain
+
+    class ScopedReplace(InMemoryMemories):
+        name = "store-owned-scoped"
+        store_owned_retain = True
+        supports_chunk_scoped_replace = True
+
+    class WholesaleOnly(InMemoryMemories):
+        name = "store-owned-wholesale"
+        store_owned_retain = True
+        # supports_chunk_scoped_replace stays False: its only replace is the whole document.
+
+    assert attempts_delta_retain(ScopedReplace({}), "b", True) is True
+    assert attempts_delta_retain(WholesaleOnly({}), "b", True) is False, (
+        "a store that cannot scope a replace must not delta — it would delete the chunks the delta was preserving"
+    )
+    # Postgres is unaffected either way, and delta still runs only on the first sub-batch.
+    plain = InMemoryMemories({})
+    assert attempts_delta_retain(plain, "b", True) is True
+    assert attempts_delta_retain(plain, "b", False) is False
+    assert attempts_delta_retain(ScopedReplace({}), "b", False) is False
+
+
 def test_a_store_owned_bank_never_takes_the_delta_path():
     """A store-owned bank has exactly ONE retain write path, `provider.retain()`.
 
@@ -1541,6 +1575,7 @@ def test_a_store_owned_bank_never_takes_the_delta_path():
     class StoreOwned(InMemoryMemories):
         name = "store-owned-delta"
         store_owned_retain = True
+        # No chunk-scoped replace: wholesale is all it can say.
 
     assert attempts_delta_retain(StoreOwned({}), "sob-bank", True) is False
 
