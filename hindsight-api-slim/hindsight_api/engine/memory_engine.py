@@ -7920,12 +7920,32 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
                 if phases:
                     accounted = sum(d for _, d in phases)
-                    slowest = sorted(phases, key=lambda kv: -kv[1])[:4]
+                    # EVERY phase, not the slowest four. The truncation made the line read as if
+                    # the remainder were unmeasured: a recall whose four biggest phases summed to
+                    # 134ms of 237ms looked like it had 103ms nobody had instrumented, and the
+                    # obvious next move -- go add timers to hydration and entity build -- was
+                    # wasted work, because `hydrate_results` and `entity_build` were already
+                    # recording metrics that this line was throwing away. Descending, so the top of
+                    # the list is still where to look first.
+                    ordered = sorted(phases, key=lambda kv: -kv[1])
                     log_buffer.append(
                         "  [phases] "
-                        + ", ".join(f"{n}={d * 1000:.0f}ms" for n, d in slowest)
+                        + ", ".join(f"{n}={d * 1000:.0f}ms" for n, d in ordered)
                         + f" | accounted={accounted * 1000:.0f}ms of {total_time * 1000:.0f}ms"
                     )
+                    # Diagnostics are excluded from the sum above because they are subsets, but
+                    # they are the most useful numbers in the line (store_recall is the store's
+                    # share of parallel_retrieval), so print them on their own, clearly labelled.
+                    diags = [
+                        (m.phase_name, m.duration_seconds)
+                        for m in getattr(tracer, "phase_metrics", []) or []
+                        if (m.details or {}).get("diagnostic")
+                    ]
+                    if diags:
+                        log_buffer.append(
+                            "  [phases:subsets] "
+                            + ", ".join(f"{n}={d * 1000:.0f}ms" for n, d in sorted(diags, key=lambda kv: -kv[1]))
+                        )
             log_buffer.append(
                 f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
             )
