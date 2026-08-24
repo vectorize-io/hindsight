@@ -160,6 +160,9 @@ def _make_llm_config(mock_response):
 
     llm = MagicMock(spec=LLMProvider)
     llm.provider = "mock"
+    # Set explicitly: ``model`` is an instance attribute, so ``spec=LLMProvider``
+    # does not provide it, and the extraction error paths name the model.
+    llm.model = "mock-model"
     token_usage = MagicMock()
     token_usage.__add__ = lambda self, other: self
     llm.call = AsyncMock(return_value=(mock_response, token_usage))
@@ -249,15 +252,14 @@ async def test_top_level_fact_list_is_accepted_without_retry():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("fact_fields", "expected_count", "expected_text"),
+    ("fact_fields", "expected_text"),
     [
-        ({"text": "Alice visited Paris"}, 1, "Alice visited Paris"),
-        ({"what": "Alice visited Paris"}, 1, "Alice visited Paris"),
-        ({}, 0, None),
+        ({"text": "Alice visited Paris"}, "Alice visited Paris"),
+        ({"what": "Alice visited Paris"}, "Alice visited Paris"),
     ],
 )
-async def test_fact_text_alias_is_recovered_without_accepting_empty_facts(fact_fields, expected_count, expected_text):
-    """Recover schema-drifted ``text`` facts while still skipping empty facts."""
+async def test_fact_text_alias_is_recovered(fact_fields, expected_text):
+    """Recover schema-drifted ``text`` facts (the empty case is #3708 below)."""
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
 
     config = _make_config(llm_max_retries=0, retain_llm_max_retries=None)
@@ -286,9 +288,173 @@ async def test_fact_text_alias_is_recovered_without_accepting_empty_facts(fact_f
             agent_name="test-agent",
         )
 
-    assert len(facts) == expected_count
-    if expected_text:
-        assert expected_text in facts[0].fact
+    assert len(facts) == 1
+    assert expected_text in facts[0].fact
+
+
+def _drifted_fact(index: int) -> dict:
+    """A well-formed JSON fact object that carries none of the text keys (#3708)."""
+    return {"when": f"202{index}", "who": "Alice", "why": "vacation", "fact_type": "world"}
+
+
+@pytest.mark.asyncio
+async def test_schema_drifted_facts_are_retried_then_raise():
+    """Issue #3708.
+
+    A model without strict-schema support can return well-formed JSON whose fact
+    objects have the wrong shape (no 'what'/'factual_core'/'text'). Every fact is
+    then dropped. That must (a) count as malformed so the re-prompt loop runs, and
+    (b) raise once the retries are exhausted rather than returning [] — otherwise
+    the retain commits the document with 0 memory units and reports `completed`.
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=2, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={"facts": [_drifted_fact(3), _drifted_fact(4)]})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        with pytest.raises(RuntimeError, match="all 2 facts returned by the LLM were unusable"):
+            await _extract_facts_from_chunk(
+                chunk="Alice visited Paris in 2023.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="travel notes",
+                llm_config=llm_config,
+                config=config,
+                agent_name="test-agent",
+            )
+
+    # Budget 2 => the initial request plus 2 re-prompts.
+    assert llm_config.call.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_schema_drifted_facts_do_not_discard_the_usable_ones():
+    """A partially drifted response keeps its valid facts and does not raise."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=0, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(
+        mock_response={
+            "facts": [
+                {"what": "Alice visited Paris", "when": "2023", "fact_type": "world"},
+                _drifted_fact(4),
+            ]
+        }
+    )
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="travel notes",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert "Alice visited Paris" in facts[0].fact
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("placeholder", ["", "N/A", None])
+async def test_placeholder_what_is_skipped_without_retry_or_raise(placeholder):
+    """A *present* but empty/"N/A" 'what' is the model saying "nothing here".
+
+    That is schema-conformant, so it must stay a quiet skip: no re-prompt (which
+    could not improve it) and no failure (#3708 must not turn "no facts in this
+    content" into a hard error).
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=3, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={"facts": [{"what": placeholder, "fact_type": "world"}]})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="ok thanks",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert facts == []
+    assert llm_config.call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_facts_list_is_not_treated_as_schema_drift():
+    """``{"facts": []}`` is a valid "nothing to extract" answer, not a failure."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=3, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="ok thanks",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert facts == []
+    assert llm_config.call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_verbatim_mode_tolerates_facts_without_what():
+    """In verbatim mode 'what' is intentionally absent — text is backfilled from
+    the chunk later, so those facts must not be counted as schema drift."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = dataclasses.replace(
+        _make_config(llm_max_retries=3, retain_llm_max_retries=None),
+        retain_extraction_mode="verbatim",
+    )
+    llm_config = _make_llm_config(mock_response={"facts": [{"fact_type": "world", "entities": ["Alice"]}]})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="travel notes",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert llm_config.call.call_count == 1
 
 
 @pytest.mark.asyncio

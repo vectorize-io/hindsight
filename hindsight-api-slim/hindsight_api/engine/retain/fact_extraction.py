@@ -1492,6 +1492,17 @@ async def _extract_facts_from_chunk(
                     # In verbatim mode, 'what' is intentionally absent — text is backfilled from chunk
                     if extraction_mode != "verbatim":
                         logger.warning(f"Skipping fact {i}: missing 'what' field")
+                        # Count it as malformed so the re-prompt below covers this case too.
+                        # A model that emits well-formed JSON with the wrong field shape (no
+                        # schema enforcement, e.g. JSON-mode-only models) otherwise drops every
+                        # fact on the first attempt and returns [] without ever retrying, and
+                        # the retain still completes — silent data loss (#3708).
+                        #
+                        # Only *absent* text keys count. A key that is present but empty or
+                        # "N/A" is the model saying "nothing to extract here", which re-prompting
+                        # cannot improve — skip it as quietly as before.
+                        if not any(key in llm_fact for key in ("what", "factual_core", "text")):
+                            has_malformed_facts = True
                         continue
 
                 # Critical field: fact_type — "assistant" maps to "experience", everything else is "world".
@@ -1660,6 +1671,22 @@ async def _extract_facts_from_chunk(
                     f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{outer_attempts}. Retrying..."
                 )
                 continue
+
+            # Every fact the model returned was unusable, on every attempt. Raise
+            # instead of returning [] so the failure reaches the worker's retry
+            # machinery and ultimately fails the operation loudly — the same rule the
+            # non-dict response above follows (#1833). Without this the retain commits
+            # a document with 0 memory units and reports `completed`, so callers cannot
+            # tell schema-drifted extraction from content that genuinely held no facts
+            # (#3708). A model that legitimately returns `"facts": []` never lands here:
+            # nothing was dropped, so has_malformed_facts stays False.
+            if has_malformed_facts and not chunk_facts:
+                raise RuntimeError(
+                    f"Fact extraction failed: all {len(raw_facts)} facts returned by the LLM were "
+                    f"unusable after {outer_attempts} attempts (wrong shape or missing required fields). "
+                    f"Model '{llm_config.model}' may not honour the extraction schema — consider enabling "
+                    f"HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN or using a model with strict schema support."
+                )
 
             return chunk_facts, usage
 
@@ -2314,6 +2341,16 @@ async def extract_facts_from_contents_batch_api(
             if not what:
                 what = get_value("text")
             if not what:
+                # Same schema-drift signal as the streaming path (#3708): a fact object
+                # carrying none of the text keys means the model ignored the schema.
+                # The batch API cannot re-prompt a single request, so record it on the
+                # operation instead — that is what extraction_errors is for, and
+                # HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS can escalate it to a failure.
+                # A key that is present but empty/"N/A" stays a quiet skip.
+                if not any(key in llm_fact for key in ("what", "factual_core", "text")):
+                    message = f"{custom_id}: fact {i} has no 'what'/'factual_core'/'text' field"
+                    logger.warning(message)
+                    extraction_errors.add(message)
                 continue
 
             when = get_value("when")
