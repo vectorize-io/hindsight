@@ -1,10 +1,16 @@
-"""Tests for consolidation retry budget configurability (issue #1042)."""
+"""Tests for consolidation retry budget configurability (issue #1042) and
+failure classification (issue #3684)."""
 
-from unittest.mock import AsyncMock, MagicMock
+import json
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from hindsight_api.engine.consolidation.consolidator import _consolidate_batch_with_llm
+from hindsight_api.engine.llm_interface import OutputTooLongError, ProviderRateLimitResetError
+from hindsight_api.engine.providers.openai_compatible_llm import ProviderResponseError
 
 
 @pytest.fixture
@@ -16,6 +22,16 @@ def mock_llm_config():
     response.deletes = []
     llm.call.return_value = response
     return llm
+
+
+@pytest.fixture(autouse=True)
+def no_real_sleep():
+    """Neutralise the outer retry backoff (#3684) so these unit tests stay fast."""
+    with patch(
+        "hindsight_api.engine.consolidation.consolidator.asyncio.sleep",
+        new_callable=AsyncMock,
+    ) as sleep:
+        yield sleep
 
 
 @pytest.fixture
@@ -170,3 +186,148 @@ class TestConsolidationRetryBudget:
         assert mock_llm_config.call.call_count == 2
         for call_args in mock_llm_config.call.call_args_list:
             assert call_args.kwargs.get("max_retries") == 2
+
+
+class _AuthError(Exception):
+    """Stand-in for a provider SDK's 401/403, which the classifier duck-types."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+
+
+def _validation_error() -> ValidationError:
+    """A real pydantic ValidationError, as ``response_format.model_validate`` raises."""
+
+    class _Shape(BaseModel):
+        n: int
+
+    try:
+        _Shape.model_validate({"n": "not-an-int"})
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("expected a ValidationError")
+
+
+class TestConsolidationFailureClassification:
+    """Issue #3684: the outer batch ladder must not retry what a re-send cannot fix.
+
+    The loop rebuilds a byte-identical payload every attempt, on top of the
+    provider's own ladder, so retrying an input-shaped failure multiplies cost for
+    nothing — and retrying a *control signal* loses it entirely.
+    """
+
+    async def _run(self, llm, config):
+        return await _consolidate_batch_with_llm(
+            llm_config=llm,
+            memories=[{"id": "m1", "text": "test"}],
+            union_observations=[],
+            union_source_facts={},
+            config=config,
+        )
+
+    @pytest.mark.asyncio
+    async def test_quota_defer_propagates_instead_of_failing_the_batch(self, mock_llm_config, mock_config):
+        """ProviderRateLimitResetError is a defer signal, not a batch failure.
+
+        Swallowing it meant the batch was reported failed, the caller bisected it
+        into sub-batches that each re-hit the same quota wall, and every memory was
+        stamped consolidation_failed_at — permanently excluding facts from
+        consolidation because quota was briefly exhausted.
+        """
+        retry_at = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        mock_llm_config.call.side_effect = ProviderRateLimitResetError(retry_at=retry_at, message="quota")
+
+        with pytest.raises(ProviderRateLimitResetError) as excinfo:
+            await self._run(mock_llm_config, mock_config)
+
+        assert excinfo.value.retry_at == retry_at
+        assert mock_llm_config.call.call_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [401, 403])
+    async def test_auth_error_propagates(self, mock_llm_config, mock_config, status_code):
+        """A bad key is a server misconfiguration, not a property of these memories."""
+        mock_llm_config.call.side_effect = _AuthError(status_code)
+
+        with pytest.raises(_AuthError):
+            await self._run(mock_llm_config, mock_config)
+
+        assert mock_llm_config.call.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_json_decode_error_is_not_re_sent(self, mock_llm_config, mock_config):
+        """The provider already burned its own ladder on this; re-sending adds nothing.
+
+        Still reported failed, so the caller's adaptive bisection — which *does*
+        vary the input — gets its chance.
+        """
+        mock_llm_config.call.side_effect = json.JSONDecodeError("Expecting ',' delimiter", "{}", 1)
+
+        result = await self._run(mock_llm_config, mock_config)
+
+        assert result.failed
+        assert mock_llm_config.call.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_validation_error_is_not_re_sent(self, mock_llm_config, mock_config):
+        """Schema-invalid output is input-shaped: the same prompt yields the same shape."""
+        mock_llm_config.call.side_effect = _validation_error()
+
+        result = await self._run(mock_llm_config, mock_config)
+
+        assert result.failed
+        assert mock_llm_config.call.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_output_too_long_is_not_re_sent(self, mock_llm_config, mock_config):
+        """Bisection shortens the output; an identical re-send cannot."""
+        mock_llm_config.call.side_effect = OutputTooLongError("too long")
+
+        result = await self._run(mock_llm_config, mock_config)
+
+        assert result.failed
+        assert mock_llm_config.call.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_provider_flagged_non_retryable_is_not_re_sent(self, mock_llm_config, mock_config):
+        """A provider that already decided the failure is permanent is believed."""
+        mock_llm_config.call.side_effect = ProviderResponseError("empty body", retryable=False)
+
+        result = await self._run(mock_llm_config, mock_config)
+
+        assert result.failed
+        assert mock_llm_config.call.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_transport_error_still_retries(self, mock_llm_config, mock_config):
+        """Transport-shaped failures keep the full outer budget — this is the case it exists for."""
+        mock_config.consolidation_max_attempts = 3
+        mock_llm_config.call.side_effect = ConnectionResetError("connection reset")
+
+        result = await self._run(mock_llm_config, mock_config)
+
+        assert result.failed
+        assert mock_llm_config.call.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_outer_loop_backs_off_between_retries(self, mock_llm_config, mock_config, no_real_sleep):
+        """Without backoff a rate limit was re-sent immediately, three times."""
+        mock_config.consolidation_max_attempts = 3
+        mock_llm_config.call.side_effect = ConnectionResetError("connection reset")
+
+        await self._run(mock_llm_config, mock_config)
+
+        # One sleep between attempts, none after the last, and growing.
+        delays = [call.args[0] for call in no_real_sleep.await_args_list]
+        assert len(delays) == 2
+        assert delays[0] < delays[1]
+
+    @pytest.mark.asyncio
+    async def test_no_backoff_when_failing_fast(self, mock_llm_config, mock_config, no_real_sleep):
+        """A fail-fast class must not pay the backoff it is skipping the retry for."""
+        mock_llm_config.call.side_effect = json.JSONDecodeError("bad", "{}", 1)
+
+        await self._run(mock_llm_config, mock_config)
+
+        assert no_real_sleep.await_count == 0
