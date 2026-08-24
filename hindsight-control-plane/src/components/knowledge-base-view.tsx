@@ -8,6 +8,8 @@ import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { createTagsMatch, includesUntagged, updateTagsMatch } from "@/lib/page-tag-scope";
 import {
   Dialog,
   DialogContent,
@@ -71,6 +73,59 @@ function flatten(nodes: KnowledgeNode[], out: KnowledgeNode[] = []): KnowledgeNo
   return out;
 }
 
+/**
+ * The tags field for a page, plus the scoping control that keeps it from
+ * silently emptying the page.
+ *
+ * A page's tags are not labels: they are the scope it is synthesized from, and
+ * a tagged page matches memories with `all_strict` by default — a memory must
+ * carry EVERY tag, and untagged memories are excluded outright. Tags typed here
+ * to describe a topic ("homelab", "type:runbook") therefore match nothing
+ * unless the bank's memories were retained with those exact tags, and the page
+ * generates as "I don't have information about this" while a plain recall for
+ * the same question returns plenty (#3687). The checkbox is the escape hatch,
+ * and it only appears once there is a filter for it to widen.
+ */
+function TagScopeFields({
+  tags,
+  includeUntagged,
+  onChange,
+  t,
+}: {
+  tags: string;
+  includeUntagged: boolean;
+  onChange: (patch: { tags?: string; includeUntagged?: boolean }) => void;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const hasTags = tags.trim().length > 0;
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium text-foreground">{t("fieldTags")}</label>
+      <Input
+        value={tags}
+        onChange={(e) => onChange({ tags: e.target.value })}
+        placeholder={t("fieldTagsPlaceholder")}
+      />
+      <p className="text-xs text-muted-foreground">{t("fieldTagsHint")}</p>
+      {hasTags && (
+        <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
+          <label className="flex items-start gap-2 cursor-pointer">
+            <Checkbox
+              className="mt-0.5"
+              checked={includeUntagged}
+              onCheckedChange={(c) => onChange({ includeUntagged: c as boolean })}
+            />
+            <span className="text-sm">{t("fieldIncludeUntagged")}</span>
+          </label>
+          <p className="text-xs text-muted-foreground">
+            {includeUntagged ? t("fieldIncludeUntaggedOn") : t("fieldIncludeUntaggedOff")}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function KnowledgeBaseView() {
   const t = useTranslations("knowledgeBase");
   const { currentBank } = useBank();
@@ -110,14 +165,31 @@ export function KnowledgeBaseView() {
   const autoSelectedRef = useRef(false);
 
   const [createKind, setCreateKind] = useState<"folder" | "page" | null>(null);
-  const [form, setForm] = useState({ name: "", sourceQuery: "", parentId: "", tags: "" });
+  const [form, setForm] = useState({
+    name: "",
+    sourceQuery: "",
+    parentId: "",
+    tags: "",
+    includeUntagged: false,
+  });
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeNode | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   // Editing the open page's options (name / source query / tags).
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: "", sourceQuery: "", tags: "" });
+  const [editForm, setEditForm] = useState({
+    name: "",
+    sourceQuery: "",
+    tags: "",
+    includeUntagged: false,
+  });
+  // What the open page's tag matching resolved to when the edit dialog opened.
+  // The PATCH only carries `tags_match` when the user actually moved the
+  // checkbox: a page set to a mode this two-state control cannot express
+  // ("any", "any_strict", "exact") must not be rewritten to "all_strict"
+  // just because someone renamed it.
+  const [initialIncludeUntagged, setInitialIncludeUntagged] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
   // `silent` skips the loading spinner so the background auto-refresh poll
@@ -326,7 +398,7 @@ export function KnowledgeBaseView() {
   }, []);
 
   const openCreate = (kind: "folder" | "page", parentId = "") => {
-    setForm({ name: "", sourceQuery: "", parentId, tags: "" });
+    setForm({ name: "", sourceQuery: "", parentId, tags: "", includeUntagged: false });
     setCreateKind(kind);
   };
 
@@ -346,11 +418,15 @@ export function KnowledgeBaseView() {
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean);
+        const tagsMatch = createTagsMatch(tags, form.includeUntagged);
         await client.createKnowledgePage(currentBank, {
           name: form.name.trim(),
           source_query: form.sourceQuery.trim(),
           parent_id,
           tags: tags.length ? tags : undefined,
+          // Sent as a trigger patch, so the page keeps the rest of its
+          // knowledge-page defaults (delta, observations-only).
+          trigger: tagsMatch ? { tags_match: tagsMatch } : undefined,
         });
       }
       if (parent_id) setExpanded((prev) => new Set(prev).add(parent_id));
@@ -368,13 +444,17 @@ export function KnowledgeBaseView() {
     // Pre-fill tags from the tree node's RAW tags (which keep the `type:` tag),
     // not selected.tags — the page projection strips `type:` for display, and
     // editing from that would silently drop it on save.
-    const rawTags = allNodes.find((n) => n.id === selected.id)?.tags ?? selected.tags ?? [];
+    const node = allNodes.find((n) => n.id === selected.id);
+    const rawTags = node?.tags ?? selected.tags ?? [];
+    const includeUntagged = includesUntagged(node?.trigger?.tags_match);
     setEditForm({
       name: selected.name,
       // `description` carries the page's source query (the question that rebuilds it).
       sourceQuery: selected.description ?? "",
       tags: rawTags.join(", "),
+      includeUntagged,
     });
+    setInitialIncludeUntagged(includeUntagged);
     setEditing(true);
   };
 
@@ -386,10 +466,12 @@ export function KnowledgeBaseView() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+      const tagsMatch = updateTagsMatch(tags, editForm.includeUntagged, initialIncludeUntagged);
       await client.updateKnowledgeNode(currentBank, selected.id, {
         name: editForm.name.trim(),
         source_query: editForm.sourceQuery.trim(),
         tags,
+        trigger: tagsMatch ? { tags_match: tagsMatch } : undefined,
       });
       setEditing(false);
       await loadTree();
@@ -657,15 +739,12 @@ export function KnowledgeBaseView() {
                     className="min-h-[100px]"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">{t("fieldTags")}</label>
-                  <Input
-                    value={form.tags}
-                    onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                    placeholder={t("fieldTagsPlaceholder")}
-                  />
-                  <p className="text-xs text-muted-foreground">{t("fieldTagsHint")}</p>
-                </div>
+                <TagScopeFields
+                  tags={form.tags}
+                  includeUntagged={form.includeUntagged}
+                  onChange={(patch) => setForm({ ...form, ...patch })}
+                  t={t}
+                />
               </>
             )}
             <div className="space-y-2">
@@ -729,15 +808,12 @@ export function KnowledgeBaseView() {
               />
               <p className="text-xs text-muted-foreground">{t("editSourceQueryHint")}</p>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">{t("fieldTags")}</label>
-              <Input
-                value={editForm.tags}
-                onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
-                placeholder={t("fieldTagsPlaceholder")}
-              />
-              <p className="text-xs text-muted-foreground">{t("fieldTagsHint")}</p>
-            </div>
+            <TagScopeFields
+              tags={editForm.tags}
+              includeUntagged={editForm.includeUntagged}
+              onChange={(patch) => setEditForm({ ...editForm, ...patch })}
+              t={t}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(false)} disabled={savingEdit}>
