@@ -1224,14 +1224,17 @@ class TestRetainCompletedWebhook:
         monkeypatch.setattr(engine_module, "get_config", lambda: narrowed)
 
         counts: list[int] = []
-        real_split = engine_module._split_contents_into_sub_batches
+        real_iter = engine_module.iter_sub_batches
 
         def _spy(*args, **kwargs):
-            split = real_split(*args, **kwargs)
-            counts.append(len(split.sub_batches))
-            return split
+            # Counting means draining, and the retain loop consumes this lazily on purpose,
+            # so the spy re-yields from a list instead of returning the generator. Only the
+            # test pays for materialising it.
+            collected = list(real_iter(*args, **kwargs))
+            counts.append(len(collected))
+            return iter(collected)
 
-        monkeypatch.setattr(engine_module, "_split_contents_into_sub_batches", _spy)
+        monkeypatch.setattr(engine_module, "iter_sub_batches", _spy)
         return counts
 
     @pytest.mark.asyncio

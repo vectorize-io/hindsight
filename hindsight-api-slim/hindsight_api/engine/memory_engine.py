@@ -721,36 +721,27 @@ def _is_oracledb_integrity_error(e: Exception) -> bool:
 
 
 @dataclass
-class _SubBatchSplit:
-    """Result of packing retain contents into sub-batches.
+class _SubBatch:
+    """One sub-batch, and everything the retain loop needs to run it.
 
-    ``sub_batches[i]`` is a list of RetainContentDict items that should
-    be processed together. ``origin_indices[i]`` lists the indices into
-    the original ``contents`` list that contributed items to
-    ``sub_batches[i]``; callers that present per-input results to the
-    user (such as ``retain_batch_async``) use this mapping to merge
-    results belonging to the same original content back together when
-    an oversized item was chunked across multiple sub-batches.
+    Carrying a sub-batch's parts together is what lets the splitter yield them. The shape
+    this replaces was parallel lists — contents, origins, body overrides, chunk counts —
+    read by a shared index, and a caller reading ``sub_batches[i]`` alongside
+    ``chunk_counts[i]`` needs every list materialised. A caller reading ``sub.contents``
+    and ``sub.chunk_count`` needs only the sub-batch it is holding.
 
-    ``document_body_overrides[i]`` is the full original body of the
-    oversized item that produced ``sub_batches[i]``, or ``None`` when
-    the sub-batch was not produced by chunking an oversized item. The
-    orchestrator uses this as the ``documents.original_text`` payload
-    so that slicing an item across sub-batches does not persist a
-    partial body (see issue #1838).
-
-    ``chunk_counts[i]`` is how many native chunks ``sub_batches[i]``
-    holds. The splitter knows this exactly (it cut on native chunk
-    boundaries), so callers must read it from here rather than
-    re-deriving it: the orchestrator consumes each item's ``content``
-    while streaming, and re-chunking afterwards silently yields 1
-    (see issue #1888).
+    ``is_last`` is resolved by the producer, which looks one sub-batch ahead. The retain
+    loop cannot derive it — there is no length to compare against any more — and it must
+    know, because the transactional-outbox callback fires inside the last sub-batch's
+    transaction and nowhere else (see ``tests/test_webhooks.py``).
     """
 
-    sub_batches: list[list[RetainContentDict]]
-    origin_indices: list[list[int]]
-    document_body_overrides: list[str | None] = field(default_factory=list)
-    chunk_counts: list[int] = field(default_factory=list)
+    contents: list[RetainContentDict]
+    origins: list[int]
+    document_body: "ScreenedDocumentBody | None"
+    chunk_count: int
+    index: int  # 1-based, for logging and the is-first-batch decision
+    is_last: bool
 
 
 @dataclass
@@ -878,105 +869,102 @@ class ScreenedDocumentBody:
     content_hash: str
 
 
-def _screen_document_body_overrides(
-    overrides: list[str | None],
-    config: HindsightConfig,
-) -> list[ScreenedDocumentBody | None]:
-    """Memory Defense screen and content-hash each distinct document body override once.
+def _screen_document_body(body: str, config: HindsightConfig) -> ScreenedDocumentBody:
+    """Memory Defense screen one document body and hash what screening produced.
 
-    The splitter hands every slice of an oversized item the same body, so
-    screening it inside the retain path would rescan the whole document once
-    per sub-batch (issue #3282). Screen here instead — the orchestrator takes
-    an override as already screened (see ``redact_document_body``) and already
-    hashed (see ``ScreenedDocumentBody``).
+    The hash is of the REDACTED text, because that is what gets written — a hash taken
+    before redaction would describe a document that was never stored, and every ownership
+    check against it would miss. Callers cache by body; this does no caching of its own.
     """
     from .retain.fact_extraction import _sanitize_text
     from .retain.orchestrator import redact_document_body
 
-    screened: dict[str, ScreenedDocumentBody] = {}
-    result: list[ScreenedDocumentBody | None] = []
-    for body in overrides:
-        if body is None:
-            result.append(None)
-            continue
-        if body not in screened:
-            redacted = redact_document_body(body, config)
-            sanitized = _sanitize_text(redacted) or ""
-            screened[body] = ScreenedDocumentBody(
-                text=redacted,
-                content_hash=hashlib.sha256(sanitized.encode()).hexdigest(),
-            )
-        result.append(screened[body])
-    return result
+    redacted = redact_document_body(body, config)
+    sanitized = _sanitize_text(redacted) or ""
+    return ScreenedDocumentBody(text=redacted, content_hash=_sha256_windowed(sanitized))
 
 
-def _split_contents_into_sub_batches(
+# How much text is encoded to bytes at a time when hashing a document body. Slicing a str
+# by character index never splits a character, so the concatenated windows are byte-identical
+# to encoding the whole string — this only changes how much of it exists at once.
+_HASH_WINDOW_CHARS = 1024 * 1024
+
+
+def _sha256_windowed(text: str) -> str:
+    """``sha256`` of ``text``'s UTF-8 bytes, without materialising them all.
+
+    ``text.encode()`` on a document body allocates a second full copy of it purely to feed
+    the hash — 45 MB for a 45 MB document, the last allocation in the retain front half that
+    still scaled with the input (#3756). Feeding the digest a megabyte at a time gives the
+    same hex digest at a bounded cost.
+    """
+    digest = hashlib.sha256()
+    for start in range(0, len(text), _HASH_WINDOW_CHARS):
+        digest.update(text[start : start + _HASH_WINDOW_CHARS].encode())
+    return digest.hexdigest()
+
+
+@dataclass
+class _RawSubBatch:
+    """A sub-batch as the splitter produces it, before the body is screened.
+
+    Separate from :class:`_SubBatch` because screening needs a resolved config, which the
+    pure splitting logic has no business knowing about, and because ``is_last`` is decided
+    a layer up by lookahead.
+    """
+
+    contents: list[RetainContentDict]
+    origins: list[int]
+    body_override: str | None
+    chunk_count: int
+
+
+def _iter_raw_sub_batches(
     contents: list[RetainContentDict],
     tokens_per_batch: int,
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
-) -> _SubBatchSplit:
-    """Pack retain contents into sub-batches whose combined token count
-    stays at or below ``tokens_per_batch``.
+) -> Iterator[_RawSubBatch]:
+    """Stream the sub-batches of ``contents`` — see ``_split_contents_into_sub_batches``.
 
-    Any single item that already exceeds the budget is cut into slices, because
-    passing it through as one ``1/1`` sub-batch contradicts the splitter's log
-    and OOMs the orchestrator under realistic memory limits (see issue #1571).
+    Yields rather than collects so a large submission's slices never exist all at once.
+    The slices ARE the document, cut up: for a 45 MB body they measure 45.5 MB, held for
+    the whole retain on top of the submitted body itself. Streaming them takes that to
+    ~0.1 MB and the front half's live set from two copies of the document to one — one
+    being the floor, since the submitted body has to survive to be written as
+    ``documents.original_text`` (#3756).
 
-    **Slices are always cut on native chunk boundaries** — the same
-    ``chunk_text(chunk_size, structured_chunk_size)`` boundaries the retain
-    pipeline itself uses — and every slice is verified to re-chunk back to
-    exactly the chunks it holds. That keeps one invariant true no matter how a
-    document arrives:
-
-        the chunks stored for a document depend only on its body,
-        never on how transport split it.
-
-    Everything downstream is built on that invariant and silently degrades
-    without it: delta retain and the streaming recovery pass both match stored
-    chunks by content hash (a slice cutting mid-chunk matches nothing, so
-    unchanged history is re-extracted — issue #3282), and ``chunk_index``
-    bookkeeping assumes a slice contributes a whole number of chunks (#1888).
-    A slice therefore honours ``tokens_per_batch`` only down to one native
-    chunk; below that, ``retain_chunk_size`` is the real bound.
-
-    ``chunk_size``/``structured_chunk_size`` have no default on purpose: they
-    must be the bank's resolved retain chunking settings, and quietly falling
-    back to the global default would reintroduce exactly the misalignment this
-    function exists to prevent.
-
-    Used by the in-process ``retain_batch_async`` path, which processes
-    the returned sub-batches SEQUENTIALLY with ``is_first_batch=(i==1)``.
-    The async submission path uses ``_split_contents_into_async_children``
-    instead, which never fragments a single item across children — see
-    that helper for the reasoning.
+    Safe to consume lazily even though the caller mutates what it is handed (``retain_batch``
+    pops ``content`` off each sub-batch item as it streams): every item is read before the
+    sub-batch containing it is yielded, so a consumer can only ever mutate entries this has
+    already passed.
     """
     from .retain import fact_extraction
 
     def _chunks_of(text: str) -> Iterator[str]:
         return fact_extraction.iter_chunks(text, chunk_size, structured_chunk_size=structured_chunk_size)
 
-    sub_batches: list[list[RetainContentDict]] = []
-    origin_indices: list[list[int]] = []
-    document_body_overrides: list[str | None] = []
-    chunk_counts: list[int] = []
     current_batch: list[RetainContentDict] = []
     current_batch_origins: list[int] = []
     current_batch_tokens = 0
     current_batch_chunks = 0
 
-    def _flush() -> None:
+    def _flush() -> _RawSubBatch | None:
         nonlocal current_batch, current_batch_origins, current_batch_tokens, current_batch_chunks
-        if current_batch:
-            sub_batches.append(current_batch)
-            origin_indices.append(current_batch_origins)
-            document_body_overrides.append(None)
-            chunk_counts.append(current_batch_chunks)
-            current_batch = []
-            current_batch_origins = []
-            current_batch_tokens = 0
-            current_batch_chunks = 0
+        if not current_batch:
+            return None
+        flushed = _RawSubBatch(
+            contents=current_batch,
+            origins=current_batch_origins,
+            body_override=None,
+            chunk_count=current_batch_chunks,
+        )
+        current_batch = []
+        current_batch_origins = []
+        current_batch_tokens = 0
+        current_batch_chunks = 0
+        return flushed
 
     for original_idx, item in enumerate(contents):
         content_str = item.get("content", "") or ""
@@ -992,32 +980,86 @@ def _split_contents_into_sub_batches(
             # writes the full original text to documents.original_text — not
             # just its own slice (otherwise the last slice would clobber the
             # body with a truncated payload; see issue #1838).
-            _flush()
+            pending = _flush()
+            if pending is not None:
+                yield pending
             for run in _pack_native_chunks(_chunks_of(content_str), tokens_per_batch):
                 joined = _rejoin_native_chunks(run, chunk_size, structured_chunk_size)
                 slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]
                 for slice_text, slice_chunk_count in slices:
                     chunk_item = cast(RetainContentDict, {**item, "content": slice_text})
-                    sub_batches.append([chunk_item])
-                    origin_indices.append([original_idx])
-                    document_body_overrides.append(content_str)
-                    chunk_counts.append(slice_chunk_count)
+                    yield _RawSubBatch(
+                        contents=[chunk_item],
+                        origins=[original_idx],
+                        body_override=content_str,
+                        chunk_count=slice_chunk_count,
+                    )
             continue
 
         if current_batch and current_batch_tokens + item_tokens > tokens_per_batch:
-            _flush()
+            pending = _flush()
+            if pending is not None:
+                yield pending
         current_batch.append(item)
         current_batch_origins.append(original_idx)
         current_batch_tokens += item_tokens
         current_batch_chunks += sum(1 for _ in _chunks_of(content_str))
 
-    _flush()
-    return _SubBatchSplit(
-        sub_batches=sub_batches,
-        origin_indices=origin_indices,
-        document_body_overrides=document_body_overrides,
-        chunk_counts=chunk_counts,
-    )
+    pending = _flush()
+    if pending is not None:
+        yield pending
+
+
+def iter_sub_batches(
+    contents: list[RetainContentDict],
+    tokens_per_batch: int,
+    *,
+    chunk_size: int,
+    structured_chunk_size: int | None,
+    config: HindsightConfig,
+) -> Iterator[_SubBatch]:
+    """Stream screened, hashed, last-flagged sub-batches ready for the retain loop.
+
+    Wraps :func:`_iter_raw_sub_batches` with the two things the loop needs and the raw
+    splitter cannot supply: the Memory Defense screening and content hash of each distinct
+    document body (cached, so an oversized item's identical body is screened once however
+    many slices it produced — issue #3282), and ``is_last``, from a one-item lookahead.
+    """
+    screened: dict[str, ScreenedDocumentBody] = {}
+
+    def _screen(body: str | None) -> ScreenedDocumentBody | None:
+        if body is None:
+            return None
+        if body not in screened:
+            screened[body] = _screen_document_body(body, config)
+        return screened[body]
+
+    index = 0
+    held: _RawSubBatch | None = None
+    for raw in _iter_raw_sub_batches(
+        contents, tokens_per_batch, chunk_size=chunk_size, structured_chunk_size=structured_chunk_size
+    ):
+        if held is not None:
+            index += 1
+            yield _SubBatch(
+                contents=held.contents,
+                origins=held.origins,
+                document_body=_screen(held.body_override),
+                chunk_count=held.chunk_count,
+                index=index,
+                is_last=False,
+            )
+        held = raw
+    if held is not None:
+        index += 1
+        yield _SubBatch(
+            contents=held.contents,
+            origins=held.origins,
+            document_body=_screen(held.body_override),
+            chunk_count=held.chunk_count,
+            index=index,
+            is_last=True,
+        )
 
 
 def _split_contents_into_async_children(
@@ -5221,31 +5263,18 @@ class MemoryEngine(MemoryEngineInterface):
             retain_config = await self._resolve_retain_config(bank_id, request_context, strategy)
             chunking_config = self._retain_chunking_config(retain_config)
 
-            split = _split_contents_into_sub_batches(
+            # Streamed, not collected: the slices are the document cut up, and holding
+            # them all costs a second copy of it for the whole retain (#3756). Each is
+            # screened, hashed and flagged as it arrives; ``is_last`` comes from a
+            # one-item lookahead inside the generator, because there is no length to
+            # compare ``i`` against any more.
+            sub_batch_stream = iter_sub_batches(
                 contents,
                 tokens_per_batch,
                 chunk_size=chunking_config.chunk_size,
                 structured_chunk_size=chunking_config.structured_chunk_size,
+                config=retain_config,
             )
-            sub_batches = split.sub_batches
-            origin_indices = split.origin_indices
-            # Every slice of an oversized item carries the same full body as its
-            # documents.original_text payload, and that body never goes through
-            # per-item screening. Screen each distinct body once here rather than
-            # inside every sub-batch (issue #3282).
-            document_body_overrides = _screen_document_body_overrides(split.document_body_overrides, retain_config)
-
-            sub_batch_sizes = [len(b) for b in sub_batches]
-            # Keep the per-sub-batch sizes log compact when an oversize
-            # single item gets chunked into many [1]-sized sub-batches.
-            if len(sub_batches) <= 20:
-                logger.info(f"Split into {len(sub_batches)} sub-batches: {sub_batch_sizes} items each")
-            else:
-                logger.info(
-                    f"Split into {len(sub_batches)} sub-batches "
-                    f"(items per sub-batch: min={min(sub_batch_sizes)}, "
-                    f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
-                )
 
             # Preserve the public contract: one result list per input
             # content. When an oversize single item is chunked across
@@ -5304,19 +5333,27 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                     )
 
-            for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
+            sub_batches_run = 0
+            for sub in sub_batch_stream:
+                i = sub.index
+                sub_batch = sub.contents
+                sub_origins = sub.origins
                 # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
                 if operation_id and not await self._check_op_alive(operation_id):
                     logger.info(
-                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping after {i - 1}/{len(sub_batches)} sub-batches"
+                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled "
+                        f"(bank deleted), stopping after {i - 1} sub-batches"
                     )
                     cancelled = True
                     break
 
+                sub_batches_run = i
                 sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
-                logger.info(
-                    f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
-                )
+                # No "i of N": N is not known until the stream ends, and computing it up
+                # front would mean splitting the document twice. Operators follow a long
+                # retain through the chunk-level "storing N/total" progress the streaming
+                # pipeline writes, which is unaffected.
+                logger.info(f"Processing sub-batch {i}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens")
                 # Live worker stage for the in-flight sub-batch; the durable progress
                 # snapshot is written *after* the sub-batch commits (below) so processed
                 # reflects work actually done and reaches total on completion.
@@ -5337,7 +5374,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # after the call yields "" — and chunk_text("") returns [""]
                 # (count 1), advancing the per-document cursor by 1 regardless
                 # of the real chunk count (issue #1888).
-                sub_chunk_count = split.chunk_counts[i - 1]
+                sub_chunk_count = sub.chunk_count
 
                 sub_results, sub_usage, sub_processed = await self._retain_batch_async_internal(
                     bank_id=bank_id,
@@ -5351,14 +5388,10 @@ class MemoryEngine(MemoryEngineInterface):
                     strategy=strategy,
                     # Outbox callback runs inside the last sub-batch's transaction so the
                     # webhook delivery row is committed atomically with the final retain data.
-                    outbox_callback=outbox_callback if i == len(sub_batches) else None,
-                    outbox_callback_factory=outbox_callback_factory if i == len(sub_batches) else None,
-                    document_body_override=(
-                        document_body_overrides[i - 1].text if document_body_overrides[i - 1] else None
-                    ),
-                    document_body_hash=(
-                        document_body_overrides[i - 1].content_hash if document_body_overrides[i - 1] else None
-                    ),
+                    outbox_callback=outbox_callback if sub.is_last else None,
+                    outbox_callback_factory=outbox_callback_factory if sub.is_last else None,
+                    document_body_override=sub.document_body.text if sub.document_body else None,
+                    document_body_hash=sub.document_body.content_hash if sub.document_body else None,
                     chunk_index_offset=sub_offset,
                 )
 
@@ -5390,7 +5423,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             total_time = time.time() - start_time
             logger.info(
-                f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from {len(contents)} contents in {total_time:.3f}s"
+                f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from "
+                f"{len(contents)} contents across {sub_batches_run} sub-batches in {total_time:.3f}s"
             )
             result = per_input_results
         else:
