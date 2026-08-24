@@ -137,7 +137,7 @@ def _tokens_are_compatible(a: str, b: str) -> bool:
     token check, and imposing this on top would reject real variants that have no long shared word
     to hide behind ("Nick"/"Nicolas" is 0.55).
     """
-    ta, tb = _TRGM_WORD.findall(a), _TRGM_WORD.findall(b)
+    ta, tb = _TRGM_WORD.findall(a.lower()), _TRGM_WORD.findall(b.lower())
     if len(ta) < 2 and len(tb) < 2:
         return True
     short, rest = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
@@ -376,9 +376,11 @@ class EntityResolver:
             intrabatch_merge_similarity: pg_trgm similarity at/above which two new
                 names created by the same retain are merged into one entity.
             entity_resolution_max_candidates: Max candidates scored per entity
-                mention. Scoring is a synchronous SequenceMatcher call per
-                candidate, so an unbounded candidate set turns one resolution
-                batch into minutes of event-loop-blocking CPU (GH-3211).
+                mention. Every candidate costs synchronous string comparison on
+                the event-loop thread — a trigram set, and for those that clear
+                the floor a word-level check and a SequenceMatcher pass — so an
+                unbounded candidate set turns one resolution batch into minutes
+                of event-loop-blocking CPU (GH-3211).
             merge_min_similarity: Minimum pg_trgm similarity with an EXISTING
                 entity before that entity may be reused for a name, regardless of
                 what the other scoring signals say (#3751).
@@ -533,7 +535,8 @@ class EntityResolver:
 
         Each mention may carry ``"resolve": False`` to opt out of resolution. The
         default, True, treats a name as a *guess* at which entity is meant, so
-        similar existing entities are scored on name similarity + co-occurrence +
+        existing entities that are similar enough to be merged onto at all (see
+        ``merge_min_similarity``) are scored on name similarity + co-occurrence +
         recency and the best above threshold is reused. False takes the name
         literally: an existing entity is reused only when its canonical name
         matches case-insensitively, any other name creates its own entity, and it
