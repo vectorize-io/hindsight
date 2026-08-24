@@ -763,7 +763,8 @@ async def _run_reflect_agent_inner(
             )
 
         structured_output = None
-        if response_schema and answer:
+        # ``answer`` is non-empty past the guard above, so only the schema gates this.
+        if response_schema:
             struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
             structured_output = struct.structured_output
             total_input_tokens += struct.input_tokens
