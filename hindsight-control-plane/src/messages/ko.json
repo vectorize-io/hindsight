@@ -1806,7 +1806,7 @@
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
-    "advancedOptions": "멘탈 모델 옵션",
+    "mentalModelOptions": "멘탈 모델 옵션",
     "searchPlaceholder": "페이지 검색…",
     "clearSearch": "검색 지우기",
     "searchEmpty": "일치하는 페이지가 없습니다.",

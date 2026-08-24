@@ -584,7 +584,7 @@ export function KnowledgeBaseView() {
                     className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
                   >
                     <SlidersHorizontal className="w-3 h-3" />
-                    {t("advancedOptions")}
+                    {t("mentalModelOptions")}
                   </button>
                 )}
               </div>
@@ -811,8 +811,8 @@ export function KnowledgeBaseView() {
             // Tags and trigger drive the tree's chips and freshness line, so pull
             // the page back in rather than leaving the reader looking at stale scope.
             await loadTree();
-            if (selected) {
-              const p = await client.getKnowledgePage(currentBank!, selected.id);
+            if (selected && currentBank) {
+              const p = await client.getKnowledgePage(currentBank, selected.id);
               setTabs((prev) => prev.map((x) => (x.id === p.id ? p : x)));
             }
           }}

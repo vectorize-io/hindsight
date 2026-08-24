@@ -1806,7 +1806,7 @@
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
-    "advancedOptions": "Opciones del modelo mental",
+    "mentalModelOptions": "Opciones del modelo mental",
     "searchPlaceholder": "Buscar páginas…",
     "clearSearch": "Borrar búsqueda",
     "searchEmpty": "No hay páginas coincidentes.",

@@ -1806,7 +1806,7 @@
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
-    "advancedOptions": "心智模型選項",
+    "mentalModelOptions": "心智模型選項",
     "searchPlaceholder": "搜尋頁面…",
     "clearSearch": "清除搜尋",
     "searchEmpty": "冇符合嘅頁面。",
