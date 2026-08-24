@@ -41,6 +41,13 @@ class _ExplodingPool:
 # PG-free and never acquires from it, so the failure never fires, the deliberately-hanging
 # extraction is never cancelled, and the test times out at 600s rather than failing.
 @pytest.mark.memory_backend_incompatible
+def _mock_config() -> MagicMock:
+    """A stand-in config that models the fields the streaming pipeline actually reads."""
+    config = MagicMock()
+    config.retain_memory_budget_mb = 128
+    return config
+
+
 async def test_consumer_failure_cancels_in_flight_extractions(monkeypatch):
     hanging_started = asyncio.Event()
     cancelled = 0
@@ -76,7 +83,11 @@ async def test_consumer_failure_cancels_in_flight_extractions(monkeypatch):
             bank_id="bank-cancel",
             contents_dicts=[{"content": "\n".join(chunks)}],
             contents=[],
-            config=MagicMock(),
+            # A real number for the memory budget: `_streaming_retain_batch` builds a
+            # RetainMemoryBudget from it, and a bare MagicMock attribute makes every
+            # comparison inside it truthy — the producer then waits for room that is never
+            # reported, which is a hang rather than the cancellation this test is about.
+            config=_mock_config(),
             document_id="doc-cancel",
             is_first_batch=True,
             fact_type_override=None,

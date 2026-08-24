@@ -39,6 +39,11 @@ _PER_FACT_OVERHEAD_BYTES = 512
 _PER_STRING_OVERHEAD_BYTES = 49
 
 
+def _text_bytes(text: str | None) -> int:
+    """What a string costs, counting ``None`` and the empty string as the header alone."""
+    return _PER_STRING_OVERHEAD_BYTES + len(text or "")
+
+
 def estimate_chunk_bytes(
     processed: list[ProcessedFact],
     extracted: list[ExtractedFact],
@@ -49,19 +54,20 @@ def estimate_chunk_bytes(
     Counts the three things that scale with the extraction — the processed facts (text,
     context and embedding), the raw extracted facts they came from, and the chunk text kept
     for the ``chunks`` row — and ignores the rest as noise against them.
+
+    Every string is read through ``_text_bytes``, which tolerates ``None``. The fields are
+    annotated ``str``, but a converted file upload retains with no context and puts ``None``
+    in one — and an estimate that raises turns a heuristic into a failed retain, which is
+    exactly what it did to the file-retain path before this guard.
     """
     total = 0
     for fact in processed:
-        total += _PER_FACT_OVERHEAD_BYTES
-        total += len(fact.fact_text) + _PER_STRING_OVERHEAD_BYTES
-        total += len(fact.context) + _PER_STRING_OVERHEAD_BYTES
+        total += _PER_FACT_OVERHEAD_BYTES + _text_bytes(fact.fact_text) + _text_bytes(fact.context)
         total += len(fact.embedding) * fact.embedding.itemsize
     for raw in extracted:
-        total += _PER_FACT_OVERHEAD_BYTES
-        total += len(raw.fact_text) + _PER_STRING_OVERHEAD_BYTES
-        total += len(raw.context) + _PER_STRING_OVERHEAD_BYTES
+        total += _PER_FACT_OVERHEAD_BYTES + _text_bytes(raw.fact_text) + _text_bytes(raw.context)
     for meta in chunk_meta:
-        total += len(meta.chunk_text) + _PER_STRING_OVERHEAD_BYTES
+        total += _text_bytes(meta.chunk_text)
     return total
 
 
@@ -81,6 +87,17 @@ class RetainMemoryBudget:
     limit_bytes: int
 
     def __post_init__(self) -> None:
+        # Fail loudly on a limit that is not a number. Every comparison below would
+        # otherwise "succeed" against a stand-in object and return something truthy, which
+        # makes `reserve` wait for room that can never be reported — a retain that hangs
+        # until its wall-clock ceiling instead of one that reports a bad config. A caller
+        # handing this a mock rather than a resolved config is the realistic way to get
+        # here, and a 300-second hang is a terrible way to find that out.
+        if not isinstance(self.limit_bytes, int) or isinstance(self.limit_bytes, bool):
+            raise TypeError(
+                f"RetainMemoryBudget needs an int limit_bytes, got {type(self.limit_bytes).__name__}; "
+                "pass config.retain_memory_budget_mb * 1024 * 1024 from a resolved config"
+            )
         self._held_bytes = 0
         self._room = asyncio.Event()
         self._room.set()

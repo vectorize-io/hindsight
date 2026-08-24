@@ -67,6 +67,22 @@ def test_estimate_of_nothing_is_nothing():
     assert estimate_chunk_bytes([], [], []) == 0
 
 
+def test_estimate_tolerates_a_null_context():
+    """A retain with no context must not be failed by its own memory estimate.
+
+    ``ProcessedFact.context`` is annotated ``str``, but a converted file upload retains
+    without one and puts ``None`` there. The first version of this estimator called
+    ``len()`` on it and turned every file retain into an HTTP 500 — a heuristic breaking
+    the operation it exists to protect.
+    """
+    fact = _fact()
+    fact.context = None  # type: ignore[assignment]
+    raw = _extracted()
+    raw.context = None  # type: ignore[assignment]
+
+    assert estimate_chunk_bytes([fact], [raw], [_meta()]) > 0
+
+
 def test_estimate_tracks_embedding_width():
     """A 1536-dim model costs 4x a 384-dim one per fact, and the estimate says so."""
     narrow = estimate_chunk_bytes([_fact(dims=384)], [], [])
