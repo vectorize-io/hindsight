@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { client, type TagGroup, type TagsMatch } from "@/lib/api";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
@@ -136,6 +137,12 @@ export function MentalModelsView() {
   const [tagsMatch, setTagsMatch] = useState<"any" | "all">("any");
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [mentalModelToUpdate, setMentalModelToUpdate] = useState<MentalModel | null>(null);
+  // ?mentalModel=<id> opens that model's detail straight on its configuration tab.
+  // A knowledge page links here for its retrieval scope, since the page itself
+  // deliberately no longer offers a partial copy of these options (#3687).
+  const searchParams = useSearchParams();
+  const deepLinkedId = searchParams.get("mentalModel");
+  const deepLinkedRef = useRef<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
     name: string;
@@ -246,6 +253,17 @@ export function MentalModelsView() {
       loadData();
     }
   }, [currentBank, selectedTags, tagsMatch]);
+
+  // Open the deep-linked model once its row has loaded. Guarded per id so closing
+  // the modal doesn't fight the link, and so a stale ?mentalModel= left in the URL
+  // doesn't re-open on every refetch.
+  useEffect(() => {
+    if (!deepLinkedId || deepLinkedRef.current === deepLinkedId) return;
+    const model = mentalModels.find((m) => m.id === deepLinkedId);
+    if (!model) return;
+    deepLinkedRef.current = deepLinkedId;
+    setSelectedMentalModel(model);
+  }, [deepLinkedId, mentalModels]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -588,6 +606,13 @@ export function MentalModelsView() {
 
       <MentalModelDetailModal
         mentalModelId={selectedMentalModel?.id ?? null}
+        // Land on configuration when arriving from a page's "advanced options"
+        // link — that is the whole reason the caller navigated here.
+        initialTab={
+          deepLinkedRef.current && selectedMentalModel?.id === deepLinkedRef.current
+            ? "configuration"
+            : "content"
+        }
         onClose={() => setSelectedMentalModel(null)}
         onDelete={(m) => setDeleteTarget({ id: m.id, name: m.name })}
         onClear={(m) => setClearTarget({ id: m.id, name: m.name })}

@@ -14893,6 +14893,19 @@ class MemoryEngine(MemoryEngineInterface):
                     else:
                         previous_reflect_response = raw_rr
 
+            # A supplied trigger PATCHES the stored one (see _merge_trigger): callers
+            # send only the fields they set, so the rest have to be read back rather
+            # than defaulted. Only paid for when a trigger is actually being changed.
+            if trigger is not None:
+                trigger_row = await conn.fetchrow(
+                    f"SELECT trigger FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+                trigger = self._merge_trigger(
+                    trigger, base=self._stored_trigger(trigger_row["trigger"]) if trigger_row else {}
+                )
+
             # Build dynamic update
             updates = []
             params: list[Any] = [bank_id, mental_model_id]
@@ -15233,7 +15246,7 @@ class MemoryEngine(MemoryEngineInterface):
     # bank's consolidated **observations** (not raw facts), refreshed incrementally
     # (delta) after each consolidation, and excluding other mental models so a page
     # never reflects on sibling pages. A client's own ``trigger`` MERGES over these
-    # (see ``_merge_page_trigger``), so overriding one field keeps the rest.
+    # (see ``_merge_trigger``), so overriding one field keeps the rest.
     KNOWLEDGE_PAGE_DEFAULT_TRIGGER = {
         "mode": "delta",
         "fact_types": ["observation"],
@@ -15241,11 +15254,11 @@ class MemoryEngine(MemoryEngineInterface):
         "refresh_after_consolidation": True,
     }
 
-    def _merge_page_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Layer the fields a client actually set over ``base``, so a page trigger patches.
+    def _merge_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Layer the fields a client actually set over ``base``, so a trigger patches.
 
         ``base`` is what the unstated fields keep: ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
-        on create, the page's CURRENT trigger on update.
+        when omitted (page creation), otherwise the model's CURRENT trigger.
 
         Both used to be all-or-nothing — a supplied trigger REPLACED whatever was
         there. Since the API model fills every unset field with its own defaults, a
@@ -15255,6 +15268,13 @@ class MemoryEngine(MemoryEngineInterface):
         sibling pages. That is what the coding-agents plugin had been doing to every
         page it created (#3506). The API layer now sends only the fields the client
         actually set (``model_dump(exclude_unset=True)``), and they merge here.
+
+        #3506 fixed only the two page routes, so the same replace-not-merge bug
+        outlived it on ``PATCH /mental-models/{id}`` — which is the route the control
+        plane uses to edit a page's advanced options, and which the MCP
+        ``update_mental_model`` tool drives with a ONE-KEY dict
+        (``{"refresh_after_consolidation": ...}``). Editing one setting there wiped
+        every other one. Hence this is now the shared merge for any mental model.
 
         The two refresh triggers stay mutually exclusive, as ``MentalModelTrigger``
         requires of a stated pair: setting one drops an unstated other rather than
@@ -15450,7 +15470,7 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
         embedding = await self._generate_mental_model_embedding(name, content)
         effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
-        effective_trigger = self._merge_page_trigger(trigger)
+        effective_trigger = self._merge_trigger(trigger)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
         try:
@@ -15799,7 +15819,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             # The page's CURRENT trigger comes back with it: a supplied trigger patches
-            # that rather than replacing it (see _merge_page_trigger).
+            # that rather than replacing it (see _merge_trigger).
             row = await conn.fetchrow(
                 f"SELECT kp.mental_model_id, mm.trigger FROM {fq_table('knowledge_pages')} kp "
                 f"LEFT JOIN {fq_table('mental_models')} mm "
@@ -15811,9 +15831,7 @@ class MemoryEngine(MemoryEngineInterface):
         if row is None or row["mental_model_id"] is None:
             return None
         effective_trigger = (
-            self._merge_page_trigger(trigger, base=self._stored_trigger(row["trigger"]))
-            if trigger is not None
-            else None
+            self._merge_trigger(trigger, base=self._stored_trigger(row["trigger"])) if trigger is not None else None
         )
         # The write is already authorized above; the backing mental-model update
         # runs without re-invoking the validator.

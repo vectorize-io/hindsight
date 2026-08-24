@@ -1,15 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { client, type KnowledgeNode } from "@/lib/api";
+import { bankRoute } from "@/lib/bank-url";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
-import { createTagsMatch, includesUntagged, updateTagsMatch } from "@/lib/page-tag-scope";
 import {
   Dialog,
   DialogContent,
@@ -46,6 +45,7 @@ import {
   Info,
   Pencil,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
@@ -73,63 +73,11 @@ function flatten(nodes: KnowledgeNode[], out: KnowledgeNode[] = []): KnowledgeNo
   return out;
 }
 
-/**
- * The tags field for a page, plus the scoping control that keeps it from
- * silently emptying the page.
- *
- * A page's tags are not labels: they are the scope it is synthesized from, and
- * a tagged page matches memories with `all_strict` by default — a memory must
- * carry EVERY tag, and untagged memories are excluded outright. Tags typed here
- * to describe a topic ("homelab", "type:runbook") therefore match nothing
- * unless the bank's memories were retained with those exact tags, and the page
- * generates as "I don't have information about this" while a plain recall for
- * the same question returns plenty (#3687). The checkbox is the escape hatch,
- * and it only appears once there is a filter for it to widen.
- */
-function TagScopeFields({
-  tags,
-  includeUntagged,
-  onChange,
-  t,
-}: {
-  tags: string;
-  includeUntagged: boolean;
-  onChange: (patch: { tags?: string; includeUntagged?: boolean }) => void;
-  t: ReturnType<typeof useTranslations>;
-}) {
-  const hasTags = tags.trim().length > 0;
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium text-foreground">{t("fieldTags")}</label>
-      <Input
-        value={tags}
-        onChange={(e) => onChange({ tags: e.target.value })}
-        placeholder={t("fieldTagsPlaceholder")}
-      />
-      <p className="text-xs text-muted-foreground">{t("fieldTagsHint")}</p>
-      {hasTags && (
-        <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
-          <label className="flex items-start gap-2 cursor-pointer">
-            <Checkbox
-              className="mt-0.5"
-              checked={includeUntagged}
-              onCheckedChange={(c) => onChange({ includeUntagged: c as boolean })}
-            />
-            <span className="text-sm">{t("fieldIncludeUntagged")}</span>
-          </label>
-          <p className="text-xs text-muted-foreground">
-            {includeUntagged ? t("fieldIncludeUntaggedOn") : t("fieldIncludeUntaggedOff")}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function KnowledgeBaseView() {
   const t = useTranslations("knowledgeBase");
   const { currentBank } = useBank();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const pageParam = searchParams.get("page");
 
   const [roots, setRoots] = useState<KnowledgeNode[]>([]);
@@ -165,31 +113,15 @@ export function KnowledgeBaseView() {
   const autoSelectedRef = useRef(false);
 
   const [createKind, setCreateKind] = useState<"folder" | "page" | null>(null);
-  const [form, setForm] = useState({
-    name: "",
-    sourceQuery: "",
-    parentId: "",
-    tags: "",
-    includeUntagged: false,
-  });
+  const [form, setForm] = useState({ name: "", sourceQuery: "", parentId: "" });
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeNode | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Editing the open page's options (name / source query / tags).
+  // Editing the open page's options (name / source query). Tags and the rest of
+  // the retrieval scope live on the backing mental model — see openAdvancedOptions.
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({
-    name: "",
-    sourceQuery: "",
-    tags: "",
-    includeUntagged: false,
-  });
-  // What the open page's tag matching resolved to when the edit dialog opened.
-  // The PATCH only carries `tags_match` when the user actually moved the
-  // checkbox: a page set to a mode this two-state control cannot express
-  // ("any", "any_strict", "exact") must not be rewritten to "all_strict"
-  // just because someone renamed it.
-  const [initialIncludeUntagged, setInitialIncludeUntagged] = useState(false);
+  const [editForm, setEditForm] = useState({ name: "", sourceQuery: "" });
   const [savingEdit, setSavingEdit] = useState(false);
 
   // `silent` skips the loading spinner so the background auto-refresh poll
@@ -397,8 +329,25 @@ export function KnowledgeBaseView() {
     });
   }, []);
 
+  // Hand the page's backing mental model to the Mental Models tab, which owns the
+  // full options editor (scope tags + tags_match + tag_groups, fact types, refresh
+  // schedule). Deep-linked rather than duplicated so there is one form to keep
+  // correct, and so the URL is shareable.
+  const openAdvancedOptions = useCallback(
+    (mentalModelId: string) => {
+      if (!currentBank) return;
+      router.push(
+        bankRoute(
+          currentBank,
+          `?view=knowledge&knowledgeTab=models&mentalModel=${encodeURIComponent(mentalModelId)}`
+        )
+      );
+    },
+    [currentBank, router]
+  );
+
   const openCreate = (kind: "folder" | "page", parentId = "") => {
-    setForm({ name: "", sourceQuery: "", parentId, tags: "", includeUntagged: false });
+    setForm({ name: "", sourceQuery: "", parentId });
     setCreateKind(kind);
   };
 
@@ -414,19 +363,17 @@ export function KnowledgeBaseView() {
           parent_id,
         });
       } else {
-        const tags = form.tags
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        const tagsMatch = createTagsMatch(tags, form.includeUntagged);
+        // No tags: a page is created reading the whole bank. Tags SCOPE a page
+        // rather than labelling it, and a tagged page defaults to `all_strict`
+        // (every tag required, untagged memories excluded), so tags typed here to
+        // describe a topic silently matched nothing and the page generated as
+        // "I don't have information about this" (#3687). Scoping is a deliberate
+        // choice made afterwards, on the backing mental model, next to the
+        // tags_match and tag_groups that govern how it is applied.
         await client.createKnowledgePage(currentBank, {
           name: form.name.trim(),
           source_query: form.sourceQuery.trim(),
           parent_id,
-          tags: tags.length ? tags : undefined,
-          // Sent as a trigger patch, so the page keeps the rest of its
-          // knowledge-page defaults (delta, observations-only).
-          trigger: tagsMatch ? { tags_match: tagsMatch } : undefined,
         });
       }
       if (parent_id) setExpanded((prev) => new Set(prev).add(parent_id));
@@ -441,20 +388,11 @@ export function KnowledgeBaseView() {
 
   const openEdit = () => {
     if (!selected) return;
-    // Pre-fill tags from the tree node's RAW tags (which keep the `type:` tag),
-    // not selected.tags — the page projection strips `type:` for display, and
-    // editing from that would silently drop it on save.
-    const node = allNodes.find((n) => n.id === selected.id);
-    const rawTags = node?.tags ?? selected.tags ?? [];
-    const includeUntagged = includesUntagged(node?.trigger?.tags_match);
     setEditForm({
       name: selected.name,
       // `description` carries the page's source query (the question that rebuilds it).
       sourceQuery: selected.description ?? "",
-      tags: rawTags.join(", "),
-      includeUntagged,
     });
-    setInitialIncludeUntagged(includeUntagged);
     setEditing(true);
   };
 
@@ -462,16 +400,13 @@ export function KnowledgeBaseView() {
     if (!currentBank || !selected || !editForm.name.trim()) return;
     setSavingEdit(true);
     try {
-      const tags = editForm.tags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const tagsMatch = updateTagsMatch(tags, editForm.includeUntagged, initialIncludeUntagged);
+      // `tags` is deliberately absent: the PATCH applies only the keys present,
+      // so omitting it preserves whatever scope the page has. Sending the field
+      // from a dialog that no longer shows it would clear every page's scope on
+      // an unrelated rename.
       await client.updateKnowledgeNode(currentBank, selected.id, {
         name: editForm.name.trim(),
         source_query: editForm.sourceQuery.trim(),
-        tags,
-        trigger: tagsMatch ? { tags_match: tagsMatch } : undefined,
       });
       setEditing(false);
       await loadTree();
@@ -638,16 +573,33 @@ export function KnowledgeBaseView() {
                 </Button>
               </div>
 
-              {/* Provenance: this wiki isn't written, it's grounded. Links back
-                  into the memory substrate the page was synthesized from. */}
-              {supportingCount > 0 && selectedMmId && (
-                <button
-                  onClick={() => setProvenanceMmId(selectedMmId)}
-                  className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
-                >
-                  {t("backedBy", { count: supportingCount })}
-                </button>
-              )}
+              <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                {/* Provenance: this wiki isn't written, it's grounded. Links back
+                    into the memory substrate the page was synthesized from. */}
+                {supportingCount > 0 && selectedMmId && (
+                  <button
+                    onClick={() => setProvenanceMmId(selectedMmId)}
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                  >
+                    {t("backedBy", { count: supportingCount })}
+                  </button>
+                )}
+                {/* A page IS a mental model with a place in the tree, and the model
+                    is where its retrieval scope lives — tags, tags_match, tag_groups,
+                    fact types. Rather than reproduce a partial copy of that form here
+                    (the tags input used to sit in the page dialogs, with no way to see
+                    or change the match mode that decides what they actually select),
+                    the page links to the one editor that owns the whole scope. */}
+                {selectedMmId && (
+                  <button
+                    onClick={() => openAdvancedOptions(selectedMmId)}
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    <SlidersHorizontal className="w-3 h-3" />
+                    {t("advancedOptions")}
+                  </button>
+                )}
+              </div>
 
               {/* Freshness + tags. The generation prompt (machinery) is tucked
                   behind the expander so the page opens with the knowledge. */}
@@ -739,12 +691,6 @@ export function KnowledgeBaseView() {
                     className="min-h-[100px]"
                   />
                 </div>
-                <TagScopeFields
-                  tags={form.tags}
-                  includeUntagged={form.includeUntagged}
-                  onChange={(patch) => setForm({ ...form, ...patch })}
-                  t={t}
-                />
               </>
             )}
             <div className="space-y-2">
@@ -808,12 +754,6 @@ export function KnowledgeBaseView() {
               />
               <p className="text-xs text-muted-foreground">{t("editSourceQueryHint")}</p>
             </div>
-            <TagScopeFields
-              tags={editForm.tags}
-              includeUntagged={editForm.includeUntagged}
-              onChange={(patch) => setEditForm({ ...editForm, ...patch })}
-              t={t}
-            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(false)} disabled={savingEdit}>
