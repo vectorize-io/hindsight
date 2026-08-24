@@ -227,6 +227,7 @@ class WorkerPoller:
         slot_reservations: dict[str, int] | None = None,
         consolidation_bank_priority: dict[str, int] | None = None,
         max_retries: int = 3,
+        orphan_lease_seconds: int = 86400,
     ):
         """
         Initialize the worker poller.
@@ -273,6 +274,9 @@ class WorkerPoller:
             consolidation_bank_priority if consolidation_bank_priority else None
         )
         self._max_retries = max(0, max_retries)  # Never negative
+        # Lease age (seconds) after which a 'processing' row owned by ANY worker
+        # is treated as abandoned and reclaimed. 0 disables the sweep entirely.
+        self._orphan_lease_seconds = max(0, orphan_lease_seconds)
         # Cache of which optional PG routines are installed on the server
         # (probed once, memoised for the life of the poller).
         from ..engine.db.optional_routines import OptionalRoutines
@@ -1158,6 +1162,72 @@ class WorkerPoller:
             )
         return _updated_row_count(result)
 
+    async def _reclaim_expired_processing_tasks(self, schema: str | None) -> int:
+        """Reclaim 'processing' rows whose lease expired, whatever worker owns them.
+
+        ``_reclaim_own_processing_tasks`` matches ``worker_id = <own id>``, so it
+        can only rescue rows this worker itself abandoned. When ``worker_id``
+        defaults to the container hostname (``worker/main.py``:
+        ``args.worker_id or socket.gethostname()``) every ``compose down``/``up``
+        mints a new id, so anything in flight at that moment is stranded under an
+        id that will never come back — and no future startup can ever match it.
+        ``claimed_at`` is already recorded on claim but was never read, so
+        nothing else notices either. See #3709, #3594, #3720.
+
+        This is not hypothetical. On a single-container deployment two
+        consolidations were stranded on 2026-07-05 and were still 'processing'
+        **50 days later**. Consolidation is serialised per bank at claim time
+        (``busy_bank_ids`` in ``claim_tasks``), so each corpse marked its bank
+        permanently busy and no consolidation for those banks could ever be
+        claimed again. With ``{"consolidation": 2}`` reserved of 4 slots the
+        worker ran at half capacity for the whole period:
+
+            slots=2/4 | reserved: [consolidation=0/2(avail=2)] | shared=2/2(avail=0)
+
+        Only rows older than ``orphan_lease_seconds`` are touched (default 24 h —
+        far beyond any real task, and the corpses above were 50 days old), and
+        this worker's own rows are excluded because the caller above already
+        handled them with the retry/fail accounting. Set the lease to 0 to
+        disable the sweep. Batch API rows are excluded for the same reason as in
+        the own-rows path: they are long-lived by design.
+
+        Returns:
+            Number of rows reset to pending.
+        """
+        if self._orphan_lease_seconds <= 0:
+            return 0
+
+        table = fq_table("async_operations", schema)
+        async with self._backend.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                UPDATE {table}
+                SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+                    updated_at = now()
+                WHERE status = 'processing'
+                  AND worker_id IS NOT NULL
+                  AND worker_id <> $1
+                  AND claimed_at IS NOT NULL
+                  AND claimed_at < now() - make_interval(secs => $2)
+                  AND result_metadata->>'batch_id' IS NULL
+                RETURNING operation_id, worker_id, operation_type
+                """,
+                self._worker_id,
+                float(self._orphan_lease_seconds),
+            )
+
+        if rows:
+            owners = sorted({str(r["worker_id"]) for r in rows})
+            schema_display = f'"{schema}"' if schema else str(schema)
+            logger.warning(
+                f"Worker {self._worker_id} reclaimed {len(rows)} operation(s) abandoned by "
+                f"{len(owners)} departed worker(s) in schema {schema_display} "
+                f"(lease {self._orphan_lease_seconds}s; owners: {', '.join(owners)}). "
+                "Set HINDSIGHT_API_WORKER_ID to a stable value so worker ids survive "
+                "container recreation and this is not needed."
+            )
+        return len(rows)
+
     async def recover_own_tasks(self) -> int:
         """
         Recover tasks that were assigned to this worker but not completed.
@@ -1186,6 +1256,11 @@ class WorkerPoller:
                 total_count += await self._recover_batch_operations(schema)
 
                 total_count += await self._reclaim_own_processing_tasks(schema)
+
+                # Reclaim rows abandoned by a worker id that will never return.
+                # _reclaim_own_processing_tasks only matches worker_id = own id,
+                # so it cannot see rows left by a PREVIOUS container. See #3709.
+                total_count += await self._reclaim_expired_processing_tasks(schema)
 
                 # Finalize batch_retain parents that the aggregation left behind
                 # (crash between a child's terminal commit and the parent update,

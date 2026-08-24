@@ -741,6 +741,7 @@ ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
 ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS = "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
+ENV_WORKER_ORPHAN_LEASE_SECONDS = "HINDSIGHT_API_WORKER_ORPHAN_LEASE_SECONDS"
 ENV_OPERATION_RETENTION_DAYS = "HINDSIGHT_API_OPERATION_RETENTION_DAYS"
 ENV_OPERATION_CLEANUP_BATCH_SIZE = "HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE"
 
@@ -1403,6 +1404,9 @@ DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on transient task failure
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
+# Age after which a 'processing' row owned by a departed worker is reclaimed.
+# 24 h is far beyond any real task; 0 disables the sweep. See poller.
+DEFAULT_WORKER_ORPHAN_LEASE_SECONDS = 86400
 # Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
 # Zero retention days disables automatic pruning entirely, and is the default:
 # operation history is a user-visible audit trail, so bounding it is an opt-in
@@ -2693,6 +2697,7 @@ class HindsightConfig:
     worker_task_retry_backoff_seconds: int
     worker_http_port: int
     worker_max_slots: int
+    worker_orphan_lease_seconds: int
     worker_slot_reservations: dict[str, int]
     worker_consolidation_bank_priority: dict[str, int]
     operation_retention_days: int
@@ -4007,6 +4012,9 @@ class HindsightConfig:
             ),
             worker_http_port=int(os.getenv(ENV_WORKER_HTTP_PORT, str(DEFAULT_WORKER_HTTP_PORT))),
             worker_max_slots=int(os.getenv(ENV_WORKER_MAX_SLOTS, str(DEFAULT_WORKER_MAX_SLOTS))),
+            worker_orphan_lease_seconds=int(
+                os.getenv(ENV_WORKER_ORPHAN_LEASE_SECONDS, str(DEFAULT_WORKER_ORPHAN_LEASE_SECONDS))
+            ),
             worker_slot_reservations=worker_slot_reservations,
             worker_consolidation_bank_priority=_parse_bank_priority(
                 os.getenv(ENV_WORKER_CONSOLIDATION_BANK_PRIORITY, "")

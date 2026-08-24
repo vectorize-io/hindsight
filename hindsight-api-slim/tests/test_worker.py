@@ -1269,6 +1269,125 @@ class TestWorkerRecovery:
             assert row["status"] == "processing"
 
     @pytest.mark.asyncio
+    async def test_expired_lease_from_departed_worker_is_reclaimed(self, pool, backend, clean_operations):
+        """A 'processing' row whose lease expired is reclaimed even though another worker owns it.
+
+        Guards #3709: worker_id defaults to the container hostname, so every
+        container recreation strands whatever was in flight under an id that
+        never returns. recover_own_tasks() matches worker_id = own id and can
+        never see those rows.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        stale_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'dead-container-abc123',
+                    now() - interval '50 days')
+            """,
+            stale_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="live-worker",
+            executor=lambda x: None,
+            orphan_lease_seconds=86400,
+        )
+
+        reclaimed = await poller._reclaim_expired_processing_tasks(None)
+        assert reclaimed == 1
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at FROM async_operations WHERE operation_id = $1",
+            stale_id,
+        )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_fresh_lease_from_another_worker_is_left_alone(self, pool, backend, clean_operations):
+        """A live worker's in-flight row must never be stolen just because we restarted."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        fresh_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'retain', 'processing', $3::jsonb, 'other-live-worker', now())
+            """,
+            fresh_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="live-worker",
+            executor=lambda x: None,
+            orphan_lease_seconds=86400,
+        )
+
+        assert await poller._reclaim_expired_processing_tasks(None) == 0
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            fresh_id,
+        )
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "other-live-worker"
+
+    @pytest.mark.asyncio
+    async def test_orphan_sweep_is_disabled_when_lease_is_zero(self, pool, backend, clean_operations):
+        """orphan_lease_seconds=0 opts out entirely — nothing is reclaimed."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        stale_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'retain', 'processing', $3::jsonb, 'dead-container-abc123',
+                    now() - interval '50 days')
+            """,
+            stale_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="live-worker",
+            executor=lambda x: None,
+            orphan_lease_seconds=0,
+        )
+
+        assert await poller._reclaim_expired_processing_tasks(None) == 0
+
+        row = await pool.fetchrow(
+            "SELECT status FROM async_operations WHERE operation_id = $1", stale_id
+        )
+        assert row["status"] == "processing"
+
+    @pytest.mark.asyncio
     async def test_recover_own_tasks_returns_zero_when_no_stale_tasks(self, pool, backend, clean_operations):
         """Test that recover_own_tasks returns 0 when there are no stale tasks."""
         from hindsight_api.worker import WorkerPoller
