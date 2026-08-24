@@ -3677,18 +3677,17 @@ class MemoryEngine(MemoryEngineInterface):
         if not operation_id:
             return
 
-        from .reflect.agent import NO_ANSWER_TEXT
-
         content = refreshed.get("content") or ""
         stripped = content.strip()
         reflect_response = refreshed.get("reflect_response") or {}
         based_on = reflect_response.get("based_on") or {}
         outcome = RefreshMentalModelOutcomeMetadata(
             content_len=len(content),
-            # The no-answer stub and the pending placeholder complete
-            # wire-successful but carry no real synthesis — a length check
-            # alone would read them as populated.
-            populated_content=bool(stripped) and stripped not in (MENTAL_MODEL_PENDING_CONTENT, NO_ANSWER_TEXT),
+            # The pending placeholder completes wire-successful but carries no
+            # real synthesis — a length check alone would read it as populated.
+            # Reflect's own failure stubs are gone: a run with no answer now
+            # raises (#2959), so no refresh reaches here carrying one.
+            populated_content=bool(stripped) and stripped != MENTAL_MODEL_PENDING_CONTENT,
             based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
             delta_ops_applied=len(reflect_response.get("delta_operations_applied") or []),
             delta_ops_skipped=len(reflect_response.get("delta_operations_skipped") or []),

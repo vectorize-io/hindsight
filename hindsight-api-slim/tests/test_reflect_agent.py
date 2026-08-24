@@ -15,6 +15,7 @@ import pytest
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
+    ReflectNoAnswerError,
     ReflectToolCallError,
     _all_mental_models_are_usable_and_fresh,
     _cache_cleanup_tasks,
@@ -948,6 +949,125 @@ class TestContextOverflowBehavior:
         assert mock_llm.call_with_tools.call_count == 1
         # Final synthesis was called
         mock_llm.call.assert_called_once()
+
+
+class TestNoAnswerFailsHard:
+    """A run that produces no answer raises instead of inventing placeholder text (#2959).
+
+    Reflect used to substitute "No answer provided." (or an iteration-limit
+    sentence) whenever a terminal path came up empty. Both are non-empty strings,
+    so every downstream emptiness guard read them as a real answer: a mental-model
+    refresh persisted the stub over a document built across months of refreshes and
+    recorded the operation as ``completed`` with no error. There is no answer to
+    return in these cases, so the run fails.
+    """
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.provider = "openai"
+        llm.model = "gpt-test"
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=(
+                "Synthesized answer from gathered evidence.",
+                TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+            )
+        )
+        return llm
+
+    @pytest.fixture
+    def mock_functions(self):
+        return {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @staticmethod
+    def _recall_then(done_arguments: dict) -> list[LLMToolCallResult]:
+        """Gather evidence first, so ``done`` is not rejected by the evidence guardrail."""
+        return [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test query"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="done", arguments=done_arguments)],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+    async def _run(self, mock_llm, mock_functions):
+        return await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=False,
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+    @pytest.mark.asyncio
+    async def test_blank_done_answer_raises(self, mock_llm, mock_functions):
+        """The production trigger: output truncated mid-tool-call, so ``answer`` arrives empty."""
+        mock_llm.call_with_tools.side_effect = self._recall_then({"answer": "   ", "memory_ids": ["mem-1"]})
+
+        with pytest.raises(ReflectNoAnswerError) as exc_info:
+            await self._run(mock_llm, mock_functions)
+
+        assert "no answer" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_missing_done_answer_raises(self, mock_llm, mock_functions):
+        """``answer`` absent entirely, not just blank."""
+        mock_llm.call_with_tools.side_effect = self._recall_then({"memory_ids": ["mem-1"]})
+
+        with pytest.raises(ReflectNoAnswerError):
+            await self._run(mock_llm, mock_functions)
+
+    @pytest.mark.asyncio
+    async def test_empty_document_mode_answer_raises(self, mock_llm, mock_functions):
+        """Document mode that renders to nothing is the same failure as a blank answer."""
+        mock_llm.call_with_tools.side_effect = self._recall_then(
+            {"document": {"sections": []}, "memory_ids": ["mem-1"]}
+        )
+
+        with pytest.raises(ReflectNoAnswerError):
+            await self._run(mock_llm, mock_functions)
+
+    @pytest.mark.asyncio
+    async def test_empty_final_synthesis_raises(self, mock_llm, mock_functions):
+        """The forced final synthesis (tools disabled) returning nothing also fails."""
+        mock_llm.call.return_value = ("   ", TokenUsage(input_tokens=10, output_tokens=0, total_tokens=10))
+        # Gather evidence, then stop tool-calling: the agent falls through to the
+        # forced synthesis, which is where the empty text comes from.
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test query"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(content="", tool_calls=[], finish_reason="stop"),
+        ]
+
+        with pytest.raises(ReflectNoAnswerError) as exc_info:
+            await self._run(mock_llm, mock_functions)
+
+        assert "final synthesis" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_real_answer_still_returned(self, mock_llm, mock_functions):
+        """The guard must not touch a run that did produce an answer."""
+        mock_llm.call_with_tools.side_effect = self._recall_then(
+            {"answer": "The user has a cat named Luna.", "memory_ids": ["mem-1"]}
+        )
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert result.text == "The user has a cat named Luna."
 
 
 class TestDirectiveLeakageOnEmptyBank:
