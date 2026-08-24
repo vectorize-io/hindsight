@@ -9,10 +9,10 @@ import pytest
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.memory_engine import (
     _split_contents_into_async_children,
-    _split_contents_into_sub_batches,
     count_tokens,
 )
 from hindsight_api.engine.retain.fact_extraction import chunk_text
+from tests.sub_batch_helpers import collect_sub_batches
 
 # ---------------------------------------------------------------------------
 # Regression tests for issue #1571: the splitter must actually chunk an
@@ -30,7 +30,7 @@ def test_split_single_oversized_item_produces_multiple_sub_batches():
     big_content = "The quick brown fox jumps over the lazy dog. " * 1_000
     assert count_tokens(big_content) > tokens_per_batch
 
-    split = _split_contents_into_sub_batches(
+    split = collect_sub_batches(
         [{"content": big_content, "document_id": "doc-oversize"}],
         tokens_per_batch,
         chunk_size=3000,
@@ -62,7 +62,7 @@ def test_split_oversized_item_preserves_document_id_and_metadata():
         "tags": ["t1", "t2"],
     }
 
-    split = _split_contents_into_sub_batches([item], tokens_per_batch, chunk_size=3000)
+    split = collect_sub_batches([item], tokens_per_batch, chunk_size=3000)
 
     assert len(split.sub_batches) > 1
     for batch in split.sub_batches:
@@ -88,7 +88,7 @@ def test_split_mixed_batch_chunks_only_oversized_items():
         {"content": small_b, "document_id": "doc-c"},
     ]
 
-    split = _split_contents_into_sub_batches(contents, tokens_per_batch, chunk_size=3000)
+    split = collect_sub_batches(contents, tokens_per_batch, chunk_size=3000)
 
     # We expect: [small_a packed] then N chunks of big, then [small_b packed].
     # At minimum: > 2 sub-batches (a + multiple big chunks + c).
@@ -141,7 +141,7 @@ def test_split_slices_are_whole_native_chunks(body):
     native_chunks = chunk_text(body, chunk_size)
     assert len(native_chunks) > 3, "test payload must span several native chunks"
 
-    split = _split_contents_into_sub_batches(
+    split = collect_sub_batches(
         [{"content": body, "document_id": "doc-align"}],
         tokens_per_batch=1_500,
         chunk_size=chunk_size,
@@ -183,7 +183,7 @@ def test_split_falls_back_to_one_chunk_per_slice_when_no_faithful_join_exists(mo
     # `chunk_text` is `list(iter_chunks(...))`, so this covers the rejoin verification too.
     monkeypatch.setattr(fact_extraction, "iter_chunks", _fake_iter_chunks)
 
-    split = _split_contents_into_sub_batches(
+    split = collect_sub_batches(
         [{"content": body, "document_id": "doc-unjoinable"}],
         tokens_per_batch=100,
         chunk_size=3000,
@@ -203,7 +203,7 @@ def test_split_slice_never_cuts_a_native_chunk_under_a_tiny_budget():
     body = "The quick brown fox jumps over the lazy dog. " * 1_000
     native_chunks = chunk_text(body, 3000)
 
-    split = _split_contents_into_sub_batches(
+    split = collect_sub_batches(
         [{"content": body, "document_id": "doc-tiny-budget"}],
         tokens_per_batch=10,
         chunk_size=3000,
@@ -221,7 +221,7 @@ def test_split_small_batch_returns_single_sub_batch():
         {"content": "Bob loves Python", "document_id": "doc-2"},
     ]
 
-    split = _split_contents_into_sub_batches(contents, tokens_per_batch, chunk_size=3000)
+    split = collect_sub_batches(contents, tokens_per_batch, chunk_size=3000)
 
     assert len(split.sub_batches) == 1
     assert split.sub_batches[0] == contents
