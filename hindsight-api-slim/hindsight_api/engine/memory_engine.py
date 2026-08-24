@@ -1868,6 +1868,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_statement_timeout = config.db_statement_timeout
         self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
         self._entity_trgm_similarity_threshold = config.entity_trgm_similarity_threshold
+        self._entity_merge_min_similarity = config.entity_merge_min_similarity
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -4321,6 +4322,7 @@ class MemoryEngine(MemoryEngineInterface):
             entity_resolution_batch_size=self._retain_entity_resolution_batch_size,
             intrabatch_merge_similarity=self._entity_intrabatch_merge_similarity,
             entity_resolution_max_candidates=self._retain_entity_resolution_max_candidates,
+            merge_min_similarity=self._entity_merge_min_similarity,
         )
 
         # Initialize config resolver for hierarchical configuration

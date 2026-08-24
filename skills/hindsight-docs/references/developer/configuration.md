@@ -59,6 +59,7 @@ Migrations will automatically create the schema if it doesn't exist and create a
 | `HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE` | Whether the per-connection session settings above (`statement_timeout`, `max_parallel_workers_per_gather`, the trigram threshold, the vector-search tuning, and — on the `vchord` text-search backend — the search path) are re-applied every time a connection is taken from the pool, not only when it is first opened. Keep this on unless the same settings are already pinned on the database role or the database itself (`ALTER ROLE … SET`), because releasing a connection resets it to the server defaults — with the re-apply off and nothing pinned server-side, reused connections quietly run without them, and on `vchord` recall fails outright rather than merely degrading. When they *are* pinned server-side the re-apply changes nothing and only costs a round trip per acquire, which is worth reclaiming on busy deployments behind a transaction-mode connection pooler. `application_name` is always re-applied and is unaffected by this setting. | `true` |
 | `HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` | Postgres `pg_trgm.similarity_threshold` applied to every pool connection, governing how close a name must be for entity resolution's `%` trigram match to treat it as a candidate. Must be between `0` (exclusive) and `1`. Lower catches more substring-ish matches at higher CPU cost on large entity sets; higher is stricter and cheaper. | `0.15` |
 | `HINDSIGHT_API_ENTITY_INTRABATCH_MERGE_SIMILARITY` | Trigram similarity (pg_trgm-equivalent, computed in-memory) at/above which two brand-new names created by the **same** retain are merged into a single entity (in-batch dedup of surface-form variants — e.g. the same name with different emoji/case/suffix). Must be between `0` (exclusive) and `1`. This is a *merge* cutoff, deliberately stricter than the recall-only threshold above; raise it toward `1.0` to merge only near-identical forms. | `0.5` |
+| `HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` | Minimum trigram similarity a name must have with an **existing** entity before that entity can be reused for it, whatever the other resolution signals say. Sits between the recall threshold above (`0.15`, which only decides what is *considered*) and the same-batch fold-in cutoff below (`0.5`). Must be between `0` (exclusive) and `1`. Lower it for corpora of very short names, where trigram similarity is unavoidably low (`Jon`/`John` is `0.29`); raise it to merge only clear surface variants. | `0.3` |
 
 For high-concurrency workloads, increase `DB_POOL_MAX_SIZE`. Each concurrent recall/think operation can use 2-4 connections.
 
@@ -1458,36 +1459,43 @@ is reused if it clears **`0.6`**. Otherwise a new entity is created.
 | Signal | Weight | What it measures |
 |--------|--------|------------------|
 | Name similarity | up to **0.5** | A character-sequence ratio between the two lowercased names (Python's `difflib.SequenceMatcher`) — **not** the trigram similarity from stage 1 |
-| Co-occurring entities | up to **0.3** | The fraction of the *other* entities extracted from the same fact that this candidate already co-occurs with |
+| Co-occurring entities | up to **0.3** | How many of the *other* entities extracted from the same fact this candidate already co-occurs with, each weighted by how selective it is |
 | Temporal proximity | up to **0.2** | How close the fact's date is to the candidate's `last_seen`, decaying linearly to zero at 7 days |
 
-Two consequences are worth knowing about:
+Before any of that is counted, the candidate must reach
+`HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` (**`0.3`**) in trigram similarity. That floor
+exists because the two stages measure different things and can disagree, most sharply on
+short names: the sequence ratio rewards any shared run of characters, so `Tigran` and `Iran`
+score `0.80` on it — higher than `Alice`/`Alice Chen` (`0.67`), a merge the resolver exists
+to make — while trigram ranks them correctly at `0.20` and `0.55`. Without the floor, the
+remaining signals are worth `0.5` of the `0.6` needed, so a name that merely resembled an
+existing entity could be merged onto it by the bank's history alone.
 
-- **There is no minimum name similarity that rejects a candidate.** Name similarity is
-  capped at `0.5` of the `0.6` needed, so a name never merges on its own — but
-  co-occurrence and recency are worth `0.5` between them, so a *weak* name match can be
-  carried over the line by the bank's history alone. On a mature bank this is easy to
-  hit: an entity such as `user` co-occurs with nearly every fact, so it contributes
-  co-occurrence overlap that carries little actual information.
-- **The two stages can disagree, and short names disagree the most.** The sequence ratio
-  rewards a shared run of characters relative to the length of the names, so short names
-  score far higher on it than on trigram similarity. `Tigran` and `Iran` are trigram-similar
-  at `0.20` (barely admitted at stage 1) but sequence-similar at `0.80`, which is `0.40` of
-  the `0.6` threshold before any other signal is counted.
+The co-occurrence weighting matters for the same reason. An entity such as `user` co-occurs
+with nearly every fact in a mature bank, so sharing it says almost nothing; each shared
+entity is discounted by how many distinct entities it co-occurs with, and a partner seen
+alongside a hundred others is worth a tenth of one seen alongside a single other.
 
-**If unrelated entities are merging,** raise
-`HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` — it is the only threshold exposed, and
-it works by keeping the candidate out of stage 2 entirely. `0.25` is a reasonable first
-step: it excludes coincidental pairs like the one above while genuine surface variants of
-the same name, which typically sit between `0.4` and `0.7`, still match. Note that it is
-applied as a Postgres session setting on every pool connection, so it is server-wide and
-cannot be overridden per bank. For names that must never be fuzzy-matched at all, model
-them as [entity labels](retain.md#entity-labels), or pass them yourself with
+So there are three thresholds, and they answer different questions:
+
+| Threshold | Default | Question |
+|---|---|---|
+| `ENTITY_TRGM_SIMILARITY_THRESHOLD` | `0.15` | Which existing entities are even looked at? |
+| `ENTITY_MERGE_MIN_SIMILARITY` | `0.3` | Which of them may be merged onto? |
+| `ENTITY_INTRABATCH_MERGE_SIMILARITY` | `0.5` | Which brand-new names in one retain are folded together? |
+
+**If unrelated entities are merging,** raise `HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY`.
+Genuine surface variants of one name usually sit between `0.4` and `0.7`, so there is room
+above the default. For names that must never be fuzzy-matched at all, model them as
+[entity labels](retain.md#entity-labels), or pass them yourself with
 [`resolve_entities: false`](api/retain.md#resolve_entities).
 
-**If variants that should merge are staying separate,** lower that threshold, and check
-that `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` is not truncating the right
-candidate away on a bank with many similar names.
+**If variants that should merge are staying separate,** lower
+`HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` — short names are the usual reason, since
+trigram similarity on them is unavoidably low. If lowering it changes nothing, the candidate
+is not reaching stage 2 at all: lower `HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` too,
+and check that `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` is not truncating the
+right candidate away on a bank with many similar names.
 
 #### Skip storing raw document text
 
