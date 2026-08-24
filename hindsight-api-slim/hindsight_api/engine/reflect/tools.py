@@ -409,7 +409,7 @@ async def tool_expand(
     from ..memories import get_memories
 
     _store = get_memories()
-    if _store.writes_memory_rows_in_sql_for(bank_id):
+    if not _store.store_owned_for(bank_id):
         memories = await conn.fetch(
             f"""
             SELECT id, text, chunk_id, document_id, fact_type, context
@@ -445,7 +445,7 @@ async def tool_expand(
     # `documents` tables empty, so the SQL below would return nothing and `expand` would answer
     # without the chunk or document it was asked for — the memories read above was routed to the
     # store but these two were not.
-    _docs_in_store = _store.owns_document_store_for(bank_id)
+    _docs_in_store = _store.store_owned_for(bank_id)
     chunk_map: dict[str, Any] = {}
     if chunk_ids and _docs_in_store:
         # The store addresses a chunk by (document_id, index), and `chunk_id` is

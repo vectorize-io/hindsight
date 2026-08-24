@@ -30,9 +30,9 @@ Most operations are a method here, so the call chains route through the interfac
 rather than reimplement it per store; where the two differ, they usually differ by
 what the method does — the Postgres implementation writes join rows and reprocesses
 links, one that owns the store no-ops those passes and does its own thing. A handful
-of call sites still branch on the two capability flags (``writes_memory_rows_in_sql``
-for the inline-SQL fast paths, ``owns_document_store`` for the document/chunk bodies)
-where the shapes are genuinely different; those are the seams, not accidental leaks.
+of call sites still branch on the one capability flag, ``store_owned`` — whether the
+store owns its writes or the caller issues them as SQL — where the shapes are
+genuinely different; those are the seams, not accidental leaks.
 """
 
 from __future__ import annotations
@@ -505,36 +505,36 @@ class MemoriesExtension(Extension, ABC):
         name rather than masquerading as another store in the banner."""
         return type(self).__name__
 
-    #: Whether memories live as rows in the SQL ``memory_units`` table. True for the SQL stores
-    #: (Postgres/Oracle), whose ``upsert_observation`` / ``delete_facts`` are no-ops because the
-    #: consolidator writes those rows inline. A store that keeps memories elsewhere sets this
-    #: False so the consolidator skips the inline SQL and routes the write through the store —
-    #: then all of an observation's state lives wherever the store keeps it, not in Postgres.
-    writes_memory_rows_in_sql: bool = True
+    #: Whether this store OWNS ITS WRITES, rather than the caller writing them as SQL.
+    #:
+    #: One question, because in practice there has only ever been one: a store either keeps
+    #: everything itself — the memory rows, the document/chunk bodies, and the whole retain — or it
+    #: keeps none of them and the caller issues the SQL inside its own transaction. This used to be
+    #: three separate flags (``writes_memory_rows_in_sql``, ``owns_document_store``,
+    #: ``store_owned_retain``) asking that same question in three places, two of them in the
+    #: opposite polarity to the third, and no store ever set a mixed combination.
+    #:
+    #: False (the default) is the SQL stores, Postgres and Oracle, and nothing about how they work
+    #: changes: memories are rows in ``memory_units``, a document's text is
+    #: ``documents.original_text`` and its chunks are ``chunks.chunk_text``, the retain runs its
+    #: Phase-1 entity resolution in SQL, and this extension's write methods are no-ops because the
+    #: caller already wrote them — inside a transaction that makes the whole re-ingest atomic.
+    #:
+    #: True is a store that keeps memories elsewhere. It owns a dedicated document store (bodies go
+    #: through ``put_document`` / ``get_document_record`` / ``get_chunk_text`` / ``list_chunk_texts``
+    #: / ``count_chunks`` / ``document_content_hash``), resolves entity NAMES itself, and commits the
+    #: entire retain — resolution, upserts and the document replace — as ONE atomic server-side call
+    #: (``retain``). The orchestrator then needs no Postgres connection phase for it.
+    #:
+    #: Bank-scoped via :meth:`store_owned_for`, for a router whose banks live in different backends.
+    store_owned: bool = False
 
-    #: Whether this store owns the document/chunk BODIES — a document's extracted text, its chunk
-    #: texts, and its original uploaded file. Default False: Postgres keeps ``documents.original_text``
-    #: / ``chunks.chunk_text`` and the file goes through ``file_storage``. A store that sets this True
-    #: owns a dedicated document store, so the retain and read paths route document/chunk
-    #: bodies through the ``put_document`` / ``get_document_record`` / ``get_chunk_text`` /
-    #: ``list_chunk_texts`` / ``count_chunks`` / ``document_content_hash`` methods below instead of
-    #: the inline SQL. Cold, never-searched, key-based — see docs/documents-chunks.md.
-    owns_document_store: bool = False
-
-    #: Whether this store commits the ENTIRE retain — entity resolution/minting, the memory upserts,
-    #: and the document replace — in ONE atomic server-side call (its ``retain`` method). Default
-    #: False: the host runs its normal retain (Phase-1 entity resolution in SQL, then the write). A
-    #: store that sets this True resolves entity NAMES itself and needs no Postgres connection phase,
-    #: so the orchestrator skips SQL entity resolution + the documents/chunks/entities rows + the
-    #: commit witness and issues one ``retain`` instead. Bank-scoped via
-    #: :meth:`store_owned_retain_for`.
-    store_owned_retain: bool = False
-
-    def store_owned_retain_for(self, bank_id: str) -> bool:
-        """Per-bank form of :attr:`store_owned_retain`. Defaults to the class attribute; a router
-        that keeps some banks in a store-owned backend and others in SQL overrides it to answer PER
-        BANK. See :meth:`owns_document_store_for`."""
-        return self.store_owned_retain
+    def store_owned_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`store_owned`. Defaults to the class attribute, so a
+        single-backend extension needs no override. A router whose banks live in different backends
+        overrides this to answer PER BANK; every bank-scoped call site consults it rather than the
+        attribute."""
+        return self.store_owned
 
     async def retain(
         self,
@@ -552,8 +552,8 @@ class MemoriesExtension(Extension, ABC):
         """Commit an entire retain in one server-side call — resolve/mint the ``unit_entity_names``
         against the store's own registry, write the memories with the resulting entity ids, and
         (when ``replace_document_id`` is set) tombstone the document's prior version — all atomically.
-        Only a store advertising :attr:`store_owned_retain` implements this; the orchestrator calls it
-        exactly when :meth:`store_owned_retain_for` is true, so the default never runs. It exists on
+        Only a store advertising :attr:`store_owned` implements this; the orchestrator calls it
+        exactly when :meth:`store_owned_for` is true, so the default never runs. It exists on
         the interface so a routing extension delegates it automatically (see RoutingMemories).
 
         ``replace_chunk_ids`` narrows the replace to named chunks of the document — the DELTA case,
@@ -571,20 +571,6 @@ class MemoriesExtension(Extension, ABC):
         wholesale one: the chunks the caller did not name are exactly the ones it is trying to
         keep."""
         raise NotImplementedError("this store does not support a store-owned retain")
-
-    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
-        """Per-bank form of :attr:`writes_memory_rows_in_sql`. Defaults to the class attribute, so a
-        single-store extension needs no override. A store that keeps different banks in different
-        backends (some in SQL, some not) overrides this to answer PER BANK; every *bank-scoped* call
-        site consults this instead of the class attribute, so mixed banks each take the correct path.
-        (The few process-level gates — e.g. "is cross-store txn recovery relevant at all" — keep
-        reading the class attribute.)"""
-        return self.writes_memory_rows_in_sql
-
-    def owns_document_store_for(self, bank_id: str) -> bool:
-        """Per-bank form of :attr:`owns_document_store`. Defaults to the class attribute; a store
-        that keeps some banks in a separate backend overrides it. See :meth:`writes_memory_rows_in_sql_for`."""
-        return self.owns_document_store
 
     async def assert_writable(self, bank_id: str) -> None:
         """Refuse the operation if the store cannot take writes for this bank right now.
@@ -746,10 +732,10 @@ class MemoriesExtension(Extension, ABC):
 
     # ------------------------------------------------------ document/chunk bodies
     #
-    # Only relevant when :attr:`owns_document_store` is True: a store that keeps document/chunk
+    # Only relevant when :attr:`store_owned` is True: a store that keeps document/chunk
     # BODIES (extracted text, chunk texts, original file) in its own dedicated store rather than in
     # ``documents.original_text`` / ``chunks.chunk_text`` / ``file_storage``. The retain and read
-    # paths branch on ``owns_document_store`` and call these instead of the inline SQL. All bodies
+    # paths branch on ``store_owned`` and call these instead of the inline SQL. All bodies
     # are cold and never-searched; the document is passed whole (text + ordered chunk texts + file)
     # so the store can pack and dedup it — see docs/documents-chunks.md.
 
@@ -811,7 +797,7 @@ class MemoriesExtension(Extension, ABC):
         """Page this bank's documents from the store's OWN registry — the ``{items, total, limit,
         offset}`` shape the documents browser expects. Only a store that owns its document metadata
         overrides this (a Postgres-backed store lists from the SQL ``documents`` table instead, so
-        the engine only calls this for an ``owns_document_store`` store). Default raises so a
+        the engine only calls this for a ``store_owned`` store). Default raises so a
         mis-routed call is loud rather than silently empty.
 
         ``tags``/``tags_match`` filter by the documents' tags with the same modes and meanings as
@@ -821,7 +807,7 @@ class MemoriesExtension(Extension, ABC):
 
     async def count_documents(self, *, bank_id: str) -> int:
         """This bank's document count, from the store's own registry — the bank-stats document
-        total. Only an ``owns_document_store`` store overrides this (a Postgres store counts the
+        total. Only a ``store_owned`` store overrides this (a Postgres store counts the
         SQL ``documents`` table instead); the engine only calls it for a store that owns its docs."""
         raise NotImplementedError
 
@@ -911,7 +897,7 @@ class MemoriesExtension(Extension, ABC):
         from the methods declared here, so a fetch-many that exists only on a concrete store is
         invisible through the router — the call silently falls back and the optimisation is dead code
         in exactly the deployment it was written for. That has now happened twice; see
-        ``store_owned_retain_for``.
+        ``store_owned_for``.
         """
         return [await self.get_chunk_text(bank_id=bank_id, document_id=doc_id, chunk_index=idx) for doc_id, idx in refs]
 
@@ -926,7 +912,7 @@ class MemoriesExtension(Extension, ABC):
     async def set_document_tags(self, *, bank_id: str, document_id: str, tags: "list[str]") -> None:
         """Replace a document RECORD's tags, leaving its bodies alone.
 
-        Only an ``owns_document_store`` store implements this; a Postgres store updates its own
+        Only a ``store_owned`` store implements this; a Postgres store updates its own
         ``documents`` row instead, so the engine calls it only for a store-owned bank. It exists
         because re-tagging must not mean re-uploading: the record already carries every body's
         content hash, so a store can rewrite the record with new tags and move no bytes.

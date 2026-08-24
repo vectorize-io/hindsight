@@ -81,7 +81,7 @@ async def _insert_observation(
     """
     store = get_memories()
     obs_id = uuid.uuid4()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         await conn.execute(
             """
             INSERT INTO memory_units (

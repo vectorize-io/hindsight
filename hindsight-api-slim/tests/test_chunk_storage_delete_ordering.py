@@ -90,7 +90,7 @@ async def test_delete_chunks_by_ids_sweeps_links_on_both_endpoints(
     for the FK cascade to delete in executor-chosen order, reopening the #2570 deadlock.
     """
     bank_id = f"test-link-sweep-{uuid.uuid4().hex[:8]}"
-    if not get_memories().writes_memory_rows_in_sql_for(bank_id):
+    if get_memories().store_owned_for(bank_id):
         pytest.skip("memory_links reference memory_units rows, which this store keeps outside SQL")
 
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)

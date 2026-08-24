@@ -51,10 +51,10 @@ class InMemoryMemories(MemoriesExtension):
     name = "in-memory"
     # This store keeps memory rows in its own dict, not in Postgres, so the engine must take the
     # store-delegating branches (never the inline-SQL fast paths that assume a live ``conn``).
-    writes_memory_rows_in_sql = False
+    store_owned = True
     # It also owns the document/chunk bodies, so the retain and read paths route those through the
     # document methods below — exercising that half of the seam too.
-    owns_document_store = True
+    store_owned = True
     # When True the store carries each unit's entity ids on the recall result (a backend that
     # resolves the unit->entity posting inline), so recall builds the entity map from the result
     # and resolves only names via ``resolve_entity_names``. When False the result carries no ids
@@ -539,7 +539,7 @@ class InMemoryMemories(MemoriesExtension):
             created_at=record.created_at or datetime.now(timezone.utc),
         )
 
-    # -- document store (owns_document_store=True) ---------------------------
+    # -- document store (store_owned=True) -----------------------------------
 
     async def put_document(
         self,
@@ -768,7 +768,7 @@ async def test_maintenance_passes_are_optional(restore_default_store):
 # ---------------------------------------------------------------------------
 # Per-bank store capabilities. A store may route different banks to different
 # backends, so every BANK-SCOPED call site asks per bank —
-# writes_memory_rows_in_sql_for(bank_id) / owns_document_store_for(bank_id) —
+# store_owned_for(bank_id) —
 # rather than reading the process-global class attribute. The class attribute
 # stays the single-store default the _for methods fall back to.
 # ---------------------------------------------------------------------------
@@ -778,13 +778,13 @@ def test_per_bank_capability_defaults_to_the_class_attribute():
     """A single-store extension needs no override: the _for methods return the class attr, so
     every existing store keeps its exact behaviour for every bank."""
     pg = PostgresMemories({})
-    assert (pg.writes_memory_rows_in_sql, pg.owns_document_store) == (True, False)
-    assert pg.writes_memory_rows_in_sql_for("any-bank") is True
-    assert pg.owns_document_store_for("any-bank") is False
+    assert not (pg.store_owned, pg.store_owned) == (True, False)
+    assert not pg.store_owned_for("any-bank") is True
+    assert pg.store_owned_for("any-bank") is False
 
     mem = InMemoryMemories({})  # owns its rows AND its document store
-    assert mem.writes_memory_rows_in_sql_for("any-bank") is False
-    assert mem.owns_document_store_for("any-bank") is True
+    assert not mem.store_owned_for("any-bank") is False
+    assert mem.store_owned_for("any-bank") is True
 
 
 def test_a_store_answers_capabilities_per_bank():
@@ -795,27 +795,23 @@ def test_a_store_answers_capabilities_per_bank():
         name = "per-bank"
         # The loop-level class attr stays False so cross-store txn recovery still runs; the
         # per-bank answer is what every bank-scoped site consults.
-        writes_memory_rows_in_sql = False
+        store_owned = False
 
         def __init__(self, config=None):
             super().__init__(config)
             self.sql_banks = {"legacy-bank"}
 
-        def writes_memory_rows_in_sql_for(self, bank_id):
-            return bank_id in self.sql_banks
-
-        def owns_document_store_for(self, bank_id):
+        def store_owned_for(self, bank_id):
             return bank_id not in self.sql_banks
 
     store = PerBankStore({})
-    # A SQL-backed bank looks like Postgres (host does inline SQL, keeps documents in SQL)...
-    assert store.writes_memory_rows_in_sql_for("legacy-bank") is True
-    assert store.owns_document_store_for("legacy-bank") is False
-    # ...a store-backed bank owns its rows and its document store.
-    assert store.writes_memory_rows_in_sql_for("new-bank") is False
-    assert store.owns_document_store_for("new-bank") is True
-    # The process-level gate (cross-store recovery loop) still fires off the class attr.
-    assert store.writes_memory_rows_in_sql is False
+    # A SQL-backed bank looks like Postgres: the caller writes the rows and the documents.
+    assert store.store_owned_for("legacy-bank") is False
+    # ...a store-backed bank owns its rows, its document store and its retain.
+    assert store.store_owned_for("new-bank") is True
+    # The process-level gate (the cross-store recovery loop) still reads the class attribute, which
+    # stays False so that loop keeps running even though some banks answer True per bank.
+    assert store.store_owned is False
 
 
 def test_assert_writable_defaults_to_allowing_everything():
@@ -997,8 +993,8 @@ async def test_engine_clear_observations_routes_through_store(memory, request_co
 
 # ---------------------------------------------------------------------------
 # Recall enrichment through the seam. These lock the input combinations that a
-# store owning its rows/bodies (writes_memory_rows_in_sql=False,
-# owns_document_store=True) must hydrate FROM THE STORE, not from SQL. The class
+# store owning its rows/bodies (store_owned=True) must hydrate FROM THE STORE,
+# not from SQL. The class
 # of bug they guard against: recall(include_chunks=True) through such a store
 # returned EMPTY chunk text because the engine read the (empty) SQL chunks row
 # and never overlaid the store's body. Each test seeds a memory in the stub,
@@ -1080,7 +1076,7 @@ async def test_recall_include_chunks_hydrates_body_from_store(memory, request_co
 
     This is the regression guard: the SQL ``chunks`` row a store that owns bodies writes carries an
     EMPTY ``chunk_text``; the real text lives in the store. Remove the overlay in ``recall_async``
-    (~line 5271, the ``owns_document_store`` block) and the returned text falls back to that empty
+    (~line 5271, the ``store_owned`` block) and the returned text falls back to that empty
     string — this assertion then fails, which is exactly the bug that slipped through before.
     """
     store = InMemoryMemories({})
@@ -1507,7 +1503,7 @@ def test_every_bank_deltas_on_the_first_sub_batch():
 
     class StoreOwned(InMemoryMemories):
         name = "store-owned"
-        store_owned_retain = True
+        store_owned = True
 
     for store in (InMemoryMemories({}), StoreOwned({})):
         assert attempts_delta_retain(store, "b", True) is True

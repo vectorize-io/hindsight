@@ -767,7 +767,7 @@ async def _resolve_target_id(backend: Any, bank_id: str, document_id: str, on_co
     from ..memories import get_memories
 
     _store = get_memories()
-    if _store.owns_document_store_for(bank_id):
+    if _store.store_owned_for(bank_id):
         exists = await _store.get_document_record(bank_id=bank_id, document_id=document_id) is not None
     else:
         async with acquire_with_retry(backend) as conn:

@@ -5448,7 +5448,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # a store that owns the document store keeps the body there and leaves the SQL
                 # `original_text` NULL, so the SQL read counts zero prepended chunks and every
                 # later sub-batch starts its chunk_index on top of the ones the prepend consumed.
-                if not existing_text and _docs_owner.owns_document_store_for(bank_id):
+                if not existing_text and _docs_owner.store_owned_for(bank_id):
                     _rec = await _docs_owner.get_document_record(
                         bank_id=bank_id, document_id=append_doc_id, include_text=True
                     )
@@ -7241,7 +7241,7 @@ class MemoryEngine(MemoryEngineInterface):
                 from .memories import get_memories
 
                 _obs_store = get_memories()
-                if observation_ids_ordered and not _obs_store.writes_memory_rows_in_sql_for(bank_id):
+                if observation_ids_ordered and _obs_store.store_owned_for(bank_id):
                     # A store that keeps memories outside SQL: fetch each observation, then its
                     # source memories, for their chunk_ids — the join the SQL branch does, walked
                     # in observation-rank order so per-observation grouping is preserved.
@@ -7323,7 +7323,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # row, so it selects one fewer column and keeps the asyncpg Records as-is — no
                     # per-chunk ``dict`` allocation for an overlay it never runs.
                     _chunk_store = get_memories()
-                    _owns_docs = _chunk_store.owns_document_store_for(bank_id)
+                    _owns_docs = _chunk_store.store_owned_for(bank_id)
                     _chunk_cols = (
                         "chunk_id, chunk_text, chunk_index, document_id"
                         if _owns_docs
@@ -7590,7 +7590,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # Both branches keep observation-rank order: the token budget below is filled
                         # in this order, so an unordered read would let a low-ranked observation
                         # spend the budget the top-ranked one needs (issue #3221).
-                        if store.writes_memory_rows_in_sql_for(bank_id):
+                        if not store.store_owned_for(bank_id):
                             obs_rows = [
                                 {"id": str(r["id"]), "source_memory_ids": r["source_memory_ids"]}
                                 for r in await sf_conn.fetch(
@@ -7633,7 +7633,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # needed, so the SQL store selects those (bank-scoped) instead of the full
                         # 17-column memory row — the difference is measurable on this hot path.
                         if source_ids_ordered:
-                            if store.writes_memory_rows_in_sql_for(bank_id):
+                            if not store.store_owned_for(bank_id):
                                 source_row_by_id = {
                                     str(r["id"]): _source_fact_dict(
                                         uid=str(r["id"]),
@@ -7977,7 +7977,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .memories import get_memories
 
             _store = get_memories()
-            if _store.writes_memory_rows_in_sql_for(bank_id):
+            if not _store.store_owned_for(bank_id):
                 # Use a subquery for counts to avoid GROUP BY on CLOB columns
                 # (Oracle cannot use CLOB types as comparison keys in GROUP BY).
                 doc = await conn.fetchrow(
@@ -8009,7 +8009,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # `documents` row at all, so reading one here returns nothing and the caller 404s a
                 # document that the LIST route just returned. `list_documents` already branches on
                 # this; the addressed read has to branch the same way or the two disagree.
-                if _store.owns_document_store_for(bank_id):
+                if _store.store_owned_for(bank_id):
                     _rec = await _store.get_document_record(bank_id=bank_id, document_id=document_id, include_text=True)
                     if _rec is None:
                         doc = None
@@ -8135,7 +8135,7 @@ class MemoryEngine(MemoryEngineInterface):
                 from .memories import get_memories
 
                 _store = get_memories()
-                if _store.writes_memory_rows_in_sql_for(bank_id):
+                if not _store.store_owned_for(bank_id):
                     unit_rows = await conn.fetch(
                         f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND bank_id = $2 AND fact_type IN ('experience', 'world')",
                         document_id,
@@ -8184,7 +8184,7 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # For a store that keeps memories outside SQL, deleting the documents row does not
                 # cascade to its memories (they are not SQL rows) — drop them through the store.
-                if not _store.writes_memory_rows_in_sql_for(bank_id):
+                if _store.store_owned_for(bank_id):
                     # A store-owned (PG-free) bank writes NO Postgres documents row, so the DELETE
                     # above is a no-op and `deleted` is None — the deletion must be DRIVEN off the
                     # store, not gated on the SQL result (otherwise a store-owned document could never
@@ -8193,21 +8193,21 @@ class MemoryEngine(MemoryEngineInterface):
                     # Postgres to be atomic with. (The legacy path that DID write a documents row for
                     # such a store still tagged a txn; that row no longer exists under PG-free retain.)
                     had_memories = bool(unit_ids) or units_count > 0
-                    if _store.store_owned_retain_for(bank_id):
+                    if _store.store_owned_for(bank_id):
                         # Whether the RECORD existed has to be established before deleting it, and it
-                        # cannot be inferred from `owns_document_store_for` — that is a capability of
+                        # cannot be inferred from `store_owned_for` — that is a capability of
                         # the store, true for every bank it serves, so using it here reported a
                         # successful deletion for a document that never existed and turned the 404
                         # this endpoint promises into a 200.
                         doc_existed = (
                             await _store.document_content_hash(bank_id=bank_id, document_id=document_id) is not None
-                            if _store.owns_document_store_for(bank_id)
+                            if _store.store_owned_for(bank_id)
                             else False
                         )
                         await _store.delete_document(
                             conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
                         )
-                        if _store.owns_document_store_for(bank_id):
+                        if _store.store_owned_for(bank_id):
                             await _store.delete_document_record(bank_id=bank_id, document_id=document_id)
                         # Report the deletion off the store's own state (SQL `deleted` is None here).
                         #
@@ -8220,7 +8220,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # number and a second delete of the same document would report success. That
                         # made the endpoint's 404 depend on how far behind the indexer happened to
                         # be, which is why it passed alone and failed under load.
-                        if doc_existed if _store.owns_document_store_for(bank_id) else had_memories:
+                        if doc_existed if _store.store_owned_for(bank_id) else had_memories:
                             deleted = deleted or document_id
                     elif deleted:
                         # Legacy store-outside-SQL that still writes a Postgres documents row: keep
@@ -8233,7 +8233,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # extracted text + chunk bodies; the orphan sweep reclaims the blobs), under
                         # the same write-group. This is the EXPLICIT deletion — distinct from the
                         # re-ingest facts-delete above.
-                        if _store.owns_document_store_for(bank_id):
+                        if _store.store_owned_for(bank_id):
                             await _store.delete_document_record(bank_id=bank_id, document_id=document_id, txn=_del_txn)
                         # Re-record the witness now that the group's writes have happened, so the row
                         # carries what they actually wrote. `begin_txn` recorded it before any write
@@ -8362,7 +8362,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # exactly the store whose branch below was written to serve it — the retag
                     # never ran, and the caller got "not found" for a document it had just read.
                     # Drive existence off the STORE instead, the same way document DELETE had to.
-                    if not _store.owns_document_store_for(bank_id):
+                    if not _store.store_owned_for(bank_id):
                         return False
                     if await _store.get_document_record(bank_id=bank_id, document_id=document_id) is None:
                         return False
@@ -8370,7 +8370,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # The document's OWN tags live on the store's record; the memories are
                         # retagged separately below. Both, or the browser shows one of them stale.
                         await _store.set_document_tags(bank_id=bank_id, document_id=document_id, tags=list(tags))
-                if tags is not None and not _store.writes_memory_rows_in_sql_for(bank_id):
+                if tags is not None and _store.store_owned_for(bank_id):
                     # A store that keeps memories outside SQL: retag the document's memories, then
                     # invalidate the observations built on them and requeue their sources so the
                     # next consolidation rebuilds them under the new tags (the cascade the SQL
@@ -8550,7 +8550,7 @@ class MemoryEngine(MemoryEngineInterface):
                 from .memories import get_memories
 
                 _store = get_memories()
-                if _store.writes_memory_rows_in_sql_for(bank_id):
+                if not _store.store_owned_for(bank_id):
                     row = await conn.fetchrow(
                         f"SELECT bank_id, fact_type FROM {fq_table('memory_units')} WHERE id = $1",
                         str(unit_uuid),
@@ -8585,14 +8585,14 @@ class MemoryEngine(MemoryEngineInterface):
                 # observations inserted concurrently by consolidation (otherwise a
                 # racing insert committed between the sweep and the delete would
                 # leave an orphan referencing this just-deleted source memory).
-                if _store.writes_memory_rows_in_sql_for(bank_id):
+                if not _store.store_owned_for(bank_id):
                     deleted = await conn.fetchval(
                         f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
                     )
                 else:
                     deleted = unit_id if fact_type is not None else None
                     if deleted:
-                        if _store.store_owned_retain_for(bank_id):
+                        if _store.store_owned_for(bank_id):
                             # Store-owned: the tombstone is the ONLY write here (the relink/prune
                             # enqueues above join memory_units/unit_entities, which this store keeps
                             # no rows in — so they touch nothing; stale-observation cleanup routes to
@@ -8932,7 +8932,7 @@ class MemoryEngine(MemoryEngineInterface):
                             from .memories import get_memories as _get_memories_for_scope
 
                             _scope_store = _get_memories_for_scope()
-                            if _scope_store.writes_memory_rows_in_sql_for(bank_id):
+                            if not _scope_store.store_owned_for(bank_id):
                                 unit_id_rows = await conn.fetch(
                                     f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                                     bank_id,
@@ -8994,7 +8994,7 @@ class MemoryEngine(MemoryEngineInterface):
                         from .memories import get_memories as _get_memories_for_delete
 
                         _del_store = _get_memories_for_delete()
-                        if _del_store.writes_memory_rows_in_sql_for(bank_id):
+                        if not _del_store.store_owned_for(bank_id):
                             units_count = await conn.fetchval(
                                 f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id
                             )
@@ -9009,7 +9009,7 @@ class MemoryEngine(MemoryEngineInterface):
                             units_count = sum(_counts.values())
                             documents_count = (
                                 await _del_store.count_documents(bank_id=bank_id)
-                                if _del_store.owns_document_store_for(bank_id)
+                                if _del_store.store_owned_for(bank_id)
                                 else 0
                             )
                             _ents = await _del_store.list_entities(
@@ -9102,7 +9102,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import DeletePredicate, get_memories
 
         store = get_memories()
-        if not store.writes_memory_rows_in_sql_for(bank_id):
+        if store.store_owned_for(bank_id):
             # Three cases, and the middle one is the whole point. `delete_bank_profile` is what
             # separates "delete this bank" from "clear this bank's memories" — the API's clear
             # endpoint calls in with it False, and the bank goes on existing afterwards.
@@ -9178,7 +9178,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                if store.writes_memory_rows_in_sql_for(bank_id):
+                if not store.store_owned_for(bank_id):
                     # Count observations before deletion
                     count = await conn.fetchval(
                         f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
@@ -9312,7 +9312,7 @@ class MemoryEngine(MemoryEngineInterface):
         store = get_memories()
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            if store.writes_memory_rows_in_sql_for(bank_id):
+            if not store.store_owned_for(bank_id):
                 count = await conn.fetchval(
                     f"""
                     SELECT COUNT(*) FROM {fq_table("memory_units")}
@@ -9394,7 +9394,7 @@ class MemoryEngine(MemoryEngineInterface):
                     from .memories import get_memories
 
                     _store = get_memories()
-                    if _store.writes_memory_rows_in_sql_for(bank_id):
+                    if not _store.store_owned_for(bank_id):
                         await conn.execute(
                             f"""
                             UPDATE {fq_table("memory_units")}
@@ -9637,7 +9637,7 @@ class MemoryEngine(MemoryEngineInterface):
                 if new_entities is not None:
                     entity_date = new_occ_start or live.mentioned_at
                     entities_resolved = True
-                    if store.store_owned_retain_for(bank_id):
+                    if store.store_owned_for(bank_id):
                         # The store owns its entity registry: hand it the raw names and let its
                         # apply_edit resolve + mint them (exactly as its retain does), so a new
                         # entity from an edit lands in that registry. Nothing is written to — or
@@ -9789,7 +9789,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # rows the store's reads no longer consult.
                     _curation_txn = (
                         None
-                        if store.store_owned_retain_for(bank_id)
+                        if store.store_owned_for(bank_id)
                         else await store.begin_txn(conn=conn, fq_table=fq_table, bank_id=bank_id, mutating=True)
                     )
 
@@ -10636,7 +10636,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         _docs_store = get_memories()
-        if _docs_store.owns_document_store_for(bank_id):
+        if _docs_store.store_owned_for(bank_id):
             # `tags`/`tags_match` go WITH the call: dropping them here silently returned the
             # unfiltered page — every document, including the untagged ones a strict mode excludes
             # — with a `total` that ignored the filter. The store applies them and counts what
@@ -10786,7 +10786,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .memories import get_memories
 
             _hist_store = get_memories()
-            if _hist_store.writes_memory_rows_in_sql_for(bank_id):
+            if not _hist_store.store_owned_for(bank_id):
                 row = await conn.fetchrow(
                     f"""
                     SELECT fact_type, source_memory_ids
@@ -10932,7 +10932,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .memories import get_memories
 
             _chunk_store = get_memories()
-            if _chunk_store.owns_document_store_for(_cbank):
+            if _chunk_store.store_owned_for(_cbank):
                 if self._operation_validator:
                     from hindsight_api.extensions import BankReadContext, BankReadOperation
 
@@ -10986,7 +10986,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .memories import get_memories
 
             _store = get_memories()
-            if _store.owns_document_store_for(chunk["bank_id"]):
+            if _store.store_owned_for(chunk["bank_id"]):
                 _t = await _store.get_chunk_text(
                     bank_id=chunk["bank_id"],
                     document_id=chunk["document_id"],
@@ -11037,7 +11037,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         _chunks_store = get_memories()
-        if _chunks_store.owns_document_store_for(bank_id):
+        if _chunks_store.store_owned_for(bank_id):
             # A store that owns the document store keeps neither the SQL `documents` row nor the
             # SQL `chunks` rows, so the existence check below 404s and the page below is empty.
             # Serve the whole route from the store instead of overlaying text onto rows that do
@@ -11112,7 +11112,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .memories import get_memories
 
             _store = get_memories()
-            if _store.owns_document_store_for(bank_id):
+            if _store.store_owned_for(bank_id):
                 _texts = await _store.list_chunk_texts(bank_id=bank_id, document_id=document_id)
                 if _texts is not None:
                     _texts_by_index = dict(enumerate(_texts))
@@ -13073,7 +13073,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         _eg_store = get_memories()
-        if _eg_store.store_owned_retain_for(bank_id):
+        if _eg_store.store_owned_for(bank_id):
             return await _eg_store.get_entity_graph(bank_id=bank_id, limit=limit, min_count=min_count)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -13411,7 +13411,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
             # Document count, like link/node counts above, must be asked of the store: a store that
             # owns its documents keeps no rows in the SQL `documents` table, so the query returns 0.
-            if store.owns_document_store_for(bank_id):
+            if store.store_owned_for(bank_id):
                 total_documents = await store.count_documents(bank_id=bank_id)
             else:
                 doc_count_row = await conn.fetchrow(
@@ -13428,7 +13428,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .memories import get_memories
 
             _store = get_memories()
-            if _store.writes_memory_rows_in_sql_for(bank_id):
+            if not _store.store_owned_for(bank_id):
                 consolidation_row = await conn.fetchrow(
                     f"""
                     SELECT
@@ -13710,7 +13710,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         _store = get_memories()
-        if _store.store_owned_retain_for(bank_id):
+        if _store.store_owned_for(bank_id):
             # A store that owns its entity registry writes no SQL `entities` rows, so the query
             # below matches nothing and the caller 404s an entity that `list_entities` just
             # returned. Resolve the one id against the store's registry instead — an ADDRESSED

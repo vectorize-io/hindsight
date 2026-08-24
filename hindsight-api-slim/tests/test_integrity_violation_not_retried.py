@@ -220,7 +220,7 @@ def _patch_update_action_deps(consolidator, conn, source_ids, append_mock) -> Ex
     """
     # The capability is consulted per bank (#3388), so the stub answers the bank-scoped
     # form rather than carrying the bare class attribute it replaced.
-    store = SimpleNamespace(writes_memory_rows_in_sql_for=lambda bank_id: True)
+    store = SimpleNamespace(store_owned_for=lambda bank_id: False)
     stack = ExitStack()
     stack.enter_context(patch("hindsight_api.config.get_config", _fake_config))
     stack.enter_context(patch.object(consolidator, "acquire_with_retry", MagicMock(return_value=_AsyncNullCtx(conn))))

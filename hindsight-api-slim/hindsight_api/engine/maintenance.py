@@ -184,13 +184,13 @@ class MaintenanceLoop:
         cross-store write-group txns a crashed writer could leave undecided.
 
         Deliberately reads the PROCESS-LEVEL class attribute, not the per-bank
-        ``writes_memory_rows_in_sql_for(bank_id)`` — this only decides whether the recovery LOOP
+        ``store_owned_for(bank_id)`` — this only decides whether the recovery LOOP
         needs to run at all. A store that routes some banks outside SQL keeps the class attribute
         False so the loop runs, then ``recover_pending_txns`` is bank-scoped inside it."""
         try:
             from .memories import get_memories
 
-            return not get_memories().writes_memory_rows_in_sql
+            return get_memories().store_owned
         except Exception:
             return False
 
@@ -454,7 +454,7 @@ class MaintenanceLoop:
         from .memories import get_memories
 
         store = get_memories()
-        if store.writes_memory_rows_in_sql:
+        if not store.store_owned:
             return
         # Best-effort includes not having an engine to ask: the loop can be constructed without one
         # (see `__init__`), and this reap is explicitly allowed to be skipped. Only a store-owned

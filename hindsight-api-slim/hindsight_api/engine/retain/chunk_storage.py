@@ -71,7 +71,7 @@ async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> lis
     from ..memories import META_CHUNK_ID, get_memories
 
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         rows = await conn.fetch(
             f"""
             SELECT id
@@ -163,7 +163,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     from ..memories import META_CHUNK_ID, DeletePredicate, get_memories
 
     _store = get_memories()
-    if bank_id and not _store.writes_memory_rows_in_sql_for(bank_id):
+    if bank_id and _store.store_owned_for(bank_id):
         for _cid in chunk_ids:
             await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}), txn=txn)
 
@@ -274,7 +274,7 @@ async def store_chunks_batch(
     # same shape as store_document_text=False, and idempotency is unaffected (content_hash stays).
     from ..memories import get_memories
 
-    if get_memories().owns_document_store_for(bank_id):
+    if get_memories().store_owned_for(bank_id):
         store_text = False
 
     # Prepare chunk data for batch insert

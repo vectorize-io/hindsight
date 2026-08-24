@@ -400,7 +400,7 @@ async def _apply_dedup_create_fold(
     live_source_ids = await _filter_live_source_memories(conn, bank_id, create_source_ids)
     if not live_source_ids:
         return None
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         # Oracle-safe: _native_search_vector_update emits the to_tsvector clause only for a
         # native PG tsvector column, "" otherwise (see #3021 — the raw ::regconfig cast
         # breaks Oracle). RETURNING-gate on the twin's probe-time text so a concurrent
@@ -480,7 +480,7 @@ async def _apply_dedup_update_fold(
         return False
 
     store = get_memories()
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         # Snapshot the updated row's sources with a PLAIN read (no FOR UPDATE). Lock order
         # must be sources-before-observation: _filter_live_source_memories below takes
         # FOR SHARE on the SOURCE rows first, then the fold UPDATE locks the observation
@@ -687,7 +687,7 @@ async def _filter_live_source_memories(
     if not source_memory_ids:
         return []
     store = get_memories()
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         rows = await conn.fetch(
             f"SELECT id FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2 FOR SHARE",
             source_memory_ids,
@@ -716,7 +716,7 @@ async def _any_live_source_memory(
     if not source_memory_ids:
         return False
     store = get_memories()
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         found = await conn.fetchval(
             f"SELECT 1 FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2 LIMIT 1",
             source_memory_ids,
@@ -877,7 +877,7 @@ async def _count_observations_for_scope(
     Observations with no tags are not counted (the limit does not apply to them).
     """
     store = get_memories()
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         return await conn.fetchval(
             f"SELECT COUNT(*) FROM {fq_table('memory_units')} "
             f"WHERE bank_id = $1 AND fact_type = 'observation' AND tags @> $2::varchar[]",
@@ -1499,7 +1499,7 @@ async def _run_consolidation_job(
             # witness row + decide happen in ONE short transaction at the end (below) — we must not
             # hold a Postgres transaction across the LLM calls in the sub-batch loop.
             #
-            # A store that owns the whole retain (store_owned_retain) keeps ALL of this batch's memory
+            # A store that owns its writes (store_owned) keeps ALL of this batch's memory
             # writes — observation upserts/deletes and the mark_consolidated stamps — in ITS store, not
             # Postgres, so there is nothing to make atomic with a Postgres witness. Skip the write-group
             # entirely (``_batch_txn = None`` → the writes below are plain, immediately-visible writes).
@@ -1509,7 +1509,7 @@ async def _run_consolidation_job(
             # undecided. The mental-model refresh-tag bookkeeping below becomes a plain Postgres write
             # (best-effort rather than atomic-with-the-batch — a missed tag only defers a refresh).
             _txn_provider = get_memories()
-            _store_owned = _txn_provider.store_owned_retain_for(bank_id)
+            _store_owned = _txn_provider.store_owned_for(bank_id)
             _batch_txn = None if _store_owned else await _txn_provider.mint_txn(bank_id=bank_id, mutating=True)
 
             try:
@@ -2634,7 +2634,7 @@ async def _apply_update_action(
     merged_tags = list(existing_tags | source_tags)
 
     t0 = time.time()
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         # Unlike the dedup folds this statement also runs on Oracle, where LEAST/GREATEST
         # return NULL as soon as ANY argument is NULL (PostgreSQL ignores NULL arguments).
         # The inner COALESCE covers a NULL *parameter*; the outer one covers a NULL
@@ -2803,7 +2803,7 @@ async def _execute_delete_action(
 ) -> None:
     """Delete a superseded or contradicted observation."""
     store = get_memories()
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         await conn.execute(
             f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 AND bank_id = $2 AND fact_type = 'observation'",
             uuid.UUID(observation_id),
@@ -3277,7 +3277,7 @@ async def _apply_create_observation(
     source_memory_ids = live_source_memory_ids
 
     t0 = time.time()
-    if store.writes_memory_rows_in_sql_for(bank_id):
+    if not store.store_owned_for(bank_id):
         # Query varies based on text search backend.
         from ..schema import _is_oracle  # noqa: PLC0415
 

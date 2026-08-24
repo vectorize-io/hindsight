@@ -78,7 +78,7 @@ async def _insert_observation(
     """
     store = get_memories()
     obs_id = uuid.uuid4()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         await conn.execute(
             """
             INSERT INTO memory_units (
@@ -113,7 +113,7 @@ async def _insert_observation(
 async def _get_observation_ids(conn, bank_id: str) -> list[str]:
     """Ids of the bank's observations, read from whichever store holds them."""
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         rows = await conn.fetch(
             "SELECT id FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
             bank_id,
@@ -128,7 +128,7 @@ async def _get_observation_ids(conn, bank_id: str) -> list[str]:
 async def _get_consolidated_at(conn, memory_id: uuid.UUID, bank_id: str | None = None):
     """A memory's consolidated marker. ``bank_id`` is required for a bank-partitioned store."""
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         return await conn.fetchval(
             "SELECT consolidated_at FROM memory_units WHERE id = $1",
             memory_id,

@@ -633,7 +633,7 @@ async def _apply_store_last_write(banks: list[dict], sort_keys: "dict[str, datet
     from ..memories import get_memories
 
     store = get_memories()
-    external = [b for b in banks if not store.writes_memory_rows_in_sql_for(b["bank_id"])]
+    external = [b for b in banks if store.store_owned_for(b["bank_id"])]
     if not external:
         return
     ids = [b["bank_id"] for b in external]
@@ -692,7 +692,7 @@ async def apply_store_fact_counts(pool, banks: list[dict]) -> None:
     from ..memories import get_memories
 
     store = get_memories()
-    external = [bank for bank in banks if not store.writes_memory_rows_in_sql_for(bank["bank_id"])]
+    external = [bank for bank in banks if store.store_owned_for(bank["bank_id"])]
     if not external:
         return
 

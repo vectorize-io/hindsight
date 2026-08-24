@@ -429,7 +429,7 @@ async def _pre_resolve_phase1(
     slow reads, eliminating TimeoutErrors under concurrent load.
 
     ``skip_entity_resolution`` is set for a store that resolves/mints entities itself
-    (``store_owned_retain``): the store owns its own entity registry and resolves raw names
+    (``store_owned``): the store owns its own entity registry and resolves raw names
     server-side inside its atomic retain, so the Postgres trigram scan + entity INSERTs here
     are pure waste (and the whole point of the PG-free path is to not touch Postgres). We return an
     empty entity result; the store-owned write path reconstructs raw names straight from the facts.
@@ -703,11 +703,11 @@ async def _streaming_batch_write_ext(
     the staged writes are discarded on that path too.
     """
     # A store that resolves entities and commits the whole retain atomically in one server-side
-    # call (``store_owned_retain``) takes the PG-free path: no connection phase at all, no
+    # call (``store_owned``) takes the PG-free path: no connection phase at all, no
     # write-group witness, one server-side retain. Everything below (the two-phase Protocol-B
     # dance) is for a store whose memory rows live elsewhere but whose metadata still lands in
     # Postgres.
-    if provider.store_owned_retain_for(bank_id):
+    if provider.store_owned_for(bank_id):
         return await _streaming_store_owned_retain(
             provider=provider,
             pool=pool,
@@ -942,7 +942,7 @@ async def _streaming_store_owned_retain(
     No connection is acquired, no ``documents``/``chunks``/``entities`` rows, no commit witness, no
     ``decide_txn`` — the store's single write is already atomic, so Protocol B has nothing left to
     make atomic *together*. Document/chunk BODIES were already sent to the store's document store by
-    ``_store_document_bodies`` (``owns_document_store``); the small Postgres metadata rows that the
+    ``_store_document_bodies`` (``store_owned``); the small Postgres metadata rows that the
     Protocol-B path still wrote are simply gone.
 
     Known gaps, tracked for the follow-on phases:
@@ -1479,7 +1479,7 @@ async def retain_batch(
         from ..memories import get_memories
 
         _store = get_memories()
-        if not existing_text and _store.owns_document_store_for(bank_id):
+        if not existing_text and _store.store_owned_for(bank_id):
             _record = await _store.get_document_record(bank_id=bank_id, document_id=effective_doc_id, include_text=True)
             if _record:
                 existing_text = _record.get("original_text")
@@ -1874,7 +1874,7 @@ async def _store_document_bodies(
     from ..memories.base import StoreWriteConflict
 
     store = get_memories()
-    if not store.owns_document_store_for(bank_id):
+    if not store.store_owned_for(bank_id):
         return
     # `put_document` REPLACES a document's chunk list — it takes the ordered texts whole, because
     # the store packs them into one object. A sub-batched retain calls this once per sub-batch
@@ -2547,7 +2547,7 @@ async def _streaming_retain_batch(
 
                 _edge_provider = get_memories()
                 _edge_txn = None
-                if _edge_provider.store_owned_retain_for(bank_id):
+                if _edge_provider.store_owned_for(bank_id):
                     # Store-owned 0-fact (re-)ingest: the document's bodies are already in the store
                     # (via _store_document_bodies) and there are no new memories. A re-ingest that now
                     # yields 0 facts must drop the document's PRIOR memories — ONE plain store-side
@@ -2640,11 +2640,11 @@ async def _streaming_retain_batch(
             mb_start = time.time()
 
             # Phase 1 — Entity Resolution only (no ANN — deferred to Phase 3). A store that resolves
-            # and mints entities itself (server-side, ``store_owned_retain``) skips the Postgres
+            # and mints entities itself (server-side, ``store_owned``) skips the Postgres
             # trigram scan + entity INSERTs entirely — the PG-free path touches no Postgres in retain.
             from ..memories import get_memories as _get_memories_p1
 
-            _store_owned_retain = _get_memories_p1().store_owned_retain_for(bank_id)
+            _store_owned = _get_memories_p1().store_owned_for(bank_id)
             p1_start = time.time()
             phase1 = await _pre_resolve_phase1(
                 pool,
@@ -2655,7 +2655,7 @@ async def _streaming_retain_batch(
                 config,
                 log_buffer,
                 skip_semantic_ann=True,
-                skip_entity_resolution=_store_owned_retain,
+                skip_entity_resolution=_store_owned,
             )
 
             logger.info(f"[streaming] Phase 1 (entity resolution): {time.time() - p1_start:.3f}s")
@@ -2692,7 +2692,7 @@ async def _streaming_retain_batch(
             # `mint_txn() is not None`, which was the same question only while every separate-system
             # store implemented Protocol B. A store that owns its whole retain has no write group to
             # mint — one WAL entry is already atomic — so once memlake dropped `mint_txn` the handle
-            # came back None and this branch stopped being taken: `store_owned_retain` banks fell
+            # came back None and this branch stopped being taken: store-owned banks fell
             # through to the Postgres path below and their `Retain` RPC was never called at all,
             # while `store_owned_retain_for()` went on reporting True. Asking what the store CAN do
             # cannot drift out of sync with what it does; asking whether it minted a handle can.
@@ -2700,7 +2700,7 @@ async def _streaming_retain_batch(
 
             _ext_provider = get_memories()
             _ext_txn = await _ext_provider.mint_txn(bank_id=bank_id, mutating=True)
-            if _ext_provider.store_owned_retain_for(bank_id) or _ext_txn is not None:
+            if _ext_provider.store_owned_for(bank_id) or _ext_txn is not None:
                 ext_result = await _streaming_batch_write_ext(
                     provider=_ext_provider,
                     ext_txn=_ext_txn,
@@ -3033,7 +3033,7 @@ async def _streaming_retain_batch(
 
             _edge_provider = get_memories()
             _edge_txn = None
-            if _edge_provider.store_owned_retain_for(bank_id):
+            if _edge_provider.store_owned_for(bank_id):
                 # Store-owned zero-batch retain — the post-loop analogue of the per-batch 0-fact
                 # PG-free branch above. Reached when NO batch ran at all (empty/gibberish content,
                 # or a recovery where every chunk was already committed as a prior attempt). The
@@ -3308,7 +3308,7 @@ async def _try_delta_retain(
     from ..memories import get_memories as _get_memories_delta
 
     _delta_store = _get_memories_delta()
-    _store_owned_delta = _delta_store.store_owned_retain_for(bank_id)
+    _store_owned_delta = _delta_store.store_owned_for(bank_id)
 
     # Need a single document_id
     effective_doc_id = document_id
@@ -3947,7 +3947,7 @@ async def _delta_metadata_only(
     from ..memories import get_memories as _get_memories_meta
 
     _meta_store = _get_memories_meta()
-    if _meta_store.store_owned_retain_for(bank_id):
+    if _meta_store.store_owned_for(bank_id):
         # The document and its chunks are not in SQL, so the row lock and the hash read above have
         # nothing to read: the whole point of this path — "the document has not moved, so leave its
         # facts alone" — would otherwise decide it HAD moved and fall back to a full retain, which

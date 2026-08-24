@@ -382,7 +382,7 @@ async def _upsert_document_row(
     # the bulky body is written to the store up front (orchestrator._store_document_bodies).
     from ..memories import get_memories
 
-    if get_memories().owns_document_store_for(bank_id):
+    if get_memories().store_owned_for(bank_id):
         original_text = None
     await conn.execute(
         f"""
@@ -431,7 +431,7 @@ async def update_memory_units_metadata_and_tags(
     from ..memories.base import META_METADATA_JSON
 
     store = get_memories()
-    if not store.writes_memory_rows_in_sql_for(bank_id):
+    if store.store_owned_for(bank_id):
         # A store that keeps memories outside SQL: page the document's memories and patch each
         # one's tags and metadata through the store — the UPDATE below is a no-op on its empty
         # memory_units.

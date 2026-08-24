@@ -2043,8 +2043,8 @@ async def test_download_route_rejects_unauthorized_keys(api_client, memory, requ
 class _StoreOwnedMemories:
     """A memories store that keeps memories outside SQL, like an external store extension."""
 
-    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
-        return False
+    def store_owned_for(self, bank_id: str) -> bool:
+        return True
 
 
 @pytest.mark.asyncio
@@ -2112,7 +2112,7 @@ class _RecordingStoreOwned(_StoreOwnedMemories):
     def __init__(self):
         self.documents: dict[str, dict] = {}
 
-    def owns_document_store_for(self, bank_id: str) -> bool:
+    def store_owned_for(self, bank_id: str) -> bool:
         return True
 
     async def get_document_record(self, *, bank_id, document_id, include_text=False):
@@ -2206,8 +2206,8 @@ class _FakeStoreOwned(_StoreOwnedMemories):
 
 
 class _SqlMemories:
-    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
-        return True
+    def store_owned_for(self, bank_id: str) -> bool:
+        return False
 
 
 @pytest.mark.asyncio
