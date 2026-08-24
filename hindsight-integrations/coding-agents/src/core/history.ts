@@ -50,9 +50,13 @@ export interface HistoryImport {
   unattributed?: number;
 }
 
-/** Claude encodes a project directory as its absolute path with separators and underscores replaced by `-`. */
+/** Claude encodes a project directory as its absolute path with EVERY non-alphanumeric character
+ *  replaced by `-` — separators, dots, underscores, spaces, `+`, `@`, all of them. Case is kept,
+ *  and runs are not collapsed (`/a-1/-b` -> `-a-1--b`), so this is a 1:1 character substitution.
+ *  Verified against Claude Code 2.1.241: `hs_under_test` -> `hs-under-test`, and
+ *  `hs+odd@repo v2` -> `hs-odd-repo-v2`. */
 export function claudeProjectDir(repoDir: string, home = homedir()): string {
-  return join(home, ".claude", "projects", repoDir.replace(/[/._]/g, "-"));
+  return join(home, ".claude", "projects", repoDir.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 
 /** Is `dir` the repo itself or somewhere inside it? */
@@ -144,7 +148,7 @@ function claudeHistory(repoDir: string, home: string): HistoryImport {
   let unattributed = 0;
   for (const file of dirs.flatMap(jsonlFiles)) {
     // ONLY the cwd recorded inside the session may attribute it to a repo. Falling back to the
-    // directory name would be a guess: `/` and `.` both encode to `-`, so `repo-sub` is either the
+    // directory name would be a guess: every non-alphanumeric encodes to `-`, so `repo-sub` is either the
     // subdirectory `repo/sub` or an unrelated sibling repo — and a wrong guess files someone
     // else's conversation into this repo's memory, which is worse than importing nothing.
     // (Measured: 400/400 sampled sessions record a cwd, so this skips ~nothing in practice.)
