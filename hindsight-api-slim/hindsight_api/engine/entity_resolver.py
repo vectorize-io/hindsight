@@ -66,6 +66,11 @@ class _SimilarNamePair:
 # single-retain new-entity count while bounding the tail.
 _INTRABATCH_MAX_NAMES = 250
 
+# Trigram similarity at which two names are the same words in some order, differing only in case,
+# punctuation or decoration — pg_trgm builds its trigrams per word, so identical sets means the
+# separators are all that differ. Name evidence that strong stands on its own.
+_IDENTICAL_TRIGRAMS: Final[float] = 1.0
+
 # A pg_trgm "word" is a maximal run of alphanumerics (Unicode letters/digits, underscore excluded);
 # everything else (space, punctuation, emoji) is a separator. This is why decoration variants like
 # "Wren <emoji>" collapse to the same trigram set.
@@ -105,6 +110,38 @@ def _trigram_similarity(a: str, b: str) -> float:
     it backend-agnostic (Postgres, Oracle, and the pg_trgm-absent "full" fallback all behave alike).
     """
     return _trigram_set_similarity(_trigram_set(a), _trigram_set(b))
+
+
+# Sequence ratio at/above which two *words* count as the same word. Calibrated on the pair this
+# exists to reject — "John Smith" vs "Jane Smith", where john/jane is 0.50 — against the legitimate
+# word-level differences below it: são/sao 0.67, waler/wall 0.67, arbor/arbour 0.91. Abbreviations
+# (corp/corporation, 0.53) are admitted by the prefix rule instead, not by lowering this.
+_MIN_TOKEN_SIMILARITY: Final[float] = 0.6
+
+
+def _tokens_match(a: str, b: str) -> bool:
+    """Whether two words are plausibly the same word — equal, an abbreviation of, or a near-miss."""
+    return a == b or a.startswith(b) or b.startswith(a) or SequenceMatcher(None, a, b).ratio() >= _MIN_TOKEN_SIMILARITY
+
+
+def _tokens_are_compatible(a: str, b: str) -> bool:
+    """Whether two multi-word names agree word by word.
+
+    Whole-name similarity lets one long shared word drown out a completely different short one:
+    "John Smith" and "Jane Smith" are 0.47 by trigram and 0.80 by sequence ratio, so two people who
+    share a surname and a workplace scored as one entity. Every word of the shorter name has to find
+    a counterpart in the longer one — the same floor the whole name already faces, applied where the
+    evidence actually is.
+
+    Single-word names are exempt, and deliberately: with one token the whole-name check *is* the
+    token check, and imposing this on top would reject real variants that have no long shared word
+    to hide behind ("Nick"/"Nicolas" is 0.55).
+    """
+    ta, tb = _TRGM_WORD.findall(a), _TRGM_WORD.findall(b)
+    if len(ta) < 2 and len(tb) < 2:
+        return True
+    short, rest = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return all(any(_tokens_match(word, other) for other in rest) for word in short)
 
 
 @dataclass
@@ -1114,32 +1151,47 @@ class EntityResolver:
                 # ranks them correctly. Gate on trigram, and leave the score above the gate
                 # alone: SequenceMatcher stays load-bearing for typo variants that arrive
                 # with no co-occurrence context at all ("Dr Waler" -> "Dr Wall").
-                if _trigram_set_similarity(mention_trigrams, _trigram_set(canonical_name)) < self._merge_min_similarity:
+                canonical_lower = canonical_name.lower()
+                name_trigram_similarity = _trigram_set_similarity(mention_trigrams, _trigram_set(canonical_name))
+                if name_trigram_similarity < self._merge_min_similarity:
                     continue
 
-                score = 0.0
+                # ...and word by word, since whole-name similarity lets one long shared word drown
+                # out a completely different short one (see _tokens_are_compatible).
+                if not _tokens_are_compatible(entity_text_lower, canonical_lower):
+                    continue
 
-                # 1. Name similarity (0-0.5)
-                name_similarity = SequenceMatcher(None, entity_text_lower, canonical_name.lower()).ratio()
-                score += name_similarity * 0.5
+                if name_trigram_similarity >= _IDENTICAL_TRIGRAMS:
+                    # Identical trigram sets: the same words, differing only in case, punctuation or
+                    # decoration ("Wren 🎵" / "Wren", "GPT-4" / "GPT 4"). The in-batch pass already
+                    # unifies names like these on the name alone and at a *lower* bar (0.5), so
+                    # requiring history here made two forms one entity or two depending only on
+                    # whether they arrived in the same retain — #3107 fixed that half only.
+                    score = 1.0
+                else:
+                    score = 0.0
 
-                # 2. Co-occurring entities (0-0.3), each weighted by how selective it is
-                if nearby_entity_set:
-                    co_entities = cooccurrence_map.get(candidate_id, set())
-                    matched_weight = sum(nearby_weights[name] for name in nearby_entity_set & co_entities)
-                    score += (matched_weight / len(nearby_entity_set)) * 0.3
+                    # 1. Name similarity (0-0.5)
+                    name_similarity = SequenceMatcher(None, entity_text_lower, canonical_lower).ratio()
+                    score += name_similarity * 0.5
 
-                # 3. Temporal proximity (0-0.2)
-                if last_seen and entity_event_date:
-                    # Normalize timezone awareness for comparison
-                    event_date_utc = (
-                        entity_event_date if entity_event_date.tzinfo else entity_event_date.replace(tzinfo=UTC)
-                    )
-                    last_seen_utc = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
-                    days_diff = abs((event_date_utc - last_seen_utc).total_seconds() / 86400)
-                    if days_diff < 7:
-                        temporal_score = max(0, 1.0 - (days_diff / 7))
-                        score += temporal_score * 0.2
+                    # 2. Co-occurring entities (0-0.3), each weighted by how selective it is
+                    if nearby_entity_set:
+                        co_entities = cooccurrence_map.get(candidate_id, set())
+                        matched_weight = sum(nearby_weights[name] for name in nearby_entity_set & co_entities)
+                        score += (matched_weight / len(nearby_entity_set)) * 0.3
+
+                    # 3. Temporal proximity (0-0.2)
+                    if last_seen and entity_event_date:
+                        # Normalize timezone awareness for comparison
+                        event_date_utc = (
+                            entity_event_date if entity_event_date.tzinfo else entity_event_date.replace(tzinfo=UTC)
+                        )
+                        last_seen_utc = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
+                        days_diff = abs((event_date_utc - last_seen_utc).total_seconds() / 86400)
+                        if days_diff < 7:
+                            temporal_score = max(0, 1.0 - (days_diff / 7))
+                            score += temporal_score * 0.2
 
                 if score > best_score:
                     best_score = score

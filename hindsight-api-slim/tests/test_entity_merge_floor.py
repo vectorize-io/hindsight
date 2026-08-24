@@ -14,8 +14,9 @@ import pytest
 
 from hindsight_api.engine.entity_resolver import (
     EntityResolver,
-    _cooccurrence_weight,
     _build_cooccurrence_index,
+    _cooccurrence_weight,
+    _tokens_are_compatible,
 )
 
 NOW = datetime.now(UTC)
@@ -189,3 +190,57 @@ async def test_scores_landing_exactly_on_the_threshold_agree_with_each_other():
         event_date=None,
     )
     assert name == "Jonathan Reeding Rd"
+
+
+@pytest.mark.asyncio
+async def test_a_different_given_name_is_not_absorbed_by_a_shared_surname():
+    """Whole-name similarity lets one long shared word drown out a different short one: "John
+    Smith"/"Jane Smith" is 0.47 by trigram and 0.80 by sequence ratio, so two people who share a
+    surname and a workplace scored as one entity even with the floor in place."""
+    resolver = _resolver({"john smith": "new-john-id"})
+    name = await _resolve_one(
+        resolver,
+        "John Smith",
+        ("jane-id", "Jane Smith", {}, NOW, 20),
+        nearby=["Bletchley Park"],
+        cooccurs_with={"bletchley park"},
+        degrees={"bletchley park": 1},
+    )
+    assert name == "John Smith"
+
+
+@pytest.mark.asyncio
+async def test_a_decorated_form_of_a_stored_name_is_the_same_entity():
+    """Identical trigram sets mean the same words, differing only in separators. The in-batch pass
+    already unifies these on the name alone at a lower bar, so requiring history here made two forms
+    one entity or two depending only on whether they arrived in the same retain (#3107)."""
+    resolver = _resolver({"wren 🎵": "new-wren-id"})
+    name = await _resolve_one(
+        resolver,
+        "Wren 🎵",
+        # Stale, and sharing nothing: the name has to carry it alone.
+        ("wren-id", "Wren", {}, NOW - timedelta(days=400), 3),
+        nearby=[],
+        cooccurs_with=set(),
+    )
+    assert name == "Wren"
+
+
+def test_word_level_agreement_admits_real_variants_and_rejects_substitutions():
+    """The cutoff is calibrated between john/jane (0.50) and the legitimate word differences."""
+    assert _tokens_are_compatible("são paulo", "sao paulo")
+    assert _tokens_are_compatible("ann arbor", "ann arbour")
+    assert _tokens_are_compatible("dr waler", "dr wall")
+    assert _tokens_are_compatible("microsoft corp", "microsoft corporation"), "abbreviation, via prefix"
+    assert _tokens_are_compatible("john a smith", "john smith"), "an added initial is not a word conflict"
+    assert _tokens_are_compatible("alice", "alice chen"), "an added word is not a word conflict"
+    assert not _tokens_are_compatible("john smith", "jane smith")
+    assert not _tokens_are_compatible("new york", "new jersey")
+    assert not _tokens_are_compatible("united states", "united kingdom")
+
+
+def test_single_word_names_are_exempt_from_word_level_agreement():
+    """With one token the whole-name floor *is* the token floor, and applying this on top would
+    reject real variants with no long shared word to hide behind."""
+    assert _tokens_are_compatible("nick", "nicolas"), "0.55 by sequence ratio — under the word cutoff"
+    assert _tokens_are_compatible("iran", "iraq"), "not compatible in truth, but not this rule's job"

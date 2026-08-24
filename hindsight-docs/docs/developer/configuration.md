@@ -1471,6 +1471,16 @@ to make — while trigram ranks them correctly at `0.20` and `0.55`. Without the
 remaining signals are worth `0.5` of the `0.6` needed, so a name that merely resembled an
 existing entity could be merged onto it by the bank's history alone.
 
+Two further checks run before the score. A candidate must **agree word by word**: every word of
+the shorter name has to find a counterpart in the longer one (an equal word, an abbreviation of
+one, or a near-miss spelling). Whole-name similarity otherwise lets a long shared word drown out
+a completely different short one — `John Smith` and `Jane Smith` are `0.47` by trigram and `0.80`
+by sequence ratio, so two people sharing a surname would merge. Single-word names are exempt,
+since with one word the floor above already is the word-level check. And in the other direction,
+a candidate whose trigram set is *identical* to the name's is reused outright, whatever the other
+signals say: pg_trgm builds trigrams per word, so identical sets mean the two forms differ only in
+case, punctuation or decoration (`Wren 🎵` and `Wren`, `GPT-4` and `GPT 4`).
+
 The co-occurrence weighting matters for the same reason. An entity such as `user` co-occurs
 with nearly every fact in a mature bank, so sharing it says almost nothing; each shared
 entity is discounted by how many distinct entities it co-occurs with, and a partner seen
