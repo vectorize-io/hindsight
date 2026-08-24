@@ -62,6 +62,9 @@ describe("buildKnowledgePreamble", () => {
     ]) {
       expect(out).toMatch(/new task or goal.*knowledge pages FIRST/is);
       expect(out).toMatch(/hindsight_reflect only when.*pages are too shallow/is);
+      // No `s` flag ON PURPOSE: this must stay a per-LINE guard against the old wording
+      // ("call hindsight_reflect with that goal FIRST"). With `s` it would span newlines and
+      // match the legitimate "hindsight_reflect ..." / "FIRST STOP" lines further down the guide.
       expect(out).not.toMatch(/hindsight_reflect.*FIRST/);
     }
   });
