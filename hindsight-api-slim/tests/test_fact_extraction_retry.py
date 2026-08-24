@@ -134,8 +134,8 @@ async def test_output_too_long_fails_unsplittable_subchunk_without_recursing():
 
 
 @pytest.mark.asyncio
-async def test_output_too_long_keeps_facts_from_sibling_when_one_half_fails():
-    """One unsplittable half must not discard facts the other half extracted."""
+async def test_output_too_long_propagates_when_one_half_cannot_be_split():
+    """A failing half must fail the chunk, not return the other half's facts."""
     from hindsight_api.engine.llm_wrapper import OutputTooLongError
     from hindsight_api.engine.retain.fact_extraction import TokenUsage, _extract_facts_with_auto_split
 
@@ -146,8 +146,9 @@ async def test_output_too_long_keeps_facts_from_sibling_when_one_half_fails():
     async def _extract(*, chunk: str, **_kwargs):
         # Only the half holding solely the user turn succeeds. Anything still
         # carrying the assistant turn overflows, so the whole chunk splits first
-        # and the tiny assistant half then fails unsplittably. Keyed on content,
-        # not call order, so gather scheduling cannot flip the test.
+        # and the tiny assistant half then fails unsplittably — below the split
+        # floor, so it cannot be reduced further. Keyed on content, not call
+        # order, so gather scheduling cannot flip the test.
         if "assistant" not in chunk:
             return [{"fact": "kept"}], TokenUsage()
         raise OutputTooLongError("too long")
@@ -159,18 +160,20 @@ async def test_output_too_long_keeps_facts_from_sibling_when_one_half_fails():
         "hindsight_api.engine.retain.fact_extraction._extract_facts_from_chunk",
         side_effect=_extract,
     ):
-        facts, _usage = await _extract_facts_with_auto_split(
-            chunk=chunk,
-            chunk_index=0,
-            total_chunks=1,
-            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
-            context="",
-            llm_config=llm_config,
-            config=config,
-            agent_name="agent",
-        )
-
-    assert facts == [{"fact": "kept"}]
+        # Returning the successful half's facts here would report the retain
+        # complete with the assistant turn silently missing, which is the
+        # failure mode this whole path exists to prevent.
+        with pytest.raises(RuntimeError, match="refusing to drop this sub-chunk"):
+            await _extract_facts_with_auto_split(
+                chunk=chunk,
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
 
 
 def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = None):
@@ -827,15 +830,3 @@ def test_facts_saturation_limit_scales_with_output_budget():
     assert resolve_facts_saturation_limit(small) < resolve_facts_saturation_limit(large)
     assert resolve_facts_saturation_limit(small) >= RETAIN_FACTS_SATURATION_FLOOR
 
-
-def test_facts_saturation_limit_falls_back_to_floor_without_budget():
-    """An unset or non-numeric ceiling falls back to the conservative floor."""
-    from hindsight_api.engine.retain.fact_extraction import (
-        RETAIN_FACTS_SATURATION_FLOOR,
-        resolve_facts_saturation_limit,
-    )
-
-    unset = MagicMock()
-    unset.retain_max_completion_tokens = None
-
-    assert resolve_facts_saturation_limit(unset) == RETAIN_FACTS_SATURATION_FLOOR

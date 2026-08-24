@@ -479,10 +479,12 @@ _APPROX_OUTPUT_TOKENS_PER_FACT = 85
 
 def resolve_facts_saturation_limit(config) -> int:
     """Facts a single extraction may return before the response counts as saturated."""
-    budget = getattr(config, "retain_max_completion_tokens", None)
-    if not isinstance(budget, int) or budget <= 0:
-        return RETAIN_FACTS_SATURATION_FLOOR
-    derived = budget // (2 * _APPROX_OUTPUT_TOKENS_PER_FACT)
+    # Direct attribute access, never getattr with a default: StaticConfigProxy
+    # signals "this field is bank-configurable" by raising ConfigFieldAccessError,
+    # which subclasses AttributeError, so a default would silently substitute the
+    # global value for the bank's resolved one (#3610). The field is required and
+    # validated positive by validate_retain_completion_token_budget.
+    derived = config.retain_max_completion_tokens // (2 * _APPROX_OUTPUT_TOKENS_PER_FACT)
     return max(RETAIN_FACTS_SATURATION_FLOOR, derived)
 
 
@@ -1206,7 +1208,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     # structured-output backend accepts JSON Schema maxItems. The saturation
     # check in _extract_facts_from_chunk remains authoritative for providers
     # that do not enforce this schema keyword.
-    if getattr(config, "llm_supports_max_items", True):
+    if config.llm_supports_max_items:
         facts_field = response_schema.model_fields["facts"]
         response_schema = create_model(
             "BoundedFactExtractionResponse",
@@ -1847,33 +1849,19 @@ async def _extract_facts_with_auto_split(
             ),
         ]
 
-        # return_exceptions so one unsplittable half cannot discard facts the other
-        # half extracted successfully. Losing good data is the failure mode this
-        # path exists to prevent, so salvage what succeeded and only fail when the
-        # split produced nothing at all.
-        sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
+        # A failing half must propagate, not be salvaged around. extract_facts_from_text
+        # already fails the retain if ANY chunk could not be extracted — "partial
+        # extraction is not acceptable" — so keeping one half's facts while the other
+        # is lost would report the operation completed with data silently missing,
+        # which is the exact failure this path exists to prevent.
+        sub_results = await asyncio.gather(*sub_tasks)
 
         # Combine results from both halves
         all_facts = []
         total_usage = TokenUsage()
-        failures: list[BaseException] = []
-        for sub_result in sub_results:
-            if isinstance(sub_result, BaseException):
-                failures.append(sub_result)
-                continue
-            sub_facts, sub_usage = sub_result
+        for sub_facts, sub_usage in sub_results:
             all_facts.extend(sub_facts)
             total_usage = total_usage + sub_usage
-
-        if failures and not all_facts:
-            raise failures[0]
-
-        if failures:
-            logger.error(
-                f"Chunk {chunk_index + 1}/{total_chunks}: {len(failures)} of {len(sub_results)} sub-chunks "
-                f"failed after splitting; keeping {len(all_facts)} facts from the sub-chunks that succeeded. "
-                f"First failure: {failures[0]}"
-            )
 
         logger.info(f"Successfully extracted {len(all_facts)} facts from split chunk {chunk_index + 1}")
 

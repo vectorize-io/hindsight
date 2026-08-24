@@ -31,6 +31,7 @@ def _baseline_config() -> MagicMock:
     config.retain_custom_instructions = None
     config.llm_output_language = None
     config.llm_supports_max_items = True
+    config.retain_max_completion_tokens = 4096
     return config
 
 
