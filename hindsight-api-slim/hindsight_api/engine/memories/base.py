@@ -759,8 +759,10 @@ class MemoriesExtension(Extension, ABC):
         It exists because ranking does not need payloads. Fusion orders candidates by id and arm
         score, and only the few that survive are ever read, so a store CAN return scores for the
         wide arms and materialize the rest afterwards. A store that does so must populate at least
-        ``text`` here, and should also restore ``entity_ids`` — leaving it ``None`` sends recall down
-        the ``entity_map_for_units`` path, which re-fetches the very memories this just fetched.
+        ``text`` here, and should also restore ``entity_ids`` and, for observations,
+        ``source_memory_ids`` — each field left ``None`` sends recall down a fallback that re-fetches
+        the very memories this just fetched (``entity_map_for_units`` for the first, the
+        ``prefer_observations`` and ``include_chunks`` reads for the second).
 
         Declared here rather than probed for, because a routing store generates its delegators from
         this interface: a method that exists only on a concrete store is unreachable in a cloud

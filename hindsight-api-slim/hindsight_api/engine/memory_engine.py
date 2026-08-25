@@ -7186,29 +7186,37 @@ class MemoryEngine(MemoryEngineInterface):
                 # "The observation list" = observations within the window we would return.
                 # Only those can supersede a raw fact; a far-down observation should not
                 # suppress a top raw fact it merely happens to reference.
-                observation_ids = [
-                    uuid.UUID(sr.id)
-                    for sr in scored_results[: thinking_budget * 2]
-                    if sr.retrieval.fact_type == "observation"
+                observation_srs = [
+                    sr for sr in scored_results[: thinking_budget * 2] if sr.retrieval.fact_type == "observation"
                 ]
+                observation_ids = [uuid.UUID(sr.id) for sr in observation_srs]
                 if observation_ids:
                     dedup_start = time.time()
                     superseded_ids: set[str] = set()
                     from .memories import get_memories
 
-                    async with acquire_with_retry(backend) as dedup_conn:
-                        # The observation carries its sources; the store resolves
-                        # them all in one addressed read.
-                        obs_rows = [
-                            {"source_memory_ids": m.source_memory_ids}
-                            for m in await get_memories().get_memories(
-                                conn=dedup_conn,
-                                fq_table=fq_table,
-                                bank_id=bank_id,
-                                unit_ids=[str(o) for o in observation_ids],
-                            )
-                            if m.fact_type == "observation"
-                        ]
+                    # A backend that carries an observation's sources on the recalled result has
+                    # already paid for this record — hydration fetched it whole. Re-fetching it to
+                    # read one field back off is a second addressed read per recall, and against a
+                    # store whose reads are round trips that is most of what this step costs. Same
+                    # all-or-nothing shape as the entity fast path: one observation that did not
+                    # carry its sources means the read has to happen anyway, so it covers them all.
+                    if all(sr.retrieval.source_memory_ids is not None for sr in observation_srs):
+                        obs_rows = [{"source_memory_ids": sr.retrieval.source_memory_ids} for sr in observation_srs]
+                    else:
+                        async with acquire_with_retry(backend) as dedup_conn:
+                            # The observation carries its sources; the store resolves
+                            # them all in one addressed read.
+                            obs_rows = [
+                                {"source_memory_ids": m.source_memory_ids}
+                                for m in await get_memories().get_memories(
+                                    conn=dedup_conn,
+                                    fq_table=fq_table,
+                                    bank_id=bank_id,
+                                    unit_ids=[str(o) for o in observation_ids],
+                                )
+                                if m.fact_type == "observation"
+                            ]
                     if tracer:
                         tracer.add_phase_metric(
                             "prefer_observations_dedup",
@@ -7250,6 +7258,10 @@ class MemoryEngine(MemoryEngineInterface):
                 ordered_items: list[tuple[str, str]] = []
                 seen_chunk_ids: set[str] = set()
                 observation_ids_ordered: list[uuid.UUID] = []
+                # The sources each observation already carries on its result, if the backend
+                # resolved them inline; ``None`` for one that did not, which is what decides
+                # below whether the observations have to be re-fetched to find them.
+                carried_sources: dict[str, list[str] | None] = {}
                 for sr in top_scored:
                     chunk_id = sr.retrieval.chunk_id
                     if chunk_id and chunk_id not in seen_chunk_ids:
@@ -7258,6 +7270,7 @@ class MemoryEngine(MemoryEngineInterface):
                     elif not chunk_id and sr.retrieval.fact_type == "observation":
                         ordered_items.append(("obs", sr.id))
                         observation_ids_ordered.append(uuid.UUID(sr.id))
+                        carried_sources[sr.id] = sr.retrieval.source_memory_ids
 
                 # Resolve source chunk_ids for all observations in a single query,
                 # ordered by observation rank so per-observation results stay grouped correctly.
@@ -7266,26 +7279,36 @@ class MemoryEngine(MemoryEngineInterface):
 
                 _obs_store = get_memories()
                 if observation_ids_ordered and _obs_store.store_owned_for(bank_id):
-                    # A store that keeps memories outside SQL: fetch each observation, then its
-                    # source memories, for their chunk_ids — the join the SQL branch does, walked
-                    # in observation-rank order so per-observation grouping is preserved.
-                    obs_units = await _obs_store.get_memories(
-                        conn=None,
-                        fq_table=fq_table,
-                        bank_id=bank_id,
-                        unit_ids=[str(o) for o in observation_ids_ordered],
-                    )
-                    by_obs = {u.unit_id: u for u in obs_units}
-                    src_ids = [sid for u in obs_units for sid in u.source_memory_ids]
+                    # A store that keeps memories outside SQL: resolve each observation's sources,
+                    # then read those source memories for their chunk_ids — the join the SQL branch
+                    # does, walked in observation-rank order so per-observation grouping is
+                    # preserved.
+                    #
+                    # The first half is free when the results carry their sources: hydration
+                    # already fetched these observations whole, so re-fetching them to read one
+                    # list back off is an addressed read that buys nothing. The SECOND read stays
+                    # either way — the sources are memories recall never retrieved, and their
+                    # chunk_ids are genuinely new.
+                    if all(carried_sources.get(str(o)) is not None for o in observation_ids_ordered):
+                        sources_by_obs = {str(o): (carried_sources[str(o)] or []) for o in observation_ids_ordered}
+                    else:
+                        obs_units = await _obs_store.get_memories(
+                            conn=None,
+                            fq_table=fq_table,
+                            bank_id=bank_id,
+                            unit_ids=[str(o) for o in observation_ids_ordered],
+                        )
+                        sources_by_obs = {u.unit_id: list(u.source_memory_ids) for u in obs_units}
+                    src_ids = [sid for sids in sources_by_obs.values() for sid in sids]
                     srcs = await _obs_store.get_memories(
                         conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=list(dict.fromkeys(src_ids))
                     )
                     src_chunk = {s.unit_id: s.chunk_id for s in srcs}
                     for _obs_uuid in observation_ids_ordered:
-                        _obs = by_obs.get(str(_obs_uuid))
-                        if not _obs:
+                        _obs_sources = sources_by_obs.get(str(_obs_uuid))
+                        if _obs_sources is None:
                             continue
-                        for _sid in _obs.source_memory_ids:
+                        for _sid in _obs_sources:
                             _cid = src_chunk.get(_sid)
                             if _cid and _cid not in seen_chunk_ids:
                                 obs_chunk_ids.setdefault(str(_obs_uuid), []).append(_cid)
@@ -7570,7 +7593,8 @@ class MemoryEngine(MemoryEngineInterface):
             source_facts_dict: dict[str, MemoryFact] | None = None
             source_facts_truncated = False
             if include_source_facts:
-                observation_ids = [uuid.UUID(sr.id) for sr in top_scored if sr.retrieval.fact_type == "observation"]
+                observation_srs = [sr for sr in top_scored if sr.retrieval.fact_type == "observation"]
+                observation_ids = [uuid.UUID(sr.id) for sr in observation_srs]
                 if observation_ids:
                     from .memories import get_memories
 
@@ -7611,10 +7635,20 @@ class MemoryEngine(MemoryEngineInterface):
                         # store reads only the two columns it needs rather than a full memory row; a
                         # store that owns its rows answers from its own objects via one addressed read.
                         #
-                        # Both branches keep observation-rank order: the token budget below is filled
+                        # Every branch keeps observation-rank order: the token budget below is filled
                         # in this order, so an unordered read would let a low-ranked observation
                         # spend the budget the top-ranked one needs (issue #3221).
-                        if not store.store_owned_for(bank_id):
+                        if all(sr.retrieval.source_memory_ids is not None for sr in observation_srs):
+                            # Third place in this one recall that wants an observation's sources,
+                            # after the prefer-observations dedup and the chunk walk. A backend that
+                            # carried them on the result has already been read for these very
+                            # observations, so none of the three re-reads them; a backend that did
+                            # not falls through to the branches below unchanged.
+                            obs_rows = [
+                                {"id": sr.id, "source_memory_ids": sr.retrieval.source_memory_ids}
+                                for sr in observation_srs
+                            ]
+                        elif not store.store_owned_for(bank_id):
                             obs_rows = [
                                 {"id": str(r["id"]), "source_memory_ids": r["source_memory_ids"]}
                                 for r in await sf_conn.fetch(

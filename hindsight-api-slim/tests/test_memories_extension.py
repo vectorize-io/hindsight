@@ -61,6 +61,10 @@ class InMemoryMemories(MemoriesExtension):
     # (the default store) and recall re-fetches via ``entity_map_for_units``. Both must produce
     # identical output — the parametrized entity tests pin that.
     carries_entity_ids_on_result = False
+    # Likewise for an observation's sources. When False the result carries none, and recall
+    # re-fetches the observation to read them (for the prefer_observations dedup and the chunk
+    # walk); when True it reads them off the result. Both must produce identical output.
+    carries_source_ids_on_result = False
 
     def __init__(self, config: dict[str, str] | None = None):
         super().__init__(config or {})
@@ -184,6 +188,7 @@ class InMemoryMemories(MemoriesExtension):
                 # A store that resolves the posting inline carries the ids on the result (a list,
                 # possibly empty); otherwise leave it None so recall re-fetches via the map path.
                 entity_ids=list(row.entity_ids) if self.carries_entity_ids_on_result else None,
+                source_memory_ids=(list(row.source_memory_ids) if self.carries_source_ids_on_result else None),
                 similarity=score if semantic else None,
                 bm25_score=None if semantic else score,
             )
@@ -1302,7 +1307,10 @@ def test_entity_map_from_results_shape(ids_by_unit, names, expected):
     assert _entity_map_from_results(ids_by_unit, names) == expected
 
 
-async def test_recall_all_enrichments_together_through_store(memory, request_context, restore_default_store):
+@pytest.mark.parametrize("carries_source_ids", [False, True], ids=["refetch", "ids-on-result"])
+async def test_recall_all_enrichments_together_through_store(
+    memory, request_context, restore_default_store, carries_source_ids
+):
     """All three flags at once, with prefer_observations=True, through the owning store.
 
     The observation supersedes its raw source fact (prefer_observations drops it from results), so:
@@ -1311,8 +1319,20 @@ async def test_recall_all_enrichments_together_through_store(memory, request_con
     - source_facts come back populated from the store's rows;
     - entities on the observation resolve to registry names.
     One recall exercises the whole enrichment surface for a store that owns its rows and bodies.
+
+    Parametrized over the two ways recall can learn an observation's sources, because both consumers
+    of that list are in this one recall:
+
+    - ``refetch``: the result carries none, so the dedup and the chunk walk each re-fetch the
+      observation to read them — an addressed read apiece, which for a store whose reads are round
+      trips is most of what those steps cost;
+    - ``ids-on-result``: the store carried them on the hydrated result and neither read happens.
+
+    The assertions are the same for both. That is the point: the output must not depend on which
+    path recall took, or the fast path is an approximation rather than an optimisation.
     """
     store = InMemoryMemories({})
+    store.carries_source_ids_on_result = carries_source_ids
     set_memories(store)
     suffix = uuid.uuid4().hex[:8]
     bank_id = f"seam-all-{suffix}"
@@ -1381,6 +1401,14 @@ async def test_recall_all_enrichments_together_through_store(memory, request_con
         assert result.chunks[chunk_id].chunk_text == body
 
         # source_facts: the raw fact, populated from the store
+        # And the fast path really is one: carrying the sources removes THREE addressed reads
+        # from this single recall — the prefer-observations dedup's, the chunk walk's and the
+        # source-facts block's, each of which re-read an observation hydration had already read.
+        # Asserted as a count rather than "it was faster", because the point is WHICH reads stopped
+        # happening; the two that remain fetch the observation's SOURCES, memories recall never
+        # retrieved, for their chunk ids and their text.
+        assert store.calls.count("get_memories") == (2 if carries_source_ids else 5), store.calls
+
         assert result.source_facts and src_id in result.source_facts
         assert result.source_facts[src_id].text == src_text
         assert by_id[obs_id].source_fact_ids == [src_id]

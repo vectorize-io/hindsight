@@ -66,6 +66,17 @@ class RetrievalResult:
     # only stores direct postings must leave this ``None`` for observations.
     entity_ids: list[str] | None = None
 
+    # The memories an OBSERVATION was consolidated from, if the backend carried them.
+    # ``None`` means "not carried" (the default store, and every non-observation result);
+    # a list — possibly empty — means the backend resolved it inline.
+    #
+    # Recall needs this twice for an observation it is about to return: ``prefer_observations``
+    # drops the raw facts an observation supersedes, and ``include_chunks`` walks the sources for
+    # their chunk ids. Both used to re-fetch the observation to read one field off a record the
+    # hydration had already fetched and thrown away. A store that leaves this ``None`` keeps the
+    # re-fetch, so the two paths stay interchangeable rather than one being an approximation.
+    source_memory_ids: list[str] | None = None
+
     # Retrieval-specific scores (only one will be set depending on retrieval method)
     similarity: float | None = None  # Semantic retrieval
     bm25_score: float | None = None  # BM25 retrieval
