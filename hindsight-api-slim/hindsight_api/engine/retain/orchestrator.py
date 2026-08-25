@@ -282,6 +282,7 @@ from . import (
     fact_storage,
     link_creation,
 )
+from .embedding_coalescer import CoalescingEmbedder
 from .memory_budget import RetainMemoryBudget, estimate_chunk_bytes
 from .types import (
     CausalRelation,
@@ -2305,6 +2306,14 @@ async def _streaming_retain_batch(
             f"Document {effective_doc_id} was updated by a concurrent retain while this append was extracting"
         )
 
+    # Every chunk task embeds only its own chunk's facts, which makes each embedding
+    # call one text wide — and in `chunks` extraction mode, where there is no LLM call
+    # to overlap, that single round trip is the whole per-chunk cost (issue #3784).
+    # The coalescer keeps the fan-out and batches the concurrent embedding calls
+    # underneath it. One per retain: the backends read the ambient bank id for cost
+    # attribution, so texts from different banks must not share a request.
+    coalescing_embedder = CoalescingEmbedder(embeddings_model)
+
     # ---- LLM Producer ----
     # Fires all chunk extractions as concurrent tasks (bounded by the LLM
     # semaphore inside fact_extraction to 32 concurrent).  As each completes
@@ -2335,7 +2344,7 @@ async def _streaming_retain_batch(
                     llm_config,
                     agent_name,
                     config,
-                    embeddings_model,
+                    coalescing_embedder,
                     format_date_fn,
                     fact_type_override,
                     log_buffer,
@@ -2390,6 +2399,11 @@ async def _streaming_retain_batch(
             for extraction in tasks:
                 if not extraction.done():
                     extraction.cancel()
+            # Same reasoning for the coalescer: its dispatcher is a task of its own and
+            # a cancelled fan-out would otherwise leave it — and anything parked on
+            # it — alive for the life of the process.
+            coalescing_embedder.close()
+            log_buffer.append(f"[streaming] {coalescing_embedder.stats.describe()}")
 
     # ---- DB Consumer ----
     # Drains enriched chunks from the queue in batches and runs

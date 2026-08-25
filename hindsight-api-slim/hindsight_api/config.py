@@ -399,6 +399,7 @@ ENV_EMBEDDINGS_ONNX_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX"
 ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX"
 ENV_EMBEDDINGS_ONNX_OUTPUT_NAME = "HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
+ENV_EMBEDDINGS_TEI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
 ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
@@ -990,6 +991,10 @@ DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
 DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
+# Texts per TEI /embed request. Also the batch size the streaming retain producer
+# coalesces its per-chunk embedding calls up to (see embedding_coalescer), so raising
+# it is how a TEI deployment with headroom trades requests for larger ones.
+DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE = 32
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
 DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = 768
 DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
@@ -2765,6 +2770,7 @@ class HindsightConfig:
     # Defaulted fields (source-compatible additions — existing direct constructor callers keep working).
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
+    embeddings_tei_batch_size: int = DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE
     embeddings_openai_dimensions: int | None = None
     embeddings_query_prefix: str = DEFAULT_EMBEDDINGS_QUERY_PREFIX
     embeddings_passage_prefix: str = DEFAULT_EMBEDDINGS_PASSAGE_PREFIX
@@ -3506,6 +3512,11 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE,
                 os.getenv(ENV_EMBEDDINGS_OPENAI_BATCH_SIZE),
                 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE,
+            ),
+            embeddings_tei_batch_size=_parse_positive_int(
+                ENV_EMBEDDINGS_TEI_BATCH_SIZE,
+                os.getenv(ENV_EMBEDDINGS_TEI_BATCH_SIZE),
+                DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE,
             ),
             embeddings_openai_dimensions=_parse_optional_positive_int(
                 ENV_EMBEDDINGS_OPENAI_DIMENSIONS,
