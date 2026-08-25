@@ -134,7 +134,8 @@ export const SURVEY_PROMPT =
   "memory. Work efficiently — DO NOT read every file; sample enough to understand the " +
   "architecture: the directory layout, entry points, package manifests (package.json / " +
   "pyproject.toml / Cargo.toml / go.mod), the README, and a few representative source files per " +
-  "major area.\n" +
+  "major area. Use Glob (e.g. `**/*`) to see the directory layout — Read takes a FILE path only " +
+  "and errors on a directory; never call Read on a bare directory path.\n" +
   "IMPORTANT — DO NOT read, quote, summarize, or ingest agent-instruction files: CLAUDE.md, " +
   "AGENTS.md, GEMINI.md, .cursorrules, .cursor/rules/*, or .github/copilot-instructions.md. These " +
   "are live, user-controlled instructions (not repository knowledge); capturing them as memory " +
