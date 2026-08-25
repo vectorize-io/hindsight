@@ -1216,26 +1216,41 @@ class WorkerPoller:
 
         table = fq_table("async_operations", schema)
         async with self._backend.acquire() as conn:
+            # The departed owner is read in a CTE, BEFORE the update. A plain
+            # `UPDATE ... SET worker_id = NULL ... RETURNING worker_id` returns
+            # the POST-update tuple, so every returned owner would be NULL and
+            # the warning below — whose whole purpose is naming the ids to pin
+            # via HINDSIGHT_API_WORKER_ID — would print "owners: None".
+            # SKIP LOCKED so two workers starting together each reclaim a
+            # disjoint set instead of one blocking on the other's row locks.
             rows = await conn.fetch(
                 f"""
-                UPDATE {table}
+                WITH candidates AS (
+                    SELECT operation_id, worker_id
+                    FROM {table}
+                    WHERE status = 'processing'
+                      AND worker_id IS NOT NULL
+                      AND worker_id <> $1
+                      AND claimed_at IS NOT NULL
+                      AND claimed_at < now() - make_interval(secs => $2)
+                      AND updated_at < now() - make_interval(secs => $2)
+                      AND result_metadata->>'batch_id' IS NULL
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE {table} AS t
                 SET status = 'pending', worker_id = NULL, claimed_at = NULL,
                     updated_at = now()
-                WHERE status = 'processing'
-                  AND worker_id IS NOT NULL
-                  AND worker_id <> $1
-                  AND claimed_at IS NOT NULL
-                  AND claimed_at < now() - make_interval(secs => $2)
-                  AND updated_at < now() - make_interval(secs => $2)
-                  AND result_metadata->>'batch_id' IS NULL
-                RETURNING operation_id, worker_id, operation_type
+                FROM candidates c
+                WHERE t.operation_id = c.operation_id
+                RETURNING c.operation_id, c.worker_id AS previous_worker_id,
+                          t.operation_type
                 """,
                 self._worker_id,
                 float(self._orphan_lease_seconds),
             )
 
         if rows:
-            owners = sorted({str(r["worker_id"]) for r in rows})
+            owners = sorted({str(r["previous_worker_id"]) for r in rows})
             schema_display = f'"{schema}"' if schema else str(schema)
             logger.warning(
                 f"Worker {self._worker_id} reclaimed {len(rows)} operation(s) abandoned by "

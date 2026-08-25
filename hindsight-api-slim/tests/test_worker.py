@@ -1319,6 +1319,54 @@ class TestWorkerRecovery:
         assert row["claimed_at"] is None
 
     @pytest.mark.asyncio
+    async def test_reclaim_warning_names_the_departed_worker(self, pool, backend, clean_operations, caplog):
+        """The warning must name the OLD owner, not NULL.
+
+        The whole point of the receipt is telling the operator which ids to pin
+        via HINDSIGHT_API_WORKER_ID. Reading the owner from the UPDATE's own
+        RETURNING clause cannot do that: the same statement sets
+        worker_id = NULL, and PostgreSQL RETURNING yields the POST-update tuple,
+        so the log said "owners: None" — true, useless, and indistinguishable
+        from a bug. The owner is therefore captured in a CTE before the write.
+        """
+        import logging
+
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id,
+                 claimed_at, updated_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'dead-container-abc123',
+                    now() - interval '50 days', now() - interval '50 days')
+            """,
+            uuid.uuid4(),
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="live-worker",
+            executor=lambda x: None,
+            orphan_lease_seconds=86400,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="hindsight_api.worker.poller"):
+            assert await poller._reclaim_expired_processing_tasks(None) == 1
+
+        reclaim_logs = [r.message for r in caplog.records if "reclaimed" in r.message]
+        assert reclaim_logs, "the reclaim produced no warning at all"
+        joined = "\n".join(reclaim_logs)
+        assert "dead-container-abc123" in joined, f"departed worker id missing from receipt: {joined}"
+        assert "owners: None" not in joined
+
+    @pytest.mark.asyncio
     async def test_fresh_lease_from_another_worker_is_left_alone(self, pool, backend, clean_operations):
         """A live worker's in-flight row must never be stolen just because we restarted."""
         from hindsight_api.worker import WorkerPoller
