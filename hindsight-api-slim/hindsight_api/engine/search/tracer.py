@@ -176,6 +176,12 @@ class SearchTracer:
         self.current_step += 1
         self.nodes_visited_set.add(node_id)
 
+        # The counters above are cheap and feed the summary totals, so they stay. Everything below
+        # constructs per-node trace records and is skipped unless a trace was actually asked for --
+        # see the note in `add_retrieval_results`.
+        if self.phases_only:
+            return
+
         # Clamp values to handle floating-point precision issues
         # (sometimes normalization produces values like 1.0000005 instead of 1.0)
         semantic_similarity = min(1.0, max(0.0, semantic_similarity))
@@ -280,6 +286,14 @@ class SearchTracer:
             metadata: Optional metadata about this retrieval method
             fact_type: Fact type this retrieval was for (world, experience)
         """
+        # Builds one object per retrieval hit, and a recall's arms carry hundreds. Profiled under
+        # load this and `visit_node` were ~7% of the api process's loop thread, entirely for a
+        # trace nobody requested -- the tracer is constructed for EVERY recall now so the phase
+        # metrics have somewhere to live, so a method without this guard runs on every request.
+        # Its siblings (`record_query_embedding`, `add_entry_point`, `add_rrf_merged`, ...) all
+        # have it; these two were missed.
+        if self.phases_only:
+            return
         retrieval_results = []
         for rank, (doc_id, data) in enumerate(results, start=1):
             score = data.get(score_field)
