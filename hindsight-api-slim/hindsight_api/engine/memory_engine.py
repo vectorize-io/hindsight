@@ -6909,9 +6909,15 @@ class MemoryEngine(MemoryEngineInterface):
                 # full results has no `text` on them yet, and the trace recorded every entry point
                 # with an empty string. Hydration happens here rather than by moving the recording
                 # after the trim, because an entry point is a top-10 SEMANTIC result and need not
-                # have survived fusion at all. Costs one extra fetch of at most ten records, and
-                # only when a trace was asked for.
-                _entry_points = semantic_results[:10]
+                # have survived fusion at all.
+                #
+                # Skipped unless a caller actually asked for a trace. The enclosing guard is
+                # `if tracer:`, and the tracer is now built for EVERY recall so the `[phases]`
+                # accounting has somewhere to write — so this fetch, which costs a round trip per
+                # recall and exists only to fill in text for the graph view, had quietly become
+                # unconditional. `phases_only` is the flag that distinguishes "constructed for
+                # metrics" from "the caller wants a trace".
+                _entry_points = [] if getattr(tracer, "phases_only", False) else semantic_results[:10]
                 if _entry_points:
                     from .memories import get_memories as _get_memories_for_trace
 
