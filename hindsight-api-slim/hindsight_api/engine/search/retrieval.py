@@ -890,10 +890,11 @@ async def retrieve_all_fact_types_parallel(
     from ..memories import RecallArms, get_memories
 
     # Time the store call itself. Without it `parallel_retrieval` is a black box: it reported 135ms
-    # while a bare memlake Query measured 33ms, and there was no way to tell whether the difference
-    # was the store doing more work (this is 3 fact types x 4 arms in ONE call, not one query) or
-    # the host adding overhead around it. The nine per-arm rows below cannot answer that either --
-    # a store-owned recall returns every arm from a single call, so their durations are literals.
+    # while a bare store-level query measured 33ms, and there was no way to tell whether the
+    # difference was the store doing more work (this is 3 fact types x 4 arms in ONE call, not one
+    # query) or the host adding overhead around it. The nine per-arm rows below cannot answer that
+    # either -- a store-owned recall returns every arm from a single call, so their durations are
+    # literals.
     _unified_start = time.time()
     unified = await get_memories().recall_unified(
         conn=pool,
