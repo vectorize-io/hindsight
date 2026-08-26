@@ -913,7 +913,7 @@ describe("runtime staging", () => {
 });
 
 describe("skill install across skills-capable hosts", () => {
-  it("copies the packaged skill for claude/codex(~/.agents)/antigravity/cursor and uninstall removes each", () => {
+  it("copies the packaged skill for claude/codex(~/.agents)/antigravity/cursor/prime-agent and uninstall removes each", () => {
     const home = mkdtempSync(join(tmpdir(), "hs-inst-skill-"));
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
     mkdirSync(join(pkgRoot, "skill"), { recursive: true });
@@ -927,6 +927,9 @@ describe("skill install across skills-capable hosts", () => {
       ["codex", join(home, ".agents", "skills")],
       ["antigravity-cli", join(home, ".gemini", "config", "skills")],
       ["cursor-cli", join(home, ".cursor", "skills")],
+      // Prime Agent's OWN root, never the shared ~/.agents one it also reads: uninstall removes a
+      // fixed directory name, so the shared root would take Codex's and dsh's copy with it (#3772).
+      ["prime-agent", join(home, ".prime", "agent", "skills")],
     ];
     run(["install", ...targets.map(([h]) => h)], ctx);
     for (const [, base] of targets) {
@@ -936,6 +939,31 @@ describe("skill install across skills-capable hosts", () => {
     for (const [, base] of targets) {
       expect(existsSync(join(base, "hindsight-coding-agent"))).toBe(false);
     }
+    rmSync(home, { recursive: true, force: true });
+    rmSync(pkgRoot, { recursive: true, force: true });
+  });
+
+  // uninstallSkill removes a fixed directory NAME, so a host installing into the shared
+  // agentskills root would delete the copy another host is still using.
+  it("uninstalling prime-agent leaves the shared ~/.agents copy Codex installed", () => {
+    const home = mkdtempSync(join(tmpdir(), "hs-inst-skill-"));
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(
+      join(pkgRoot, "skill", "SKILL.md"),
+      "---\nname: hindsight-coding-agent\n---\nbody"
+    );
+    const ctx = { home, pkgRoot, dist: join(pkgRoot, "dist"), claudeMcp: vi.fn(() => true) };
+
+    run(["install", "codex", "prime-agent"], ctx);
+    run(["uninstall", "prime-agent"], ctx);
+
+    expect(existsSync(join(home, ".agents", "skills", "hindsight-coding-agent", "SKILL.md"))).toBe(
+      true
+    );
+    expect(existsSync(join(home, ".prime", "agent", "skills", "hindsight-coding-agent"))).toBe(
+      false
+    );
     rmSync(home, { recursive: true, force: true });
     rmSync(pkgRoot, { recursive: true, force: true });
   });

@@ -126,7 +126,8 @@ A native plugin via `cline plugin install`, plus MCP and the companion skill.
 npx @vectorize-io/hindsight-coding-agents install prime-agent
 ```
 
-An extension entry in `~/.prime/agent/settings.json` — native tools, no MCP needed.
+An extension entry in `~/.prime/agent/settings.json` — native tools, no MCP needed — plus the
+companion skill in `~/.prime/agent/skills`.
 
 #### <img src="/img/harness/dsh.svg" alt="" width="20" height="20" /> DeepSeek Harness
 

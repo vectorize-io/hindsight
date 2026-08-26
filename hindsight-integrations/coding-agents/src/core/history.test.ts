@@ -145,6 +145,40 @@ describe("local history import", () => {
   });
 });
 
+/**
+ * `importLocalHistory` documents that it never throws, and its caller (`--import-conversations`)
+ * takes it at its word. A stray entry must therefore cost that entry, not the whole run (#3771).
+ */
+describe("a junk entry costs itself, not the import", () => {
+  it("skips a regular file sitting where a Claude project directory was expected", () => {
+    const h = newHome();
+    const repo = "/Users/x/dev/myrepo";
+    const dir = claudeProjectDir(repo, h);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), `${claudeLine("user", "the real session", repo)}\n`);
+    // Named like the project dir of a SUBDIRECTORY, so the prefix filter hands it to the listing;
+    // without the guard readdirSync threw ENOTDIR and nothing was imported.
+    writeFileSync(claudeProjectDir("/Users/x/dev/myrepo/sub", h), "not a folder");
+
+    const r = importLocalHistory("claude-code", repo, h);
+
+    expect(r.supported).toBe(true);
+    expect(r.sessions).toHaveLength(1);
+    expect(JSON.stringify(r.sessions)).toContain("the real session");
+  });
+
+  it("skips a regular file where ~/.claude/projects itself was expected", () => {
+    const h = newHome();
+    mkdirSync(join(h, ".claude"), { recursive: true });
+    writeFileSync(join(h, ".claude", "projects"), "not a folder");
+
+    const r = importLocalHistory("claude-code", "/Users/x/dev/myrepo", h);
+
+    expect(r.supported).toBe(true);
+    expect(r.sessions).toEqual([]);
+  });
+});
+
 describe("attribution must be proven, never guessed", () => {
   it("skips a Claude session that records no cwd instead of trusting the directory name", () => {
     const h = newHome();

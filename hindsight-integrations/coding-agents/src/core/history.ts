@@ -118,9 +118,24 @@ function firstLine(path: string, cap = 1_000_000): string | undefined {
   }
 }
 
+/**
+ * The entries of a directory, or none when there is nothing to list.
+ *
+ * `existsSync` answered only half of that: it is TRUE for a regular file sitting where a directory
+ * was expected — a stray `~/.claude/projects/-Users-x-dev-repo-sub` — and the `readdirSync` behind
+ * it then threw ENOTDIR out of `importLocalHistory`, which promises never to throw. One junk entry
+ * killed the whole `--import-conversations` run instead of costing that entry (#3771).
+ */
+function listDir(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return []; // missing, unreadable, or a stray file where a directory was expected
+  }
+}
+
 function jsonlFiles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  return listDir(dir)
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => join(dir, f));
 }
@@ -139,11 +154,9 @@ function claudeHistory(repoDir: string, home: string): HistoryImport {
   const root = join(home, ".claude", "projects");
   const exact = claudeProjectDir(repoDir, home);
   const prefix = exact + "-";
-  const dirs = existsSync(root)
-    ? readdirSync(root)
-        .map((d) => join(root, d))
-        .filter((d) => d === exact || d.startsWith(prefix))
-    : [];
+  const dirs = listDir(root)
+    .map((d) => join(root, d))
+    .filter((d) => d === exact || d.startsWith(prefix));
   const sessions: ChatSession[] = [];
   let unattributed = 0;
   for (const file of dirs.flatMap(jsonlFiles)) {
