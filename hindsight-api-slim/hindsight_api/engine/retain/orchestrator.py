@@ -2037,12 +2037,12 @@ async def _streaming_retain_batch(
     # is the full ordered chunk-text list; ``combined_content`` is the full document text (both are
     # released as the batches stream, so the write happens now while they are still resident).
     # Accumulate only when the store actually owns a document store. `_store_document_bodies`
-    # early-returns for one that does not, so on a SQL deployment accumulating would hold the whole
+    # early-returns on the SAME predicate, so on a SQL deployment accumulating would hold the whole
     # document's chunk texts for the retain and then flush them into a no-op — and worse, it would
     # pin exactly the strings the streaming producer frees as it goes (`all_pre_chunks[i] = ""`).
     from ..memories import get_memories
 
-    if body_accum is not None and effective_doc_id and get_memories().owns_document_store_for(bank_id):
+    if body_accum is not None and effective_doc_id and get_memories().store_owned_for(bank_id):
         # Accumulating path — see below. Written as the positive branch so `body_accum` and
         # `effective_doc_id` are both narrowed inside it.
         acc = body_accum.get(effective_doc_id)

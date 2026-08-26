@@ -39,19 +39,13 @@ def _document_with_mixed_separators() -> str:
     nineteenth arrives after a blank line; a short turn follows. The chunker splits that
     into three, the last two short enough to merge once rejoined.
     """
-    return (
-        "\n".join(_link(i) for i in range(18))
-        + "\n\n"
-        + _link(99)
-        + "\n"
-        + "[Turn 322] User: " + "word322 " * 4
-    )
+    return "\n".join(_link(i) for i in range(18)) + "\n\n" + _link(99) + "\n" + "[Turn 322] User: " + "word322 " * 4
 
 
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Known: `\"\\n\\n\".join` rewrites separators the body did not use, so re-chunking "
+        'Known: `"\\n\\n".join` rewrites separators the body did not use, so re-chunking '
         "the joined text does not reproduce the split. This is the condition that makes "
         "`_rejoin_native_chunks` give up."
     ),
