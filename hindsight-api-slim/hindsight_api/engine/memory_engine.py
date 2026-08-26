@@ -5328,7 +5328,9 @@ class MemoryEngine(MemoryEngineInterface):
             sub_batches_run = 0
             # Chunk texts accumulated across the sub-batches of each document, written by
             # `flush_document_bodies` below. Same lifetime as `chunk_offsets`: this retain only.
-            body_accum: dict[str, dict] = {}
+            from .retain.orchestrator import DocumentBodyAccumulator
+
+            body_accum: dict[str, DocumentBodyAccumulator] = {}
             # Sub-batches of one document used to run strictly one after another, but most of a
             # sub-batch is a round-trip to the store — I/O wait, holding no GIL — so running a few
             # concurrently overlaps a wait rather than paying it end to end.
@@ -5541,7 +5543,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_body_override: str | None = None,
         document_body_hash: str | None = None,
         chunk_index_offset: int = 0,
-        body_accum: dict[str, dict] | None = None,
+        body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
     ) -> tuple[list[list[str]], "TokenUsage", int | None]:
         """
         Internal method for batch processing without chunking logic.

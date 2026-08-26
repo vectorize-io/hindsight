@@ -21,6 +21,7 @@ import asyncio
 import pytest
 
 from hindsight_api.engine.retain.orchestrator import (
+    DocumentBodyAccumulator,
     _contiguous_prefix,
     _flush_document_body,
     flush_document_bodies,
@@ -28,9 +29,8 @@ from hindsight_api.engine.retain.orchestrator import (
 
 
 def _acc(meta=True):
-    return {
-        "slices": {},
-        "meta": (
+    return DocumentBodyAccumulator(
+        meta=(
             {
                 "bank_id": "b",
                 "content_hash": "h",
@@ -42,10 +42,8 @@ def _acc(meta=True):
             }
             if meta
             else None
-        ),
-        "flushed_bytes": 0,
-        "lock": asyncio.Lock(),
-    }
+        )
+    )
 
 
 class _Recorder:
@@ -103,7 +101,7 @@ async def test_every_document_gets_a_body_written_progressively(recorder):
     """
     acc = _acc()
     for offset in range(0, 40, 10):
-        acc["slices"][offset] = [f"chunk{offset + i}" for i in range(10)]
+        acc.slices[offset] = [f"chunk{offset + i}" for i in range(10)]
         await _flush_document_body(acc, "doc", force=False)
 
     assert recorder.writes, "a body must be written as the retain proceeds, not only at the end"
@@ -128,7 +126,7 @@ async def test_a_large_document_flushes_as_it_grows(recorder):
     big = "x" * (5 * 1024 * 1024)  # over the flush minimum on its own
     offset = 0
     for _ in range(8):
-        acc["slices"][offset] = [big]
+        acc.slices[offset] = [big]
         offset += 1
         await _flush_document_body(acc, "doc", force=False)
 
@@ -144,10 +142,10 @@ async def test_a_large_document_flushes_as_it_grows(recorder):
 async def test_the_append_watermark_rides_only_the_first_write(recorder):
     """An append's compare-and-set belongs to the write derived from the stored base."""
     acc = _acc()
-    acc["meta"]["expect_watermark"] = 7
+    acc.meta["expect_watermark"] = 7
     big = "y" * (5 * 1024 * 1024)
     for offset in range(4):
-        acc["slices"][offset] = [big]
+        acc.slices[offset] = [big]
         await _flush_document_body(acc, "doc", force=False)
     await flush_document_bodies({"doc": acc})
 
@@ -167,7 +165,7 @@ async def test_nothing_is_written_for_a_document_that_produced_no_slices(recorde
 async def test_a_document_with_no_metadata_is_skipped(recorder):
     """No sub-batch reached the body write, so there is nothing to describe the document."""
     acc = _acc(meta=False)
-    acc["slices"][0] = ["a"]
+    acc.slices[0] = ["a"]
     await flush_document_bodies({"doc": acc})
     assert recorder.writes == []
 
@@ -182,7 +180,7 @@ async def test_concurrent_flushes_of_one_document_do_not_interleave(recorder):
     acc = _acc()
 
     async def add(offset: int):
-        acc["slices"][offset] = [f"c{offset}"]
+        acc.slices[offset] = [f"c{offset}"]
         await _flush_document_body(acc, "doc", force=False)
 
     await asyncio.gather(*(add(o) for o in reversed(range(20))))
@@ -208,7 +206,7 @@ async def test_the_accumulating_path_never_asks_the_store_for_the_prefix(recorde
     # Slices deliberately start at a high offset once the first is in, mimicking a document deep
     # into its sub-batches — the case that used to read thousands of chunks back per write.
     for offset in range(6):
-        acc["slices"][offset] = [big]
+        acc.slices[offset] = [big]
         await _flush_document_body(acc, "doc", force=False)
     await flush_document_bodies({"doc": acc})
 
