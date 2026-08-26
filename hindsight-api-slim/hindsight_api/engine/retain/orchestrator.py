@@ -2073,11 +2073,14 @@ async def _store_document_bodies(
 
 
 # A document body is flushed once its unwritten chunk text has at least DOUBLED since the last
-# flush (and at least this much has accumulated). Doubling makes the number of writes O(log chunks)
-# and the total bytes written ~2x the document, where flushing per sub-batch is O(chunks^2) and
-# flushing only at the end risks the whole document. It also bounds what an interrupted retain
-# loses: never more than half of what it had.
-_BODY_FLUSH_MIN_BYTES = 4 * 1024 * 1024
+# flush. Doubling from the FIRST slice makes the number of writes O(log chunks) and the total bytes
+# written ~2x the document, where flushing per sub-batch is O(chunks^2).
+#
+# There is deliberately no minimum size below which nothing is written. A floor would mean any
+# document under it is written only at the very end, so an interrupted retain would leave its
+# memories with no body at all — worse than the per-sub-batch writes this replaces, which at least
+# left a partial body. Doubling from the first slice keeps the guarantee the size claim rests on:
+# an interruption never loses more than half of what had accumulated.
 
 
 def _contiguous_prefix(slices: dict[int, list[str]]) -> list[str]:
@@ -2106,9 +2109,9 @@ async def _flush_document_body(acc: dict, document_id: str, *, force: bool) -> N
         if not chunks:
             return
         pending = sum(len(c) for c in chunks)
-        if not force and pending < max(_BODY_FLUSH_MIN_BYTES, 2 * acc["flushed_bytes"]):
-            return
-        if pending == acc["flushed_bytes"] and not force:
+        if pending <= acc["flushed_bytes"] and not force:
+            return  # nothing new since the last write
+        if not force and pending < max(1, 2 * acc["flushed_bytes"]):
             return
         await _store_document_bodies(
             bank_id=meta["bank_id"],
@@ -2127,6 +2130,12 @@ async def _flush_document_body(acc: dict, document_id: str, *, force: bool) -> N
             chunk_index_offset=0,
         )
         acc["flushed_bytes"] = pending
+        # Collapse what was just written into one entry. `put_document` REPLACES the chunk list, so
+        # the next flush needs these strings again and they cannot be dropped — but the per-slice
+        # entries can, which keeps the prefix walk O(1) instead of O(sub-batches) and stops the dict
+        # growing for the rest of the retain. Slices past the write stay keyed where they are.
+        rest = {off: sl for off, sl in acc["slices"].items() if off >= len(chunks)}
+        acc["slices"] = {0: chunks, **rest}
 
 
 async def flush_document_bodies(body_accum: dict[str, dict]) -> None:
@@ -2278,7 +2287,16 @@ async def _streaming_retain_batch(
     # a no-op for a Postgres store (which keeps the text in its own columns below). ``all_pre_chunks``
     # is the full ordered chunk-text list; ``combined_content`` is the full document text (both are
     # released as the batches stream, so the write happens now while they are still resident).
-    if body_accum is None or not effective_doc_id:
+    # Accumulate only when the store actually owns a document store. `_store_document_bodies`
+    # early-returns for one that does not, so on a SQL deployment accumulating would hold the whole
+    # document's chunk texts for the retain and then flush them into a no-op — and worse, it would
+    # pin exactly the strings the streaming producer frees as it goes (`all_pre_chunks[i] = ""`).
+    from ..memories import get_memories
+
+    _accumulating = (
+        body_accum is not None and bool(effective_doc_id) and get_memories().owns_document_store_for(bank_id)
+    )
+    if not _accumulating:
         await _store_document_bodies(
             bank_id=bank_id,
             document_id=effective_doc_id,
@@ -2307,10 +2325,13 @@ async def _streaming_retain_batch(
         # Slices are keyed by their offset rather than appended: the offset is assigned before
         # dispatch, so keying on it reconstructs the document's order whatever order the
         # sub-batches finish in — which is what lets them run concurrently.
-        acc = body_accum.setdefault(
-            effective_doc_id,
-            {"slices": {}, "meta": None, "flushed_bytes": 0, "lock": asyncio.Lock()},
-        )
+        # Not `setdefault`: that would build a fresh Lock on every sub-batch just to discard it,
+        # and the mixed-value literal does not match its overloads. There is no await between the
+        # lookup and the insert, so on one event loop this cannot race.
+        acc = body_accum.get(effective_doc_id)
+        if acc is None:
+            acc = {"slices": {}, "meta": None, "flushed_bytes": 0, "lock": asyncio.Lock()}
+            body_accum[effective_doc_id] = acc
         acc["slices"][chunk_index_offset] = list(all_pre_chunks)
         # Every sub-batch carries the WHOLE document as `combined_content` (and so the same content
         # hash), so any one of them can supply the metadata for the writes.

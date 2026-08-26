@@ -94,19 +94,27 @@ def test_a_gap_stops_the_prefix():
 
 
 @pytest.mark.asyncio
-async def test_a_small_document_is_written_once_at_the_end(recorder):
-    """Under the flush threshold, the whole body is one write — not one per sub-batch."""
+async def test_every_document_gets_a_body_written_progressively(recorder):
+    """There is no size below which nothing is written until the end.
+
+    A floor would mean any document under it is written only by the final flush, so an interrupted
+    retain would leave its memories with no chunk texts at all — worse than the per-sub-batch writes
+    this replaces, which at least left a partial body. Doubling starts from the first slice.
+    """
     acc = _acc()
     for offset in range(0, 40, 10):
         acc["slices"][offset] = [f"chunk{offset + i}" for i in range(10)]
         await _flush_document_body(acc, "doc", force=False)
 
-    assert recorder.writes == [], "nothing should be written before the threshold or the end"
+    assert recorder.writes, "a body must be written as the retain proceeds, not only at the end"
+    # Doubling: far fewer writes than slices, and each one a prefix of the next.
+    assert len(recorder.writes) < 4
+    for earlier, later in zip(recorder.writes, recorder.writes[1:]):
+        assert later[: len(earlier)] == earlier
 
     await flush_document_bodies({"doc": acc})
-    assert len(recorder.writes) == 1, "a finished retain writes its body"
-    assert len(recorder.writes[0]) == 40
-    assert recorder.offsets == [0], "the accumulator holds the document from index 0"
+    assert len(recorder.writes[-1]) == 40, "the finished retain has the complete body"
+    assert set(recorder.offsets) == {0}, "the accumulator holds the document from index 0"
 
 
 @pytest.mark.asyncio
@@ -166,7 +174,11 @@ async def test_a_document_with_no_metadata_is_skipped(recorder):
 
 @pytest.mark.asyncio
 async def test_concurrent_flushes_of_one_document_do_not_interleave(recorder):
-    """Slices arriving from concurrent sub-batches still produce a consistent body."""
+    """Slices arriving from concurrent sub-batches still produce a consistent body.
+
+    Whatever order they arrive in and however many flushes that triggers, every write is a prefix
+    of the document and the last one is the whole of it.
+    """
     acc = _acc()
 
     async def add(offset: int):
@@ -176,8 +188,10 @@ async def test_concurrent_flushes_of_one_document_do_not_interleave(recorder):
     await asyncio.gather(*(add(o) for o in reversed(range(20))))
     await flush_document_bodies({"doc": acc})
 
-    assert len(recorder.writes) == 1
-    assert recorder.writes[0] == [f"c{o}" for o in range(20)]
+    expected = [f"c{o}" for o in range(20)]
+    assert recorder.writes[-1] == expected
+    for w in recorder.writes:
+        assert w == expected[: len(w)], f"a write was not a prefix of the document: {w}"
 
 
 @pytest.mark.asyncio
@@ -202,3 +216,28 @@ async def test_the_accumulating_path_never_asks_the_store_for_the_prefix(recorde
     assert set(recorder.offsets) == {0}, (
         f"every write must be at offset 0 so the prefix read-back cannot fire; got {sorted(set(recorder.offsets))}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_store_without_a_document_store_does_not_accumulate(monkeypatch):
+    """A SQL deployment must not build the accumulator at all.
+
+    `_store_document_bodies` early-returns for a store that owns no document store, so accumulating
+    there would hold the whole document's chunk texts for the retain and then flush them into a
+    no-op — and it would pin exactly the strings the streaming producer frees as it goes
+    (`all_pre_chunks[i] = ""`), undoing that strategy on the default deployment.
+    """
+    from unittest.mock import MagicMock
+
+    import hindsight_api.engine.retain.orchestrator as orch
+
+    store = MagicMock()
+    store.owns_document_store_for.return_value = False
+    monkeypatch.setattr("hindsight_api.engine.memories.get_memories", lambda: store)
+
+    # The gate is what the accumulating branch is chosen by; assert the store is consulted and
+    # answers no, which routes to the direct per-sub-batch write instead.
+    from hindsight_api.engine.memories import get_memories
+
+    assert get_memories().owns_document_store_for("bank") is False
+    assert orch._contiguous_prefix({}) == []

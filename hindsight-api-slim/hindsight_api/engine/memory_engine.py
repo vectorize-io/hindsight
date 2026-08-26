@@ -18,7 +18,6 @@ import hashlib
 import inspect
 import json
 import logging
-import os
 import random
 import sys
 import time
@@ -5335,104 +5334,146 @@ class MemoryEngine(MemoryEngineInterface):
             # concurrently overlaps a wait rather than paying it end to end.
             #
             # Default 1 keeps today's behaviour exactly; a deployment opts in.
-            concurrency = max(1, int(os.environ.get("HINDSIGHT_RETAIN_SUBBATCH_CONCURRENCY", "1")))
-            sem = asyncio.Semaphore(concurrency)
+            # From the resolved config, not read inline per retain.
+            concurrency = max(1, get_config().retain_subbatch_concurrency)
             pending: list[asyncio.Task] = []
             collected: list[tuple] = []
-            bodies: dict[int, tuple] = {}
 
-            async def _run_sub(idx: int, contents_, origins_, offset_, is_last_):
-                async with sem:
-                    r, u, pr = await self._retain_batch_async_internal(
-                        bank_id=bank_id,
-                        contents=contents_,
-                        request_context=request_context,
-                        document_id=document_id,
-                        is_first_batch=idx == 1,  # Only upsert on first batch
-                        fact_type_override=fact_type_override,
-                        document_tags=document_tags,
-                        operation_id=operation_id,
-                        strategy=strategy,
-                        # Outbox callback runs inside the last sub-batch's transaction so the
-                        # webhook delivery row is committed atomically with the final retain data.
-                        outbox_callback=outbox_callback if is_last_ else None,
-                        outbox_callback_factory=outbox_callback_factory if is_last_ else None,
-                        document_body_override=bodies.get(idx, (None, None))[0],
-                        document_body_hash=bodies.get(idx, (None, None))[1],
-                        chunk_index_offset=offset_,
-                        body_accum=body_accum,
-                    )
+            async def _run_sub(idx: int, contents_, origins_, offset_, is_last_, body_, body_hash_):
+                r, u, pr = await self._retain_batch_async_internal(
+                    bank_id=bank_id,
+                    contents=contents_,
+                    request_context=request_context,
+                    document_id=document_id,
+                    is_first_batch=idx == 1,  # Only upsert on first batch
+                    fact_type_override=fact_type_override,
+                    document_tags=document_tags,
+                    operation_id=operation_id,
+                    strategy=strategy,
+                    # Outbox callback runs inside the last sub-batch's transaction so the
+                    # webhook delivery row is committed atomically with the final retain data.
+                    outbox_callback=outbox_callback if is_last_ else None,
+                    outbox_callback_factory=outbox_callback_factory if is_last_ else None,
+                    document_body_override=body_,
+                    document_body_hash=body_hash_,
+                    chunk_index_offset=offset_,
+                    body_accum=body_accum,
+                )
                 return idx, origins_, r, u, pr
 
-            for sub in sub_batch_stream:
-                i = sub.index
-                sub_batch = sub.contents
-                sub_origins = sub.origins
-                # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
-                if operation_id and not await self._check_op_alive(operation_id):
-                    logger.info(
-                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled "
-                        f"(bank deleted), stopping after {i - 1} sub-batches"
+            try:
+                for sub in sub_batch_stream:
+                    i = sub.index
+                    sub_batch = sub.contents
+                    sub_origins = sub.origins
+                    # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
+                    if operation_id and not await self._check_op_alive(operation_id):
+                        logger.info(
+                            f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled "
+                            f"(bank deleted), stopping after {i - 1} sub-batches"
+                        )
+                        cancelled = True
+                        # Cancel what is already in flight. Without this the gather below would run
+                        # every dispatched sub-batch to completion AFTER the operation was found dead,
+                        # which is the opposite of what the check is for.
+                        for t in pending:
+                            t.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        pending = []
+                        break
+
+                    sub_batches_run = i
+                    sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
+                    # No "i of N": N is not known until the stream ends, and computing it up
+                    # front would mean splitting the document twice. Operators follow a long
+                    # retain through the chunk-level "storing N/total" progress the streaming
+                    # pipeline writes, which is unaffected.
+                    logger.info(f"Processing sub-batch {i}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens")
+                    # Live worker stage for the in-flight sub-batch; the durable progress
+                    # snapshot is written *after* the sub-batch commits (below) so processed
+                    # reflects work actually done and reaches total on completion.
+                    set_stage(f"batch_retain.sub_batch.{i}")
+
+                    # Resolve the document this sub-batch writes to so we can offset
+                    # its chunk_index past chunks already stored by earlier sub-batches
+                    # of the same document. A grouped call passes ``document_id``, so
+                    # every sub-batch shares it; otherwise only the oversized-single-
+                    # item split shares a document_id across sub-batches (packed
+                    # multi-item sub-batches carry distinct document_ids, offset 0).
+                    sub_doc_id = document_id or (sub_batch[0].get("document_id") if len(sub_batch) == 1 else None)
+                    sub_offset = chunk_offsets.get(sub_doc_id, 0) if sub_doc_id else 0
+
+                    # How many chunks this sub-batch contributes, from the splitter.
+                    # It must NOT be re-derived here: retain_batch consumes (pops)
+                    # each item's "content" while streaming, so reading it back
+                    # after the call yields "" — and chunk_text("") returns [""]
+                    # (count 1), advancing the per-document cursor by 1 regardless
+                    # of the real chunk count (issue #1888). Taking it from the splitter is also what
+                    # lets the offset be assigned BEFORE dispatch, which is what makes concurrent
+                    # sub-batches possible at all.
+                    sub_chunk_count = sub.chunk_count
+
+                    # Advance the document's chunk_index cursor by the number of chunks this sub-batch
+                    # produced, so the next sub-batch sharing the document continues the sequence.
+                    if sub_doc_id:
+                        # retain_batch only prepends the existing body on the global
+                        # first sub-batch (is_first_batch == i == 1), so fold its chunk
+                        # count in only there.
+                        if i == 1:
+                            sub_chunk_count += append_prepend_chunks.get(sub_doc_id, 0)
+                        chunk_offsets[sub_doc_id] = sub_offset + sub_chunk_count
+
+                    task = asyncio.create_task(
+                        _run_sub(
+                            i,
+                            sub_batch,
+                            sub_origins,
+                            sub_offset,
+                            sub.is_last,
+                            sub.document_body.text if sub.document_body else None,
+                            sub.document_body.content_hash if sub.document_body else None,
+                        )
                     )
-                    cancelled = True
-                    break
-
-                sub_batches_run = i
-                sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
-                # No "i of N": N is not known until the stream ends, and computing it up
-                # front would mean splitting the document twice. Operators follow a long
-                # retain through the chunk-level "storing N/total" progress the streaming
-                # pipeline writes, which is unaffected.
-                logger.info(f"Processing sub-batch {i}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens")
-                # Live worker stage for the in-flight sub-batch; the durable progress
-                # snapshot is written *after* the sub-batch commits (below) so processed
-                # reflects work actually done and reaches total on completion.
-                set_stage(f"batch_retain.sub_batch.{i}")
-
-                # Resolve the document this sub-batch writes to so we can offset
-                # its chunk_index past chunks already stored by earlier sub-batches
-                # of the same document. A grouped call passes ``document_id``, so
-                # every sub-batch shares it; otherwise only the oversized-single-
-                # item split shares a document_id across sub-batches (packed
-                # multi-item sub-batches carry distinct document_ids, offset 0).
-                sub_doc_id = document_id or (sub_batch[0].get("document_id") if len(sub_batch) == 1 else None)
-                sub_offset = chunk_offsets.get(sub_doc_id, 0) if sub_doc_id else 0
-
-                # How many chunks this sub-batch contributes, from the splitter.
-                # It must NOT be re-derived here: retain_batch consumes (pops)
-                # each item's "content" while streaming, so reading it back
-                # after the call yields "" — and chunk_text("") returns [""]
-                # (count 1), advancing the per-document cursor by 1 regardless
-                # of the real chunk count (issue #1888). Taking it from the splitter is also what
-                # lets the offset be assigned BEFORE dispatch, which is what makes concurrent
-                # sub-batches possible at all.
-                sub_chunk_count = sub.chunk_count
-
-                # Advance the document's chunk_index cursor by the number of chunks this sub-batch
-                # produced, so the next sub-batch sharing the document continues the sequence.
-                if sub_doc_id:
-                    # retain_batch only prepends the existing body on the global
-                    # first sub-batch (is_first_batch == i == 1), so fold its chunk
-                    # count in only there.
+                    pending.append(task)
+                    # The first sub-batch is a barrier: it upserts the document row that every later
+                    # sub-batch's ownership check reads, and in append mode it is the one that prepends
+                    # the existing body.
                     if i == 1:
-                        sub_chunk_count += append_prepend_chunks.get(sub_doc_id, 0)
-                    chunk_offsets[sub_doc_id] = sub_offset + sub_chunk_count
+                        collected.append(await task)
+                        pending.remove(task)
+                        continue
 
-                bodies[i] = (
-                    sub.document_body.text if sub.document_body else None,
-                    sub.document_body.content_hash if sub.document_body else None,
-                )
-                task = asyncio.create_task(_run_sub(i, sub_batch, sub_origins, sub_offset, sub.is_last))
-                pending.append(task)
-                # The first sub-batch is a barrier: it upserts the document row that every later
-                # sub-batch's ownership check reads, and in append mode it is the one that prepends
-                # the existing body.
-                if i == 1:
-                    collected.append(await task)
-                    pending.remove(task)
+                    # Throttle DISPATCH, not just execution. `sub_batch_stream` is a synchronous
+                    # generator, so if this loop never suspends it runs to exhaustion and every
+                    # sub-batch's text is alive at once in a pending task's closure — which is what
+                    # keeps a large document from being resident. A semaphore inside the task does not
+                    # help: it bounds how many RUN, not how many have been created. Waiting here for a
+                    # slot keeps the splitter one slice ahead of the work, which is what it was at
+                    # concurrency 1 before any of this.
+                    while len(pending) >= concurrency:
+                        done, still = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        pending = list(still)
+                        collected.extend(t.result() for t in done)
 
-            if pending:
-                collected.extend(await asyncio.gather(*pending))
+                if pending:
+                    # return_exceptions so one failure does not leave siblings running unawaited —
+                    # that orphans their store and DB writes past the caller unwinding, and logs
+                    # "Task exception was never retrieved". The first error is re-raised below, after
+                    # every task has settled.
+                    results = await asyncio.gather(*pending, return_exceptions=True)
+                    for r in results:
+                        if isinstance(r, BaseException):
+                            raise r
+                        collected.append(r)
+            finally:
+                # In a `finally` so a failed sub-batch still writes what its siblings accumulated.
+                # Otherwise the last slices since the previous doubling are lost, and for a document
+                # that never reached a flush that is the whole body — leaving memories with no
+                # chunk texts, which is worse than the per-sub-batch writes this replaces.
+                from .retain.orchestrator import flush_document_bodies
+
+                await flush_document_bodies(body_accum)
 
             # Merge in sub-batch order, not completion order, so `per_input_results` is identical
             # whatever order concurrent sub-batches finished in.
@@ -5451,12 +5492,6 @@ class MemoryEngine(MemoryEngineInterface):
                 # Per-sub-batch progress is intentionally not written here: the streaming
                 # retain pipeline emits finer-grained "storing N/total chunks" snapshots
                 # via progress_callback as each sub-batch's chunks commit.
-
-            # Write out whatever the sub-batches accumulated but did not reach a flush threshold
-            # with, so a document's body is complete when its retain is.
-            from .retain.orchestrator import flush_document_bodies
-
-            await flush_document_bodies(body_accum)
 
             total_time = time.time() - start_time
             logger.info(

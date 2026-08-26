@@ -804,6 +804,7 @@ def _parse_worker_slot_reservations() -> dict[str, int]:
 
 ENV_WORKER_CONSOLIDATION_BANK_PRIORITY = "HINDSIGHT_API_WORKER_CONSOLIDATION_BANK_PRIORITY"
 ENV_RETAIN_MAX_CONCURRENT = "HINDSIGHT_API_RETAIN_MAX_CONCURRENT"
+ENV_RETAIN_SUBBATCH_CONCURRENCY = "HINDSIGHT_API_RETAIN_SUBBATCH_CONCURRENCY"
 ENV_RETAIN_WALL_TIMEOUT = "HINDSIGHT_API_RETAIN_WALL_TIMEOUT"
 
 # Reflect agent settings
@@ -1423,6 +1424,10 @@ DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 DEFAULT_OPERATION_RETENTION_DAYS = 0
 DEFAULT_OPERATION_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
+# Sub-batches of ONE document processed at a time. Most of a sub-batch is a store round-trip, so
+# overlapping a few hides that wait. 1 keeps the splitter exactly one slice ahead of the work,
+# which is what bounds how much of a large document is resident; raise it knowingly.
+DEFAULT_RETAIN_SUBBATCH_CONCURRENCY = 1
 # Wall-clock ceiling for one retain task in the worker (0 disables). This is a
 # deadlock/wedge backstop, not a latency target: a retain that blocks forever on
 # a lock, an LLM permit or a queue put would otherwise hold its worker slot until
@@ -2714,6 +2719,7 @@ class HindsightConfig:
     operation_retention_days: int
     operation_cleanup_batch_size: int
     retain_max_concurrent: int
+    retain_subbatch_concurrency: int
     retain_wall_timeout: int
 
     # Reflect agent settings
@@ -4046,6 +4052,9 @@ class HindsightConfig:
                 DEFAULT_OPERATION_CLEANUP_BATCH_SIZE,
             ),
             retain_max_concurrent=int(os.getenv(ENV_RETAIN_MAX_CONCURRENT, str(DEFAULT_RETAIN_MAX_CONCURRENT))),
+            retain_subbatch_concurrency=int(
+                os.getenv(ENV_RETAIN_SUBBATCH_CONCURRENCY, str(DEFAULT_RETAIN_SUBBATCH_CONCURRENCY))
+            ),
             retain_wall_timeout=int(os.getenv(ENV_RETAIN_WALL_TIMEOUT, str(DEFAULT_RETAIN_WALL_TIMEOUT))),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
