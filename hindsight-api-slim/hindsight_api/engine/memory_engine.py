@@ -813,12 +813,25 @@ def _pack_native_chunks(chunks: Iterable[str], tokens_per_batch: int) -> Iterato
         yield current
 
 
+@dataclass(frozen=True)
+class _NativeChunkSpan:
+    """Where a run of native chunks came from in the document that produced it.
+
+    ``text`` is the slice of the source that yielded the run, or ``None`` when the run could
+    not be located in it. ``cursor`` is where the next run's search starts: the end of this
+    run when it was located, and the unchanged input cursor when it was not.
+    """
+
+    text: str | None
+    cursor: int
+
+
 def _span_of_native_chunks(
     source: str,
     chunks: list[str],
     cursor: int,
-) -> tuple[str | None, int]:
-    """The original span of ``source`` covering a run of consecutive native chunks.
+) -> _NativeChunkSpan:
+    r"""The original span of ``source`` covering a run of consecutive native chunks.
 
     ``_rejoin_native_chunks`` reconstructs a run by guessing which separator sat between its
     chunks — a merged JSON array, ``"\n\n"``, ``"\n"`` — and gives up when none of them
@@ -828,23 +841,32 @@ def _span_of_native_chunks(
 
     The guessing is avoidable. The chunks came from ``source``, in order, so the text that produced
     them is the slice from the first chunk's start to the last chunk's end — separators included,
-    whatever they were. Locating them costs a forward scan with a cursor that only moves right, so
-    a document is still walked once overall.
+    whatever they were. When the chunks are substrings of the source, locating them costs a forward
+    scan with a cursor that only moves right, so a document is still walked once overall.
 
-    Returns ``(None, cursor)`` if any chunk cannot be located from ``cursor``, and the caller falls
+    When they are NOT — ``iter_chunks`` re-serializes a JSON conversation array per chunk, and
+    rebuilds JSONL as ``"\n".join`` of its non-blank lines — no chunk is ever found, ``cursor``
+    cannot advance, and each attempt rescans the whole body from where it started. That is why the
+    caller stops attempting after the first miss: whether a document's chunks are substrings of it
+    is decided once, by the branch ``iter_chunks`` takes for the whole document, so one miss
+    settles it. Left unbounded it costs a full scan per run: splitting a 44 MB conversation into
+    its 985 sub-batches took 52s instead of 22s, and the gap grows with the square of the
+    document — the class of cost #3756 removed from this path.
+
+    Returns ``text=None`` if any chunk cannot be located from ``cursor``, and the caller falls
     back to the rejoin exactly as before. The caller also verifies that the slice re-chunks to the
     same run, so a span that would change the split is rejected rather than trusted.
     """
     start = source.find(chunks[0], cursor)
     if start < 0:
-        return None, cursor
+        return _NativeChunkSpan(text=None, cursor=cursor)
     end = start
     for chunk in chunks:
         found = source.find(chunk, end)
         if found < 0:
-            return None, cursor
+            return _NativeChunkSpan(text=None, cursor=cursor)
         end = found + len(chunk)
-    return source[start:end], end
+    return _NativeChunkSpan(text=source[start:end], cursor=end)
 
 
 def _rejoin_native_chunks(
@@ -1022,14 +1044,28 @@ def _iter_raw_sub_batches(
             # order and only ever move forward, so one cursor serves them all and the document is
             # scanned once rather than per run.
             span_cursor = 0
+            # Whether this document's chunks are substrings of it at all. A miss means they are
+            # not — a re-serialized JSON conversation, JSONL rebuilt from its non-blank lines —
+            # and that is a property of the whole document, not of one run. Every later attempt
+            # would miss too, and each miss rescans the body from `span_cursor` (which a miss
+            # cannot advance), so retrying costs a full scan per run. One miss settles it; the
+            # rejoin is what handles those shapes anyway.
+            span_locatable = True
             for run in _pack_native_chunks(_chunks_of(content_str), tokens_per_batch):
                 # Prefer the ORIGINAL span over a guessed rejoin: it carries whatever separators
                 # the document actually used, so it reconstructs runs the guessing cannot. Verified
                 # the same way either candidate is — a slice that would change the split is
-                # rejected, not trusted.
-                joined, span_cursor = _span_of_native_chunks(content_str, run, span_cursor)
-                if joined is not None and len(run) > 1 and list(_chunks_of(joined)) != run:
-                    joined = None
+                # rejected, not trusted. A single-chunk run needs no verification: its span is that
+                # chunk exactly, so there is nothing a re-chunk could disagree with.
+                joined = None
+                if span_locatable:
+                    span = _span_of_native_chunks(content_str, run, span_cursor)
+                    span_cursor = span.cursor
+                    joined = span.text
+                    if joined is None:
+                        span_locatable = False
+                    elif len(run) > 1 and list(_chunks_of(joined)) != run:
+                        joined = None
                 if joined is None:
                     joined = _rejoin_native_chunks(run, chunk_size, structured_chunk_size)
                 slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]

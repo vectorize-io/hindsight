@@ -20,7 +20,11 @@ that produced them is the slice from the first chunk's start to the last chunk's
 whatever separators the document actually used.
 """
 
+import json
+
+from hindsight_api.engine import memory_engine
 from hindsight_api.engine.memory_engine import (
+    _NativeChunkSpan,
     _iter_raw_sub_batches,
     _pack_native_chunks,
     _rejoin_native_chunks,
@@ -75,13 +79,13 @@ def test_a_run_survives_as_one_sub_batch_via_its_original_span():
     # The body is far under the token budget, so packing must offer it as a single run.
     assert len(runs) == 1, f"expected one run under a {TOKENS_PER_BATCH}-token budget, got {len(runs)}"
 
-    span, cursor = _span_of_native_chunks(body, runs[0], 0)
-    assert span is not None, "every chunk came from the body, so the span must be locatable"
-    assert cursor > 0
+    span = _span_of_native_chunks(body, runs[0], 0)
+    assert span.text is not None, "every chunk came from the body, so the span must be locatable"
+    assert span.cursor > 0
 
     # The property that makes the span safe to use: it re-chunks to the run it came from, so the
     # sub-batch's chunk_index accounting is the same as the splitter's.
-    assert chunk_text(span, CHUNK_SIZE, structured_chunk_size=None) == runs[0]
+    assert chunk_text(span.text, CHUNK_SIZE, structured_chunk_size=None) == runs[0]
 
 
 def test_the_span_is_the_source_text_verbatim():
@@ -89,9 +93,9 @@ def test_the_span_is_the_source_text_verbatim():
     body = _document_with_mixed_separators()
     chunks = chunk_text(body, CHUNK_SIZE, structured_chunk_size=None)
 
-    span, _ = _span_of_native_chunks(body, chunks, 0)
-    assert span is not None
-    assert span in body, "the span must be a slice of the source, not a reconstruction of it"
+    span = _span_of_native_chunks(body, chunks, 0)
+    assert span.text is not None
+    assert span.text in body, "the span must be a slice of the source, not a reconstruction of it"
 
 
 def test_the_cursor_only_moves_forward_across_runs():
@@ -104,8 +108,9 @@ def test_the_cursor_only_moves_forward_across_runs():
     cursor = 0
     seen = [cursor]
     for run in runs:
-        span, cursor = _span_of_native_chunks(body, run, cursor)
-        assert span is not None
+        span = _span_of_native_chunks(body, run, cursor)
+        assert span.text is not None
+        cursor = span.cursor
         seen.append(cursor)
     assert seen == sorted(seen), f"cursor moved backwards: {seen}"
 
@@ -113,9 +118,9 @@ def test_the_cursor_only_moves_forward_across_runs():
 def test_an_unlocatable_chunk_falls_back_rather_than_guessing_wrong():
     """A chunk that is not in the source yields None, so the caller uses the old path."""
     body = _document_with_mixed_separators()
-    span, cursor = _span_of_native_chunks(body, ["text that is not in the document"], 0)
-    assert span is None
-    assert cursor == 0, "a failed lookup must not advance the cursor"
+    span = _span_of_native_chunks(body, ["text that is not in the document"], 0)
+    assert span.text is None
+    assert span.cursor == 0, "a failed lookup must not advance the cursor"
 
 
 def test_the_splitter_packs_runs_instead_of_fragmenting_per_chunk():
@@ -158,3 +163,58 @@ def test_the_splitter_packs_runs_instead_of_fragmenting_per_chunk():
     # the chunks each sub-batch's text really produces.
     assert [s.chunk_count for s in subs] == [len(r) for r in runs]
     assert sum(s.chunk_count for s in subs) == len(chunks)
+
+
+def _conversation_over_the_budget() -> str:
+    """A JSON conversation array big enough to take the oversized-item path.
+
+    ``iter_chunks`` re-serializes each chunk of a conversation array with its own ``[``/``]``,
+    so no chunk is ever a substring of the body — the shape the span reconstruction can never
+    locate, and the one ``_rejoin_native_chunks`` merges back into a single array instead.
+    """
+    turns = [{"role": "user", "content": f"message {i} " + "word " * 60} for i in range(400)]
+    return json.dumps(turns, ensure_ascii=False)
+
+
+def test_the_span_is_attempted_once_on_a_body_whose_chunks_are_not_substrings(monkeypatch):
+    """A body the span can never locate costs ONE attempt, not one per run.
+
+    A miss cannot advance the cursor, so every retry rescans the whole body from where the last
+    one started. Whether a document's chunks are substrings of it is settled by the branch
+    ``iter_chunks`` takes for the entire document, so retrying buys nothing and costs a full scan
+    per run: splitting a 44 MB conversation into its 985 sub-batches took 52s instead of 22s, and
+    the gap grows with the square of the document. That is the class of cost #3756 removed from
+    this path; it must not come back.
+    """
+    body = _conversation_over_the_budget()
+    chunks = chunk_text(body, CHUNK_SIZE, structured_chunk_size=None)
+    runs = list(_pack_native_chunks(chunks, PACKED_TOKENS))
+    assert len(runs) > 5, "fixture must produce many runs, or one attempt per run is not visible"
+
+    # The precondition: this really is a body the span cannot locate.
+    assert _span_of_native_chunks(body, runs[0], 0).text is None
+
+    attempts: list[int] = []
+    real = memory_engine._span_of_native_chunks
+
+    def _counting_span(source: str, run: list[str], cursor: int) -> _NativeChunkSpan:
+        attempts.append(cursor)
+        return real(source, run, cursor)
+
+    monkeypatch.setattr(memory_engine, "_span_of_native_chunks", _counting_span)
+
+    subs = list(
+        _iter_raw_sub_batches(
+            [{"content": body}],
+            PACKED_TOKENS,
+            chunk_size=CHUNK_SIZE,
+            structured_chunk_size=None,
+        )
+    )
+
+    assert len(attempts) == 1, (
+        f"the span was attempted {len(attempts)} times over {len(runs)} runs — each miss rescans "
+        f"the whole body, so this is quadratic in the document"
+    )
+    # The rejoin still does its job on this shape, so the runs are not fragmented either.
+    assert [sub.chunk_count for sub in subs] == [len(r) for r in runs]
