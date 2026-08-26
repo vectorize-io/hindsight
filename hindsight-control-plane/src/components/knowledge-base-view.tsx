@@ -79,8 +79,20 @@ export function KnowledgeBaseView() {
   const searchParams = useSearchParams();
   const pageParam = searchParams.get("page");
 
-  const [roots, setRoots] = useState<KnowledgeNode[]>([]);
+  // The tree is stamped with the bank it was fetched for, and read back through
+  // `roots` below, so a bank change invalidates it *during the same render* that
+  // sees the new bank. State cleared from an effect would come too late: other
+  // effects in that same commit would still run against the old bank's tree and
+  // request its page / mental model ids under the new bank (#3807).
+  const [tree, setTree] = useState<{ bank: string; roots: KnowledgeNode[] } | null>(null);
   const [loading, setLoading] = useState(false);
+  // Only the tree fetched for the bank on screen counts; while a switch is in
+  // flight there is no tree, which parks the selection effects below.
+  const treeLoaded = tree !== null && tree.bank === currentBank;
+  const roots = useMemo(() => (treeLoaded ? tree.roots : []), [treeLoaded, tree]);
+  // The bank of the newest tree request, so a slow response for a bank we have
+  // since left can't overwrite the current one.
+  const treeRequestBankRef = useRef<string | null>(null);
   // Root folder starts expanded so its contents are visible by default.
   const [expanded, setExpanded] = useState<Set<string>>(new Set([ROOT_ID]));
 
@@ -134,15 +146,22 @@ export function KnowledgeBaseView() {
   const loadTree = useCallback(
     async (opts?: { silent?: boolean }) => {
       if (!currentBank) return;
+      const bank = currentBank;
+      treeRequestBankRef.current = bank;
       if (!opts?.silent) setLoading(true);
+      let nextRoots: KnowledgeNode[] = [];
       try {
-        const result = await client.getKnowledgeTree(currentBank);
-        setRoots(result.roots || []);
+        const result = await client.getKnowledgeTree(bank);
+        nextRoots = result.roots || [];
       } catch {
         // toast handled by interceptor
       } finally {
         if (!opts?.silent) setLoading(false);
       }
+      if (treeRequestBankRef.current !== bank) return;
+      // Stamped even when the fetch failed (empty tree), so the selection effects
+      // don't stay parked forever waiting for a tree that isn't coming.
+      setTree({ bank, roots: nextRoots });
     },
     [currentBank]
   );
@@ -303,10 +322,21 @@ export function KnowledgeBaseView() {
     setActiveId((a) => (a === id ? (next[idx]?.id ?? next[idx - 1]?.id ?? null) : a));
   }, []);
 
+  // The ?page= id, but only once this bank's tree confirms it owns it. An id from
+  // another bank (a stale deep link) resolves to null instead of being requested,
+  // and auto-selection below takes over. Deliberately the id string and not the
+  // node, so the auto-refresh poll's new node objects don't re-run the effect and
+  // yank focus back to the deep-linked tab.
+  const deepLinkPageId = useMemo(
+    () =>
+      pageParam && allNodes.some((n) => n.id === pageParam && n.kind === "page") ? pageParam : null,
+    [pageParam, allNodes]
+  );
+
   // Deep-link: open the page named in ?page= (e.g. navigated from the Home card).
   useEffect(() => {
-    if (pageParam && currentBank) openPage(pageParam);
-  }, [pageParam, currentBank, openPage]);
+    if (treeLoaded && deepLinkPageId) openPage(deepLinkPageId);
+  }, [treeLoaded, deepLinkPageId, openPage]);
 
   // Reset the once-per-bank auto-select guard when switching banks.
   useEffect(() => {
@@ -315,15 +345,17 @@ export function KnowledgeBaseView() {
 
   // Open the first page on entry so the content pane isn't empty — unless a page
   // is deep-linked or already open. Fires once per bank (guarded), so closing a
-  // page doesn't snap it back open.
+  // page doesn't snap it back open. A ?page= id this bank doesn't own falls
+  // through to here rather than leaving the pane empty.
   useEffect(() => {
-    if (autoSelectedRef.current || pageParam || selected || !allNodes.length) return;
+    if (autoSelectedRef.current || !treeLoaded || deepLinkPageId || selected || !allNodes.length)
+      return;
     const firstPage = allNodes.find((n) => n.kind === "page");
     if (firstPage) {
       autoSelectedRef.current = true;
       openPage(firstPage.id);
     }
-  }, [allNodes, pageParam, selected, openPage]);
+  }, [allNodes, treeLoaded, deepLinkPageId, selected, openPage]);
 
   const toggleFolder = useCallback((id: string) => {
     setExpanded((prev) => {
