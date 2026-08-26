@@ -2293,6 +2293,14 @@ class MemoryEngine(MemoryEngineInterface):
         # Configurable via HINDSIGHT_API_RETAIN_MAX_CONCURRENT (default: 4).
         self._put_semaphore = asyncio.Semaphore(get_config().retain_max_concurrent)
 
+        # The same phase for a bank whose store owns the write path. The limit above is sized for
+        # contention on the SQL entity/link/HNSW tables — contention a store that keeps its own
+        # index does not have, which makes 4 an arbitrary throughput ceiling there rather than a
+        # protection. It still needs *a* bound (the phase holds a decoded batch while it runs), so
+        # this is a separate number rather than no semaphore.
+        # Configurable via HINDSIGHT_API_RETAIN_STORE_MAX_CONCURRENT.
+        self._store_put_semaphore = asyncio.Semaphore(get_config().retain_store_max_concurrent)
+
         # initialize encoding eagerly to avoid delaying the first time
         get_token_encoding()
 
@@ -5682,6 +5690,26 @@ class MemoryEngine(MemoryEngineInterface):
             cancelled=cancelled,
         )
 
+    def _db_semaphore_for(self, bank_id: str) -> asyncio.Semaphore:
+        """Which retain-write gate applies to this bank.
+
+        Two limits, because they guard different things. The SQL path's gate protects shared
+        entity/link/HNSW tables from concurrent index work. A store that owns the write path keeps
+        its own index and has none of that contention, so applying the SQL number to it caps
+        throughput for a reason that does not hold — but it still needs a bound, because the phase
+        holds a decoded batch for its duration.
+        """
+        try:
+            from .memories import get_memories
+
+            if get_memories().store_owned_for(bank_id):
+                return self._store_put_semaphore
+        except Exception:
+            # A store that cannot answer is treated as the SQL path: the tighter gate is the safe
+            # default, and this must never be the thing that fails a retain.
+            logger.debug("could not resolve store ownership for %s; using the SQL retain gate", bank_id)
+        return self._put_semaphore
+
     async def _retain_batch_async_internal(
         self,
         bank_id: str,
@@ -5759,7 +5787,7 @@ class MemoryEngine(MemoryEngineInterface):
                 schema=_current_schema.get(),
                 outbox_callback=outbox_callback,
                 outbox_callback_factory=outbox_callback_factory,
-                db_semaphore=self._put_semaphore,
+                db_semaphore=self._db_semaphore_for(bank_id),
                 document_body_override=document_body_override,
                 document_body_hash=document_body_hash,
                 chunk_index_offset=chunk_index_offset,
