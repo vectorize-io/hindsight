@@ -1366,6 +1366,7 @@ async def retain_batch(
     document_body_override: str | None = None,
     document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
+    body_accum: dict[str, dict] | None = None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     webhook_manager: Any = None,
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
@@ -1875,6 +1876,7 @@ async def retain_batch(
         document_body_override=document_body_override,
         document_body_hash=document_body_hash,
         chunk_index_offset=chunk_index_offset,
+        body_accum=body_accum,
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
@@ -2070,6 +2072,70 @@ async def _store_document_bodies(
         raise ConcurrentAppendConflict(str(e)) from e
 
 
+# A document body is flushed once its unwritten chunk text has at least DOUBLED since the last
+# flush (and at least this much has accumulated). Doubling makes the number of writes O(log chunks)
+# and the total bytes written ~2x the document, where flushing per sub-batch is O(chunks^2) and
+# flushing only at the end risks the whole document. It also bounds what an interrupted retain
+# loses: never more than half of what it had.
+_BODY_FLUSH_MIN_BYTES = 4 * 1024 * 1024
+
+
+def _contiguous_prefix(slices: dict[int, list[str]]) -> list[str]:
+    """The document's chunk texts from index 0, stopping at the first gap.
+
+    Sub-batches may complete out of order, so the accumulator can hold slice 0 and slice 2 while
+    slice 1 is still in flight. The chunk list is POSITIONAL — `put_document` takes it whole and
+    index N is chunk N — so writing across a gap would shift every following chunk. Writing only
+    the gap-free prefix is exactly what a sequential retain would have written by that point.
+    """
+    out: list[str] = []
+    for offset in sorted(slices):
+        if offset != len(out):
+            break
+        out.extend(slices[offset])
+    return out
+
+
+async def _flush_document_body(acc: dict, document_id: str, *, force: bool) -> None:
+    """Write the accumulated body if enough has accumulated (or the retain is finishing)."""
+    meta = acc.get("meta")
+    if not meta:
+        return
+    async with acc["lock"]:
+        chunks = _contiguous_prefix(acc["slices"])
+        if not chunks:
+            return
+        pending = sum(len(c) for c in chunks)
+        if not force and pending < max(_BODY_FLUSH_MIN_BYTES, 2 * acc["flushed_bytes"]):
+            return
+        if pending == acc["flushed_bytes"] and not force:
+            return
+        await _store_document_bodies(
+            bank_id=meta["bank_id"],
+            document_id=document_id,
+            content_hash=meta["content_hash"],
+            combined_content=meta["combined_content"],
+            chunk_texts=chunks,
+            merged_tags=meta["merged_tags"],
+            config=meta["config"],
+            retain_params=meta["retain_params"],
+            # The append CAS belongs to the write derived from the stored base, which is the first
+            # one this retain issues; later flushes build on what it wrote.
+            expect_watermark=meta["expect_watermark"] if acc["flushed_bytes"] == 0 else None,
+            # The accumulator holds the document from index 0, so the write needs no offset — it
+            # IS the prefix, which is what `put_document` wants.
+            chunk_index_offset=0,
+        )
+        acc["flushed_bytes"] = pending
+
+
+async def flush_document_bodies(body_accum: dict[str, dict]) -> None:
+    """Write out every accumulated document body. Call once a retain's sub-batches have all run."""
+    for document_id, acc in list(body_accum.items()):
+        await _flush_document_body(acc, document_id, force=True)
+    body_accum.clear()
+
+
 # ---------------------------------------------------------------------------
 # Streaming chunk batching
 # ---------------------------------------------------------------------------
@@ -2102,6 +2168,7 @@ async def _streaming_retain_batch(
     document_body_override: str | None = None,
     document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
+    body_accum: dict[str, dict] | None = None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
@@ -2211,25 +2278,53 @@ async def _streaming_retain_batch(
     # a no-op for a Postgres store (which keeps the text in its own columns below). ``all_pre_chunks``
     # is the full ordered chunk-text list; ``combined_content`` is the full document text (both are
     # released as the batches stream, so the write happens now while they are still resident).
-    await _store_document_bodies(
-        bank_id=bank_id,
-        document_id=effective_doc_id,
-        content_hash=new_content_hash,
-        combined_content=combined_content,
-        chunk_texts=all_pre_chunks,
-        merged_tags=merged_tags,
-        config=config,
-        retain_params=retain_params,
-        # An append derives the new body from the stored one, so its write is conditional on that
-        # base still being current. Only the first sub-batch carries it: it is the one that read
-        # the base, and the later sub-batches build on what it just wrote, not on the old document.
-        expect_watermark=append_base_watermark if is_first_batch else None,
-        # `all_pre_chunks` is THIS sub-batch's chunks; the offset is where they sit in the
-        # document, and is what lets the store keep the earlier sub-batches' chunks instead of
-        # being handed one slice as if it were the whole document. The delta path's two calls need
-        # no offset: delta retain only runs on the first sub-batch, where the offset is 0.
-        chunk_index_offset=chunk_index_offset,
-    )
+    if body_accum is None or not effective_doc_id:
+        await _store_document_bodies(
+            bank_id=bank_id,
+            document_id=effective_doc_id,
+            content_hash=new_content_hash,
+            combined_content=combined_content,
+            chunk_texts=all_pre_chunks,
+            merged_tags=merged_tags,
+            config=config,
+            retain_params=retain_params,
+            # An append derives the new body from the stored one, so its write is conditional on
+            # that base still being current. Only the first sub-batch carries it: it is the one
+            # that read the base, and the later sub-batches build on what it just wrote.
+            expect_watermark=append_base_watermark if is_first_batch else None,
+            # `all_pre_chunks` is THIS sub-batch's chunks; the offset is where they sit in the
+            # document, and is what lets the store keep the earlier sub-batches' chunks instead of
+            # being handed one slice as if it were the whole document. The delta path's two calls
+            # need no offset: delta retain only runs on the first sub-batch, where the offset is 0.
+            chunk_index_offset=chunk_index_offset,
+        )
+    else:
+        # Accumulating path. `put_document` REPLACES the chunk list, so restoring the prefix used
+        # to mean reading [0, offset) back out of the store on EVERY sub-batch — a read linear in
+        # the offset, so quadratic over the document, on top of re-sending the same body text each
+        # time. The sub-batches instead hand their slices here and the accumulator writes.
+        #
+        # Slices are keyed by their offset rather than appended: the offset is assigned before
+        # dispatch, so keying on it reconstructs the document's order whatever order the
+        # sub-batches finish in — which is what lets them run concurrently.
+        acc = body_accum.setdefault(
+            effective_doc_id,
+            {"slices": {}, "meta": None, "flushed_bytes": 0, "lock": asyncio.Lock()},
+        )
+        acc["slices"][chunk_index_offset] = list(all_pre_chunks)
+        # Every sub-batch carries the WHOLE document as `combined_content` (and so the same content
+        # hash), so any one of them can supply the metadata for the writes.
+        if acc["meta"] is None:
+            acc["meta"] = {
+                "bank_id": bank_id,
+                "content_hash": new_content_hash,
+                "combined_content": combined_content,
+                "merged_tags": merged_tags,
+                "config": config,
+                "retain_params": retain_params,
+                "expect_watermark": append_base_watermark,
+            }
+        await _flush_document_body(acc, effective_doc_id, force=False)
 
     # Track whether document tracking has been done (by the first batch)
     doc_tracking_done = [False]

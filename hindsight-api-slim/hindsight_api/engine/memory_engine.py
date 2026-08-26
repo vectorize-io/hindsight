@@ -18,6 +18,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import random
 import sys
 import time
@@ -5326,6 +5327,43 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
             sub_batches_run = 0
+            # Chunk texts accumulated across the sub-batches of each document, written by
+            # `flush_document_bodies` below. Same lifetime as `chunk_offsets`: this retain only.
+            body_accum: dict[str, dict] = {}
+            # Sub-batches of one document used to run strictly one after another, but most of a
+            # sub-batch is a round-trip to the store — I/O wait, holding no GIL — so running a few
+            # concurrently overlaps a wait rather than paying it end to end.
+            #
+            # Default 1 keeps today's behaviour exactly; a deployment opts in.
+            concurrency = max(1, int(os.environ.get("HINDSIGHT_RETAIN_SUBBATCH_CONCURRENCY", "1")))
+            sem = asyncio.Semaphore(concurrency)
+            pending: list[asyncio.Task] = []
+            collected: list[tuple] = []
+            bodies: dict[int, tuple] = {}
+
+            async def _run_sub(idx: int, contents_, origins_, offset_, is_last_):
+                async with sem:
+                    r, u, pr = await self._retain_batch_async_internal(
+                        bank_id=bank_id,
+                        contents=contents_,
+                        request_context=request_context,
+                        document_id=document_id,
+                        is_first_batch=idx == 1,  # Only upsert on first batch
+                        fact_type_override=fact_type_override,
+                        document_tags=document_tags,
+                        operation_id=operation_id,
+                        strategy=strategy,
+                        # Outbox callback runs inside the last sub-batch's transaction so the
+                        # webhook delivery row is committed atomically with the final retain data.
+                        outbox_callback=outbox_callback if is_last_ else None,
+                        outbox_callback_factory=outbox_callback_factory if is_last_ else None,
+                        document_body_override=bodies.get(idx, (None, None))[0],
+                        document_body_hash=bodies.get(idx, (None, None))[1],
+                        chunk_index_offset=offset_,
+                        body_accum=body_accum,
+                    )
+                return idx, origins_, r, u, pr
+
             for sub in sub_batch_stream:
                 i = sub.index
                 sub_batch = sub.contents
@@ -5365,32 +5403,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # each item's "content" while streaming, so reading it back
                 # after the call yields "" — and chunk_text("") returns [""]
                 # (count 1), advancing the per-document cursor by 1 regardless
-                # of the real chunk count (issue #1888).
+                # of the real chunk count (issue #1888). Taking it from the splitter is also what
+                # lets the offset be assigned BEFORE dispatch, which is what makes concurrent
+                # sub-batches possible at all.
                 sub_chunk_count = sub.chunk_count
 
-                sub_results, sub_usage, sub_processed = await self._retain_batch_async_internal(
-                    bank_id=bank_id,
-                    contents=sub_batch,
-                    request_context=request_context,
-                    document_id=document_id,
-                    is_first_batch=i == 1,  # Only upsert on first batch
-                    fact_type_override=fact_type_override,
-                    document_tags=document_tags,
-                    operation_id=operation_id,
-                    strategy=strategy,
-                    # Outbox callback runs inside the last sub-batch's transaction so the
-                    # webhook delivery row is committed atomically with the final retain data.
-                    outbox_callback=outbox_callback if sub.is_last else None,
-                    outbox_callback_factory=outbox_callback_factory if sub.is_last else None,
-                    document_body_override=sub.document_body.text if sub.document_body else None,
-                    document_body_hash=sub.document_body.content_hash if sub.document_body else None,
-                    chunk_index_offset=sub_offset,
-                )
-
-                # Advance the document's chunk_index cursor by the number of
-                # chunks this sub-batch produced (counted above, before the
-                # orchestrator consumed the content), so the next sub-batch
-                # sharing the document continues the sequence.
+                # Advance the document's chunk_index cursor by the number of chunks this sub-batch
+                # produced, so the next sub-batch sharing the document continues the sequence.
                 if sub_doc_id:
                     # retain_batch only prepends the existing body on the global
                     # first sub-batch (is_first_batch == i == 1), so fold its chunk
@@ -5398,6 +5417,26 @@ class MemoryEngine(MemoryEngineInterface):
                     if i == 1:
                         sub_chunk_count += append_prepend_chunks.get(sub_doc_id, 0)
                     chunk_offsets[sub_doc_id] = sub_offset + sub_chunk_count
+
+                bodies[i] = (
+                    sub.document_body.text if sub.document_body else None,
+                    sub.document_body.content_hash if sub.document_body else None,
+                )
+                task = asyncio.create_task(_run_sub(i, sub_batch, sub_origins, sub_offset, sub.is_last))
+                pending.append(task)
+                # The first sub-batch is a barrier: it upserts the document row that every later
+                # sub-batch's ownership check reads, and in append mode it is the one that prepends
+                # the existing body.
+                if i == 1:
+                    collected.append(await task)
+                    pending.remove(task)
+
+            if pending:
+                collected.extend(await asyncio.gather(*pending))
+
+            # Merge in sub-batch order, not completion order, so `per_input_results` is identical
+            # whatever order concurrent sub-batches finished in.
+            for _idx, sub_origins, sub_results, sub_usage, sub_processed in sorted(collected, key=lambda x: x[0]):
                 # sub_results aligns 1:1 with sub_batch items; map each
                 # back to its source input via origin_indices so callers
                 # iterating with ``zip(contents, results)`` still align.
@@ -5412,6 +5451,12 @@ class MemoryEngine(MemoryEngineInterface):
                 # Per-sub-batch progress is intentionally not written here: the streaming
                 # retain pipeline emits finer-grained "storing N/total chunks" snapshots
                 # via progress_callback as each sub-batch's chunks commit.
+
+            # Write out whatever the sub-batches accumulated but did not reach a flush threshold
+            # with, so a document's body is complete when its retain is.
+            from .retain.orchestrator import flush_document_bodies
+
+            await flush_document_bodies(body_accum)
 
             total_time = time.time() - start_time
             logger.info(
@@ -5461,6 +5506,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_body_override: str | None = None,
         document_body_hash: str | None = None,
         chunk_index_offset: int = 0,
+        body_accum: dict[str, dict] | None = None,
     ) -> tuple[list[list[str]], "TokenUsage", int | None]:
         """
         Internal method for batch processing without chunking logic.
@@ -5525,6 +5571,7 @@ class MemoryEngine(MemoryEngineInterface):
                 document_body_override=document_body_override,
                 document_body_hash=document_body_hash,
                 chunk_index_offset=chunk_index_offset,
+                body_accum=body_accum,
                 # Stream chunk-level "storing N/total" progress to the operation row as
                 # the document's chunks commit (more useful than the coarse sub-batch tick).
                 progress_callback=self._write_operation_progress,
