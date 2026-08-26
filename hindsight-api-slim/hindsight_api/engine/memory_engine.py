@@ -1348,6 +1348,10 @@ def _recall_scoring_now(question_date: datetime | None) -> datetime:
 # Logger for memory system
 logger = logging.getLogger(__name__)
 
+#: Sentinel for "the store has never seen this page", distinct from a page indexed with no
+#: timestamp — the two must not compare equal or a reconcile would skip a genuinely missing entry.
+_MISSING_FROM_INDEX = object()
+
 from .db_utils import acquire_with_retry, retry_with_backoff, use_or_acquire
 
 
@@ -14073,9 +14077,146 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             return result
 
-    async def _generate_mental_model_embedding(self, name: str, content: str) -> str | None:
+    async def _mental_model_embedding_vector(self, name: str, content: str) -> list[float] | None:
+        """The page embedding as a vector. Over name + content, matching what BM25 indexes."""
         embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [f"{name} {content}"])
-        return str(embedding[0]) if embedding else None
+        return list(embedding[0]) if embedding and embedding[0] else None
+
+    async def _generate_mental_model_embedding(self, name: str, content: str) -> str | None:
+        vec = await self._mental_model_embedding_vector(name, content)
+        return str(vec) if vec else None
+
+    # -- the knowledge-page index -------------------------------------------
+    #
+    # A store that indexes pages holds a DERIVED copy: the row in `mental_models` is written first
+    # and stays the authority. So these run AFTER the row is committed, and a failure here leaves a
+    # row that is not yet searchable — which `reconcile_knowledge_index` repairs. The reverse order
+    # would leave the index describing a row that does not exist.
+
+    def _knowledge_index_store(self, bank_id: str):
+        """The store to index this bank's pages into, or None when Postgres still searches them."""
+        from .memories import get_memories
+
+        store = get_memories()
+        return store if store.owns_knowledge_index_for(bank_id) else None
+
+    async def _index_knowledge_page(
+        self,
+        conn,
+        bank_id: str,
+        mental_model_id: str,
+        *,
+        embedding: list[float] | None,
+    ) -> None:
+        """Push one page's searchable half into the store.
+
+        Reads the name, content and tags back from the row rather than taking them from the caller,
+        so every write path indexes the same thing and one that forgets a field cannot leave the
+        index disagreeing with the row it is derived from. The embedding is passed in because the
+        caller has just computed it and Postgres is not required to be storing it.
+        """
+        store = self._knowledge_index_store(bank_id)
+        if store is None:
+            return
+        row = await conn.fetchrow(
+            f"SELECT name, content, tags, last_refreshed_at FROM {fq_table('mental_models')} "
+            "WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            mental_model_id,
+        )
+        if row is None:
+            return
+        from .memories import KnowledgePageEntry
+
+        await store.index_knowledge_pages(
+            bank_id,
+            [
+                KnowledgePageEntry(
+                    page_id=mental_model_id,
+                    # The same document the native tsvector column generates, so the two backends
+                    # match on more than intent.
+                    index_text=f"{row['name'] or ''} {row['content'] or ''}",
+                    embedding=embedding,
+                    tags=list(row["tags"] or []),
+                    updated_at=row["last_refreshed_at"],
+                )
+            ],
+        )
+
+    async def _deindex_knowledge_pages(self, bank_id: str, mental_model_ids: list[str]) -> None:
+        """Drop pages from the store's index. Safe for ids the store never held."""
+        store = self._knowledge_index_store(bank_id)
+        if store is None or not mental_model_ids:
+            return
+        await store.delete_knowledge_pages(bank_id, mental_model_ids)
+
+    async def reconcile_knowledge_index(self, bank_id: str, *, force: bool = False) -> dict[str, int]:
+        """Make the store's page index agree with this bank's `mental_models` rows.
+
+        The index is derived and the write is not transactional, so it can disagree with Postgres in
+        two ways, both repaired here:
+
+        * a row whose indexing failed after it committed — searchable nowhere until this runs;
+        * an entry whose row was deleted, or rolled back after the index write acked — a hit that
+          hydrates to nothing, which the caller drops, so it reads as *missing* results rather than
+          as a stale index.
+
+        Postgres is the authority in both directions: what it holds is put, what it does not is
+        removed. That is also why this doubles as the initial build — there is no data to migrate,
+        only an index to construct — and why re-running it is free.
+
+        ``force`` re-indexes every page rather than only those the store has not seen at the row's
+        current ``last_refreshed_at``. Needed after an embedding-model change, where every vector is
+        wrong but no timestamp moved.
+        """
+        store = self._knowledge_index_store(bank_id)
+        if store is None:
+            return {"indexed": 0, "removed": 0, "unchanged": 0}
+
+        from .memories import KnowledgePageEntry
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"SELECT id, name, content, tags, last_refreshed_at FROM {fq_table('mental_models')} "
+                "WHERE bank_id = $1",
+                bank_id,
+            )
+        indexed = {r.page_id: r.updated_at for r in await store.list_knowledge_pages(bank_id)}
+
+        stale: list = []
+        unchanged = 0
+        for row in rows:
+            page_id = str(row["id"])
+            seen = indexed.pop(page_id, _MISSING_FROM_INDEX)
+            # Compare on the row's own change time. An entry the store has never seen compares
+            # unequal to everything, which is what makes a first run index the whole bank.
+            if not force and seen is not _MISSING_FROM_INDEX and seen == row["last_refreshed_at"]:
+                unchanged += 1
+                continue
+            stale.append(row)
+
+        for row in stale:
+            vec = await self._mental_model_embedding_vector(row["name"] or "", row["content"] or "")
+            await store.index_knowledge_pages(
+                bank_id,
+                [
+                    KnowledgePageEntry(
+                        page_id=str(row["id"]),
+                        index_text=f"{row['name'] or ''} {row['content'] or ''}",
+                        embedding=vec,
+                        tags=list(row["tags"] or []),
+                        updated_at=row["last_refreshed_at"],
+                    )
+                ],
+            )
+
+        # Whatever is left in `indexed` had no row: the store holds it and Postgres does not.
+        leftovers = list(indexed)
+        if leftovers:
+            await store.delete_knowledge_pages(bank_id, leftovers)
+
+        return {"indexed": len(stale), "removed": len(leftovers), "unchanged": unchanged}
 
     async def _insert_pinned_mental_model(
         self,
@@ -14189,7 +14330,8 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
-        embedding = await self._generate_mental_model_embedding(name, content)
+        embedding_vec = await self._mental_model_embedding_vector(name, content)
+        embedding = str(embedding_vec) if embedding_vec else None
 
         if not mental_model_id:
             mental_model_id = f"mm-{uuid.uuid4().hex}"
@@ -14217,6 +14359,10 @@ class MemoryEngine(MemoryEngineInterface):
                     max_tokens=max_tokens,
                     trigger=trigger,
                 )
+            # After the transaction commits: the index is derived from a row that must already
+            # exist, and indexing inside the transaction would publish a page a rollback then
+            # un-creates.
+            await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
 
         # Best-effort default-template hook runs after the bank-create commits
         # (it opens its own connections and can create pinned models).
@@ -15415,6 +15561,9 @@ class MemoryEngine(MemoryEngineInterface):
         previous_content: str | None = None
         previous_reflect_response: dict[str, Any] | None = None
         new_embedding_str: str | None = None
+        # The vector as well as its literal: a store-owned index takes the floats, and asking for
+        # the string alone would mean embedding the same document twice on every page write.
+        new_embedding_vec: list[float] | None = None
         document_changed = name is not None or content is not None
         if document_changed:
             async with use_or_acquire(backend, conn) as read_conn:
@@ -15436,10 +15585,11 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     previous_reflect_response = raw_rr
 
-            new_embedding_str = await self._generate_mental_model_embedding(
+            new_embedding_vec = await self._mental_model_embedding_vector(
                 name if name is not None else (current_row["name"] or ""),
                 content if content is not None else (current_row["content"] or ""),
             )
+            new_embedding_str = str(new_embedding_vec) if new_embedding_vec else None
 
         # The exit stack carries the row lock a trigger patch takes below; it stays
         # empty (and free) on every other update.
@@ -15618,6 +15768,13 @@ class MemoryEngine(MemoryEngineInterface):
                     get_config().mental_model_history_max_entries,
                 )
 
+            # Re-index whenever the searchable half moved. A name-only edit still changes the BM25
+            # document (it is name + content), which is why the embedding above is recomputed for
+            # any document change and not only for a content one — so `new_embedding_vec` is set
+            # exactly when this runs.
+            if row is not None and document_changed:
+                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=new_embedding_vec)
+
             return self._row_to_mental_model(row) if row else None
 
     async def _append_mental_model_history(
@@ -15732,6 +15889,14 @@ class MemoryEngine(MemoryEngineInterface):
                 mental_model_id,
                 embedding_str,
             )
+            # The body is gone but the page is not: re-index off the name alone so it stays
+            # findable by title, rather than leaving the index describing content that no longer
+            # exists.
+            if row is not None:
+                vec = None
+                if self._knowledge_index_store(bank_id) is not None:
+                    vec = await self._mental_model_embedding_vector(row["name"] or "", "")
+                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=vec)
 
         return self._row_to_mental_model(row) if row else None
 
@@ -15769,7 +15934,13 @@ class MemoryEngine(MemoryEngineInterface):
                 mental_model_id,
             )
 
-        return result == "DELETE 1"
+        deleted = result == "DELETE 1"
+        if deleted:
+            # After the row is gone: an index entry outliving its row is a search hit that hydrates
+            # to nothing, which the caller silently drops — so it looks like missing results rather
+            # than a stale index.
+            await self._deindex_knowledge_pages(bank_id, [mental_model_id])
+        return deleted
 
     def _build_mm_scope_filter(
         self,
@@ -16051,7 +16222,8 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
-        embedding = await self._generate_mental_model_embedding(name, content)
+        embedding_vec = await self._mental_model_embedding_vector(name, content)
+        embedding = str(embedding_vec) if embedding_vec else None
         effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
         effective_trigger = self._merge_trigger(trigger)
         backend = await self._get_backend()
@@ -16090,6 +16262,7 @@ class MemoryEngine(MemoryEngineInterface):
                         mental_model_id,
                         managed,
                     )
+                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             if getattr(exc, "constraint_name", None) != "uq_kp_folder_pagename":
                 raise
@@ -16268,6 +16441,53 @@ class MemoryEngine(MemoryEngineInterface):
         kp = fq_table("knowledge_pages")
         mm = fq_table("mental_models")
         join = self._kp_join()
+
+        # A store that indexes pages answers the ranking; Postgres still hydrates it. The store is
+        # given the whole page set and knows nothing about folders, so the join below is what keeps
+        # folders and pinned mental models out — which is also why it over-fetches: ids the join
+        # drops would otherwise eat into `limit`.
+        from .memories import get_memories
+
+        store = get_memories()
+        if store.owns_knowledge_index_for(bank_id):
+            matches = await store.search_knowledge_pages(
+                bank_id,
+                embedding=list(emb[0]) if emb and emb[0] else None,
+                text=query,
+                limit=fetch,
+            )
+            if not matches:
+                return []
+            order = {m.page_id: i for i, m in enumerate(matches)}
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT kp.id, kp.name, kp.mental_model_id,
+                           LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at
+                    FROM {join}
+                    WHERE kp.bank_id = $1 AND kp.kind = 'page' AND kp.mental_model_id = ANY($2::text[])
+                    """,
+                    bank_id,
+                    list(order),
+                )
+            # Rank by the store's ordering, not the join's: the SELECT above returns rows in
+            # whatever order the planner chose, and dropping back to that would silently discard
+            # the ranking this whole call is for.
+            out = [
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "mental_model_id": r["mental_model_id"],
+                    "snippet": (r["snippet"] or "").strip(),
+                    "score": 1.0 / (1 + order[r["mental_model_id"]]),
+                    "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+                }
+                for r in rows
+                if r["mental_model_id"] in order
+            ]
+            out.sort(key=lambda d: order[d["mental_model_id"]])
+            return out[:limit]
 
         # BM25 clauses for the configured text-search backend (same per-backend
         # dispatch the memory-recall BM25 arm uses — see knowledge_bm25_arm).
@@ -16596,6 +16816,9 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                     node_id,
                 )
+        # Deleting a folder takes its whole subtree, so every backing model in it leaves the index
+        # too — a single-page delete is just the one-element case.
+        await self._deindex_knowledge_pages(bank_id, mm_ids)
         return True
 
     async def export_knowledge_base(self, bank_id: str, *, request_context: "RequestContext") -> KnowledgeBaseExport:

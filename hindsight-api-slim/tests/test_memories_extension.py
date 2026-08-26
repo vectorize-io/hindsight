@@ -77,6 +77,9 @@ class InMemoryMemories(MemoriesExtension):
         # The document store: one record per document, each carrying its extracted text and the
         # ordered chunk texts — the bodies a store that owns them keeps out of Postgres.
         self.documents: dict[str, dict] = {}
+        # The knowledge-page index, per bank. Unlike the dicts above this one is DERIVED — the
+        # page's row lives in Postgres either way, so this holds only what a search needs.
+        self.knowledge_pages: dict[str, dict] = {}
         # Proof the engine went through the interface rather than around it.
         self.calls: list[str] = []
         # Banks whose storage exists. A store that owns its storage creates it when the
@@ -636,6 +639,72 @@ class InMemoryMemories(MemoriesExtension):
     async def observation_scope_counts(self, *, conn, fq_table, bank_id):
         self.calls.append("observation_scope_counts")
         return []
+
+    # -- the knowledge-page index -------------------------------------------
+    #
+    # Kept as a dict beside the memory rows, so the engine's routing is exercised end to end
+    # rather than mocked. The ranking is deliberately crude — substring for text, ordering by the
+    # first embedding component for vectors — because what these tests assert is that the engine
+    # ROUTES here and hydrates what comes back, not that a dict can rank.
+
+    owns_knowledge_index = True
+
+    def _pages(self, bank_id):
+        return self.knowledge_pages.setdefault(bank_id, {})
+
+    async def index_knowledge_pages(self, bank_id, entries):
+        self.calls.append("index_knowledge_pages")
+        pages = self._pages(bank_id)
+        for e in entries:
+            pages[e.page_id] = e
+
+    async def delete_knowledge_pages(self, bank_id, page_ids):
+        self.calls.append("delete_knowledge_pages")
+        pages = self._pages(bank_id)
+        for pid in page_ids:
+            pages.pop(pid, None)
+
+    async def search_knowledge_pages(
+        self, bank_id, *, embedding, text, limit, tags=None, tags_match="any", tag_groups=None
+    ):
+        self.calls.append("search_knowledge_pages")
+        from hindsight_api.engine.memories.base import KnowledgePageMatch
+
+        needle = (text or "").lower()
+        hits = [
+            e
+            for e in self._pages(bank_id).values()
+            if (not needle or needle in e.index_text.lower()) and (not tags or set(tags) & set(e.tags))
+        ]
+        return [KnowledgePageMatch(page_id=e.page_id, score=1.0) for e in hits][:limit]
+
+    async def search_knowledge_pages_semantic(
+        self,
+        bank_id,
+        *,
+        embedding,
+        limit,
+        tags=None,
+        tags_match="any",
+        tag_groups=None,
+        exclude_ids=None,
+    ):
+        self.calls.append("search_knowledge_pages_semantic")
+        from hindsight_api.engine.memories.base import KnowledgePageMatch
+
+        excluded = set(exclude_ids or ())
+        hits = [
+            e
+            for e in self._pages(bank_id).values()
+            if e.page_id not in excluded and (not tags or set(tags) & set(e.tags))
+        ]
+        return [KnowledgePageMatch(page_id=e.page_id, score=0.9) for e in hits][:limit]
+
+    async def list_knowledge_pages(self, bank_id):
+        self.calls.append("list_knowledge_pages")
+        from hindsight_api.engine.memories.base import KnowledgePageRef
+
+        return [KnowledgePageRef(page_id=e.page_id, updated_at=e.updated_at) for e in self._pages(bank_id).values()]
 
 
 @pytest.fixture

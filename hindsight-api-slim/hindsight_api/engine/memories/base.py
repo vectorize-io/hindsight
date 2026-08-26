@@ -473,6 +473,44 @@ class RecallArms:
     temporal: list = field(default_factory=list)
 
 
+@dataclass
+class KnowledgePageEntry:
+    """One knowledge page as the store indexes it.
+
+    Only what a search needs. The page's own row — its name, body, folder, trigger, history —
+    stays in Postgres, which remains the authority; this is the derived half.
+    """
+
+    #: The mental model's id, and the id every match comes back under.
+    page_id: str
+    #: What full-text search matches on. The page name and body joined; never returned.
+    index_text: str
+    #: The page's embedding. ``None`` indexes it for text search only.
+    embedding: list[float] | None = None
+    #: The page's visibility tags, so a scoped search filters inside the store rather than
+    #: over-fetching and discarding — a discarded hit has already cost a top-k slot.
+    tags: list[str] = field(default_factory=list)
+    #: When the page's row last changed. Read back by :meth:`MemoriesExtension.list_knowledge_pages`
+    #: so a reconcile can spot a stale index entry without reading the page.
+    updated_at: datetime | None = None
+
+
+@dataclass
+class KnowledgePageRef:
+    """A page as the reconcile pass sees it: what the store holds and how old it thinks it is."""
+
+    page_id: str
+    updated_at: datetime | None = None
+
+
+@dataclass
+class KnowledgePageMatch:
+    """One search result. ``score`` is comparable within a result set, not across stores."""
+
+    page_id: str
+    score: float
+
+
 class MemoriesExtension(Extension, ABC):
     """Storage + retrieval for memory units and their links, behind one interface.
 
@@ -522,6 +560,105 @@ class MemoriesExtension(Extension, ABC):
         overrides this to answer PER BANK; every bank-scoped call site consults it rather than the
         attribute."""
         return self.store_owned
+
+    # -- the knowledge-page index -------------------------------------------
+    #
+    # Knowledge pages are the one place where a store holds a DERIVED copy rather than the
+    # authority. The page's row stays in Postgres; the store keeps only an index over its text and
+    # embedding, so a lost or diverged entry is repaired by indexing it again and the two never need
+    # a transaction between them.
+    #
+    # That is why this is its own flag rather than part of `store_owned`. `store_owned` collapsed
+    # three flags into one because no store ever wanted a mixed combination — this is the mixed
+    # combination: the ownership split runs the opposite way (Postgres keeps the row, the store
+    # keeps the index), and a store can own every memory in a bank while its pages are still
+    # searched in SQL. The rollout needs exactly that state.
+
+    #: Whether this store indexes knowledge pages for search.
+    #:
+    #: False (the default) leaves `search_knowledge_pages` and the reflect tool on their SQL
+    #: queries against `mental_models` — the ANN index over `mental_models.embedding` and the BM25
+    #: index over its name + content. Nothing changes.
+    #:
+    #: True moves BOTH of those reads to this store, and the page write paths additionally call
+    #: :meth:`index_knowledge_pages` / :meth:`delete_knowledge_pages`. The Postgres row is still
+    #: written first and is still what a hit is hydrated from.
+    owns_knowledge_index: bool = False
+
+    def owns_knowledge_index_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`owns_knowledge_index`. Defaults to the class attribute; a router
+        whose banks live in different backends overrides it. Every bank-scoped call site consults
+        this rather than the attribute."""
+        return self.owns_knowledge_index
+
+    async def index_knowledge_pages(self, bank_id: str, entries: list["KnowledgePageEntry"]) -> None:
+        """Upsert pages into the store's index. A ``page_id`` already present is replaced.
+
+        Called after the Postgres row is committed, so an entry here always describes a row that
+        exists. The reverse — a committed row whose indexing failed — is the expected failure and is
+        repaired by the reconcile pass, not by a transaction.
+
+        Replacing rather than merging is deliberate: a derived index has nothing worth preserving
+        across a rewrite, and it makes re-indexing everything idempotent, which is what lets the
+        reconcile pass be "put them all again"."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def delete_knowledge_pages(self, bank_id: str, page_ids: list[str]) -> None:
+        """Remove pages from the index. Deleting one the store does not hold must be a no-op, so a
+        reconcile can reap an entry it believes is stale without first proving it is there."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def search_knowledge_pages(
+        self,
+        bank_id: str,
+        *,
+        embedding: list[float] | None,
+        text: str,
+        limit: int,
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+        tag_groups: list | None = None,
+    ) -> list["KnowledgePageMatch"]:
+        """Hybrid search over the bank's pages: text and (when given) embedding, fused BY THE STORE.
+
+        Fusion is the store's business because only it knows what its arms produce — one returning
+        ranks and another returning distances cannot share a caller-side formula. ``score`` is
+        therefore comparable within one result set and meaningless across stores; callers order by
+        it and do not otherwise interpret it.
+
+        Returns ids only. The caller joins them back to Postgres for name, snippet and folder — and
+        that join is also what filters out ids that are not pages, so the store never needs to know
+        the difference between a page and a pinned mental model."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def search_knowledge_pages_semantic(
+        self,
+        bank_id: str,
+        *,
+        embedding: list[float],
+        limit: int,
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+        tag_groups: list | None = None,
+        exclude_ids: list[str] | None = None,
+    ) -> list["KnowledgePageMatch"]:
+        """Pure vector search over the bank's pages, for the reflect tool.
+
+        Separate from :meth:`search_knowledge_pages` because the two want different answers, not
+        different tunings of one: this one reports ``score`` as a **similarity in [0, 1]**, which
+        the agent surfaces as a relevance figure, and a fused hybrid score cannot stand in for it.
+
+        ``exclude_ids`` drops pages from the result — a refresh must not retrieve the very page it
+        is regenerating."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def list_knowledge_pages(self, bank_id: str) -> list["KnowledgePageRef"]:
+        """Every page the store currently indexes for this bank.
+
+        The read half of the reconcile: diff it against the bank's `mental_models` rows to find both
+        what is missing from the index and what is left over in it. Bounded by the bank's page
+        count, which is a curated set rather than its corpus."""
+        raise NotImplementedError("this store does not index knowledge pages")
 
     async def retain(
         self,
