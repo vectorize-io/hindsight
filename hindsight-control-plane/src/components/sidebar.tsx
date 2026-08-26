@@ -21,14 +21,7 @@ import Link from "next/link";
 import { client } from "@/lib/api";
 
 type NavItem =
-  | "home"
-  | "recall"
-  | "reflect"
-  | "data"
-  | "documents"
-  | "entities"
-  | "knowledge"
-  | "profile";
+  "home" | "recall" | "reflect" | "data" | "documents" | "entities" | "knowledge" | "profile";
 
 interface SidebarProps {
   currentTab: NavItem;

@@ -1603,3 +1603,59 @@ def test_every_bank_deltas_on_the_first_sub_batch():
     for store in (InMemoryMemories({}), StoreOwned({})):
         assert attempts_delta_retain(store, "b", True) is True
         assert attempts_delta_retain(store, "b", False) is False
+
+
+async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
+    memory, request_context, restore_default_store
+):
+    """Postgres keeps the page ROW and stops carrying its two derived search columns.
+
+    This is what makes leaving `idx_mental_models_embedding` / `idx_mental_models_text_search` in
+    place cheap for a store-owned bank: the indexes still exist for the Postgres banks in the same
+    schema, but nothing new is written into them here, so no ANN insert and (on VectorChord) no
+    `tokenize()` call through the extension is paid per page write.
+
+    Asserted on the columns rather than on a call count, because the cost being avoided is the
+    index maintenance the column write triggers, not the code path.
+    """
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.schema import fq_table
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    bank = "seam-kp-bank"
+    try:
+        page = await memory.create_knowledge_page(
+            bank,
+            name="Quarterly revenue",
+            source_query="revenue",
+            content="Revenue forecast for the platform team.",
+            request_context=request_context,
+        )
+        # It reached the store's index -- otherwise "not in Postgres" would just mean "lost".
+        assert "index_knowledge_pages" in store.calls
+        assert store.knowledge_pages.get(bank), "the page must be searchable in the store"
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"SELECT name, content, embedding, search_vector "
+                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank,
+                page["mental_model_id"],
+            )
+        assert row is not None, "the page row itself must still live in Postgres"
+        # The readable half is untouched: this is not the row moving.
+        assert row["name"] == "Quarterly revenue"
+        assert row["content"]
+        # The ANN column is not written, so `idx_mental_models_embedding` takes no insert for this
+        # bank. True on every backend, because the application is what writes this column.
+        assert row["embedding"] is None, "the ANN column must not be maintained for a store-owned bank"
+        # `search_vector` is deliberately NOT asserted NULL. On vchord the application writes it and
+        # the gate does skip it, but on the native backend the column is
+        # `GENERATED ALWAYS AS (to_tsvector(...)) STORED`, so Postgres computes it and maintains the
+        # GIN index on every write whatever the application does. Only dropping the column or the
+        # index stops that, and both are per-SCHEMA, so they need the deployment-level decision this
+        # per-bank flag cannot make. Asserting NULL here would encode a saving that does not exist.
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)

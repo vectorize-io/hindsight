@@ -14100,6 +14100,39 @@ class MemoryEngine(MemoryEngineInterface):
         store = get_memories()
         return store if store.owns_knowledge_index_for(bank_id) else None
 
+    def _pg_carries_page_search(self, bank_id: str) -> bool:
+        """Whether POSTGRES carries this bank's page search columns (``embedding``,
+        ``search_vector``).
+
+        False once the store owns the index. The page ROW stays in Postgres either way — name,
+        content, tags, trigger, everything a reader sees — so this is not the row moving; it is the
+        two derived columns nobody queries any more going unwritten.
+
+        Worth doing rather than leaving them written and ignored: each is index maintenance on
+        every page write for an index no read path consults for this bank -- an ANN insert, and on
+        VectorChord a `tokenize()` call through the extension.
+
+        **It does not remove the BM25 cost on the native backend.** There
+        `mental_models.search_vector` is `GENERATED ALWAYS AS (to_tsvector(...)) STORED`, so
+        Postgres computes it and maintains `idx_mental_models_text_search` on every write no matter
+        what this code does; only dropping the column or the index stops it. So what this actually
+        saves is the ANN insert everywhere, plus the vchord lexical write where that backend is in
+        use.
+
+        Leaving the INDEXES in place is deliberate -- one schema holds banks on both backends, so
+        they still serve the Postgres ones, and dropping them is a deployment-level decision this
+        cannot make per bank.
+
+        The columns go NULL for pages written from here on. Nothing reads them for a store-owned
+        bank, and the store's own index is rebuilt by ``reconcile_knowledge_index``, which
+        re-embeds from name+content rather than reading this column -- so it is not a source of
+        truth for anything. A bank moved BACK to Postgres needs those columns backfilled; see the
+        note in :meth:`reconcile_knowledge_index`.
+        """
+        from .memories import get_memories
+
+        return not get_memories().owns_knowledge_index_for(bank_id)
+
     async def _index_knowledge_page(
         self,
         conn,
@@ -14255,9 +14288,16 @@ class MemoryEngine(MemoryEngineInterface):
         # pg_search_vector_expr needs the same cast (see update_mental_model,
         # which is now the only other one — the knowledge-base rename goes through
         # it rather than writing mental_models itself).
-        sv_expr = pg_search_vector_expr(
-            get_config(), text_col="$3", context_col="$5", signals_col=None, native_inline=False
-        )
+        #
+        # Both search columns go unwritten once the store owns this bank's index — see
+        # `_pg_carries_page_search`. The row itself is inserted exactly as before.
+        if self._pg_carries_page_search(bank_id):
+            sv_expr = pg_search_vector_expr(
+                get_config(), text_col="$3", context_col="$5", signals_col=None, native_inline=False
+            )
+        else:
+            sv_expr = None
+            embedding = None
         sv_col = ", search_vector" if sv_expr else ""
         sv_val = f", {sv_expr}" if sv_expr else ""
         row = await conn.fetchrow(
@@ -15665,10 +15705,12 @@ class MemoryEngine(MemoryEngineInterface):
                         slim_reflect_response = slim or None
                     record_mm_history = True
 
-            # Apply the embedding computed above (off-connection). Written whenever
-            # either half of the document moved, so the vector and the stored text
-            # never describe different things.
-            if document_changed:
+            # Apply the embedding computed above (off-connection). Written whenever either half of
+            # the document moved, so the vector and the stored text never describe different
+            # things — and skipped once the store owns the index: the vector is still computed,
+            # because the store needs it, it just stops being written to a column nothing reads
+            # for this bank.
+            if document_changed and self._pg_carries_page_search(bank_id):
                 updates.append(f"embedding = ${param_idx}")
                 params.append(new_embedding_str)
                 param_idx += 1
@@ -15733,7 +15775,7 @@ class MemoryEngine(MemoryEngineInterface):
             # changed, but only for vchord — its bm25vector column is written
             # inline (native is a GENERATED column that updates itself; the other
             # backends index base columns). Same helper as the insert/recall paths.
-            if name is not None or content is not None:
+            if (name is not None or content is not None) and self._pg_carries_page_search(bank_id):
                 sv_expr = pg_search_vector_expr(
                     get_config(), text_col=name_sql, context_col=content_sql, signals_col=None, native_inline=False
                 )
@@ -15868,8 +15910,12 @@ class MemoryEngine(MemoryEngineInterface):
         # Content is cleared to '', so re-tokenize search_vector from the name
         # alone — vchord only (see update_mental_model). Non-vchord backends leave
         # the column untouched (generated / base-column indexed).
-        sv_expr = pg_search_vector_expr(
-            get_config(), text_col="name", context_col="''", signals_col=None, native_inline=False
+        sv_expr = (
+            pg_search_vector_expr(
+                get_config(), text_col="name", context_col="''", signals_col=None, native_inline=False
+            )
+            if self._pg_carries_page_search(bank_id)
+            else None
         )
         sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
         async with acquire_with_retry(backend) as conn:
