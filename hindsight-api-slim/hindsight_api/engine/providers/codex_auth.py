@@ -431,34 +431,46 @@ class CodexAuthManager:
                         "Run 'codex auth login' to re-authenticate."
                     )
 
-                log_reason = f" ({reason})" if reason else ""
-                logger.info(f"Refreshing Codex OAuth access_token{log_reason}")
+                response: httpx.Response | None = None
+                refresh_attempt = 0
+                while True:
+                    log_reason = f" ({reason})" if reason else ""
+                    logger.info(f"Refreshing Codex OAuth access_token{log_reason}")
 
-                request_access_token = self.access_token
-                request_refresh_token = self.refresh_token
-                request_body = {
-                    "client_id": _CODEX_CLIENT_ID,
-                    "grant_type": "refresh_token",
-                    "refresh_token": request_refresh_token,
-                }
-                try:
-                    response = self._http_client.post(
-                        _CODEX_REFRESH_TOKEN_URL,
-                        json=request_body,
-                        headers={"Content-Type": "application/json"},
-                        timeout=30.0,
-                    )
-                except httpx.RequestError as e:
-                    raise RuntimeError(f"Codex OAuth refresh network error: {type(e).__name__}") from e
+                    request_access_token = self.access_token
+                    request_refresh_token = self.refresh_token
+                    request_body = {
+                        "client_id": _CODEX_CLIENT_ID,
+                        "grant_type": "refresh_token",
+                        "refresh_token": request_refresh_token,
+                    }
+                    try:
+                        response = self._http_client.post(
+                            _CODEX_REFRESH_TOKEN_URL,
+                            json=request_body,
+                            headers={"Content-Type": "application/json"},
+                            timeout=30.0,
+                        )
+                    except httpx.RequestError as e:
+                        raise RuntimeError(f"Codex OAuth refresh network error: {type(e).__name__}") from e
 
-                if response.status_code == 401:
+                    if response.status_code != 401:
+                        break
+
                     error_code = self._extract_oauth_error_code(response)
                     disk_tokens = self._load_tokens_from_file(self._auth_file)
                     if disk_tokens and (
                         disk_tokens.get("access_token") != request_access_token
                         or disk_tokens.get("refresh_token") != request_refresh_token
                     ):
+                        previous_refresh_token = self.refresh_token
                         self._adopt_tokens(disk_tokens)
+                        if self._token_is_fresh_with_known_expiry():
+                            return
+                        if self.refresh_token and self.refresh_token != previous_refresh_token and refresh_attempt == 0:
+                            refresh_attempt += 1
+                            logger.info("Retrying Codex OAuth refresh with newer refresh_token from auth.json")
+                            continue
                         return
                     if error_code in _CODEX_TERMINAL_REFRESH_ERROR_CODES:
                         raise CodexRefreshExpiredError(
