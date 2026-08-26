@@ -287,6 +287,21 @@ class TestPostgreSQLDialect:
         )
         assert "> 2.5" in arm
 
+    def test_build_bm25_arm_pg_textsearch_scores_each_row(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_textsearch",
+        )
+        expected_distance = "text <@> to_bm25query($4, 'idx_memory_units_text_search')"
+        assert f"-({expected_distance}) AS bm25_score" in arm
+        assert f"ORDER BY {expected_distance} ASC" in arm
+        assert "$4 <@>" not in arm
+
     def test_build_bm25_arm_pgroonga(self, d):
         arm = d.build_bm25_arm(
             table="schema.memory_units",
