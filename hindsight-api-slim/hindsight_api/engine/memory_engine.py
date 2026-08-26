@@ -813,6 +813,40 @@ def _pack_native_chunks(chunks: Iterable[str], tokens_per_batch: int) -> Iterato
         yield current
 
 
+def _span_of_native_chunks(
+    source: str,
+    chunks: list[str],
+    cursor: int,
+) -> tuple[str | None, int]:
+    """The original span of ``source`` covering a run of consecutive native chunks.
+
+    ``_rejoin_native_chunks`` reconstructs a run by guessing which separator sat between its
+    chunks — a merged JSON array, ``"\n\n"``, ``"\n"`` — and gives up when none of them
+    re-chunks back to the run it was given. Giving up is expensive: the caller then emits one
+    sub-batch per chunk, and a sub-batch's cost is largely fixed regardless of how many chunks it
+    carries, so a run that the guessing cannot reproduce becomes many retains instead of one.
+
+    The guessing is avoidable. The chunks came from ``source``, in order, so the text that produced
+    them is the slice from the first chunk's start to the last chunk's end — separators included,
+    whatever they were. Locating them costs a forward scan with a cursor that only moves right, so
+    a document is still walked once overall.
+
+    Returns ``(None, cursor)`` if any chunk cannot be located from ``cursor``, and the caller falls
+    back to the rejoin exactly as before. The caller also verifies that the slice re-chunks to the
+    same run, so a span that would change the split is rejected rather than trusted.
+    """
+    start = source.find(chunks[0], cursor)
+    if start < 0:
+        return None, cursor
+    end = start
+    for chunk in chunks:
+        found = source.find(chunk, end)
+        if found < 0:
+            return None, cursor
+        end = found + len(chunk)
+    return source[start:end], end
+
+
 def _rejoin_native_chunks(
     chunks: list[str],
     chunk_size: int,
@@ -984,8 +1018,20 @@ def _iter_raw_sub_batches(
             pending = _flush()
             if pending is not None:
                 yield pending
+            # Cursor into `content_str` for `_span_of_native_chunks`. Runs arrive in document
+            # order and only ever move forward, so one cursor serves them all and the document is
+            # scanned once rather than per run.
+            span_cursor = 0
             for run in _pack_native_chunks(_chunks_of(content_str), tokens_per_batch):
-                joined = _rejoin_native_chunks(run, chunk_size, structured_chunk_size)
+                # Prefer the ORIGINAL span over a guessed rejoin: it carries whatever separators
+                # the document actually used, so it reconstructs runs the guessing cannot. Verified
+                # the same way either candidate is — a slice that would change the split is
+                # rejected, not trusted.
+                joined, span_cursor = _span_of_native_chunks(content_str, run, span_cursor)
+                if joined is not None and len(run) > 1 and list(_chunks_of(joined)) != run:
+                    joined = None
+                if joined is None:
+                    joined = _rejoin_native_chunks(run, chunk_size, structured_chunk_size)
                 slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]
                 for slice_text, slice_chunk_count in slices:
                     chunk_item = cast(RetainContentDict, {**item, "content": slice_text})
