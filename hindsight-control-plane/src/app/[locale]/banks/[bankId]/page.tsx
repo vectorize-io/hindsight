@@ -718,7 +718,7 @@ export default function BankPage() {
                     </div>
                   </div>
 
-                  {knowledgeTab === "pages" && <KnowledgeBaseView />}
+                  {knowledgeTab === "pages" && <KnowledgeBaseView key={bankId} />}
                   {knowledgeTab === "models" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">

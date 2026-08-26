@@ -50,6 +50,7 @@ import {
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
+import { findRequestedKnowledgePageId } from "@/lib/knowledge-base-navigation";
 import { CompactMarkdown } from "./compact-markdown";
 import { StalenessBadge } from "./staleness-badge";
 import { FreshnessLine } from "./freshness-line";
@@ -201,6 +202,10 @@ export function KnowledgeBaseView() {
   }, [currentBank, loadTree]);
 
   const allNodes = useMemo(() => flatten(roots), [roots]);
+  const requestedPageId = useMemo(
+    () => findRequestedKnowledgePageId(roots, pageParam),
+    [roots, pageParam]
+  );
   // A synthetic top-level folder for the bank so the root itself is visible and
   // you can add folders/pages directly under it. Its "" id makes add-child create
   // at the root; it's never deletable (TreeRow hides delete for the root).
@@ -303,27 +308,29 @@ export function KnowledgeBaseView() {
     setActiveId((a) => (a === id ? (next[idx]?.id ?? next[idx - 1]?.id ?? null) : a));
   }, []);
 
-  // Deep-link: open the page named in ?page= (e.g. navigated from the Home card).
+  // Validate deep links against the loaded bank's tree before requesting them.
+  // Page ids belong to a bank, so a stale or shared URL must fall back locally
+  // instead of sending another bank's id and leaving the content pane empty.
   useEffect(() => {
-    if (pageParam && currentBank) openPage(pageParam);
-  }, [pageParam, currentBank, openPage]);
+    if (requestedPageId && currentBank) openPage(requestedPageId);
+  }, [requestedPageId, currentBank, openPage]);
 
   // Reset the once-per-bank auto-select guard when switching banks.
   useEffect(() => {
     autoSelectedRef.current = false;
   }, [currentBank]);
 
-  // Open the first page on entry so the content pane isn't empty — unless a page
-  // is deep-linked or already open. Fires once per bank (guarded), so closing a
-  // page doesn't snap it back open.
+  // Open the first page on entry so the content pane isn't empty. A valid deep
+  // link is handled above; an invalid or cross-bank id falls back here. Fires
+  // once per bank (guarded), so closing a page doesn't snap it back open.
   useEffect(() => {
-    if (autoSelectedRef.current || pageParam || selected || !allNodes.length) return;
+    if (autoSelectedRef.current || requestedPageId || selected || !allNodes.length) return;
     const firstPage = allNodes.find((n) => n.kind === "page");
     if (firstPage) {
       autoSelectedRef.current = true;
       openPage(firstPage.id);
     }
-  }, [allNodes, pageParam, selected, openPage]);
+  }, [allNodes, requestedPageId, selected, openPage]);
 
   const toggleFolder = useCallback((id: string) => {
     setExpanded((prev) => {
