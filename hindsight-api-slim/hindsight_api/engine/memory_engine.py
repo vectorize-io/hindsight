@@ -5331,6 +5331,22 @@ class MemoryEngine(MemoryEngineInterface):
             from .retain.orchestrator import DocumentBodyAccumulator
 
             body_accum: dict[str, DocumentBodyAccumulator] = {}
+
+            @dataclass
+            class _SubBatchOutcome:
+                """One sub-batch's results, carried back from its task.
+
+                A named type rather than a tuple so the merge below reads by field: the sub-batch
+                INDEX is what the results are re-sorted by (completion order is not document
+                order), and `origins` maps each result back to the caller's input item.
+                """
+
+                index: int
+                origins: list[int]
+                results: list[list[str]]
+                usage: "TokenUsage"
+                processed: int | None
+
             # Sub-batches of one document used to run strictly one after another, but most of a
             # sub-batch is a round-trip to the store — I/O wait, holding no GIL — so running a few
             # concurrently overlaps a wait rather than paying it end to end.
@@ -5339,7 +5355,7 @@ class MemoryEngine(MemoryEngineInterface):
             # From the resolved config, not read inline per retain.
             concurrency = max(1, get_config().retain_subbatch_concurrency)
             pending: list[asyncio.Task] = []
-            collected: list[tuple] = []
+            collected: list[_SubBatchOutcome] = []
 
             async def _run_sub(idx: int, contents_, origins_, offset_, is_last_, body_, body_hash_):
                 r, u, pr = await self._retain_batch_async_internal(
@@ -5361,7 +5377,7 @@ class MemoryEngine(MemoryEngineInterface):
                     chunk_index_offset=offset_,
                     body_accum=body_accum,
                 )
-                return idx, origins_, r, u, pr
+                return _SubBatchOutcome(index=idx, origins=origins_, results=r, usage=u, processed=pr)
 
             try:
                 for sub in sub_batch_stream:
@@ -5479,7 +5495,9 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Merge in sub-batch order, not completion order, so `per_input_results` is identical
             # whatever order concurrent sub-batches finished in.
-            for _idx, sub_origins, sub_results, sub_usage, sub_processed in sorted(collected, key=lambda x: x[0]):
+            for outcome in sorted(collected, key=lambda o: o.index):
+                sub_origins, sub_results = outcome.origins, outcome.results
+                sub_usage, sub_processed = outcome.usage, outcome.processed
                 # sub_results aligns 1:1 with sub_batch items; map each
                 # back to its source input via origin_indices so callers
                 # iterating with ``zip(contents, results)`` still align.

@@ -2085,6 +2085,24 @@ async def _store_document_bodies(
 
 
 @dataclasses.dataclass
+class DocumentBodyMeta:
+    """What a document-body write needs, beyond the chunk texts themselves.
+
+    Every sub-batch of a document carries the same values here — `combined_content` is the WHOLE
+    document on each of them, so the content hash matches too — so whichever sub-batch arrives
+    first fills this in and the rest reuse it.
+    """
+
+    bank_id: str
+    content_hash: str | None
+    combined_content: str
+    merged_tags: list[str] | None
+    config: Any
+    retain_params: dict | None
+    expect_watermark: int | None
+
+
+@dataclasses.dataclass
 class DocumentBodyAccumulator:
     """One document's chunk texts as its sub-batches produce them, plus what has been written.
 
@@ -2094,7 +2112,7 @@ class DocumentBodyAccumulator:
     """
 
     slices: dict[int, list[str]] = dataclasses.field(default_factory=dict)
-    meta: dict | None = None
+    meta: DocumentBodyMeta | None = None
     flushed_bytes: int = 0
     lock: asyncio.Lock = dataclasses.field(default_factory=asyncio.Lock)
 
@@ -2130,17 +2148,17 @@ async def _flush_document_body(acc: DocumentBodyAccumulator, document_id: str, *
         if not force and pending < max(1, 2 * acc.flushed_bytes):
             return
         await _store_document_bodies(
-            bank_id=meta["bank_id"],
+            bank_id=meta.bank_id,
             document_id=document_id,
-            content_hash=meta["content_hash"],
-            combined_content=meta["combined_content"],
+            content_hash=meta.content_hash,
+            combined_content=meta.combined_content,
             chunk_texts=chunks,
-            merged_tags=meta["merged_tags"],
-            config=meta["config"],
-            retain_params=meta["retain_params"],
+            merged_tags=meta.merged_tags,
+            config=meta.config,
+            retain_params=meta.retain_params,
             # The append CAS belongs to the write derived from the stored base, which is the first
             # one this retain issues; later flushes build on what it wrote.
-            expect_watermark=meta["expect_watermark"] if acc.flushed_bytes == 0 else None,
+            expect_watermark=meta.expect_watermark if acc.flushed_bytes == 0 else None,
             # The accumulator holds the document from index 0, so the write needs no offset — it
             # IS the prefix, which is what `put_document` wants.
             chunk_index_offset=0,
@@ -2320,15 +2338,15 @@ async def _streaming_retain_batch(
         # Every sub-batch carries the WHOLE document as `combined_content` (and so the same content
         # hash), so any one of them can supply the metadata for the writes.
         if acc.meta is None:
-            acc.meta = {
-                "bank_id": bank_id,
-                "content_hash": new_content_hash,
-                "combined_content": combined_content,
-                "merged_tags": merged_tags,
-                "config": config,
-                "retain_params": retain_params,
-                "expect_watermark": append_base_watermark,
-            }
+            acc.meta = DocumentBodyMeta(
+                bank_id=bank_id,
+                content_hash=new_content_hash,
+                combined_content=combined_content,
+                merged_tags=merged_tags,
+                config=config,
+                retain_params=retain_params,
+                expect_watermark=append_base_watermark,
+            )
         await _flush_document_body(acc, effective_doc_id, force=False)
     else:
         await _store_document_bodies(
