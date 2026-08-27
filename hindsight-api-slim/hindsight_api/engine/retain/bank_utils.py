@@ -682,12 +682,26 @@ async def _apply_store_last_write(banks: list[dict], sort_keys: "dict[str, datet
         sort_keys[bank["bank_id"]] = when
 
 
-async def apply_store_fact_counts(pool, banks: list[dict]) -> None:
+async def apply_store_fact_counts(banks: list[dict]) -> None:
     """Replace ``fact_count`` in-place for banks that keep their memories outside SQL.
 
-    Those banks leave the ``memory_units`` join empty, so the count has to come
-    from the store — one live count per bank, which is why this runs on a single
-    page of :func:`list_banks` rather than on every bank in the system.
+    Those banks leave the ``memory_units`` join empty, so the count has to come from the store.
+    Still page-scoped rather than system-wide, but ONE batched call for that page instead of a
+    round trip per bank: asking per bank made the page cost a network hop each, and on dev a
+    108-bank page took ~8s end-to-end, almost all of it those hops — most against banks with
+    nothing in them. :meth:`count_memories_many` is the same question asked once.
+
+    ``strong=True``, deliberately. The per-bank call this replaces reads the un-folded tail, so
+    anything weaker would fold a change in what a just-written bank REPORTS into what was meant to
+    be a change in how long it takes. The batched read applies the tail without opening a snapshot,
+    so a page of N banks still cannot admit N banks and evict whatever was warm.
+
+    A bank the store has no count for reports zero, per the interface's contract that absent means
+    nothing to count — so one bank cannot fail the page.
+
+    No connection is held across this: it is a network call to another service and nothing here
+    needs one. Holding a pooled connection across the per-bank loop was the other half of the cost
+    under load, and is the rule :func:`_apply_store_last_write` already follows.
     """
     from ..memories import get_memories
 
@@ -696,7 +710,6 @@ async def apply_store_fact_counts(pool, banks: list[dict]) -> None:
     if not external:
         return
 
-    async with acquire_with_retry(pool) as conn:
-        for bank in external:
-            counts = await store.count_memories(conn=conn, fq_table=fq_table, bank_id=bank["bank_id"])
-            bank["fact_count"] = sum(counts.values())
+    counts = await store.count_memories_many(bank_ids=[bank["bank_id"] for bank in external], strong=True)
+    for bank in external:
+        bank["fact_count"] = sum(counts.get(bank["bank_id"], {}).values())
