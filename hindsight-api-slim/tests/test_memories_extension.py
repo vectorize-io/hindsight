@@ -130,6 +130,8 @@ class InMemoryMemories(MemoriesExtension):
         replace_chunk_ids=None,
         replace_keep_chunk_ids=None,
         resolve_threshold=0.0,
+        enable_text_search=True,
+        enable_graph_retrieval=True,
     ):
         self.calls.append("retain")
         return None

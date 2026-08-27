@@ -672,6 +672,8 @@ class MemoriesExtension(Extension, ABC):
         replace_chunk_ids: list[str] | None = None,
         replace_keep_chunk_ids: list[str] | None = None,
         resolve_threshold: float = 0.0,
+        enable_text_search: bool = True,
+        enable_graph_retrieval: bool = True,
     ):
         """Commit an entire retain in one server-side call — resolve/mint the ``unit_entity_names``
         against the store's own registry, write the memories with the resulting entity ids, and
@@ -693,7 +695,17 @@ class MemoriesExtension(Extension, ABC):
 
         A store that cannot scope a replace must ignore these rather than silently widening to a
         wholesale one: the chunks the caller did not name are exactly the ones it is trying to
-        keep."""
+        keep.
+
+        ``enable_text_search`` / ``enable_graph_retrieval`` are the bank's recall toggles, passed
+        here because for a store that owns its index they are not only read-time settings: an arm
+        the bank has switched off needs no index built for it, and building one is work and bytes
+        spent on a query that will not run. They are the bank's CURRENT values on every retain, so
+        a store that acts on them tracks a bank that changes its mind without an out-of-band call.
+
+        A store that indexes everything regardless ignores them, which is what the default does —
+        and what Postgres does, where the columns behind both arms are maintained by the insert
+        itself and there is nothing separable to skip."""
         raise NotImplementedError("this store does not support a store-owned retain")
 
     async def assert_writable(self, bank_id: str) -> None:

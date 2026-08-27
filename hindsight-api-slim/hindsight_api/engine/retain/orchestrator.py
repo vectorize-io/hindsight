@@ -749,6 +749,12 @@ async def _streaming_store_owned_retain(
             unit_entity_names=unit_entity_names,
             replace_document_id=replace_id,
             resolve_threshold=threshold,
+            # The bank's recall toggles, on the WRITE path: a store that owns its index has no
+            # reason to build one for an arm this bank has switched off. Read from the resolved
+            # config on every retain, so a bank that changes either one is followed by the store
+            # rather than needing an out-of-band call.
+            enable_text_search=bool(getattr(config, "enable_text_search", True)),
+            enable_graph_retrieval=bool(getattr(config, "enable_graph_retrieval", True)),
         )
         # Latched HERE, where the replace was actually issued — not after the write, which also runs
         # when this batch produced no units and therefore replaced nothing.
@@ -898,6 +904,11 @@ async def _delta_store_owned_write(
             replace_document_id=effective_doc_id if replace_chunk_ids else "",
             replace_chunk_ids=replace_chunk_ids or None,
             resolve_threshold=threshold,
+            # The bank's current recall toggles, same as the streaming path above: a delta retain
+            # is still a write, and a store that owns its index should not build one for an arm
+            # this bank has switched off.
+            enable_text_search=bool(getattr(config, "enable_text_search", True)),
+            enable_graph_retrieval=bool(getattr(config, "enable_graph_retrieval", True)),
         )
         log_buffer.append(
             f"[delta] store-owned retain doc={effective_doc_id} units={len(unit_ids or [])} "
