@@ -387,6 +387,11 @@ class RecallResult(BaseModel):
 
     results: list[MemoryFact] = Field(description="List of memory facts matching the query")
     trace: dict[str, Any] | None = Field(None, description="Trace information for debugging")
+    #: Per-stage timings, in microseconds, measured INSIDE a store that answered the whole recall
+    #: (``MemoriesExtension.full_recall``). ``None`` when the engine ran its own pipeline, where the
+    #: stages are already in the trace. Excluded from the API response — it exists so the recall
+    #: trace can still attribute time once the stages no longer run here.
+    store_stages: dict[str, int] | None = Field(default=None, exclude=True)
     entities: dict[str, "EntityState"] | None = Field(
         None, description="Entity states for entities mentioned in results (keyed by canonical name)"
     )

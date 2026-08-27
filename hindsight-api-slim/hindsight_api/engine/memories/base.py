@@ -474,6 +474,75 @@ class RecallArms:
 
 
 @dataclass
+class FullRecallRequest:
+    """Everything a store needs to answer a whole recall — see
+    :meth:`MemoriesExtension.full_recall`.
+
+    This is deliberately the ENGINE's resolved values, not the caller's raw request: the budget
+    has already been resolved from the bank config, the arm toggles and the reranker mode have
+    been decided, and ``now`` is whatever the request said to score recency against. A store
+    receiving this needs no access to configuration, which is what keeps product policy out of a
+    store release — change the bank config and the next call carries the new values.
+
+    Everything after :attr:`enable_graph` is a stage the engine would otherwise run itself.
+    """
+
+    # ---- what to retrieve (mirrors `recall_unified`) ----
+    bank_id: str
+    fact_types: "list[str]"
+    query_embedding: str
+    #: The user's question. Used BOTH for the full-text arm and as the reranker's query — a store
+    #: with text search off still needs it for the second.
+    query_text: str
+    limit: int
+    temporal_window: "tuple[datetime, datetime] | None" = None
+    temporal_semantic_threshold: float = 0.1
+    tags: "list[str] | None" = None
+    tags_match: str = "any"
+    tag_groups: "list | None" = None
+    created_after: "datetime | None" = None
+    created_before: "datetime | None" = None
+    min_semantic: "float | None" = None
+    min_keyword: "float | None" = None
+    enable_text_search: bool = True
+    enable_graph: bool = True
+
+    # ---- how to rank ----
+    #: ``"rrf"``, ``"interleave"`` or ``"cross_encoder"`` — the engine's ``reranking`` mode. The
+    #: first two are passthrough (the fusion order stands); only the third calls a reranker.
+    reranking: str = "rrf"
+    reranker_max_candidates: int = 0
+    per_source_cap: int = 0
+    #: Arm name -> priority level, from ``HINDSIGHT_API_RECALL_STRATEGY_BOOSTS``.
+    strategy_boosts: "dict[str, str] | None" = None
+    recency_decay_function: str = "linear"
+    recency_decay_linear_window_days: float = 365.0
+    recency_decay_halflife_days: float = 90.0
+    #: What recency is measured from — ``question_date`` when the caller gave one, else now.
+    now: "datetime | None" = None
+    min_reranker: "float | None" = None
+    min_final: "float | None" = None
+
+    # ---- what to return ----
+    #: Results are truncated to this before the token budget is spent.
+    truncate_to: int = 0
+    max_tokens: int = 4096
+    #: The BPE vocabulary token counts are computed against. Travels because the count decides
+    #: which results come back, so the store must count with the same table the engine does.
+    tokenizer_encoding: str = "o200k_base"
+    include_entities: bool = False
+    include_chunks: bool = False
+    max_chunk_tokens: int = 4096
+
+    # ---- shapes a store may not implement ----
+    #: Set when the caller asked for something beyond the stages above. A store that sees any of
+    #: these and does not implement them must decline (return ``None``) rather than silently
+    #: answering a different question.
+    prefer_observations: bool = False
+    include_source_facts: bool = False
+
+
+@dataclass
 class KnowledgePageEntry:
     """One knowledge page as the store indexes it.
 
@@ -1064,6 +1133,32 @@ class MemoriesExtension(Extension, ABC):
         acquires its own connections from and runs the graph arm on; a store that reaches its index
         another way (e.g. over the network) ignores it.
         """
+
+    async def full_recall(self, request: "FullRecallRequest") -> "RecallResult | None":
+        """Answer a WHOLE recall inside the store, or decline by returning ``None``.
+
+        The default is ``None``: a store that does not implement this simply never claims a
+        recall, and the engine runs its own pipeline exactly as before. That is what makes this
+        safe to add — it is an opt-in shortcut, not a fork in the interface.
+
+        A store that DOES claim one is taking on everything the engine does after
+        :meth:`recall_unified`: fusion, the candidate trim, reranking, the recency / temporal /
+        strategy boosts, the ``min_scores`` floors, the ``max_tokens`` budget, and the entity and
+        chunk enrichment. It must return the same shape the engine would have — the results in
+        rank order, with their scores — because the caller cannot tell which path produced its
+        answer and must not need to.
+
+        **Declining is normal and must stay cheap.** A store should return ``None`` for any
+        request shape it does not implement rather than approximating it: a recall answered
+        almost-right is far worse than one answered by the path that has always answered it. The
+        engine falls through with no extra round-trip, since nothing has been read yet.
+
+        The reason this exists is round-trips. On a store that lives across the network, the
+        engine's pipeline is four calls — the arms, then hydration, then chunks, then entities —
+        and it moves every candidate's text out of the store to decide which handful to keep.
+        A store that owns its index can do all of it where the data already is.
+        """
+        return None
 
     def graph_retriever(self) -> "GraphRetriever | None":
         """The retriever backing the graph arm, or ``None`` to use the configured one.
