@@ -207,6 +207,17 @@ class CausalRelation(BaseModel):
     )
 
 
+# ISO-8601-ish calendar timestamp. Deliberately permissive about precision
+# (date only, date+time, optional seconds/fraction, optional Z or UTC offset)
+# and strict about everything else, so a grammar-constrained model cannot put
+# prose in a timestamp field. See the class docstrings below for why this is a
+# `pattern` and not just a description.
+ISO_TIMESTAMP_PATTERN = (
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"([T ][0-9]{2}:[0-9]{2}(:[0-9]{2})?(\.[0-9]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?)?$"
+)
+
+
 class FactCausalRelation(BaseModel):
     """
     Causal relationship from this fact to a PREVIOUS fact (embedded in each fact).
@@ -240,8 +251,12 @@ class ExtractedFact(BaseModel):
     why: str = Field(description="Context/significance if important. 'N/A' if obvious.")
 
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
-    occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
-    occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
+    occurred_start: str | None = Field(
+        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for events"
+    )
+    occurred_end: str | None = Field(
+        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for event end"
+    )
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts, including user preferences, rules, corrections, and constraints even when stated during a conversation. 'assistant' = actions, experiences, or observations the assistant/agent actually performed."
     )
@@ -379,10 +394,12 @@ class ExtractedFactVerbose(BaseModel):
 
     occurred_start: str | None = Field(
         default=None,
+        pattern=ISO_TIMESTAMP_PATTERN,
         description="WHEN the event happened (ISO timestamp). Only for fact_kind='event'. Leave null for conversations.",
     )
     occurred_end: str | None = Field(
         default=None,
+        pattern=ISO_TIMESTAMP_PATTERN,
         description="WHEN the event ended (ISO timestamp). Only for events with duration. Leave null for conversations.",
     )
 
@@ -432,8 +449,12 @@ class ExtractedFactNoCausal(BaseModel):
         default="conversation",
         description="'event' = specific datable occurrence, 'conversation' = general info",
     )
-    occurred_start: str | None = Field(default=None, description="WHEN the event happened (ISO timestamp).")
-    occurred_end: str | None = Field(default=None, description="WHEN the event ended (ISO timestamp).")
+    occurred_start: str | None = Field(
+        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="WHEN the event happened (ISO timestamp)."
+    )
+    occurred_end: str | None = Field(
+        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="WHEN the event ended (ISO timestamp)."
+    )
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = about the user/others, including user preferences, rules, corrections, and constraints. 'assistant' = actions or experiences the assistant/agent actually performed."
     )
@@ -472,8 +493,12 @@ class VerbatimExtractedFact(BaseModel):
     who: str = Field(description="People involved with relationships. 'N/A' if general.")
 
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
-    occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
-    occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
+    occurred_start: str | None = Field(
+        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for events"
+    )
+    occurred_end: str | None = Field(
+        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for event end"
+    )
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker."
     )
