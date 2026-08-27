@@ -2474,6 +2474,18 @@ class CreatePageRequest(BaseModel):
 
     name: str
     source_query: str
+    content: str | None = Field(
+        default=None,
+        description=(
+            "The page's body, authored rather than generated. Supply it and the page is created "
+            "from this text with NO refresh scheduled \u2014 the page is complete when the call "
+            "returns and no `operation_id` comes back. Stored as the canonical render of the "
+            "markdown given, like any other page body, so it round-trips as the same document "
+            "rather than the same bytes. Omit it (the default) and the body is synthesised from "
+            "the bank's memories by an async refresh, which is what `source_query` drives. "
+            "`source_query` is required either way: it is what a later refresh rebuilds from."
+        ),
+    )
     parent_id: str | None = None
     tags: list[str] | None = Field(
         default=None,
@@ -5919,7 +5931,9 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 name=body.name,
                 source_query=body.source_query,
-                content="Generating content...",
+                # An authored body is stored as-is; the placeholder only stands until the refresh
+                # scheduled below replaces it, and no refresh is scheduled when one was supplied.
+                content=body.content if body.content is not None else "Generating content...",
                 parent_id=body.parent_id,
                 tags=body.tags if body.tags else None,
                 max_tokens=body.max_tokens,
@@ -5932,15 +5946,21 @@ def _register_routes(app: FastAPI):
             )
             if node is None:
                 raise HTTPException(status_code=409, detail=f"A page named '{body.name}' already exists in this folder")
-            result = await app.state.memory.submit_async_refresh_mental_model(
-                bank_id=bank_id,
-                mental_model_id=node["mental_model_id"],
-                request_context=request_context,
-            )
+            # An authored page is already complete, so nothing is scheduled: a refresh would
+            # overwrite the body the caller just supplied with a generated one, which is the
+            # opposite of what supplying it means.
+            operation_id = None
+            if body.content is None:
+                result = await app.state.memory.submit_async_refresh_mental_model(
+                    bank_id=bank_id,
+                    mental_model_id=node["mental_model_id"],
+                    request_context=request_context,
+                )
+                operation_id = result["operation_id"]
             return CreateKnowledgePageResponse(
                 page_id=node["id"],
                 mental_model_id=node["mental_model_id"],
-                operation_id=result["operation_id"],
+                operation_id=operation_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

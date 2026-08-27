@@ -698,6 +698,80 @@ class TestPageDefaults:
         assert captured["trigger"] == {"refresh_cron": "0 3 * * *"}
 
 
+class TestAuthoredPageContent:
+    """Creating a page with a body supplied, instead of one synthesised by an LLM."""
+
+    async def test_supplied_content_is_stored_and_no_refresh_is_scheduled(
+        self, api_client, memory, kb_bank, monkeypatch
+    ):
+        """The point of supplying a body is that it is the body.
+
+        A refresh would overwrite it with a generated one, so scheduling anything here would make
+        the parameter a lie that only shows up seconds later, once the job lands.
+        """
+        bank_id, _ = kb_bank
+        captured: dict = {}
+        scheduled: list = []
+
+        real_create = memory.create_knowledge_page
+
+        async def spy_create(**kwargs):
+            captured.update(kwargs)
+            return await real_create(**kwargs)
+
+        async def fake_submit(**kwargs):
+            scheduled.append(kwargs)
+            return {"operation_id": "op-should-not-happen"}
+
+        monkeypatch.setattr(memory, "create_knowledge_page", spy_create)
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_submit)
+
+        body = "# Authored\n\nThis text was written, not generated."
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={"name": "Authored page", "source_query": "what is authored?", "content": body},
+        )
+        assert resp.status_code == 201, resp.text
+        assert captured["content"] == body, "the engine must receive the body verbatim"
+        assert scheduled == [], "an authored page must not schedule a refresh over its own body"
+        # `.get`: a null operation_id is omitted from the response rather than serialised as
+        # null, so asking for the key directly would KeyError on the correct behaviour.
+        assert resp.json().get("operation_id") is None, "there is no operation to track"
+
+        page_id = resp.json()["page_id"]
+        got = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{page_id}")
+        assert got.status_code == 200, got.text
+        # Compared stripped: a page's content is stored as the canonical render of its own
+        # markdown (the same normalisation every authored page gets), which here appends a
+        # trailing newline. The text is the caller's; the exact bytes are the renderer's.
+        assert got.json()["body"].strip() == body.strip()
+
+    async def test_omitting_content_still_generates(self, api_client, memory, kb_bank, monkeypatch):
+        """The default is unchanged: no body supplied means the page is synthesised as before."""
+        bank_id, _ = kb_bank
+        captured: dict = {}
+        scheduled: list = []
+
+        async def fake_create(**kwargs):
+            captured.update(kwargs)
+            return {"id": "kp-fake", "mental_model_id": "mm-fake"}
+
+        async def fake_submit(**kwargs):
+            scheduled.append(kwargs)
+            return {"operation_id": "op-fake"}
+
+        monkeypatch.setattr(memory, "create_knowledge_page", fake_create)
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_submit)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={"name": "Generated page", "source_query": "what is generated?"},
+        )
+        assert resp.status_code == 201, resp.text
+        assert captured["content"] == "Generating content...", "the placeholder still stands in"
+        assert len(scheduled) == 1, "a page with no body must still be scheduled for generation"
+        assert resp.json()["operation_id"] == "op-fake"
+
+
 class TestGetPage:
     async def test_okf_document(self, api_client, kb_bank):
         bank_id, ids = kb_bank
