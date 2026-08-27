@@ -331,12 +331,7 @@ def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -
 
     # chat.completions.create() signals truncation only through finish_reason; unlike
     # .parse(), it never raises LengthFinishReasonError for the handler in call() to convert.
-    # This sits ahead of the empty-content branch below because a budget exhausted before the
-    # first visible token is still a truncation. Routing that to the retryable empty-content
-    # error would re-send the same request against the same limit rather than let the caller
-    # split its input. Both sibling providers raise ahead of their content read for the same
-    # reason: litellm_llm coerces content to "" first, and openai_responses_llm checks the
-    # incomplete status before reading output_text.
+    # Checked before the content branch below: an empty response can still be a truncation.
     if finish_reason == "length":
         raise OutputTooLongError(
             f"LLM output exceeded token limits ({provider}/{model}, scope={scope}). "
