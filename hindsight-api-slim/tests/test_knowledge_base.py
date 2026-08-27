@@ -746,6 +746,80 @@ class TestAuthoredPageContent:
         # trailing newline. The text is the caller's; the exact bytes are the renderer's.
         assert got.json()["body"].strip() == body.strip()
 
+    async def test_an_authored_page_is_not_refreshed_over_by_consolidation(
+        self, api_client, memory, kb_bank, monkeypatch
+    ):
+        """The half that create-time suppression does not cover.
+
+        A knowledge page defaults to `refresh_after_consolidation: True`, which for a generated
+        page is the whole point and for an authored one means an LLM replaces the supplied body
+        the next time consolidation runs. Suppressing only the create-time refresh would make
+        "authored" true for minutes rather than permanently.
+        """
+        bank_id, _ = kb_bank
+        captured: dict = {}
+
+        async def fake_create(**kwargs):
+            captured.update(kwargs)
+            return {"id": "kp-fake", "mental_model_id": "mm-fake"}
+
+        monkeypatch.setattr(memory, "create_knowledge_page", fake_create)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={"name": "Authored", "source_query": "q", "content": "# Body"},
+        )
+        assert resp.status_code == 201, resp.text
+        assert captured["trigger"]["refresh_after_consolidation"] is False
+
+    async def test_an_authored_page_still_honours_an_explicit_refresh_request(
+        self, api_client, memory, kb_bank, monkeypatch
+    ):
+        """Only what UNSET means changes. A caller who asks for refresh gets it — supplying a body
+        and asking for it to be rebuilt later is a coherent thing to want (seed it now, keep it
+        current after)."""
+        bank_id, _ = kb_bank
+        captured: dict = {}
+
+        async def fake_create(**kwargs):
+            captured.update(kwargs)
+            return {"id": "kp-fake", "mental_model_id": "mm-fake"}
+
+        monkeypatch.setattr(memory, "create_knowledge_page", fake_create)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={
+                "name": "Authored but live",
+                "source_query": "q",
+                "content": "# Body",
+                "trigger": {"refresh_after_consolidation": True},
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert captured["trigger"]["refresh_after_consolidation"] is True
+
+    async def test_a_generated_page_keeps_the_default_refresh_policy(self, api_client, memory, kb_bank, monkeypatch):
+        """No body supplied: the trigger is untouched, so the page defaults to refreshing as before."""
+        bank_id, _ = kb_bank
+        captured: dict = {}
+
+        async def fake_create(**kwargs):
+            captured.update(kwargs)
+            return {"id": "kp-fake", "mental_model_id": "mm-fake"}
+
+        async def fake_submit(**kwargs):
+            return {"operation_id": "op-fake"}
+
+        monkeypatch.setattr(memory, "create_knowledge_page", fake_create)
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_submit)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={"name": "Generated", "source_query": "q"},
+        )
+        assert resp.status_code == 201, resp.text
+        # None means "no explicit trigger", which the engine merges into its page defaults —
+        # `refresh_after_consolidation: True` among them.
+        assert captured["trigger"] is None
+
     async def test_omitting_content_still_generates(self, api_client, memory, kb_bank, monkeypatch):
         """The default is unchanged: no body supplied means the page is synthesised as before."""
         bank_id, _ = kb_bank

@@ -2469,6 +2469,26 @@ class CreateFolderRequest(BaseModel):
     parent_id: str | None = None
 
 
+def _page_trigger(body: "CreatePageRequest") -> dict[str, Any] | None:
+    """The trigger a new page is created with.
+
+    Only what the client actually set: the engine merges it over the knowledge-page defaults, and a
+    full dump would drown them in this model's own field defaults (mode="full",
+    exclude_mental_models=False) — which is how every page created with a trigger lost its delta
+    refresh (#3506).
+
+    An AUTHORED page additionally defaults to not refreshing after consolidation. The page default
+    is to refresh, which for a generated page is the point and for an authored one silently
+    replaces the body the caller wrote with an LLM's the next time consolidation runs — so
+    "authored" would hold only until then. A caller who explicitly sets the flag gets what they
+    asked for either way; this only changes what UNSET means when a body was supplied.
+    """
+    explicit = body.trigger.model_dump(exclude_unset=True) if body.trigger else {}
+    if body.content is not None and "refresh_after_consolidation" not in explicit:
+        return {**explicit, "refresh_after_consolidation": False}
+    return explicit or None
+
+
 class CreatePageRequest(BaseModel):
     """Create a page (a mental model + tree node) under an optional parent folder."""
 
@@ -5941,7 +5961,7 @@ def _register_routes(app: FastAPI):
                 # knowledge-page defaults, and a full dump would drown them in this model's
                 # own field defaults (mode="full", exclude_mental_models=False) — which is
                 # how every page created with a trigger lost its delta refresh (#3506).
-                trigger=body.trigger.model_dump(exclude_unset=True) if body.trigger else None,
+                trigger=_page_trigger(body),
                 request_context=request_context,
             )
             if node is None:
