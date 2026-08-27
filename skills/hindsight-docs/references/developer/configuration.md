@@ -25,6 +25,7 @@ The API service handles all memory operations (retain, recall, reflect).
 | `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
 | `HINDSIGHT_API_MIGRATION_CONCURRENCY` | Number of tenant schemas to migrate concurrently (PostgreSQL only). Each schema runs in its own process; within a schema migrations are always sequential. Each worker has a fixed startup cost (~1–2s to boot a fresh interpreter), so this only pays off with **many** schemas (roughly tens or more) or slow/high-latency migrations — for a handful of schemas it is slower than sequential. Each worker uses ~3 database connections, so keep `concurrency × 3` within your database's spare `max_connections` (and any PgBouncer pool limit). `1` = fully sequential. Measured at 20k schemas: the per-restart no-op resweep dropped from ~60min to ~11min (≈5×) at `concurrency=12`. | `1` |
+| `HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES` | Comma-separated list of maintenance discovery routines this deployment installs itself (see [Owning a maintenance routine](#owning-a-maintenance-routine)). Migrations skip anything named here. | Empty (every routine installed) |
 | `HINDSIGHT_API_DATABASE_BACKEND` | Database engine backend: `postgresql` or `oracle` (Oracle 23ai) | `postgresql` |
 
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
@@ -43,6 +44,42 @@ export HINDSIGHT_API_DATABASE_SCHEMA=hindsight
 ```
 
 Migrations will automatically create the schema if it doesn't exist and create all tables in the configured schema.
+
+#### Owning a maintenance routine
+
+The background maintenance loop finds work by calling four PostgreSQL routines —
+`mental_models_with_cron`, `banks_needing_consolidation`, `schemas_with_expired_rows` and
+`schemas_with_expired_operations`. The stock implementations scan every schema in the
+database on each tick. On a large multi-tenant install that is a serial loop over
+thousands of schemas, repeated once per tick in every process running the loop.
+
+Because they are called by name, you can replace one with an implementation suited to
+your installation — typically a registry table maintained by a row trigger, so discovery
+costs one indexed read instead of a scan. List the ones you have replaced and migrations
+will leave them alone:
+
+```bash
+export HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES=mental_models_with_cron,banks_needing_consolidation
+```
+
+Read from the environment of whatever process runs the migration, so it applies equally to
+`hindsight-admin run-db-migration`, a migration Job, and migrate-on-startup.
+
+Without this, your replacement survives only until the next migration that reinstalls the
+routine: they are all `CREATE OR REPLACE` against the same name, so the migration wins and
+nothing records that a custom implementation was discarded.
+
+A few things to know:
+
+- **Your replacement must match the stock signature.** The loop calls these with fixed
+  arguments and reads fixed columns back.
+- **Nothing verifies that a replacement exists.** Naming a routine you have not installed
+  leaves whatever was there before — nothing, on a fresh database — and the maintenance
+  loop then fails on the missing function rather than quietly running the scan you were
+  trying to avoid.
+- **Ownership is not stamped into the database.** Remove a name from the list and the next
+  migration reinstalls the stock routine, with no data fix-up.
+- **Empty by default.** An installation that has not replaced anything is unaffected.
 
 ### Database Connection Pool
 

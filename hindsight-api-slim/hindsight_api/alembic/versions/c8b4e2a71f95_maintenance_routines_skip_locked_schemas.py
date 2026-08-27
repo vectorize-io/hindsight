@@ -48,9 +48,10 @@ Create Date: 2026-08-17
 
 from collections.abc import Sequence
 
-from alembic import context, op
+from alembic import context
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.alembic._owned import execute_unless_owned
 from hindsight_api.config import get_config
 
 revision: str = "c8b4e2a71f95"
@@ -109,7 +110,8 @@ def _pg_upgrade() -> None:
         return
     schema = _prefix(_target_schema())
 
-    op.execute(
+    execute_unless_owned(
+        "banks_needing_consolidation",
         f"""
         CREATE OR REPLACE FUNCTION {schema}banks_needing_consolidation()
         RETURNS TABLE(schema_name text, bank_id text)
@@ -149,10 +151,11 @@ def _pg_upgrade() -> None:
             PERFORM set_config('lock_timeout', prev_lock_timeout, true);
         END;
         $fn$;
-        """
+        """,
     )
 
-    op.execute(
+    execute_unless_owned(
+        "schemas_with_expired_rows",
         f"""
         CREATE OR REPLACE FUNCTION {schema}schemas_with_expired_rows(
             p_table text, p_ts_col text, p_days int
@@ -189,10 +192,11 @@ def _pg_upgrade() -> None:
             PERFORM set_config('lock_timeout', prev_lock_timeout, true);
         END;
         $fn$;
-        """
+        """,
     )
 
-    op.execute(
+    execute_unless_owned(
+        "mental_models_with_cron",
         f"""
         CREATE OR REPLACE FUNCTION {schema}mental_models_with_cron()
         RETURNS TABLE(schema_name text, bank_id text, mental_model_id text,
@@ -230,10 +234,11 @@ def _pg_upgrade() -> None:
             PERFORM set_config('lock_timeout', prev_lock_timeout, true);
         END;
         $fn$;
-        """
+        """,
     )
 
-    op.execute(
+    execute_unless_owned(
+        "schemas_with_expired_operations",
         f"""
         CREATE OR REPLACE FUNCTION {schema}schemas_with_expired_operations(p_days int)
         RETURNS SETOF text
@@ -278,7 +283,7 @@ def _pg_upgrade() -> None:
             PERFORM set_config('lock_timeout', prev_lock_timeout, true);
         END;
         $fn$;
-        """
+        """,
     )
 
 
