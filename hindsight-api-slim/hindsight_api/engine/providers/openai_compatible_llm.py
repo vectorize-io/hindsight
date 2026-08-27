@@ -329,6 +329,20 @@ def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -
             retryable=True,
         )
 
+    # chat.completions.create() signals truncation only through finish_reason; unlike
+    # .parse(), it never raises LengthFinishReasonError for the handler in call() to convert.
+    # This sits ahead of the empty-content branch below because a budget exhausted before the
+    # first visible token is still a truncation. Routing that to the retryable empty-content
+    # error would re-send the same request against the same limit rather than let the caller
+    # split its input. Both sibling providers raise ahead of their content read for the same
+    # reason: litellm_llm coerces content to "" first, and openai_responses_llm checks the
+    # incomplete status before reading output_text.
+    if finish_reason == "length":
+        raise OutputTooLongError(
+            f"LLM output exceeded token limits ({provider}/{model}, scope={scope}). "
+            "Input may need to be split into smaller chunks."
+        )
+
     content = _message_content(message)
     if content is None or content == "":
         tool_calls = _message_tool_calls(message)
@@ -339,14 +353,6 @@ def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -
             f"finish_reason={finish_reason}, has_tool_calls={bool(tool_calls)}, "
             f"refusal={bool(refusal)})",
             retryable=retryable,
-        )
-
-    # chat.completions.create() signals truncation only through finish_reason; unlike
-    # .parse(), it never raises LengthFinishReasonError for the handler in call() to convert.
-    if finish_reason == "length":
-        raise OutputTooLongError(
-            f"LLM output exceeded token limits ({provider}/{model}, scope={scope}). "
-            "Input may need to be split into smaller chunks."
         )
 
     return content, choice

@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from hindsight_api.engine.llm_interface import OutputTooLongError
 from hindsight_api.engine.providers.openai_compatible_llm import (
     OpenAICompatibleLLM,
+    ProviderResponseError,
     _content_or_error,
 )
 
@@ -108,6 +109,58 @@ async def test_freeform_call_raises_output_too_long_instead_of_returning_truncat
         with pytest.raises(OutputTooLongError):
             await llm.call(
                 messages=[{"role": "user", "content": "summarize"}],
+                max_retries=3,
+            )
+
+    assert create.call_count == 1
+
+
+def test_content_or_error_raises_output_too_long_when_truncated_before_any_content():
+    """A budget exhausted before the first visible token is still a truncation.
+
+    A reasoning model can spend the whole completion budget on hidden reasoning and
+    return ``content=""`` with ``finish_reason="length"``. Reading that as empty
+    content would raise a retryable ``ProviderResponseError`` instead, which sends
+    the same request against the same limit rather than splitting the input.
+    """
+    with pytest.raises(OutputTooLongError) as excinfo:
+        _content_or_error(
+            _response("", "length"),
+            provider="openai",
+            model="gpt-4o-mini",
+            scope="retain_fact_extraction",
+        )
+
+    assert "retain_fact_extraction" in str(excinfo.value)
+
+
+def test_content_or_error_still_raises_provider_error_on_empty_content_without_truncation():
+    """Control: the empty-content path is unchanged for every other finish_reason."""
+    with pytest.raises(ProviderResponseError) as excinfo:
+        _content_or_error(
+            _response("", "stop"),
+            provider="openai",
+            model="gpt-4o-mini",
+            scope="retain_fact_extraction",
+        )
+
+    assert excinfo.value.retryable is True
+    assert "empty message content" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_empty_truncated_call_is_not_retried_against_the_same_limit():
+    """The cost of misclassifying this one: ``call()`` retries a retryable
+    ``ProviderResponseError``, so an empty truncation used to re-send the identical
+    request until the ladder ran out, and the auto-split never saw it."""
+    llm = _make_llm()
+
+    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
+        create.return_value = _response("", "length")
+        with pytest.raises(OutputTooLongError):
+            await llm.call(
+                messages=[{"role": "user", "content": "extract facts"}],
+                response_format=_Facts,
                 max_retries=3,
             )
 
