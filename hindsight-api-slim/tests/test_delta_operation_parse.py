@@ -112,3 +112,32 @@ def test_parse_delta_operation_list_all_invalid_raises():
 def test_parse_delta_operation_list_pydantic_instance():
     original = DeltaOperationList(operations=[AppendBlockOp(section_id="s", text="- a")])
     assert parse_delta_operation_list(original) is original
+
+
+def test_parse_delta_operation_list_top_level_array():
+    """A bare array of ops carries the same delta as the dict form (#3820)."""
+    op_list = parse_delta_operation_list('[{"op": "append_block", "section_id": "x", "text": "hi"}]')
+    assert len(op_list.operations) == 1
+    op = op_list.operations[0]
+    assert isinstance(op, AppendBlockOp)
+    assert op.section_id == "x"
+    assert op.text == "hi"
+
+
+def test_parse_delta_operation_list_top_level_array_skips_invalid_op():
+    """Ops in an array are validated one by one, exactly as they are inside the dict form."""
+    raw = (
+        '[{"op": "append_block", "section_id": "s", "text": "ok"}, '
+        '{"op": "replace_block", "section_id": "s", "text": "missing block_id"}]'
+    )
+    op_list = parse_delta_operation_list(raw)
+    assert len(op_list.operations) == 1
+    assert isinstance(op_list.operations[0], AppendBlockOp)
+    assert op_list.operations[0].text == "ok"
+
+
+def test_parse_delta_operation_list_top_level_array_all_invalid_raises():
+    """An array of v1 typed-block ops is still every-op-invalid, so it must still raise."""
+    raw = '[{"op": "append_block", "section_id": "s", "block": {"type": "paragraph", "text": "old shape"}}]'
+    with pytest.raises(DeltaAllOpsInvalidError):
+        parse_delta_operation_list(raw)

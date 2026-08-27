@@ -270,6 +270,8 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
         except json.JSONDecodeError as exc:
             last_error = exc
             continue
+        if isinstance(payload, list):
+            payload = {"operations": payload}
         if not isinstance(payload, dict) or "operations" not in payload:
             last_error = ValueError("delta payload must be an object with an operations array")
             continue
