@@ -17,6 +17,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..config import (
@@ -26,7 +27,14 @@ from ..config import (
 )
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
+from .backpressure import is_store_backpressure
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
+
+# How long to hold a task a store shed for backpressure. Long enough that a fold has a real chance
+# to drain the backlog — retrying into a still-full store just sheds again and burns the claim —
+# and short enough that a cleared backlog is not left waiting. Deferrals do not count against
+# `max_retries`, so this can afford to be patient without risking the operation.
+_BACKPRESSURE_DEFER_SECONDS = int(os.environ.get("HINDSIGHT_API_BACKPRESSURE_DEFER_SECONDS", "120"))
 from .stage import StageHolder, bind_holder
 
 # Map DB operation_type -> metric `operation` label, collapsing the retain
@@ -1152,6 +1160,22 @@ class WorkerPoller:
             # Retry is not a terminal outcome — do not record a completion.
             await self._schedule_retry_all(task, e.retry_at, str(e))
         except Exception as e:
+            # A store refusing the write because its own indexing is behind is backpressure, not a
+            # failure: it clears itself as the fold catches up and says nothing about the payload.
+            # Deferring is what it asked for. Failing it here is what makes a long ingest lose the
+            # documents in flight when the backlog crosses the bound — the task's small retry
+            # budget runs out while the store is still legitimately shedding. Checked before the
+            # failure path so the operation keeps its retries for things that are actually wrong.
+            if is_store_backpressure(e):
+                retry_at = datetime.now(timezone.utc) + timedelta(seconds=_BACKPRESSURE_DEFER_SECONDS)
+                logger.warning(
+                    "Task %s deferred until %s: store backpressure (%s)",
+                    task.operation_id,
+                    retry_at,
+                    str(e)[:200],
+                )
+                await self._defer_all(task, retry_at, f"store backpressure: {str(e)[:400]}")
+                return
             # exc_info rather than print_exc(): the stderr copy carries no task id
             # and is the first thing lost to log rotation (issue #3218).
             error_message = format_task_error(e)
