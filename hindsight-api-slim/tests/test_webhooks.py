@@ -19,6 +19,7 @@ import pytest_asyncio
 from hindsight_api import LLMConfig
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.extensions import OperationValidationError
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
 from hindsight_api.webhooks.models import (
     ConsolidationEventData,
@@ -504,8 +505,81 @@ async def api_client(memory: MemoryEngine):
         yield client
 
 
+@pytest_asyncio.fixture
+async def webhook_validation_api_client():
+    """HTTP client with a mock engine for route-level validation failures."""
+    memory = MagicMock()
+    memory.audit_logger = None
+    app = create_app(memory, initialize_memory=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, memory
+
+
 class TestWebhookHttpApi:
     """HTTP API integration tests for webhook CRUD endpoints."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body", "memory_method"),
+        [
+            ("POST", "/webhooks", {"url": "https://example.com/hook"}, "create_webhook"),
+            ("GET", "/webhooks", None, "list_webhooks"),
+            ("DELETE", f"/webhooks/{uuid.uuid4()}", None, "delete_webhook"),
+            ("PATCH", f"/webhooks/{uuid.uuid4()}", {"enabled": False}, "update_webhook"),
+            ("GET", f"/webhooks/{uuid.uuid4()}/deliveries", None, "list_webhook_deliveries"),
+        ],
+    )
+    async def test_http_preserves_operation_validation_error(
+        self,
+        webhook_validation_api_client,
+        method: str,
+        path: str,
+        json_body: dict | None,
+        memory_method: str,
+    ):
+        """Webhook routes preserve validator status and reason instead of returning 500."""
+        api_client, memory = webhook_validation_api_client
+        setattr(
+            memory,
+            memory_method,
+            AsyncMock(side_effect=OperationValidationError("webhooks denied", status_code=403)),
+        )
+
+        response = await api_client.request(
+            method,
+            f"/v1/default/banks/validation-bank{path}",
+            json=json_body,
+        )
+
+        assert response.status_code == 403, response.text
+        assert response.json() == {"detail": "webhooks denied"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body"),
+        [
+            ("DELETE", "/webhooks/not-a-uuid", None),
+            ("PATCH", "/webhooks/not-a-uuid", {"enabled": False}),
+            ("GET", "/webhooks/not-a-uuid/deliveries", None),
+        ],
+    )
+    async def test_http_rejects_malformed_webhook_id(
+        self,
+        webhook_validation_api_client,
+        method: str,
+        path: str,
+        json_body: dict | None,
+    ):
+        """Malformed webhook IDs are client errors, not generic server failures."""
+        api_client, _ = webhook_validation_api_client
+        response = await api_client.request(
+            method,
+            f"/v1/default/banks/validation-bank{path}",
+            json=json_body,
+        )
+
+        assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
     async def test_http_create_webhook(self, api_client: httpx.AsyncClient):
