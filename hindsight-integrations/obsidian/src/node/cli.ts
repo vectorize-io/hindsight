@@ -18,6 +18,7 @@ import { parseArgs } from "node:util";
 import { HindsightClient } from "../client";
 import { SyncEngine, type ReconcileSummary, type SyncConfig } from "../sync";
 import type { Transport } from "../transport";
+import type { ObservationScopes } from "../types";
 import { fetchTransport } from "./fetch-transport";
 import { FsVault } from "./fs-vault";
 import {
@@ -38,6 +39,7 @@ export interface CliOptions {
   exclude: string[];
   vaultName: string;
   prefixDocId: boolean;
+  observationScopes?: ObservationScopes;
   indexPath: string;
   watch: boolean;
   /** Destination the sync index is bound to (issue #3257). */
@@ -58,6 +60,9 @@ Options:
   --exclude <folder>    Skip this folder (repeatable)
   --vault-name <name>   Vault name for tags/ids (default: the vault dir name)
   --prefix-doc-id       Prefix document ids with the vault name (multi-vault banks)
+  --observation-scopes <mode>
+                        Observation consolidation: combined, shared, per_tag,
+                        or all_combinations (default: server behavior)
   --index <file>        Sync-index JSON path (default: a per-target file under
                         ~/.hindsight/obsidian/, scoped to bank + API + vault)
   --watch               Keep running and sync changes as they happen
@@ -69,6 +74,16 @@ export class UsageError extends Error {}
 
 /** Thrown for `--help`; its message is printed to stdout (exit 0). */
 export class HelpRequested extends Error {}
+
+const OBSERVATION_SCOPES = ["combined", "shared", "per_tag", "all_combinations"] as const;
+
+function parseObservationScopes(value: string | undefined): ObservationScopes | undefined {
+  if (value === undefined) return undefined;
+  if (OBSERVATION_SCOPES.includes(value as ObservationScopes)) return value as ObservationScopes;
+  throw new UsageError(
+    `--observation-scopes must be one of: ${OBSERVATION_SCOPES.join(", ")}`
+  );
+}
 
 /** Parse argv into fully-resolved options (applying env fallbacks + defaults). */
 export function parseCliArgs(argv: string[]): CliOptions {
@@ -84,6 +99,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       exclude: { type: "string", multiple: true },
       "vault-name": { type: "string" },
       "prefix-doc-id": { type: "boolean", default: false },
+      "observation-scopes": { type: "string" },
       index: { type: "string" },
       watch: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
@@ -104,6 +120,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const vaultName = values["vault-name"] || basename(vault);
   const apiUrl = values["api-url"] || process.env.HINDSIGHT_API_URL || "";
   if (!apiUrl) throw new UsageError("--api-url is required (or set HINDSIGHT_API_URL)");
+  const observationScopes = parseObservationScopes(values["observation-scopes"]);
 
   const identity: IndexIdentity = {
     apiOrigin: canonicalApiOrigin(apiUrl),
@@ -122,6 +139,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     exclude: values.exclude ?? [],
     vaultName,
     prefixDocId: values["prefix-doc-id"] ?? false,
+    ...(observationScopes ? { observationScopes } : {}),
     indexPath: values.index || defaultIndexPath(identity),
     watch: values.watch ?? false,
     identity,
@@ -135,6 +153,7 @@ export function buildConfig(opts: CliOptions): SyncConfig {
     excludeFolders: opts.exclude,
     vaultName: opts.vaultName,
     prefixDocId: opts.prefixDocId,
+    ...(opts.observationScopes ? { observationScopes: opts.observationScopes } : {}),
   };
 }
 

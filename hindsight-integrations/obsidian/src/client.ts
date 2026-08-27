@@ -70,6 +70,7 @@ export class HindsightClient {
       update_mode: options.updateMode ?? "replace",
     };
     if (options.tags?.length) item.tags = options.tags;
+    if (options.observationScopes) item.observation_scopes = options.observationScopes;
     if (options.metadata && Object.keys(options.metadata).length) item.metadata = options.metadata;
     if (options.timestamp) item.timestamp = options.timestamp;
 

@@ -1,6 +1,6 @@
 import { type App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type HindsightPlugin from "./main";
-import type { Budget } from "./types";
+import type { Budget, ObservationScopes } from "./types";
 
 export interface HindsightSettings {
   apiUrl: string;
@@ -14,6 +14,8 @@ export interface HindsightSettings {
   /** DESIGN.md §0.5: OFF by default — keeps Hindsight from becoming a 2nd source of truth. */
   rememberConversations: boolean;
   prefixDocId: boolean;
+  /** Omitted to preserve the Hindsight server's default observation scope. */
+  observationScopes?: ObservationScopes;
   /** Log reflect requests/responses to the console (open devtools to view). */
   debugLogging: boolean;
   /** Chat disclosure open/closed state — remembered across sessions (last value wins). */
@@ -126,6 +128,29 @@ export class HindsightSettingTab extends PluginSettingTab {
           this.plugin.settings.syncOnEdit = v;
           await this.plugin.saveSettings();
         })
+      );
+
+    new Setting(containerEl)
+      .setName("Observation consolidation")
+      .setDesc(
+        "How observations are grouped for newly ingested content. Source tags remain available for filtering and provenance. Changing this does not rescope existing memories."
+      )
+      .addDropdown((d) =>
+        d
+          .addOptions({
+            "": "Server default",
+            combined: "Combined tags",
+            shared: "Shared",
+            per_tag: "Per tag",
+            all_combinations: "All tag combinations",
+          })
+          .setValue(this.plugin.settings.observationScopes ?? "")
+          .onChange(async (v) => {
+            this.plugin.settings.observationScopes = v
+              ? (v as ObservationScopes)
+              : undefined;
+            await this.plugin.saveSettings();
+          })
       );
 
     new Setting(containerEl)

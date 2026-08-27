@@ -83,6 +83,18 @@ describe("parseCliArgs", () => {
     expect(o.apiToken).toBe("envtok");
   });
 
+  it("accepts named observation scopes and rejects unsupported values", () => {
+    expect(parseCliArgs([...base, "--observation-scopes", "shared"]).observationScopes).toBe(
+      "shared"
+    );
+    expect(parseCliArgs([...base, "--observation-scopes", "all_combinations"]).observationScopes).toBe(
+      "all_combinations"
+    );
+    expect(() => parseCliArgs([...base, "--observation-scopes", "custom"])).toThrow(
+      /observation-scopes/
+    );
+  });
+
   it("requires --vault, --bank and an api url", () => {
     expect(() => parseCliArgs(["--bank", "b", "--api-url", "h"])).toThrow(UsageError);
     expect(() => parseCliArgs(["--vault", "/v", "--api-url", "h"])).toThrow(UsageError);
@@ -107,6 +119,22 @@ describe("buildConfig", () => {
       vaultName: "v",
       prefixDocId: true,
     });
+  });
+
+  it("maps an explicitly configured observation scope", () => {
+    const cfg = buildConfig(
+      parseCliArgs([
+        "--vault",
+        "/v",
+        "--bank",
+        "b",
+        "--api-url",
+        "h",
+        "--observation-scopes",
+        "shared",
+      ])
+    );
+    expect(cfg.observationScopes).toBe("shared");
   });
 });
 
@@ -161,6 +189,39 @@ describe("runCli", () => {
     const [url, init] = fetchSpy.mock.calls[0];
     expect(url).toBe("https://h/v1/default/banks/b/memories");
     expect(init?.method).toBe("POST");
+  });
+
+  it("sends observation_scopes through the full CLI retain path", async () => {
+    await writeFile(join(root, "note.md"), "# Note\nremember this");
+    let retained: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        retained = body.items?.[0];
+        return { status: 200, text: async () => "{}" } as unknown as Response;
+      })
+    );
+
+    expect(
+      await runCli(
+        [
+          "--vault",
+          root,
+          "--bank",
+          "b",
+          "--api-url",
+          "https://h",
+          "--observation-scopes",
+          "shared",
+          "--index",
+          join(root, "scope.json"),
+        ],
+        () => {}
+      )
+    ).toBe(0);
+    expect(retained).toMatchObject({ observation_scopes: "shared", update_mode: "replace" });
+    expect(retained?.tags).toEqual(expect.arrayContaining([expect.stringMatching(/^vault:/)]));
   });
 
   it("prints help and exits 0", async () => {
