@@ -2469,43 +2469,11 @@ class CreateFolderRequest(BaseModel):
     parent_id: str | None = None
 
 
-def _page_trigger(body: "CreatePageRequest") -> dict[str, Any] | None:
-    """The trigger a new page is created with.
-
-    Only what the client actually set: the engine merges it over the knowledge-page defaults, and a
-    full dump would drown them in this model's own field defaults (mode="full",
-    exclude_mental_models=False) — which is how every page created with a trigger lost its delta
-    refresh (#3506).
-
-    An AUTHORED page additionally defaults to not refreshing after consolidation. The page default
-    is to refresh, which for a generated page is the point and for an authored one silently
-    replaces the body the caller wrote with an LLM's the next time consolidation runs — so
-    "authored" would hold only until then. A caller who explicitly sets the flag gets what they
-    asked for either way; this only changes what UNSET means when a body was supplied.
-    """
-    explicit = body.trigger.model_dump(exclude_unset=True) if body.trigger else {}
-    if body.content is not None and "refresh_after_consolidation" not in explicit:
-        return {**explicit, "refresh_after_consolidation": False}
-    return explicit or None
-
-
 class CreatePageRequest(BaseModel):
     """Create a page (a mental model + tree node) under an optional parent folder."""
 
     name: str
     source_query: str
-    content: str | None = Field(
-        default=None,
-        description=(
-            "The page's body, authored rather than generated. Supply it and the page is created "
-            "from this text with NO refresh scheduled \u2014 the page is complete when the call "
-            "returns and no `operation_id` comes back. Stored as the canonical render of the "
-            "markdown given, like any other page body, so it round-trips as the same document "
-            "rather than the same bytes. Omit it (the default) and the body is synthesised from "
-            "the bank's memories by an async refresh, which is what `source_query` drives. "
-            "`source_query` is required either way: it is what a later refresh rebuilds from."
-        ),
-    )
     parent_id: str | None = None
     tags: list[str] | None = Field(
         default=None,
@@ -5951,9 +5919,7 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 name=body.name,
                 source_query=body.source_query,
-                # An authored body is stored as-is; the placeholder only stands until the refresh
-                # scheduled below replaces it, and no refresh is scheduled when one was supplied.
-                content=body.content if body.content is not None else "Generating content...",
+                content="Generating content...",
                 parent_id=body.parent_id,
                 tags=body.tags if body.tags else None,
                 max_tokens=body.max_tokens,
@@ -5961,26 +5927,20 @@ def _register_routes(app: FastAPI):
                 # knowledge-page defaults, and a full dump would drown them in this model's
                 # own field defaults (mode="full", exclude_mental_models=False) — which is
                 # how every page created with a trigger lost its delta refresh (#3506).
-                trigger=_page_trigger(body),
+                trigger=body.trigger.model_dump(exclude_unset=True) if body.trigger else None,
                 request_context=request_context,
             )
             if node is None:
                 raise HTTPException(status_code=409, detail=f"A page named '{body.name}' already exists in this folder")
-            # An authored page is already complete, so nothing is scheduled: a refresh would
-            # overwrite the body the caller just supplied with a generated one, which is the
-            # opposite of what supplying it means.
-            operation_id = None
-            if body.content is None:
-                result = await app.state.memory.submit_async_refresh_mental_model(
-                    bank_id=bank_id,
-                    mental_model_id=node["mental_model_id"],
-                    request_context=request_context,
-                )
-                operation_id = result["operation_id"]
+            result = await app.state.memory.submit_async_refresh_mental_model(
+                bank_id=bank_id,
+                mental_model_id=node["mental_model_id"],
+                request_context=request_context,
+            )
             return CreateKnowledgePageResponse(
                 page_id=node["id"],
                 mental_model_id=node["mental_model_id"],
-                operation_id=operation_id,
+                operation_id=result["operation_id"],
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

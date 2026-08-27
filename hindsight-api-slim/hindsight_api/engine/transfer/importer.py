@@ -335,9 +335,6 @@ class BankImportResult:
     mental_models_imported: int = 0
     mental_model_history_imported: int = 0
     knowledge_pages_imported: int = 0
-    #: Pages pushed into the STORE's search index. Zero when Postgres owns the index (it is fed
-    #: by the column writes instead), so a nonzero value means the store-owned path ran.
-    knowledge_pages_indexed: int = 0
     directives_imported: int = 0
     webhooks_imported: int = 0
     history_rows_imported: int = 0
@@ -449,7 +446,7 @@ async def _restore_rows(
     return inserted
 
 
-async def _regenerate_mental_model_embeddings(embeddings_model: Any, mm_rows: list[dict]) -> dict[str, list[float]]:
+async def _regenerate_mental_model_embeddings(embeddings_model: Any, mm_rows: list[dict]) -> dict[str, str]:
     """Re-embed each restored mental model with the *target* model.
 
     Export strips the source embedding (target-derived). Embeds the same
@@ -457,22 +454,18 @@ async def _regenerate_mental_model_embeddings(embeddings_model: Any, mm_rows: li
     ranks identically to a freshly written one. Runs off-connection (no DB conn is
     held across the embedding call — see the retain path); returns id -> vector
     literal for the caller to apply in the restore transaction.
-
-    Returns the vectors themselves rather than the ``str(...)`` literal Postgres wants: a
-    store-owned bank indexes the same vector into the store, and re-parsing a stringified list to
-    get it back would be a lossy round-trip through ``repr`` for no reason.
     """
     if not mm_rows:
         return {}
     texts = [f"{(r.get('name') or '')} {(r.get('content') or '')}" for r in mm_rows]
     vectors = await embedding_processing.generate_embeddings_batch(embeddings_model, texts)
-    return {r["id"]: list(v) for r, v in zip(mm_rows, vectors, strict=True)}
+    return {r["id"]: str(v) for r, v in zip(mm_rows, vectors, strict=True)}
 
 
 async def _apply_mental_model_derived_state(
     conn: Any,
     bank_id: str,
-    mm_embeddings: dict[str, list[float]],
+    mm_embeddings: dict[str, str],
     config: Any,
 ) -> None:
     """Write the regenerated embedding (and vchord lexical state) onto restored models.
@@ -484,11 +477,6 @@ async def _apply_mental_model_derived_state(
     """
     if not mm_embeddings:
         return
-    if not _pg_carries_page_search(bank_id):
-        # The store owns this bank's page index, so these two columns are the derived half of a
-        # table nothing reads them from any more. Skipped for the same reason the live write path
-        # skips them -- see `MemoryEngine._pg_carries_page_search`.
-        return
     sv_expr = pg_search_vector_expr(
         config, text_col="name", context_col="content", signals_col=None, native_inline=False
     )
@@ -498,65 +486,8 @@ async def _apply_mental_model_derived_state(
             f"UPDATE {fq_table('mental_models')} SET embedding = $3::vector{sv_clause} WHERE bank_id = $1 AND id = $2",
             bank_id,
             mm_id,
-            str(vector),
+            vector,
         )
-
-
-def _pg_carries_page_search(bank_id: str) -> bool:
-    """Whether Postgres carries this bank's page search columns. Mirrors the live write path's
-    rule so a restored page is indexed exactly where a freshly written one is."""
-    from ..memories import get_memories
-
-    return not get_memories().owns_knowledge_index_for(bank_id)
-
-
-async def _index_restored_pages(
-    conn: Any,
-    bank_id: str,
-    pages: list[TransferKnowledgePage],
-    mm_embeddings: dict[str, list[float]],
-) -> int:
-    """Put the restored pages into the store's search index.
-
-    Without this a restore into a store-owned deployment produces pages that are perfectly
-    readable — the row, the tree, the body all come back — and **findable by nothing**. Search
-    routes to the store, the store was never told about them, and the result is an empty list
-    rather than an error, so the bank looks restored until somebody searches it.
-
-    The row is read back rather than taken from the transfer object, matching the live write path:
-    both index ``"{name} {content}"``, and a second place that assembles that string differently is
-    a second place for the index to disagree with the row it is derived from.
-    """
-    from ..memories import KnowledgePageEntry, get_memories
-
-    store = get_memories()
-    if not store.owns_knowledge_index_for(bank_id):
-        return 0
-    mm_ids = [p.mental_model_id for p in pages if p.kind == "page" and p.mental_model_id]
-    if not mm_ids:
-        return 0
-
-    rows = await conn.fetch(
-        f"SELECT id, name, content, tags, last_refreshed_at FROM {fq_table('mental_models')} "
-        f"WHERE bank_id = $1 AND id = ANY($2::text[])",
-        bank_id,
-        mm_ids,
-    )
-    entries = [
-        KnowledgePageEntry(
-            page_id=r["id"],
-            index_text=f"{r['name'] or ''} {r['content'] or ''}",
-            # A page whose re-embed produced nothing is still indexed, for text search only —
-            # better a page findable by its words than one findable by nothing.
-            embedding=mm_embeddings.get(r["id"]),
-            tags=list(r["tags"] or []),
-            updated_at=r["last_refreshed_at"],
-        )
-        for r in rows
-    ]
-    if entries:
-        await store.index_knowledge_pages(bank_id, entries)
-    return len(entries)
 
 
 def _topological_page_order(pages: list[TransferKnowledgePage]) -> list[TransferKnowledgePage]:
@@ -782,11 +713,6 @@ async def import_bank(
         # Knowledge-base tree after its backing mental models exist (page FK) and
         # parents-first (self-referential parent_id FK).
         result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
-        # After the tree AND its mental models exist: the index is derived from rows that must
-        # already be there, and it is read back from them rather than from the archive.
-        result.knowledge_pages_indexed = await _index_restored_pages(
-            conn, bank_id, parsed.knowledge_pages, mm_embeddings
-        )
         result.directives_imported = await _restore_rows(
             conn,
             "directives",
