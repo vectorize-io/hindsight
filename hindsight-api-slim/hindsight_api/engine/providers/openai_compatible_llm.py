@@ -340,6 +340,15 @@ def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -
             f"refusal={bool(refusal)})",
             retryable=retryable,
         )
+
+    # chat.completions.create() signals truncation only through finish_reason; unlike
+    # .parse(), it never raises LengthFinishReasonError for the handler in call() to convert.
+    if finish_reason == "length":
+        raise OutputTooLongError(
+            f"LLM output exceeded token limits ({provider}/{model}, scope={scope}). "
+            "Input may need to be split into smaller chunks."
+        )
+
     return content, choice
 
 
