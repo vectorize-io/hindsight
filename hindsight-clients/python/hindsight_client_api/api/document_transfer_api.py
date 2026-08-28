@@ -608,7 +608,9 @@ class DocumentTransferApi:
             _query_params.append(('include_observations', include_observations))
             
         if include_knowledge_base is not None:
+            
             _query_params.append(('include_knowledge_base', include_knowledge_base))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization
@@ -1247,4 +1249,5 @@ class DocumentTransferApi:
             _host=_host,
             _request_auth=_request_auth
         )
+
 
