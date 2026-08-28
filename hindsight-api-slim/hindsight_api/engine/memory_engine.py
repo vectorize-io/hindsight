@@ -5673,7 +5673,8 @@ class MemoryEngine(MemoryEngineInterface):
                 # the body flush is: a retain that failed part-way must not discard what its
                 # earlier parts produced.
                 if retain_session is not None:
-                    await retain_session.commit()
+                    async with _retain_timing_mod.timed("store.commit"):
+                        await retain_session.commit()
                 await flush_document_bodies(body_accum)
 
             # Merge in sub-batch order, not completion order, so `per_input_results` is identical
@@ -5724,7 +5725,8 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             finally:
                 if retain_session is not None:
-                    await retain_session.commit()
+                    async with _retain_timing_mod.timed("store.commit"):
+                        await retain_session.commit()
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
 

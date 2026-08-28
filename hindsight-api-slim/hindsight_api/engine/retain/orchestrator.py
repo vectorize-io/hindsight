@@ -1034,7 +1034,8 @@ async def _delta_store_owned_write(
     log_buffer.append(f"DELTA RETAIN COMPLETE (store-owned): {len(processed_facts)} new units")
     logger.info("\n" + "\n".join(log_buffer) + "\n")
     try:
-        await entity_resolver.flush_pending_stats()
+        async with _timing.timed("entity.stats"):
+            await entity_resolver.flush_pending_stats()
     except Exception:
         logger.warning("Entity stats flush failed — retrieval unaffected", exc_info=True)
     return True, result_unit_ids
@@ -1289,9 +1290,10 @@ async def retain_batch(
             if retain_session is not None and document_prefetch is None:
                 from ..memories import get_memories as _gm_prefetch
 
-                document_prefetch = await _gm_prefetch().get_document_records(
-                    bank_id=bank_id, document_ids=sorted(groups.keys())
-                )
+                async with _timing.timed("delta.read"):
+                    document_prefetch = await _gm_prefetch().get_document_records(
+                        bank_id=bank_id, document_ids=sorted(groups.keys())
+                    )
 
             # Without sub-batching there is nothing else running these in parallel, so the groups
             # do it themselves. Hardcoded rather than a knob: it is not a capacity dial, it is how
@@ -2335,18 +2337,19 @@ async def _streaming_retain_batch(
         # The chunk texts go to the session HERE, not at the consumer batch: the streaming producer
         # frees each one as it is extracted (`all_pre_chunks[i] = ""`), so this is the last point
         # they are live. The facts follow from the consumer batch, and the session merges the two.
-        await retain_session.add(
-            RetainDocumentPart(
-                document_id=effective_doc_id,
-                document_body=combined_content,
-                content_hash=new_content_hash or "",
-                chunk_offset=chunk_index_offset,
-                chunk_texts=list(all_pre_chunks),
-                facts=[],
-                tags=list(merged_tags or []),
-                metadata=({"retain_params": json.dumps(retain_params)} if retain_params else {}),
+        async with _timing.timed("store.bodies"):
+            await retain_session.add(
+                RetainDocumentPart(
+                    document_id=effective_doc_id,
+                    document_body=combined_content,
+                    content_hash=new_content_hash or "",
+                    chunk_offset=chunk_index_offset,
+                    chunk_texts=list(all_pre_chunks),
+                    facts=[],
+                    tags=list(merged_tags or []),
+                    metadata=({"retain_params": json.dumps(retain_params)} if retain_params else {}),
+                )
             )
-        )
     elif body_accum is not None and effective_doc_id and get_memories().store_owned_for(bank_id):
         # Accumulating path — see below. Written as the positive branch so `body_accum` and
         # `effective_doc_id` are both narrowed inside it.
