@@ -1334,6 +1334,8 @@ async def test_export_import_mental_models_and_knowledge_pages(memory, request_c
         assert result["mental_models_imported"] == 1
         assert result["knowledge_pages_imported"] == 1
 
+        mental_models = await memory.list_mental_models(target, request_context=request_context)
+        assert mental_models.total == 1
         nodes = await memory.list_knowledge_nodes(target, request_context=request_context)
         assert [(node["name"], node["mental_model_id"]) for node in nodes] == [("Work policy", page["mental_model_id"])]
         search_results = await memory.search_knowledge_pages(

@@ -278,7 +278,16 @@ async def import_documents(
     if parsed.mental_models or parsed.knowledge_pages:
         mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
         async with acquire_with_retry(backend) as conn:
-            result.mental_models_imported = await _restore_rows(conn, "mental_models", parsed.mental_models)
+            # Document archives serialize bank-row JSON values directly. Keep
+            # JSON strings as raw JSON here; treating them as decoded values
+            # would encode an object such as trigger_data as a JSON string,
+            # which later makes mental-model listing/tree endpoints fail.
+            result.mental_models_imported = await _restore_rows(
+                conn,
+                "mental_models",
+                parsed.mental_models,
+                bank_rows_json_encoding="serialized",
+            )
             await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
             result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
 
