@@ -724,6 +724,8 @@
     "exportDialogDescription": "このバンクのドキュメントと抽出済みファクトを .zip としてダウンロードします。埋め込みは含まれず、インポート時にインポート先バンクのモデルで再生成されます。",
     "exportIncludeObservationsLabel": "統合された観測を含める",
     "exportIncludeObservationsHint": "合成された観測もエクスポートします。オフの場合、インポート先バンクが統合時に再生成します。",
+    "exportIncludeKnowledgeBaseLabel": "ナレッジベースを含める",
+    "exportIncludeKnowledgeBaseHint": "メンタルモデルとナレッジページもエクスポートします。このオプションはバンク全体のエクスポートに適用されます。",
     "importDialogTitle": "ドキュメントをインポート",
     "importDialogDescription": "バンクからエクスポートした .zip をアップロードします。通常のドキュメントアップロードではなく、ファクトはこのバンクで再埋め込み・再リンクされます。インポートはバックグラウンドで実行されます。",
     "importFileHint": "この .zip はエクスポート（このバンクまたは別のバンク）で作成されたものである必要があります。PDF・Word・テキストファイルを追加する場合は「ドキュメントを追加 → ファイルをアップロード」を使ってください。",

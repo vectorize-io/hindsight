@@ -724,6 +724,8 @@
     "exportDialogDescription": "이 뱅크의 문서와 추출된 사실을 .zip 파일로 다운로드합니다. 임베딩은 포함되지 않으며, 가져올 때 대상 뱅크의 모델로 다시 생성됩니다.",
     "exportIncludeObservationsLabel": "통합된 관찰 포함",
     "exportIncludeObservationsHint": "합성된 관찰도 내보냅니다. 끄면 대상 뱅크가 통합 과정에서 다시 생성합니다.",
+    "exportIncludeKnowledgeBaseLabel": "지식 베이스 포함",
+    "exportIncludeKnowledgeBaseHint": "멘탈 모델과 지식 페이지도 내보냅니다. 이 옵션은 뱅크 전체 내보내기에 적용됩니다.",
     "importDialogTitle": "문서 가져오기",
     "importDialogDescription": "뱅크에서 내보낸 .zip 파일을 업로드하세요. 일반 문서 업로드가 아니며, 사실이 이 뱅크에서 다시 임베딩되고 연결됩니다. 가져오기는 백그라운드에서 실행됩니다.",
     "importFileHint": "이 .zip은 내보내기로 생성된 파일이어야 합니다(이 뱅크 또는 다른 뱅크). PDF, Word, 텍스트 파일을 추가하려면 \"문서 추가 → 파일 업로드\"를 사용하세요.",

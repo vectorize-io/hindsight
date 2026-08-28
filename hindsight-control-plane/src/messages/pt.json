@@ -724,6 +724,8 @@
     "exportDialogDescription": "Baixe os documentos deste banco e seus fatos extraídos como um arquivo .zip. Embeddings não são incluídos — ao importar, são regenerados com o modelo do banco de destino.",
     "exportIncludeObservationsLabel": "Incluir observações consolidadas",
     "exportIncludeObservationsHint": "Exportar também as observações sintetizadas. Se desativado, o banco de destino as regenera durante a consolidação.",
+    "exportIncludeKnowledgeBaseLabel": "Incluir base de conhecimento",
+    "exportIncludeKnowledgeBaseHint": "Exportar também os Modelos mentais e as Páginas de conhecimento. Esta opção aplica-se a exportações do banco inteiro.",
     "importDialogTitle": "Importar documentos",
     "importDialogDescription": "Envie um arquivo .zip exportado anteriormente de um banco. Não é um upload de documento comum — os fatos são reincorporados e relinkados neste banco. A importação roda em segundo plano.",
     "importFileHint": "O .zip precisa ter sido gerado pela ação Exportar — deste banco ou de outro. Para adicionar arquivos PDF, Word ou de texto, use \"Adicionar Documento → Enviar Arquivos\".",

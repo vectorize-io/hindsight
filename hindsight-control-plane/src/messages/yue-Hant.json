@@ -724,6 +724,8 @@
     "exportDialogDescription": "將呢個庫嘅文件同擷取嘅事實下載做 .zip 檔。唔包含向量，匯入時會用目標庫嘅模型重新產生。",
     "exportIncludeObservationsLabel": "包含已整合嘅觀測",
     "exportIncludeObservationsHint": "一齊匯出合成嘅觀測。若關閉，目標庫會喺整合時重新產生。",
+    "exportIncludeKnowledgeBaseLabel": "包含知識庫",
+    "exportIncludeKnowledgeBaseHint": "一齊匯出心智模型同知識頁面。呢個選項適用於整個庫嘅匯出。",
     "importDialogTitle": "匯入文件",
     "importDialogDescription": "上載之前由某個庫匯出嘅 .zip 檔。呢個唔係一般文件上載——事實會喺呢個庫重新嵌入同關聯。匯入會喺背景執行。",
     "importFileHint": "呢個 .zip 必須係由匯出動作整出嚟嘅（本庫或者第個庫）。如果想加 PDF、Word 或者文字檔案，請改用「新增文件 → 上傳檔案」。",

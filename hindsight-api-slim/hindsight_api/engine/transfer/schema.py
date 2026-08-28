@@ -179,7 +179,6 @@ class TransferManifest(BaseModel):
     observation_count: int = 0
     mental_model_count: int = 0
     knowledge_page_count: int = 0
-    knowledge_base_count: int = 0
     # "documents" = doc/fact/observation subset; "bank" = whole-bank export
     # (also carries bank config, mental models, directives, webhooks).
     archive_type: Literal["documents", "bank"] = "documents"

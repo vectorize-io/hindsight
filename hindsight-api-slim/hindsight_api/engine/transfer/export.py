@@ -276,7 +276,8 @@ async def export_documents(
         document_count=len(documents),
         fact_count=fact_total,
         observation_count=len(observations),
-        knowledge_base_count=len(mental_models) + len(knowledge_pages),
+        mental_model_count=len(mental_models),
+        knowledge_page_count=len(knowledge_pages),
     )
 
     # ZIP compression and per-document JSON serialisation are CPU-bound and, on a

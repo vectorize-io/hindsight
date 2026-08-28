@@ -1326,7 +1326,8 @@ async def test_export_import_mental_models_and_knowledge_pages(memory, request_c
             include_knowledge_base=True,
         )
         parsed = parse_archive(archive)
-        assert parsed.manifest.knowledge_base_count == 2
+        assert parsed.manifest.mental_model_count == 1
+        assert parsed.manifest.knowledge_page_count == 1
         assert parsed.observations and all(observation.created_at is not None for observation in parsed.observations)
         with zipfile.ZipFile(io.BytesIO(archive)) as zf:
             assert "mental_models.json" in zf.namelist()

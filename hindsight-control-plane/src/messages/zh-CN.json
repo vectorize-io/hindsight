@@ -724,6 +724,8 @@
     "exportDialogDescription": "将该库的文档及其抽取的事实下载为 .zip 文件。不包含向量，导入时会使用目标库的模型重新生成。",
     "exportIncludeObservationsLabel": "包含已整合的观测",
     "exportIncludeObservationsHint": "同时导出合成的观测。若关闭，目标库会在整合时重新生成。",
+    "exportIncludeKnowledgeBaseLabel": "包含知识库",
+    "exportIncludeKnowledgeBaseHint": "同时导出心智模型和知识页面。此选项适用于整库导出。",
     "importDialogTitle": "导入文档",
     "importDialogDescription": "上传先前从某个库导出的 .zip 文件。这不是普通的文档上传——事实会在此库中重新嵌入和关联。导入在后台运行。",
     "importFileHint": "该 .zip 必须是由导出操作生成的（本库或其他库）。若要添加 PDF、Word 或文本文件，请改用“添加文档 → 上传文件”。",
