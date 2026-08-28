@@ -20,11 +20,7 @@ class SimpleJsonResponse(BaseModel):
 
 
 class FactListResponse(BaseModel):
-    """Shaped like the extraction payloads this provider actually carries.
-
-    A list is what makes a token cap dangerous: truncation drops entries and
-    leaves the rest valid, so a repaired body validates and the loss is silent.
-    """
+    """A list is what makes a cap dangerous: repair drops entries and still validates."""
 
     facts: list[str]
 
@@ -368,20 +364,14 @@ async def test_ollama_native_repairs_malformed_json_instead_of_dropping_it():
 async def test_a_truncated_response_is_reported_rather_than_repaired_into_a_short_result():
     """A token-capped response must not be repaired into a successful partial.
 
-    `chat.completions.create` does not raise on a token cap: it returns truncated
-    content with finish_reason "length". That content fails json.loads, so before
-    this guard it reached the repair fallback, json_repair closed the open braces,
-    and the call returned success with part of the extracted facts missing and
-    nothing saying so.
-
-    OutputTooLongError is the recovery path, not a hard failure: fact_extraction
-    catches it and splits the chunk in half so the whole input is still processed.
-    Swallowing it is what loses data.
+    create() returns truncated content with finish_reason "length" rather than
+    raising, so before this guard the body reached json_repair and the call
+    returned success with facts missing and nothing saying so. OutputTooLongError
+    is the recovery path: fact_extraction catches it and splits the chunk.
     """
     llm = _llm()
-    # Three facts were being written and the cap landed inside the third. Repair
-    # closes the list and the result validates with two, which is the silent
-    # loss: nothing in the return value says a third one existed.
+    # The cap landed inside the third fact; repair closes the list and it
+    # validates short, with nothing saying an entry was lost.
     truncated = '{"facts": ["alpha", "beta", "gam'
     create = AsyncMock(return_value=_response(content=truncated, finish_reason="length"))
     llm._client.chat.completions.create = create
@@ -398,12 +388,7 @@ async def test_a_truncated_response_is_reported_rather_than_repaired_into_a_shor
 
 @pytest.mark.asyncio
 async def test_ollama_native_reports_a_truncated_body_rather_than_repairing_it():
-    """The native path carries the same risk under a different key.
-
-    Ollama reports a cap-truncated body as done_reason "length" rather than
-    failing, so without the guard the shortened list is repaired and returned as
-    a success, exactly as on the compatible path.
-    """
+    """The native path carries the same risk under the done_reason key."""
     llm = _ollama_llm()
     mock_client = AsyncMock()
     mock_client.post.return_value = _ollama_response('{"facts": ["alpha", "beta", "gam', done_reason="length")
@@ -427,12 +412,10 @@ async def test_ollama_native_reports_a_truncated_body_rather_than_repairing_it()
 
 @pytest.mark.asyncio
 async def test_a_truncation_is_reported_on_the_first_attempt_not_after_the_budget():
-    """The guard fires before the retry ladder can spend anything on a re-roll.
+    """The guard fires before the ladder spends a generation on a re-roll.
 
-    A re-roll against the same cap truncates identically, so the repeat check
-    would reach repair on the second attempt. Neither outcome is wanted: the
-    caller can only split the input if it hears about the cap, and it should hear
-    on the first response that shows one.
+    A re-roll against the same cap truncates identically, so nothing is gained by
+    waiting, and the caller can only split once it hears about the cap.
     """
     llm = _llm()
     create = AsyncMock(return_value=_response(content='{"facts": ["alpha", "gam', finish_reason="length"))
@@ -454,9 +437,7 @@ async def test_a_truncation_is_reported_on_the_first_attempt_not_after_the_budge
 async def test_a_malformed_body_that_is_not_truncated_still_gets_repaired():
     """The guard reads finish_reason, not the shape of the failure.
 
-    Output that merely came out malformed keeps the repair this PR added. Without
-    this, a stricter guard could quietly turn every parse failure into a caller
-    error and undo the fix.
+    Malformed output that was not truncated keeps the repair this PR added.
     """
     llm = _llm()
     create = AsyncMock(return_value=_response(content='{"facts": ["alpha", "beta"],}'))
