@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDshHooks, toDshParameters, type Workspace } from "./dsh";
+import {
+  apply,
+  createDshHooks,
+  createHindsightProjectMemoryService,
+  toDshParameters,
+  type HindsightProjectMemoryService,
+  type Workspace,
+} from "./dsh";
 import type { ToolSpec } from "./core/knowledge-tools";
 import { z } from "zod";
 
@@ -30,6 +37,78 @@ function fakeWorkspace(core: Partial<Workspace["core"]>): Workspace {
 }
 
 const enter = (messages: unknown[]) => async () => ({ kind: "enter" as const, messages }) as never;
+
+describe("hindsightProjectMemory service", () => {
+  it("registers the optional structural service during apply", () => {
+    const provide = vi.fn();
+    const ctx = {
+      provide,
+      on: vi.fn(),
+      inject: vi.fn(),
+    };
+
+    apply(ctx as never);
+
+    expect(provide).toHaveBeenCalledOnce();
+    expect(provide).toHaveBeenCalledWith(
+      "hindsightProjectMemory",
+      expect.objectContaining({ resolve: expect.any(Function) })
+    );
+  });
+
+  it("returns undefined for a workspace where memory is disabled", () => {
+    const service = createHindsightProjectMemoryService(
+      () => ({ cfg: { disabled: true }, bankId: "", client: {} }) as never
+    );
+
+    expect(service.resolve("/disabled-repo")).toBeUndefined();
+  });
+
+  it("binds recall and replacement retain to the resolved workspace bank", async () => {
+    const reflect = vi.fn(async () => "bank answer");
+    const retain = vi.fn(async () => {});
+    const resolveMemory = vi.fn(
+      () =>
+        ({
+          cfg: { disabled: false },
+          bankId: "repo-bank",
+          client: { reflect, retain },
+        }) as never
+    );
+    const service: HindsightProjectMemoryService =
+      createHindsightProjectMemoryService(resolveMemory);
+
+    const workspace = service.resolve("/repo")!;
+    expect(resolveMemory).toHaveBeenCalledWith("dsh", "/repo");
+    expect(workspace.bankId).toBe("repo-bank");
+
+    await expect(
+      workspace.recall("why was this chosen?", { budget: "medium", timeoutMs: 4321 })
+    ).resolves.toBe("bank answer");
+    expect(reflect).toHaveBeenCalledWith("why was this chosen?", {
+      budget: "medium",
+      timeoutMs: 4321,
+    });
+
+    await workspace.retain({
+      content: "Decision: keep the bridge public.",
+      context: "AgentTeams project integration",
+      documentId: "agentteams-bridge",
+      tags: ["agentteams", "project-memory"],
+      metadata: { source: "agentteams" },
+      operationId: "retain-1",
+      updateMode: "replace",
+    });
+    expect(retain).toHaveBeenCalledWith(
+      "Decision: keep the bridge public.",
+      "AgentTeams project integration",
+      "agentteams-bridge",
+      ["agentteams", "project-memory"],
+      "document",
+      { metadata: { source: "agentteams" }, operationId: "retain-1" }
+    );
+  });
+});
 
 describe("dsh pre-step injection", () => {
   it("recalls on the human prompt and appends the memory as a sourced message", async () => {

@@ -23,7 +23,7 @@
  * and no version to keep in step — any dsh whose event names still match can load this file.
  */
 import { randomUUID } from "node:crypto";
-import { resolveHostMemory } from "./core/host-client";
+import { resolveHostMemory, type HostMemory } from "./core/host-client";
 import { diag } from "./core/diag";
 import type { ToolSpec } from "./core/knowledge-tools";
 import { log } from "./core/log";
@@ -58,8 +58,7 @@ interface DshUserMessage {
 }
 
 type PreStepDecision =
-  | { kind: "enter"; messages: DshUserMessage[] }
-  | { kind: "reject"; [key: string]: unknown };
+  { kind: "enter"; messages: DshUserMessage[] } | { kind: "reject"; [key: string]: unknown };
 
 interface PreStepPayload {
   agent: DshAgent;
@@ -68,6 +67,7 @@ interface PreStepPayload {
 
 /** The Cordis context surface this plugin uses. */
 interface DshContext {
+  provide(name: "hindsightProjectMemory", service: HindsightProjectMemoryService): void;
   on(
     event: "agent/session-start",
     listener: (payload: { agent: DshAgent }) => void
@@ -102,6 +102,58 @@ interface DshToolContext {
 /** `exec` as a dsh tool body receives it (only the caller matters to us). */
 interface DshToolRunContext {
   readonly agent?: DshAgent;
+}
+
+/** Options accepted by project-memory reflection. */
+export interface HindsightProjectMemoryRecallOptions {
+  budget?: string;
+  timeoutMs: number;
+}
+
+/** A structured project-memory write. Omitting `updateMode` and `replace` both replace the document. */
+export interface HindsightProjectMemoryRetainInput {
+  content: string;
+  context: string;
+  documentId: string;
+  tags: string[];
+  metadata?: Record<string, string>;
+  operationId?: string;
+  updateMode?: "replace";
+}
+
+/** Bank-bound memory surface exposed to AgentTeams and other project integrations. */
+export interface HindsightProjectMemoryWorkspace {
+  readonly bankId: string;
+  recall(query: string, options: HindsightProjectMemoryRecallOptions): Promise<string>;
+  retain(input: HindsightProjectMemoryRetainInput): Promise<void>;
+}
+
+/** Optional Cordis service; disabled workspaces resolve to `undefined`. */
+export interface HindsightProjectMemoryService {
+  resolve(directory: string): HindsightProjectMemoryWorkspace | undefined;
+}
+
+export type ResolveHindsightHostMemory = (harness: string, directory: string) => HostMemory;
+
+/** Build the public service over the same resolver used by dsh lifecycle and tool integrations. */
+export function createHindsightProjectMemoryService(
+  resolveMemory: ResolveHindsightHostMemory = resolveHostMemory
+): HindsightProjectMemoryService {
+  return {
+    resolve(directory) {
+      const { cfg, bankId, client } = resolveMemory(HARNESS, directory);
+      if (cfg.disabled) return undefined;
+      return {
+        bankId,
+        recall: (query, options) => client.reflect(query, options),
+        retain: (input) =>
+          client.retain(input.content, input.context, input.documentId, input.tags, "document", {
+            metadata: input.metadata,
+            operationId: input.operationId,
+          }),
+      };
+    },
+  };
 }
 
 // ── per-workspace runtime cache ─────────────────────────────────────────────────
@@ -383,6 +435,7 @@ function specsOf(workspace: Workspace): ToolSpec[] {
  * never throws, and a workspace we cannot resolve simply leaves that session unmemoried.
  */
 export function apply(ctx: DshContext): void {
+  ctx.provide("hindsightProjectMemory", createHindsightProjectMemoryService());
   const hooks = createDshHooks(workspaceForAgent);
   ctx.on("agent/session-start", hooks.sessionStart);
   // `prepend: true` puts this listener outermost, so the injection is appended AFTER every other
