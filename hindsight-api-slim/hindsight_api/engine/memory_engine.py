@@ -18,6 +18,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import random
 import sys
 import time
@@ -6683,77 +6684,88 @@ class MemoryEngine(MemoryEngineInterface):
             # The store is ALWAYS asked first. It answers what it implements and declines the
             # rest, so the decline is the switch — not a flag an operator has to set per bank.
             # Whether a store can answer a request is a property of the request, not an opinion
-            # about the bank, so there is deliberately nothing to configure.
-            from .memories import FullRecallRequest
-            from .memories import get_memories as _get_memories_for_full_recall
+            # about the bank, so there is deliberately nothing per-bank to configure.
+            #
+            # The one exception is a PROCESS-level escape hatch, and it exists for a specific
+            # reason rather than as a general off switch: proving the two paths agree requires
+            # running both over the same data, and once the store stops declining there is no
+            # other way to reach this pipeline. It is deliberately an env var and not bank config
+            # — a per-bank flag would invite leaving one bank on the slow path indefinitely,
+            # which is the situation the decline was meant to end.
+            if not os.getenv("HINDSIGHT_API_FORCE_ENGINE_RECALL"):
+                from .memories import FullRecallRequest
+                from .memories import get_memories as _get_memories_for_full_recall
 
-            _full_start = time.time()
-            _store_result = await _get_memories_for_full_recall().full_recall(
-                FullRecallRequest(
-                    bank_id=bank_id,
-                    fact_types=list(fact_type),
-                    query_embedding=str(query_embedding),
-                    query_text=query,
-                    limit=thinking_budget,
-                    temporal_window=temporal_window,
-                    tags=tags,
-                    tags_match=tags_match,
-                    tag_groups=tag_groups,
-                    created_after=created_after,
-                    created_before=created_before,
-                    min_semantic=min_scores.semantic if min_scores else None,
-                    min_keyword=min_scores.keyword if min_scores else None,
-                    enable_text_search=enable_text_search,
-                    enable_graph=enable_graph_retrieval,
-                    reranking=reranking,
-                    reranker_max_candidates=(
-                        reranker_max_candidates
-                        if reranker_max_candidates is not None
-                        else get_config().reranker_max_candidates
-                    ),
-                    per_source_cap=get_config().recall_max_candidates_per_source,
-                    strategy_boosts=get_config().recall_strategy_boosts,
-                    recency_decay_function=get_config().recency_decay_function,
-                    recency_decay_linear_window_days=get_config().recency_decay_linear_window_days,
-                    recency_decay_halflife_days=get_config().recency_decay_halflife_days,
-                    # Resolved here, not in the store: `question_date` overrides "now", and two
-                    # clocks would make an identical request score differently on the two paths.
-                    now=_recall_scoring_now(question_date),
-                    min_reranker=min_scores.reranker if min_scores else None,
-                    min_final=min_scores.final if min_scores else None,
-                    truncate_to=thinking_budget * 2,
-                    max_tokens=max_tokens,
-                    tokenizer_encoding=get_config().tokenizer_encoding,
-                    include_entities=include_entities,
-                    include_chunks=include_chunks,
-                    max_chunk_tokens=max_chunk_tokens,
-                    # Declared so the store can decline rather than answer a different
-                    # question. Neither stage exists on the store side.
-                    prefer_observations=prefer_observations,
-                    include_source_facts=include_source_facts,
-                )
-            )
-            if _store_result is not None:
-                _full_elapsed = time.time() - _full_start
-                log_buffer.append(
-                    f"  [1.5] Store-answered recall: {len(_store_result.results)} results in {_full_elapsed:.3f}s"
-                )
-                if not quiet:
-                    logger.info("\n" + "\n".join(log_buffer))
-                # The store's own per-stage timings become this recall's phase breakdown.
-                # Without this the trace goes dark exactly where the work moved to, and the
-                # only thing left to compare between the two paths is a total.
-                if enable_trace and tracer:
-                    for _name, _micros in (_store_result.store_stages or {}).items():
-                        tracer.add_phase_metric(f"store_{_name}", _micros / 1_000_000)
-                    tracer.add_phase_metric(
-                        "full_recall",
-                        _full_elapsed,
-                        {"results": len(_store_result.results)},
+                _full_start = time.time()
+                _store_result = await _get_memories_for_full_recall().full_recall(
+                    FullRecallRequest(
+                        bank_id=bank_id,
+                        fact_types=list(fact_type),
+                        query_embedding=str(query_embedding),
+                        query_text=query,
+                        limit=thinking_budget,
+                        temporal_window=temporal_window,
+                        tags=tags,
+                        tags_match=tags_match,
+                        tag_groups=tag_groups,
+                        created_after=created_after,
+                        created_before=created_before,
+                        min_semantic=min_scores.semantic if min_scores else None,
+                        min_keyword=min_scores.keyword if min_scores else None,
+                        enable_text_search=enable_text_search,
+                        enable_graph=enable_graph_retrieval,
+                        reranking=reranking,
+                        reranker_max_candidates=(
+                            reranker_max_candidates
+                            if reranker_max_candidates is not None
+                            else get_config().reranker_max_candidates
+                        ),
+                        per_source_cap=get_config().recall_max_candidates_per_source,
+                        strategy_boosts=get_config().recall_strategy_boosts,
+                        recency_decay_function=get_config().recency_decay_function,
+                        recency_decay_linear_window_days=get_config().recency_decay_linear_window_days,
+                        recency_decay_halflife_days=get_config().recency_decay_halflife_days,
+                        # Resolved here, not in the store: `question_date` overrides "now", and two
+                        # clocks would make an identical request score differently on the two paths.
+                        now=_recall_scoring_now(question_date),
+                        min_reranker=min_scores.reranker if min_scores else None,
+                        min_final=min_scores.final if min_scores else None,
+                        truncate_to=thinking_budget * 2,
+                        max_tokens=max_tokens,
+                        tokenizer_encoding=get_config().tokenizer_encoding,
+                        include_entities=include_entities,
+                        include_chunks=include_chunks,
+                        max_chunk_tokens=max_chunk_tokens,
+                        # An observation carries its source ids, so the store answers all three of
+                        # these itself: the dedup, the provenance, and the chunks an observation has
+                        # none of and inherits from its sources.
+                        prefer_observations=prefer_observations,
+                        include_source_facts=include_source_facts,
+                        max_source_facts_tokens=max_source_facts_tokens,
+                        max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
                     )
-                    _trace = tracer.finalize([r.model_dump() for r in _store_result.results])
-                    _store_result.trace = _trace.to_dict() if _trace else None
-                return _store_result
+                )
+                if _store_result is not None:
+                    _full_elapsed = time.time() - _full_start
+                    log_buffer.append(
+                        f"  [1.5] Store-answered recall: {len(_store_result.results)} results in {_full_elapsed:.3f}s"
+                    )
+                    if not quiet:
+                        logger.info("\n" + "\n".join(log_buffer))
+                    # The store's own per-stage timings become this recall's phase breakdown.
+                    # Without this the trace goes dark exactly where the work moved to, and the
+                    # only thing left to compare between the two paths is a total.
+                    if enable_trace and tracer:
+                        for _name, _micros in (_store_result.store_stages or {}).items():
+                            tracer.add_phase_metric(f"store_{_name}", _micros / 1_000_000)
+                        tracer.add_phase_metric(
+                            "full_recall",
+                            _full_elapsed,
+                            {"results": len(_store_result.results)},
+                        )
+                        _trace = tracer.finalize([r.model_dump() for r in _store_result.results])
+                        _store_result.trace = _trace.to_dict() if _trace else None
+                    return _store_result
 
             # Step 2: Optimized parallel retrieval using batched queries
             # - Semantic + BM25 combined in 1 CTE query for ALL fact types

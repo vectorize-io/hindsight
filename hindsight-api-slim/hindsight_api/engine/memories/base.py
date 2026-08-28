@@ -535,11 +535,20 @@ class FullRecallRequest:
     max_chunk_tokens: int = 4096
 
     # ---- shapes a store may not implement ----
-    #: Set when the caller asked for something beyond the stages above. A store that sees any of
-    #: these and does not implement them must decline (return ``None``) rather than silently
-    #: answering a different question.
+    # ---- derived memories (observations) and their sources ----
+    #
+    # An observation is consolidated FROM source facts and carries their ids, so a store that holds
+    # that list can answer all three of these itself. Each was previously a decline.
+    #: Drop raw facts that a returned observation was consolidated from, and backfill the freed
+    #: slots. No-op unless both observations and a raw type were requested.
     prefer_observations: bool = False
+    #: Return each returned observation's source facts, under the budgets below.
     include_source_facts: bool = False
+    #: Total token budget for source facts. Negative means unlimited.
+    max_source_facts_tokens: int = 4096
+    #: Per-observation budget. When >= 0 this REPLACES the total, so one observation with many
+    #: sources cannot spend every other observation's provenance.
+    max_source_facts_tokens_per_observation: int = -1
 
 
 @dataclass
