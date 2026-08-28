@@ -700,6 +700,7 @@ async def _load_observations_from_store(
             TransferObservation(
                 source_id=str(memory.unit_id),
                 text=memory.text,
+                created_at=memory.created_at,
                 tags=list(memory.tags or []),
                 event_date=memory.event_date,
                 occurred_start=memory.occurred_start,
@@ -780,7 +781,7 @@ async def _load_observations(
     """
     rows = await conn.fetch(
         f"""
-        SELECT id, text, tags, event_date, occurred_start, occurred_end,
+            SELECT id, text, tags, created_at, event_date, occurred_start, occurred_end,
                mentioned_at, observation_scopes, proof_count, source_memory_ids
         FROM {fq_table("memory_units")}
         WHERE bank_id = $1 AND fact_type = 'observation'
@@ -803,6 +804,7 @@ async def _load_observations(
             TransferObservation(
                 source_id=str(row["id"]),
                 text=row["text"],
+                created_at=row["created_at"],
                 tags=list(row["tags"] or []),
                 event_date=row["event_date"],
                 occurred_start=row["occurred_start"],

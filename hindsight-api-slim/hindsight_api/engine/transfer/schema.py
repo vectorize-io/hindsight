@@ -117,6 +117,7 @@ class TransferObservation(BaseModel):
     # needed when rewriting mental-model based_on references.
     source_id: str | None = None
     text: str
+    created_at: datetime | None = None
     tags: list[str] = Field(default_factory=list)
     event_date: datetime | None = None
     occurred_start: datetime | None = None

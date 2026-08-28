@@ -1322,10 +1322,12 @@ async def test_export_import_mental_models_and_knowledge_pages(memory, request_c
         archive = await memory.export_documents_async(
             source,
             request_context,
+            include_observations=True,
             include_knowledge_base=True,
         )
         parsed = parse_archive(archive)
         assert parsed.manifest.knowledge_base_count == 2
+        assert parsed.observations and all(observation.created_at is not None for observation in parsed.observations)
         with zipfile.ZipFile(io.BytesIO(archive)) as zf:
             assert "mental_models.json" in zf.namelist()
             assert "knowledge_pages.json" in zf.namelist()
@@ -1334,8 +1336,9 @@ async def test_export_import_mental_models_and_knowledge_pages(memory, request_c
         assert result["mental_models_imported"] == 1
         assert result["knowledge_pages_imported"] == 1
 
-        mental_models = await memory.list_mental_models(target, request_context=request_context)
+        mental_models = await memory.list_mental_models(target, with_staleness=True, request_context=request_context)
         assert mental_models.total == 1
+        assert mental_models.items[0]["name"] == "Work policy"
         nodes = await memory.list_knowledge_nodes(target, request_context=request_context)
         assert [(node["name"], node["mental_model_id"]) for node in nodes] == [("Work policy", page["mental_model_id"])]
         search_results = await memory.search_knowledge_pages(

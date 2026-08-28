@@ -1073,6 +1073,13 @@ async def _import_observations(
             all_source_ids: set[uuid.UUID] = set()
             for (obs, sources), obs_unit_id in zip(resolved, obs_unit_ids):
                 observation_uuid = uuid.UUID(obs_unit_id)
+                if obs.created_at is not None:
+                    await conn.execute(
+                        f"UPDATE {fq_table('memory_units')} SET created_at = $1 WHERE id = $2 AND bank_id = $3",
+                        obs.created_at,
+                        observation_uuid,
+                        bank_id,
+                    )
                 if obs.event_date is not None:
                     # insert_facts_batch derives event_date for normal writes;
                     # transfer restores the source value carried by the archive.
