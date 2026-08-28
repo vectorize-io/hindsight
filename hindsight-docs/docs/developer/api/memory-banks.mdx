@@ -79,6 +79,8 @@ Controls how aggressively facts are extracted:
 | `concise` *(default)* | Selective — only facts worth remembering long-term |
 | `verbose` | Captures more detail per fact; slower and uses more tokens |
 | `custom` | Write your own extraction rules via `retain_custom_instructions` |
+| `verbatim` | Stores each chunk's original text as one memory; the LLM extracts metadata such as entities and dates |
+| `chunks` | Stores each chunk as one memory without an LLM call; only caller-provided entities are available |
 
 ### retain_custom_instructions
 

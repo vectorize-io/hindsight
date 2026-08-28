@@ -25,7 +25,7 @@ Browse the Bank Templates Hub for ready-to-use templates.
   "bank": {
     "reflect_mission": "...",
     "retain_mission": "...",
-    "retain_extraction_mode": "concise | verbose | custom | chunks",
+    "retain_extraction_mode": "concise | verbose | custom | verbatim | chunks",
     "retain_custom_instructions": "...",
     "retain_chunk_size": 2048,
     "retain_structured_chunk_size": 8192,
@@ -90,7 +90,7 @@ Schema; each field means the same thing it does in
 |-------|------|-------------|
 | `reflect_mission` | string | Mission/context for reflect operations |
 | `retain_mission` | string | Steers what gets extracted during retain |
-| `retain_extraction_mode` | string | `concise`, `verbose`, `custom`, or `chunks` |
+| `retain_extraction_mode` | string | `concise`, `verbose`, `custom`, `verbatim`, or `chunks` |
 | `retain_custom_instructions` | string | Custom extraction prompt (requires `mode=custom`) |
 | `retain_chunk_size` | integer | Target max characters per content chunk |
 | `retain_structured_chunk_size` | integer | Max characters for a single JSONL line or conversation turn to keep whole; defaults to `retain_chunk_size` when unset |
