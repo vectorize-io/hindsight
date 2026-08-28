@@ -981,6 +981,21 @@ async def _delta_store_owned_write(
         if idx in existing_by_index
     ]
 
+    # The observations standing on the facts we are about to retire have to go with them, and
+    # BEFORE the replace: consolidation batches are built from facts, so once the sources are gone
+    # an observation derived from them is never selected again and stays recallable as stale
+    # knowledge from the previous version of the document (issue #3294). The SQL delta gets this
+    # from its own cascade in `chunk_storage`; a store-owned delta retires its facts through the
+    # replace below instead, so this is the only place that can catch them.
+    if replace_chunk_ids:
+        outgoing = await chunk_storage.memory_ids_for_chunks(None, bank_id, replace_chunk_ids)
+        if outgoing:
+            swept = await fact_storage.delete_stale_observations_for_memories(
+                None, bank_id, outgoing, ops=pool.ops
+            )
+            if swept:
+                log_buffer.append(f"[delta] swept {swept} observation(s) whose sources are being replaced")
+
     # Mint the ids without writing; the retain below is the only fact write.
     unit_ids = await fact_storage.insert_facts_batch(None, bank_id, processed_facts, ops=pool.ops, defer_index=True)
     result_unit_ids = _map_results_to_contents(delta_contents, processed_facts, unit_ids if unit_ids else [])
