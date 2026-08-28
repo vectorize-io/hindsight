@@ -935,8 +935,15 @@ class PostgreSQLOps(DataAccessOps):
         # parity up to ~12k-degree hubs and +50% traversal cost at 38k. If banks
         # grow hubs far past that, re-measure before assuming this is still the
         # right shape.
-
-        entity_rows = await conn.fetch(
+        #
+        # Entity/source traversal and semantic/causal expansion run as ONE query
+        # (#3857): the observation entity arm is fused into the semantic/causal CTE
+        # query behind an 'entity' source discriminator, like the non-observation
+        # combined expansion, so a normal call performs one fetch instead of two.
+        # Every predicate, score expression, ordering, limit, and the window bind
+        # positions are exactly the two previous statements', now sharing one
+        # snapshot. The caller splits the unioned rows by `source`.
+        all_rows = await conn.fetch(
             f"""
             WITH seed_sources AS (
                 SELECT DISTINCT unnest(source_memory_ids) AS source_id
@@ -988,27 +995,22 @@ class PostgreSQLOps(DataAccessOps):
                 CROSS JOIN LATERAL unnest(c.source_memory_ids) AS s(source_id)
                 JOIN connected_sources cs ON cs.source_id = s.source_id
                 GROUP BY c.id
-            )
-            SELECT
-                c.id, c.text, c.context, c.event_date, c.occurred_start,
-                c.occurred_end, c.mentioned_at,
-                c.fact_type, c.document_id, c.chunk_id, c.tags, c.proof_count,
-                sc.score
-            FROM candidates c
-            JOIN scored sc ON sc.id = c.id
-            ORDER BY sc.score DESC
-            LIMIT $2
-            """,
-            seed_ids,
-            budget,
-            *window.params,
-        )
-
-        # Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
-        # DISTINCT ON for causal, hardcoded to fact_type='observation'.
-        sem_causal_rows = await conn.fetch(
-            f"""
-            WITH semantic_expanded AS (
+            ),
+            observation_entity_expanded AS (
+                SELECT
+                    c.id, c.text, c.context, c.event_date, c.occurred_start,
+                    c.occurred_end, c.mentioned_at,
+                    c.fact_type, c.document_id, c.chunk_id, c.tags, c.proof_count,
+                    sc.score,
+                    'entity'::text AS source
+                FROM candidates c
+                JOIN scored sc ON sc.id = c.id
+                ORDER BY sc.score DESC
+                LIMIT $2
+            ),
+            -- Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
+            -- DISTINCT ON for causal, hardcoded to fact_type='observation'.
+            semantic_expanded AS (
                 SELECT
                     id, text, context, event_date, occurred_start,
                     occurred_end, mentioned_at,
@@ -1050,6 +1052,8 @@ class PostgreSQLOps(DataAccessOps):
                   {window.clause("mu")}
                 ORDER BY mu.id, ml.weight DESC LIMIT $2
             )
+            SELECT * FROM observation_entity_expanded
+            UNION ALL
             SELECT * FROM semantic_expanded
             UNION ALL
             SELECT * FROM causal_expanded
@@ -1059,9 +1063,11 @@ class PostgreSQLOps(DataAccessOps):
             *window.params,
         )
 
-        semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]
-        causal_rows = [r for r in sem_causal_rows if r["source"] == "causal"]
-        return LinkExpansionRows(entity=list(entity_rows), semantic=semantic_rows, causal=causal_rows)
+        return LinkExpansionRows(
+            entity=[r for r in all_rows if r["source"] == "entity"],
+            semantic=[r for r in all_rows if r["source"] == "semantic"],
+            causal=[r for r in all_rows if r["source"] == "causal"],
+        )
 
     def build_tag_listing_parts(self, mu_table: str) -> TagListingParts:
         return TagListingParts(

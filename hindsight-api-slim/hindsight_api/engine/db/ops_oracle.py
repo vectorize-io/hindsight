@@ -697,6 +697,14 @@ class OracleOps(DataAccessOps):
         # Previously used JSON_TABLE to explode source_memory_ids CLOB. The junction
         # table approach uses standard SQL joins, identical to the PG backend.
         #
+        # Entity/source traversal and semantic/causal expansion run as ONE query
+        # (#3857): the observation entity arm is fused into the semantic/causal CTE
+        # query behind an 'entity' source discriminator, like the non-observation
+        # combined expansion, so a normal call performs one fetch instead of two.
+        # Every predicate, score expression, ordering, limit, and the window bind
+        # positions are exactly the two previous statements', now sharing one
+        # snapshot. The caller splits the unioned rows by `source`.
+        #
         # Two PostgreSQL fixes are deliberately NOT mirrored here, because neither
         # was measured against Oracle and both are tuned to PostgreSQL's planner:
         #   - #3085 made PG score set-wise; the scoring below is still the
@@ -714,7 +722,7 @@ class OracleOps(DataAccessOps):
         from ..schema import fq_table
 
         obs_sources_table = fq_table("observation_sources")
-        entity_rows = await conn.fetch(
+        all_rows = await conn.fetch(
             f"""
             WITH seed_sources AS (
                 SELECT DISTINCT os.source_id
@@ -739,39 +747,31 @@ class OracleOps(DataAccessOps):
                 WHERE NOT EXISTS (
                     SELECT 1 FROM seed_sources ss WHERE ss.source_id = t.unit_id
                 )
-            )
-            SELECT
-                mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                mu.occurred_end, mu.mentioned_at,
-                mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
-                (SELECT COUNT(*)
-                 FROM {obs_sources_table} os2
-                 WHERE os2.observation_id = mu.id
-                   AND os2.source_id IN (SELECT source_id FROM connected_sources)
-                ) AS score
-            FROM {mu_table} mu
-            WHERE mu.fact_type = 'observation'
-              AND mu.id != ALL($1::uuid[])
-              AND EXISTS (
-                  SELECT 1 FROM {obs_sources_table} os3
-                  WHERE os3.observation_id = mu.id
-                    AND os3.source_id IN (SELECT source_id FROM connected_sources)
-              )
-              {window.clause("mu")}
-            ORDER BY score DESC
-            FETCH FIRST $2 ROWS ONLY
-            """,
-            seed_ids,
-            budget,
-            *window.params,
-        )
-        logger.debug(f"[LinkExpansion] observation graph (Oracle): found {len(entity_rows)} connected observations")
-
-        # Semantic + causal for observations (Oracle path)
-        # Avoids GROUP BY CLOB and DISTINCT ON — mirrors _expand_world_facts Oracle strategy.
-        sem_causal_rows = await conn.fetch(
-            f"""
-            WITH sem_scores AS (
+            ),
+            observation_entity_expanded AS (
+                SELECT
+                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
+                    mu.occurred_end, mu.mentioned_at,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    (SELECT COUNT(*)
+                     FROM {obs_sources_table} os2
+                     WHERE os2.observation_id = mu.id
+                       AND os2.source_id IN (SELECT source_id FROM connected_sources)
+                    ) AS score,
+                    'entity' AS source
+                FROM {mu_table} mu
+                WHERE mu.fact_type = 'observation'
+                  AND mu.id != ALL($1::uuid[])
+                  AND EXISTS (
+                      SELECT 1 FROM {obs_sources_table} os3
+                      WHERE os3.observation_id = mu.id
+                        AND os3.source_id IN (SELECT source_id FROM connected_sources)
+                  )
+                  {window.clause("mu")}
+                ORDER BY score DESC
+                FETCH FIRST $2 ROWS ONLY
+            ),
+            sem_scores AS (
                 SELECT id, MAX(weight) AS score
                 FROM (
                     SELECT mu.id, ml.weight
@@ -821,6 +821,8 @@ class OracleOps(DataAccessOps):
                 ORDER BY score DESC
                 FETCH FIRST $2 ROWS ONLY
             )
+            SELECT * FROM observation_entity_expanded
+            UNION ALL
             SELECT * FROM semantic_expanded
             UNION ALL
             SELECT * FROM causal_expanded
@@ -829,10 +831,11 @@ class OracleOps(DataAccessOps):
             budget,
             *window.params,
         )
-
-        semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]
-        causal_rows = [r for r in sem_causal_rows if r["source"] == "causal"]
-        return LinkExpansionRows(entity=list(entity_rows), semantic=semantic_rows, causal=causal_rows)
+        entity_rows = [r for r in all_rows if r["source"] == "entity"]
+        logger.debug(f"[LinkExpansion] observation graph (Oracle): found {len(entity_rows)} connected observations")
+        semantic_rows = [r for r in all_rows if r["source"] == "semantic"]
+        causal_rows = [r for r in all_rows if r["source"] == "causal"]
+        return LinkExpansionRows(entity=entity_rows, semantic=semantic_rows, causal=causal_rows)
 
     def build_tag_listing_parts(self, mu_table: str) -> TagListingParts:
         return TagListingParts(

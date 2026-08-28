@@ -19,9 +19,11 @@ Entity expansion is bounded by graph_per_entity_limit (LATERAL cap per entity).
 A timeout fallback (graph_expansion_timeout) drops entity expansion entirely if the
 query still exceeds the budget.
 
-For non-observation fact types the three expansions are issued as a single CTE query
-(one roundtrip, one connection) with a `source` discriminator column so the Python
-merge step can apply per-signal score transformations.
+All fact types — observation and non-observation — are expanded as a single CTE
+query (one roundtrip, one connection) with a `source` discriminator column so the
+Python merge step can apply per-signal score transformations. For non-observation
+types the three arms share one CTE chain directly; for observations the
+entity/source traversal is fused into the semantic/causal CTE query (#3857).
 """
 
 import asyncio
@@ -112,9 +114,9 @@ class LinkExpansionRetriever(GraphRetriever):
     Runs three expansions through precomputed memory_links: entity co-occurrence,
     semantic kNN, and causal chains, all bounded at retain time.
 
-    For non-observation fact types the three expansions are issued as a single CTE
-    query (one roundtrip, one connection slot) with a `source` discriminator column.
-    The Python merge step applies per-signal score transformations.
+    Every fact type is expanded as a single CTE query (one roundtrip, one
+    connection slot) with a `source` discriminator column. The Python merge step
+    applies per-signal score transformations.
     """
 
     def __init__(self):
@@ -381,7 +383,9 @@ class LinkExpansionRetriever(GraphRetriever):
         by consolidation, not retain).  Instead, traverse source_memory_ids → world
         facts → entities → other world facts → their observations.
 
-        Semantic and causal expansions run as a second combined CTE query.
+        The entity/source traversal is fused into the semantic/causal CTE query
+        (#3857): one fetch carries all three arms behind a `source` discriminator,
+        which DataAccessOps.expand_observations splits into per-signal rows.
         """
         source_ids_found: list = []
         if logger.isEnabledFor(logging.DEBUG):
