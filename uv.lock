@@ -1617,7 +1617,7 @@ wheels = [
 
 [[package]]
 name = "hindsight-all"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "hindsight-all" }
 dependencies = [
     { name = "hindsight-api-slim", extra = ["all"] },
@@ -1647,7 +1647,7 @@ provides-extras = ["local-llm", "test"]
 
 [[package]]
 name = "hindsight-all-slim"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "hindsight-all-slim" }
 dependencies = [
     { name = "hindsight-api-slim" },
@@ -1673,7 +1673,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-api"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "hindsight-api" }
 dependencies = [
     { name = "hindsight-api-slim", extra = ["all"] },
@@ -1684,7 +1684,7 @@ requires-dist = [{ name = "hindsight-api-slim", extras = ["all"], editable = "hi
 
 [[package]]
 name = "hindsight-api-slim"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "hindsight-api-slim" }
 dependencies = [
     { name = "aiohttp" },
@@ -1707,9 +1707,6 @@ dependencies = [
     { name = "greenlet" },
     { name = "httpx" },
     { name = "json-repair" },
-    { name = "langchain-core" },
-    { name = "langchain-text-splitters" },
-    { name = "langsmith" },
     { name = "litellm", version = "1.91.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "litellm", version = "1.93.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
     { name = "markitdown", extra = ["docx", "pdf", "pptx", "xls", "xlsx"] },
@@ -1733,9 +1730,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "quicktok-v1" },
     { name = "rich" },
     { name = "sqlalchemy" },
-    { name = "tiktoken" },
     { name = "tornado" },
     { name = "typer" },
     { name = "urllib3" },
@@ -1793,6 +1790,9 @@ oracle = [
 ]
 test = [
     { name = "filelock" },
+    { name = "langchain-core" },
+    { name = "langchain-text-splitters" },
+    { name = "langsmith" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-timeout" },
@@ -1803,6 +1803,9 @@ test = [
 [package.dev-dependencies]
 dev = [
     { name = "filelock" },
+    { name = "langchain-core" },
+    { name = "langchain-text-splitters" },
+    { name = "langsmith" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-rerunfailures" },
@@ -1842,9 +1845,9 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'local-llm'", specifier = ">=0.20.0" },
     { name = "huggingface-hub", marker = "extra == 'local-onnx'", specifier = ">=0.20.0" },
     { name = "json-repair", specifier = ">=0.63.2" },
-    { name = "langchain-core", specifier = ">=1.2.22" },
-    { name = "langchain-text-splitters", specifier = ">=0.3.0" },
-    { name = "langsmith", specifier = ">=0.8.18" },
+    { name = "langchain-core", marker = "extra == 'test'", specifier = ">=1.2.22" },
+    { name = "langchain-text-splitters", marker = "extra == 'test'", specifier = ">=0.3.0" },
+    { name = "langsmith", marker = "extra == 'test'", specifier = ">=0.8.18" },
     { name = "litellm", marker = "sys_platform != 'darwin'", specifier = ">=1.93.0" },
     { name = "litellm", marker = "sys_platform == 'darwin'", specifier = ">=1.91.3,<1.92" },
     { name = "llama-cpp-python", extras = ["server"], marker = "extra == 'local-llm'", specifier = ">=0.3.0" },
@@ -1880,12 +1883,12 @@ requires-dist = [
     { name = "python-dateutil", specifier = ">=2.8.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.22" },
+    { name = "quicktok-v1", specifier = ">=0.4.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "safetensors", marker = "extra == 'local-ml'", specifier = ">=0.6.2" },
     { name = "sentence-transformers", marker = "extra == 'local-ml'", specifier = ">=5.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44,<2.1" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.0.0" },
-    { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "tokenizers", marker = "extra == 'local-ml'", specifier = ">=0.22.0,<=0.23.0" },
     { name = "tokenizers", marker = "extra == 'local-onnx'", specifier = ">=0.22.0,<=0.23.0" },
     { name = "torch", marker = "extra == 'local-ml'", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cpu" },
@@ -1904,6 +1907,9 @@ provides-extras = ["local-ml", "local-llm", "local-onnx", "embedded-db", "oracle
 [package.metadata.requires-dev]
 dev = [
     { name = "filelock", specifier = ">=3.20.1" },
+    { name = "langchain-core", specifier = ">=1.2.22" },
+    { name = "langchain-text-splitters", specifier = ">=0.3.0" },
+    { name = "langsmith", specifier = ">=0.8.18" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-rerunfailures", specifier = ">=15.0" },
@@ -1917,7 +1923,7 @@ dev = [
 
 [[package]]
 name = "hindsight-client"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "hindsight-clients/python" }
 dependencies = [
     { name = "aiohttp" },
@@ -1951,7 +1957,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-dev"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "hindsight-dev" }
 dependencies = [
     { name = "hindsight-api" },
@@ -1999,7 +2005,7 @@ dev = [
 
 [[package]]
 name = "hindsight-embed"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "hindsight-embed" }
 dependencies = [
     { name = "httpx" },
@@ -4550,6 +4556,35 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/da/92/1446574745d74df0c92e6aa4a7b0b3130706a4142b2d1a5869f2eaa423c6/pyyaml-6.0.3-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:16249ee61e95f858e83976573de0f5b2893b3677ba71c9dd36b9cf8be9ac6d65", size = 829923, upload-time = "2025-09-25T21:32:54.537Z" },
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
+]
+
+[[package]]
+name = "quicktok-v1"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2c/4e/d7990cb3edf8827798f15099001813318454ef582f180eeeb66998d3e73d/quicktok_v1-0.4.0.tar.gz", hash = "sha256:284b911dc841a2b809216d65aea2db2ce7f44233843cdc55336d2c00d4c6f509", size = 4676319, upload-time = "2026-06-16T02:29:46.362Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/67/97b93e77daf2e7ca8a8128f0c39b1972dec110f5c653a10b8fee77f33dbc/quicktok_v1-0.4.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:9d98d33a9eae10640aecbc94085b6b954948b1b41485aea800439a768d5bb1ed", size = 4309700, upload-time = "2026-06-16T02:29:05.663Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/d8/810a310a0e7693591a18afc0690a7cd49c5c777f34b90ac15a202e5c9812/quicktok_v1-0.4.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ae54a8a65bbe8f986309b14f9cb273bf2016c9c3166ec98ff9145a349980bc1b", size = 4341116, upload-time = "2026-06-16T02:29:07.303Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/14/c91e08bfcf5742133305c1e2420194976d2f72473285e439f859fe39bdac/quicktok_v1-0.4.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e2a85a1f5f9a73f773c66e8c2419ffbb6f6add30464b83064870f5ea3e35c99b", size = 4353960, upload-time = "2026-06-16T02:29:08.769Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/b2/941be05a7ec414b187e2fa4165ff941f423cfdd07ebaf7ab63ef8bbbb02b/quicktok_v1-0.4.0-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:bda2c18cc4cb711eeeaadc1a30da9f268f2a5eefa3e7e5f859595ce03b8c1f78", size = 5268525, upload-time = "2026-06-16T02:29:10.493Z" },
+    { url = "https://files.pythonhosted.org/packages/58/15/820b60fe7bd5f77ac7a270860c4dceabcb32e83aac0a1eef38bc08c43b48/quicktok_v1-0.4.0-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:fe0f2cf4780413fd5012618098fe13b29919eddbec9dc3b5fa45f8067e96b0e2", size = 5326384, upload-time = "2026-06-16T02:29:12.168Z" },
+    { url = "https://files.pythonhosted.org/packages/22/81/ceec0732591775c11acbac8a5ae240afeb49f425d51651dd8cb95e8e1aa3/quicktok_v1-0.4.0-cp311-cp311-win_amd64.whl", hash = "sha256:9bb377d729df6f115e70ec4524c74415a874bdc25ff92b4c3df83b7c516bae56", size = 4316724, upload-time = "2026-06-16T02:29:13.762Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/d0/1f5b4ce3dad31cc057e99caf04fb33b3a266d5bf9081b894662351c473a2/quicktok_v1-0.4.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1776c2f247f3d5e00b905dc8010de0442a05f9074e42c18b46e4e11f35785871", size = 4310890, upload-time = "2026-06-16T02:29:15.76Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/07/97d396a0075327055cf8c469ec220cb81464844a0e6641f9f403d8ab06e2/quicktok_v1-0.4.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:18b703fe03e563fc91ea10bf7d351f0999f8ddf407eb11ef0cef675ad78fa532", size = 4341915, upload-time = "2026-06-16T02:29:17.65Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/2a/3f0ec555504e5c28a7ec6c84087163feaa659c6668d425f0441c29413893/quicktok_v1-0.4.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:aed3940c8ede8563e4b1290e849dc5d30b9ce4bb4c0758b4be60711e628ab6d4", size = 4355136, upload-time = "2026-06-16T02:29:19.404Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/8c/55c705de83048b47cd9d7ff3b21a731609d0ec4e4dd31adfbde25f042713/quicktok_v1-0.4.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:59251116285099f5634b5c90758b95621fcc393395b14e911ddb668f6a016e84", size = 5268982, upload-time = "2026-06-16T02:29:21.156Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/4c/75fc2ffbdcc40e434e6ab4f9462205cdb8a371869146625ef4851d8602db/quicktok_v1-0.4.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:c9d255c4f5f213b5eca35a97ff095d2fc39adc2da6dc1fb99bf0ef7e9456d096", size = 5327334, upload-time = "2026-06-16T02:29:22.764Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/dc/91ef13dab9837c944a5846b2f8bf47a4511348a6dc30bc5893064ac5df80/quicktok_v1-0.4.0-cp312-cp312-win_amd64.whl", hash = "sha256:c18d77456a76e4a529a3a4ebde9fc64cc9ae2e2799aac0e6591c90d0daffc86e", size = 4319324, upload-time = "2026-06-16T02:29:24.297Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/cf/242c87974419268f289c092ff9383bd44ed2563dc67ecde53f1f59e4a310/quicktok_v1-0.4.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:95179786d35a456123da62aa63f16d6367f8c53a1da32bbc95ac95df42d3469e", size = 4310931, upload-time = "2026-06-16T02:29:25.915Z" },
+    { url = "https://files.pythonhosted.org/packages/51/6b/59cf3d9fa371e9ca86f0d0797bcdd2c0b2e0094684961fbad53fafc0ef24/quicktok_v1-0.4.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f0693600ce265b9d413c919150712055274a755eea66aae8642f4a6b234105e8", size = 4341990, upload-time = "2026-06-16T02:29:27.851Z" },
+    { url = "https://files.pythonhosted.org/packages/03/f0/52cc0e6d586d491e81e0c1367369ffdc094610b324d336db09b70447f77a/quicktok_v1-0.4.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a76381495b3edbf1e3eae76fe79f7066f906054c0d4998cfdce3106e67a3622a", size = 4355258, upload-time = "2026-06-16T02:29:29.583Z" },
+    { url = "https://files.pythonhosted.org/packages/17/67/1e613f527bbd2ae9fd3f29ca7922e7d6dfc5f1058d3525623035ea937cfb/quicktok_v1-0.4.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:a0ab6e46316ee525987581f1ee52961abd1062997d8734d4a9f2f0be331a84f8", size = 5269059, upload-time = "2026-06-16T02:29:31.285Z" },
+    { url = "https://files.pythonhosted.org/packages/71/34/db94ccbc154da921538da3fbe4971e04b908efd20a7db8419c5c27d86825/quicktok_v1-0.4.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:77c6adf857695dc4ed64c4716b505b48eee74e18a5acc666d3a9249bcc80cc8d", size = 5327483, upload-time = "2026-06-16T02:29:32.956Z" },
+    { url = "https://files.pythonhosted.org/packages/35/23/0b3c3da6117e1e205b8210ec9c6f1962615d0853e4dfe533790b6a6b1b00/quicktok_v1-0.4.0-cp313-cp313-win_amd64.whl", hash = "sha256:37fb71ca8ac2869c25d4b3b370fdc913bfa2ab54e91556dae8e96a6ba2ebe013", size = 4319381, upload-time = "2026-06-16T02:29:34.774Z" },
 ]
 
 [[package]]

@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { HindsightServer } from "./server.js";
+
+const spawnMock = vi.hoisted(() => vi.fn());
+vi.mock("child_process", () => ({ spawn: spawnMock }));
 
 describe("HindsightServer construction", () => {
   it("defaults base URL to http://127.0.0.1:8888", () => {
@@ -31,5 +34,26 @@ describe("HindsightServer construction", () => {
     const server = new HindsightServer({ port: 1, readyTimeoutMs: 100 });
     const healthy = await server.checkHealth();
     expect(healthy).toBe(false);
+  });
+
+  it("hides daemon command windows on Windows", async () => {
+    const child = {
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn((event: string, handler: (code?: number) => void) => {
+        if (event === "exit") handler(0);
+        return child;
+      }),
+    };
+    spawnMock.mockReturnValueOnce(child);
+
+    const server = new HindsightServer();
+    await server.stop();
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "uvx",
+      ["hindsight-embed@latest", "daemon", "--profile", "default", "stop"],
+      expect.objectContaining({ stdio: "pipe", windowsHide: true })
+    );
   });
 });

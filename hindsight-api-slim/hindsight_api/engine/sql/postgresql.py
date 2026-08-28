@@ -308,7 +308,7 @@ class PostgreSQLDialect(SQLDialect):
             # score so only genuine term matches survive into fusion/reranking.
             bm25_where_filter = f"AND -(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2'))) > {bm25_min_score:g}"
         elif text_search_extension == "pg_textsearch":
-            bm25_score_expr = f"-({text_param} <@> to_bm25query({text_param}, 'idx_memory_units_text_search'))"
+            bm25_score_expr = f"-(text <@> to_bm25query({text_param}, 'idx_memory_units_text_search'))"
             bm25_order_by = f"text <@> to_bm25query({text_param}, 'idx_memory_units_text_search') ASC"
             bm25_where_filter = ""
         elif text_search_extension == "pgroonga":

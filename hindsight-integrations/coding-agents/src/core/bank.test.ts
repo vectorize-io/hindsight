@@ -34,6 +34,25 @@ describe("deriveBankId", () => {
     expect(deriveBankId({}, "/srv/git/myrepo.git")).toBe("coding-agent::myrepo.git");
   });
 
+  it("uses the hub name for a hidden bare repository shared by worktrees", () => {
+    mockExec.mockImplementation((_command, args) => {
+      if (args?.includes("--git-common-dir")) return "/home/me/myrepo/.bare\n";
+      if (args?.includes("--is-bare-repository")) return "true\n";
+      throw new Error("unexpected git command");
+    });
+    expect(deriveBankId({}, "/home/me/myrepo/main")).toBe("coding-agent::myrepo");
+    expect(mockExec).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a hidden non-bare common directory unchanged", () => {
+    mockExec.mockImplementation((_command, args) => {
+      if (args?.includes("--git-common-dir")) return "/home/me/project/.git-bare\n";
+      if (args?.includes("--is-bare-repository")) return "false\n";
+      throw new Error("unexpected git command");
+    });
+    expect(deriveBankId({}, "/home/me/project")).toBe("coding-agent::.git-bare");
+  });
+
   it("resolveWorktrees=false skips git and uses the directory basename", () => {
     mockExec.mockReturnValue("/home/me/dev/myrepo/.git\n");
     expect(deriveBankId({ resolveWorktrees: false }, "/home/me/dev/myrepo-wt")).toBe(

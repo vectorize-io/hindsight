@@ -24,17 +24,19 @@ from collections import defaultdict
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from fnmatch import fnmatchcase
 from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
 
 import asyncpg
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationError, field_validator
 
 from ...config import get_config
 from ...worker.stage import set_stage
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
+from ..llm_interface import OutputTooLongError, ProviderRateLimitResetError
 from ..llm_trace import (
     record_created_memory_ids,
     record_source_memory_ids,
@@ -2870,6 +2872,69 @@ def _dedupe_updates(updates: list[_UpdateAction], *, batch_label: str) -> list[_
     return list(by_id.values())
 
 
+# Backoff for the OUTER batch retry ladder (the provider runs its own, independently).
+# Deliberately short: it only has to ride out a blip, and the caller's adaptive
+# bisection is the real recovery path for anything longer-lived.
+_OUTER_RETRY_INITIAL_BACKOFF = 1.0
+_OUTER_RETRY_MAX_BACKOFF = 8.0
+
+
+class _BatchFailureClass(StrEnum):
+    """How the batch retry loop must treat an exception from the LLM call."""
+
+    PROPAGATE = "propagate"
+    """Not a batch failure at all — re-raise so the caller's handler sees it."""
+
+    FAIL_FAST = "fail_fast"
+    """A re-send of the identical payload cannot help; fail the batch immediately."""
+
+    RETRY = "retry"
+    """Transport-shaped; an unchanged re-send may well succeed."""
+
+
+def _classify_batch_failure(exc: Exception) -> _BatchFailureClass:
+    """Decide how ``_consolidate_batch_with_llm`` should react to ``exc``.
+
+    Before #3684 the loop caught bare ``Exception`` and retried everything on one
+    ladder, on top of the provider's own. Three problems, in descending severity:
+
+    1. ``ProviderRateLimitResetError`` is a *control signal*, not a failure: the
+       provider told us when quota reopens, and ``execute_task`` turns it into a
+       ``DeferOperation`` that reschedules the job for exactly then. Catching it
+       here meant the defer never fired — the batch was reported failed, adaptive
+       bisection re-hit the same quota wall on every sub-batch, and each memory
+       ended up stamped ``consolidation_failed_at``. That flag is the exclusion
+       predicate for pending consolidation and is cleared only by an explicit
+       bank-wide reset, so a *transient* quota exhaustion permanently orphaned
+       those facts. ``fact_extraction`` re-raises it for the same reason.
+    2. A 401/403 is a permanent server misconfiguration. Same shape as (1): every
+       memory in the bank would be marked failed because a key was wrong.
+    3. Malformed or schema-invalid output is input-shaped. Consolidation pins
+       ``llm_temperature_consolidation`` (0.0 by default) and this loop rebuilds a
+       byte-identical payload, so a re-send asks a greedy decoder the same question
+       and gets the same answer — the reporter measured twelve failures at the same
+       character offset. Retrying still costs a full generation, and for a JSON
+       parse error that is on top of the four the provider already burned.
+
+    ``FAIL_FAST`` is not "give up": the batch is still reported failed, so the
+    caller's adaptive bisection halves it and tries again. That path *does* vary
+    the input, which is what an input-shaped failure needs. It is the identical
+    re-send at the same batch size that has nothing to offer.
+    """
+    if isinstance(exc, ProviderRateLimitResetError):
+        return _BatchFailureClass.PROPAGATE
+    # Duck-typed rather than importing a provider SDK's error class: every SDK we
+    # front (openai, anthropic) exposes the HTTP status this way.
+    if getattr(exc, "status_code", None) in (401, 403):
+        return _BatchFailureClass.PROPAGATE
+    if isinstance(exc, json.JSONDecodeError | ValidationError | OutputTooLongError):
+        return _BatchFailureClass.FAIL_FAST
+    # Providers that surface an empty/unusable body flag their own retryability.
+    if getattr(exc, "retryable", None) is False:
+        return _BatchFailureClass.FAIL_FAST
+    return _BatchFailureClass.RETRY
+
+
 async def _consolidate_batch_with_llm(
     llm_config: Any,
     memories: list[dict[str, Any]],
@@ -2959,6 +3024,7 @@ async def _consolidate_batch_with_llm(
     max_attempts = config.consolidation_max_attempts
     inner_max_retries = config.consolidation_llm_max_retries
     last_exc: Exception | None = None
+    attempts_made = 0
     # Pre-compute a stable identifier set for the batch so failure logs name the
     # exact memories whose consolidation is failing — without this, an opaque
     # "LLM batch call failed" line gives operators no way to find the offending
@@ -2970,6 +3036,7 @@ async def _consolidate_batch_with_llm(
         ids_label = f"{', '.join(memory_ids[:3])}, ... +{len(memory_ids) - 3} more"
     batch_label = f"{len(memory_ids)} memories [{ids_label}]"
     for attempt in range(1, max_attempts + 1):
+        attempts_made = attempt
         try:
             call_kwargs: dict[str, Any] = {
                 "messages": [
@@ -3014,14 +3081,34 @@ async def _consolidate_batch_with_llm(
                 prompt_chars=len(system_prompt) + len(user_content),
             )
         except Exception as exc:
+            failure_class = _classify_batch_failure(exc)
+            if failure_class is _BatchFailureClass.PROPAGATE:
+                logger.warning(
+                    f"[CONSOLIDATION] LLM batch call for {batch_label} raised a non-batch failure "
+                    f"({type(exc).__name__}); propagating to the task handler rather than marking "
+                    f"the memories failed: {exc}"
+                )
+                raise
             last_exc = exc
+            if failure_class is _BatchFailureClass.FAIL_FAST:
+                logger.warning(
+                    f"[CONSOLIDATION] LLM batch call failed (attempt {attempt}/{max_attempts}) for "
+                    f"{batch_label} with a non-retryable {type(exc).__name__}; not re-sending the "
+                    f"identical payload: {exc}"
+                )
+                break
             logger.warning(
                 f"[CONSOLIDATION] LLM batch call failed (attempt {attempt}/{max_attempts}) for {batch_label}: {exc}"
             )
+            # Backoff on the outer ladder too. Without it a rate limit or a transient
+            # overload was re-sent immediately, three times, defeating the point of the
+            # provider's own backoff. Skipped after the final attempt — nothing follows it.
+            if attempt < max_attempts:
+                await asyncio.sleep(min(_OUTER_RETRY_INITIAL_BACKOFF * (2 ** (attempt - 1)), _OUTER_RETRY_MAX_BACKOFF))
 
     logger.error(
-        f"[CONSOLIDATION] LLM batch call failed after {max_attempts} attempts for {batch_label}, "
-        f"skipping batch. Last error: {last_exc}"
+        f"[CONSOLIDATION] LLM batch call failed after {attempts_made}/{max_attempts} attempt(s) for "
+        f"{batch_label}, skipping batch (the caller will bisect it). Last error: {last_exc}"
     )
     return _BatchLLMResult(
         obs_count=len(union_observations), prompt_chars=len(system_prompt) + len(user_content), failed=True

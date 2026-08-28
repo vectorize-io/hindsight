@@ -5,6 +5,7 @@ This module defines the interface that all LLM providers must implement,
 enabling support for multiple LLM backends (OpenAI, Anthropic, Gemini, Codex, etc.)
 """
 
+import hashlib
 import logging
 from abc import ABC, abstractmethod
 from contextlib import AbstractAsyncContextManager
@@ -223,6 +224,34 @@ class LLMInterface(ABC):
         """
         return False
 
+    @property
+    def batch_account_key(self) -> str:
+        """Stable, non-secret identifier for the provider *account* this impl calls.
+
+        A batch id only exists on the account that created it, so crash recovery
+        has to resolve the exact configured member again. ``provider`` cannot do
+        that on its own: two members of the same provider on different
+        credentials are indistinguishable by name, so reordering them (or
+        inserting a new one in front) would route a resume through the wrong
+        account and poll a batch id it has never seen — issue #3671.
+
+        The key is the endpoint identity (provider + base URL) plus a truncated
+        SHA-256 of the credential: enough to tell two accounts apart, never the
+        credential itself, since this is persisted in ``async_operations``
+        metadata and quoted back in operator-facing errors. The model is
+        deliberately excluded — a batch belongs to the account, not to the model
+        a request happened to name — so retargeting a member's model still
+        resumes. Rotating its API key does not: the key changes and recovery
+        fails loudly naming both sides, which is the safe direction to fail in.
+
+        A provider that rotates its credential in place (a refreshed OAuth/JWT
+        token rather than an operator edit) must override this with a key built
+        from the stable account identity — none of the batch-capable providers
+        does so today.
+        """
+        credential = hashlib.sha256((self.api_key or "").encode("utf-8")).hexdigest()[:12]
+        return f"{self.provider}|{self.base_url or ''}|{credential}"
+
     def supports_attempt_scoped_concurrency(self) -> bool:
         """Whether retries can acquire concurrency permits per upstream attempt."""
         return False
@@ -374,6 +403,21 @@ class OutputTooLongError(Exception):
     """
 
     pass
+
+
+class ProviderContentPolicyError(RuntimeError):
+    """Raised when a provider refuses a request on content-policy (AUP) grounds.
+
+    A refusal is a deterministic function of the content, not a transient fault:
+    the same prompt earns the same refusal on every attempt. Retrying it — inside
+    the provider's transport loop or by re-running the whole worker task — burns
+    identical calls for a guaranteed-identical failure (issue #3690), so both
+    layers treat this as permanent: the provider raises it without retrying, and
+    ``_is_non_retryable_task_error`` marks the operation failed on first sight.
+
+    A ``RuntimeError`` subclass so existing ``except RuntimeError`` handlers
+    around LLM calls keep behaving as they did before the class existed.
+    """
 
 
 class ProviderRateLimitResetError(Exception):

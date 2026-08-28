@@ -1043,14 +1043,15 @@ class FlashRankCrossEncoder(CrossEncoderModel):
 
 
 def _truncate_to_tokens(text: str, max_tokens: int) -> str:
-    """Truncate text to at most max_tokens using the shared tiktoken encoder."""
-    from .memory_engine import _get_tiktoken_encoding
+    """Truncate text to at most max_tokens using the shared encoder.
 
-    enc = _get_tiktoken_encoding()
-    tokens = enc.encode(text)
-    if len(tokens) <= max_tokens:
-        return text
-    return enc.decode(tokens[:max_tokens])
+    Reranking truncates every candidate document, and the overwhelming majority
+    already fit — so this counts first and only builds the ids for the ones that
+    actually need cutting.
+    """
+    from .token_encoding import truncate_to_tokens
+
+    return truncate_to_tokens(text, max_tokens).text
 
 
 class LiteLLMCrossEncoder(CrossEncoderModel):
@@ -1088,7 +1089,7 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
                    Use provider prefix (e.g., cohere/, together_ai/, voyage/)
             timeout: Request timeout in seconds (default: 60.0)
             max_tokens_per_doc: If set, truncate each document to this many tokens before
-                                sending to the reranker (uses tiktoken cl100k_base encoding).
+                                sending to the reranker (uses the configured encoding).
                                 Useful for models with small context windows (e.g. 1024 tokens).
         """
         self.api_base = api_base.rstrip("/")
@@ -1203,7 +1204,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
             api_base: Custom base URL for API (optional)
             timeout: Request timeout in seconds (default: 60.0)
             max_tokens_per_doc: If set, truncate each document to this many tokens before
-                                sending to the reranker (uses tiktoken cl100k_base encoding).
+                                sending to the reranker (uses the configured encoding).
                                 Useful for models with small context windows (e.g. 1024 tokens).
         """
         self.api_key = api_key

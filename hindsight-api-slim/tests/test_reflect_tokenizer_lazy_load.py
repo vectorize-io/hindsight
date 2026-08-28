@@ -7,28 +7,30 @@ def _drop_reflect_modules() -> None:
     for name in list(sys.modules):
         if name == "hindsight_api.engine.reflect" or name.startswith("hindsight_api.engine.reflect."):
             sys.modules.pop(name)
-    # The cl100k encoding is cached in engine.token_encoding; drop it too so the
-    # fresh reimport starts with an empty cache and the tiktoken patch is observed.
+    # The encoding is cached in engine.token_encoding; drop it too so the fresh
+    # reimport starts with an empty cache and the quicktok patch is observed.
     sys.modules.pop("hindsight_api.engine.token_encoding", None)
 
 
-def test_reflect_import_does_not_load_tiktoken_encoding():
+def test_reflect_import_does_not_load_tokenizer_encoding():
     _drop_reflect_modules()
 
-    with patch("tiktoken.get_encoding") as get_encoding:
+    with patch("quicktok.get_encoding") as get_encoding:
         reflect = importlib.import_module("hindsight_api.engine.reflect")
 
     get_encoding.assert_not_called()
     assert reflect.run_reflect_agent is not None
 
 
-def test_reflect_token_counting_loads_tiktoken_encoding_when_used():
+def test_reflect_token_counting_loads_tokenizer_encoding_when_used():
     _drop_reflect_modules()
     fake_encoding = MagicMock()
-    # _SafeEncoding.encode passes disallowed_special=(); accept and ignore kwargs.
+    # Counting goes through Tokenizer.count(), which takes no kwargs.
+    fake_encoding.count.side_effect = lambda text: len(text.split())
+    # Truncation still needs ids; _SafeEncoding.encode passes disallowed_special=().
     fake_encoding.encode.side_effect = lambda text, **kwargs: text.split()
 
-    with patch("tiktoken.get_encoding", return_value=fake_encoding) as get_encoding:
+    with patch("quicktok.get_encoding", return_value=fake_encoding) as get_encoding:
         agent = importlib.import_module("hindsight_api.engine.reflect.agent")
         prompts = importlib.import_module("hindsight_api.engine.reflect.prompts")
 
@@ -40,6 +42,10 @@ def test_reflect_token_counting_loads_tiktoken_encoding_when_used():
             max_context_tokens=1000,
         )
 
+    from hindsight_api.config import _get_raw_config
+
     assert count == 2
     assert "three four" in final_prompt
-    get_encoding.assert_called_once_with("cl100k_base")
+    # Whatever this deployment configured — asserting the literal default would
+    # break for anyone with HINDSIGHT_API_TOKENIZER_ENCODING set in their .env.
+    get_encoding.assert_called_once_with(_get_raw_config().tokenizer_encoding)

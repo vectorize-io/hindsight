@@ -13,8 +13,8 @@ from .ops import (
     LinkExpansionRows,
     TagListingParts,
     UpdatedWindow,
+    bank_serialization_sql,
     document_serialization_sql,
-    graph_maintenance_bank_serialization_sql,
 )
 from .result import ResultRow
 
@@ -1344,24 +1344,25 @@ class PostgreSQLOps(DataAccessOps):
         self,
         conn,
         table: str,
-        busy_bank_ids: list[str],
         claimed_ids: list,
         limit: int,
         priority_map: dict[str, int] | None,
     ) -> list:
         """Claim consolidation tasks with optional priority-based tiered ordering.
 
-        When *priority_map* is ``None``, uses the default ``ORDER BY created_at``
-        with bank-serialization (exclude busy banks).  When set, claims in
-        priority tiers — highest-priority banks first.  Specific patterns always
-        take precedence over the catch-all ``*`` entry.
+        When *priority_map* is ``None``, uses the default ``ORDER BY created_at``.
+        When set, claims in priority tiers — highest-priority banks first.
+        Specific patterns always take precedence over the catch-all ``*`` entry.
+
+        Every query here carries :func:`bank_serialization_sql`, so whichever
+        tier a bank is claimed in, at most one of its consolidations is taken.
         """
         if limit <= 0:
             return []
 
         # --- Fast path: no priority map -> current behavior ---
         if not priority_map:
-            return await self._claim_consolidation_plain(conn, table, busy_bank_ids, claimed_ids, limit)
+            return await self._claim_consolidation_plain(conn, table, claimed_ids, limit)
 
         # --- Tiered claiming ---
         # Separate specific patterns from catch-all.
@@ -1396,7 +1397,6 @@ class PostgreSQLOps(DataAccessOps):
                 rows = await self._claim_consolidation_like(
                     conn,
                     table,
-                    busy_bank_ids,
                     claimed_ids,
                     remaining,
                     specific_by_priority[pri],
@@ -1411,7 +1411,6 @@ class PostgreSQLOps(DataAccessOps):
                 rows = await self._claim_consolidation_not_like(
                     conn,
                     table,
-                    busy_bank_ids,
                     claimed_ids,
                     remaining,
                     all_specific_sql,
@@ -1427,104 +1426,64 @@ class PostgreSQLOps(DataAccessOps):
         self,
         conn,
         table,
-        busy_bank_ids,
         claimed_ids,
         limit,
     ) -> list:
         """Claim consolidation tasks with default created_at ordering."""
-        exclude_ids = claimed_ids if claimed_ids else None
-        if busy_bank_ids:
-            if exclude_ids:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND bank_id != ALL($1::text[])
-                      AND operation_id != ALL($2::uuid[])
-                    ORDER BY created_at
-                    LIMIT $3
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    busy_bank_ids,
-                    exclude_ids,
-                    limit,
-                )
-            else:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND bank_id != ALL($1::text[])
-                    ORDER BY created_at
-                    LIMIT $2
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    busy_bank_ids,
-                    limit,
-                )
-        else:
-            if exclude_ids:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND operation_id != ALL($1::uuid[])
-                    ORDER BY created_at
-                    LIMIT $2
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    exclude_ids,
-                    limit,
-                )
-            else:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
-                    LIMIT $1
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    limit,
-                )
+        if claimed_ids:
+            return await conn.fetch(
+                f"""
+                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                FROM {table} o
+                WHERE o.status = 'pending'
+                  AND o.task_payload IS NOT NULL
+                  AND o.operation_type = 'consolidation'
+                  AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                  AND o.operation_id != ALL($1::uuid[])
+                  AND {bank_serialization_sql(table, "o", "consolidation")}
+                ORDER BY o.created_at
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED
+                """,
+                claimed_ids,
+                limit,
+            )
+        return await conn.fetch(
+            f"""
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            FROM {table} o
+            WHERE o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type = 'consolidation'
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o", "consolidation")}
+            ORDER BY o.created_at
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+            """,
+            limit,
+        )
 
     async def _claim_consolidation_like(
         self,
         conn,
         table,
-        busy_bank_ids,
         claimed_ids,
         limit,
         sql_patterns,
     ) -> list:
         """Claim consolidation tasks from banks matching LIKE patterns."""
+        # bank_id is deliberately unqualified in the LIKE ANY / NOT LIKE ALL
+        # conditions here and in _claim_consolidation_not_like: db/oracle.py
+        # rewrites those forms by regex on a bare column name, so an "o."
+        # prefix would survive the rewrite as "o.(bank_id LIKE :p0 OR ...)".
+        # One table is in scope, so unqualified resolves to o.bank_id anyway.
         params: list = [sql_patterns]
         conditions = ["bank_id LIKE ANY($1::text[])"]
         idx = 2
 
-        if busy_bank_ids:
-            conditions.append(f"bank_id != ALL(${idx}::text[])")
-            params.append(busy_bank_ids)
-            idx += 1
-
         if claimed_ids:
-            conditions.append(f"operation_id != ALL(${idx}::uuid[])")
+            conditions.append(f"o.operation_id != ALL(${idx}::uuid[])")
             params.append(claimed_ids)
             idx += 1
 
@@ -1532,14 +1491,15 @@ class PostgreSQLOps(DataAccessOps):
         extra = " AND ".join(conditions)
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
-            FROM {table}
-            WHERE status = 'pending'
-              AND task_payload IS NOT NULL
-              AND operation_type = 'consolidation'
-              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            FROM {table} o
+            WHERE o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type = 'consolidation'
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o", "consolidation")}
               AND {extra}
-            ORDER BY created_at
+            ORDER BY o.created_at
             LIMIT ${idx}
             FOR UPDATE SKIP LOCKED
             """,
@@ -1550,7 +1510,6 @@ class PostgreSQLOps(DataAccessOps):
         self,
         conn,
         table,
-        busy_bank_ids,
         claimed_ids,
         limit,
         exclude_patterns,
@@ -1565,13 +1524,8 @@ class PostgreSQLOps(DataAccessOps):
             params.append(exclude_patterns)
             idx += 1
 
-        if busy_bank_ids:
-            conditions.append(f"bank_id != ALL(${idx}::text[])")
-            params.append(busy_bank_ids)
-            idx += 1
-
         if claimed_ids:
-            conditions.append(f"operation_id != ALL(${idx}::uuid[])")
+            conditions.append(f"o.operation_id != ALL(${idx}::uuid[])")
             params.append(claimed_ids)
             idx += 1
 
@@ -1579,13 +1533,14 @@ class PostgreSQLOps(DataAccessOps):
         extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
-            FROM {table}
-            WHERE status = 'pending'
-              AND task_payload IS NOT NULL
-              AND operation_type = 'consolidation'
-              AND (next_retry_at IS NULL OR next_retry_at <= NOW()){extra_clause}
-            ORDER BY created_at
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            FROM {table} o
+            WHERE o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type = 'consolidation'
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o", "consolidation")}{extra_clause}
+            ORDER BY o.created_at
             LIMIT ${idx}
             FOR UPDATE SKIP LOCKED
             """,
@@ -1611,18 +1566,9 @@ class PostgreSQLOps(DataAccessOps):
                 continue
 
             if op_type == "consolidation":
-                busy_banks = await conn.fetch(
-                    f"""
-                    SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
-                    """,
-                )
-                busy_bank_ids = [r["bank_id"] for r in busy_banks]
-
                 rows = await self._claim_consolidation_tasks(
                     conn,
                     table,
-                    busy_bank_ids,
                     claimed_ids,
                     limit,
                     consolidation_bank_priority,
@@ -1636,7 +1582,7 @@ class PostgreSQLOps(DataAccessOps):
                       AND o.task_payload IS NOT NULL
                       AND o.operation_type = $1
                       AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
-                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {bank_serialization_sql(table, "o")}
                       AND {document_serialization_sql(table, "o")}
                     ORDER BY o.created_at
                     LIMIT $2
@@ -1654,7 +1600,7 @@ class PostgreSQLOps(DataAccessOps):
         remaining_shared = shared_limit
         if remaining_shared > 0:
             # 2a. Non-consolidation tasks. graph_maintenance stays in this
-            # created_at-ordered query — see graph_maintenance_bank_serialization_sql
+            # created_at-ordered query — see bank_serialization_sql
             # for why it is a predicate rather than a phase of its own.
             if claimed_ids:
                 rows = await conn.fetch(
@@ -1666,7 +1612,7 @@ class PostgreSQLOps(DataAccessOps):
                       AND o.operation_type != 'consolidation'
                       AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
                       AND o.operation_id != ALL($1::uuid[])
-                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {bank_serialization_sql(table, "o")}
                       AND {document_serialization_sql(table, "o")}
                     ORDER BY o.created_at
                     LIMIT $2
@@ -1684,7 +1630,7 @@ class PostgreSQLOps(DataAccessOps):
                       AND o.task_payload IS NOT NULL
                       AND o.operation_type != 'consolidation'
                       AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
-                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {bank_serialization_sql(table, "o")}
                       AND {document_serialization_sql(table, "o")}
                     ORDER BY o.created_at
                     LIMIT $1
@@ -1700,18 +1646,9 @@ class PostgreSQLOps(DataAccessOps):
 
             # 2b. Consolidation tasks (with bank-serialization + optional priority)
             if remaining_shared > 0:
-                busy_banks_2 = await conn.fetch(
-                    f"""
-                    SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
-                    """,
-                )
-                busy_bank_ids_2 = [r["bank_id"] for r in busy_banks_2]
-
                 rows = await self._claim_consolidation_tasks(
                     conn,
                     table,
-                    busy_bank_ids_2,
                     claimed_ids,
                     remaining_shared,
                     consolidation_bank_priority,

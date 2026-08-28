@@ -29,6 +29,7 @@ from ..retain.types import (
     ExtractedFact,
     ProcessedFact,
     RetainContent,
+    pack_embedding,
 )
 from ..schema import fq_table
 from .schema import (
@@ -74,12 +75,17 @@ class ImportResult:
     observations_imported: int = 0
     # Observations dropped because some source fact was not imported in this run.
     observations_skipped: int = 0
+    mental_models_imported: int = 0
+    knowledge_pages_imported: int = 0
     skipped_document_ids: list[str] = field(default_factory=list)
     # Original id -> freshly generated id, for documents imported under "new-id".
     remapped_document_ids: dict[str, str] = field(default_factory=dict)
     # Per-document outcomes, for the engine's post-retain hook. Not serialized
     # into operation result_metadata (the worker handler writes counts only).
     imported_documents: list[ImportedDocument] = field(default_factory=list)
+    # Source memory-unit id -> regenerated target id. Used by whole-bank import
+    # to repair mental-model evidence after the replayed facts are inserted.
+    remapped_unit_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,6 +94,7 @@ class _ObservationOutcome:
 
     imported: int = 0
     skipped: int = 0
+    remapped_unit_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -105,6 +112,8 @@ class ParsedArchive:
     manifest: TransferManifest
     documents: list[TransferDocument]
     observations: list[TransferObservation] = field(default_factory=list)
+    mental_models: list[dict] = field(default_factory=list)
+    knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
 
 
 def _open_archive(archive_bytes: bytes, *, produced_by: str) -> zipfile.ZipFile:
@@ -148,7 +157,19 @@ def parse_archive(archive_bytes: bytes) -> ParsedArchive:
         observations: list[TransferObservation] = []
         if "observations.json" in names:
             observations = [TransferObservation.model_validate(o) for o in json.loads(zf.read("observations.json"))]
-    return ParsedArchive(manifest=manifest, documents=documents, observations=observations)
+        mental_models = json.loads(zf.read("mental_models.json")) if "mental_models.json" in names else []
+        knowledge_pages = (
+            [TransferKnowledgePage.model_validate(p) for p in json.loads(zf.read("knowledge_pages.json"))]
+            if "knowledge_pages.json" in names
+            else []
+        )
+    return ParsedArchive(
+        manifest=manifest,
+        documents=documents,
+        observations=observations,
+        mental_models=mental_models,
+        knowledge_pages=knowledge_pages,
+    )
 
 
 async def import_documents(
@@ -189,6 +210,14 @@ async def import_documents(
         ops = backend.ops
 
     parsed = parse_archive(archive_bytes)
+    if parsed.knowledge_pages and not parsed.mental_models:
+        raise ValueError("Knowledge Pages require their backing mental models in the transfer archive")
+    # Document transfer merges into an existing target bank. Reuse the logical
+    # mental-model ids, but always pin the carried rows to the destination bank;
+    # otherwise ON CONFLICT can silently match the source-bank row on same-schema
+    # transfers and leave the imported page without a backing model.
+    for row in parsed.mental_models:
+        row["bank_id"] = bank_id
     result = ImportResult()
 
     # (original document_id, fact ordinal) -> freshly inserted unit id. Used to
@@ -228,6 +257,10 @@ async def import_documents(
         )
         for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
             ref_map[(document.id, ordinal)] = unit_id
+        for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
+            source_id = document.facts[ordinal].source_id
+            if source_id is not None:
+                result.remapped_unit_ids[source_id] = unit_id
 
     if parsed.observations:
         outcome = await _import_observations(
@@ -240,16 +273,35 @@ async def import_documents(
         )
         result.observations_imported = outcome.imported
         result.observations_skipped = outcome.skipped
+        result.remapped_unit_ids.update(outcome.remapped_unit_ids)
+
+    if parsed.mental_models or parsed.knowledge_pages:
+        mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
+        async with acquire_with_retry(backend) as conn:
+            # Document archives serialize bank-row JSON values directly. Keep
+            # JSON strings as raw JSON here; treating them as decoded values
+            # would encode an object such as trigger_data as a JSON string,
+            # which later makes mental-model listing/tree endpoints fail.
+            result.mental_models_imported = await _restore_rows(
+                conn,
+                "mental_models",
+                parsed.mental_models,
+                bank_rows_json_encoding="serialized",
+            )
+            await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
+            result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
 
     logger.info(
         "[transfer] Imported %d document(s), %d fact(s), %d observation(s) into bank %s "
-        "(%d docs skipped, %d observations skipped)",
+        "(%d docs skipped, %d observations skipped, %d mental model(s), %d knowledge page(s))",
         result.documents_imported,
         result.facts_imported,
         result.observations_imported,
         bank_id,
         result.documents_skipped,
         result.observations_skipped,
+        result.mental_models_imported,
+        result.knowledge_pages_imported,
     )
     return result
 
@@ -463,6 +515,18 @@ async def _restore_knowledge_pages(conn: Any, bank_id: str, pages: list[Transfer
     if not pages:
         return 0
     inserted = 0
+    id_map: dict[str, str] = {}
+    for page in pages:
+        # Knowledge-page ids are globally unique within a schema, unlike the
+        # bank-scoped mental-model ids. A document transfer is a merge, so a
+        # source page can already exist in the target schema; remap only those
+        # collisions and rewrite parent links below.
+        page_id = page.id
+        if await conn.fetchval(
+            f"SELECT 1 FROM {fq_table('knowledge_pages')} WHERE id = $1 AND bank_id <> $2", page_id, bank_id
+        ):
+            page_id = str(uuid.uuid4())
+        id_map[page.id] = page_id
     for page in _topological_page_order(pages):
         await conn.execute(
             f"""
@@ -471,9 +535,9 @@ async def _restore_knowledge_pages(conn: Any, bank_id: str, pages: list[Transfer
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, now()), COALESCE($10, now()))
             ON CONFLICT DO NOTHING
             """,
-            page.id,
+            id_map[page.id],
             bank_id,
-            page.parent_id,
+            id_map.get(page.parent_id) if page.parent_id else None,
             page.kind,
             page.name,
             page.mental_model_id,
@@ -602,6 +666,14 @@ async def import_bank(
         facts_imported=doc_result.facts_imported,
         observations_imported=doc_result.observations_imported,
     )
+
+    # Facts and observations are replayed with fresh ids, but mental-model rows
+    # keep their ids and are restored verbatim below. Repair their grounding
+    # references before insertion so current and historical based_on data points
+    # at the target bank's units rather than the source bank's units.
+    unit_id_map = doc_result.remapped_unit_ids
+    _remap_mental_model_evidence(parsed.bank_rows.get("mental_models", []), unit_id_map)
+    _remap_mental_model_evidence(parsed.bank_rows.get("mental_model_history", []), unit_id_map)
 
     # Re-embed restored mental models off-connection (the source embedding was
     # stripped on export), so no DB connection is held across the embedding call.
@@ -980,7 +1052,7 @@ async def _import_observations(
         ProcessedFact(
             fact_text=obs.text,
             fact_type="observation",
-            embedding=embedding,
+            embedding=pack_embedding(embedding),
             occurred_start=obs.occurred_start,
             occurred_end=obs.occurred_end,
             mentioned_at=_observation_mentioned_at(obs),
@@ -1001,6 +1073,13 @@ async def _import_observations(
             all_source_ids: set[uuid.UUID] = set()
             for (obs, sources), obs_unit_id in zip(resolved, obs_unit_ids):
                 observation_uuid = uuid.UUID(obs_unit_id)
+                if obs.created_at is not None:
+                    await conn.execute(
+                        f"UPDATE {fq_table('memory_units')} SET created_at = $1 WHERE id = $2 AND bank_id = $3",
+                        obs.created_at,
+                        observation_uuid,
+                        bank_id,
+                    )
                 if obs.event_date is not None:
                     # insert_facts_batch derives event_date for normal writes;
                     # transfer restores the source value carried by the archive.
@@ -1013,6 +1092,8 @@ async def _import_observations(
                 source_uuids = [uuid.UUID(s) for s in sources]
                 all_source_ids.update(source_uuids)
                 await _link_observation_sources(conn, ops, bank_id, observation_uuid, source_uuids, obs.proof_count)
+                if obs.source_id is not None:
+                    outcome.remapped_unit_ids[obs.source_id] = str(observation_uuid)
 
             # Mark source facts consolidated so the target consolidator skips
             # them. COALESCE keeps the exact source timestamp already restored by
@@ -1028,6 +1109,58 @@ async def _import_observations(
 
     outcome.imported = len(resolved)
     return outcome
+
+
+def _remap_based_on_ids(payload: dict[str, Any] | None, unit_id_map: dict[str, str]) -> None:
+    """Rewrite memory-unit ids in a persisted reflect response after transfer.
+
+    Mental-model rows retain their ids during a whole-bank restore, while facts
+    and observations are replayed and receive new ids. The response is otherwise
+    copied verbatim, so update only evidence ids and preserve all generated text
+    and metadata. Older archives without source ids simply have no entries to
+    rewrite.
+    """
+    if not payload or not unit_id_map:
+        return
+    based_on = payload.get("based_on")
+    if not isinstance(based_on, dict):
+        return
+    for entries in based_on.values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if isinstance(entry, dict):
+                source_id = entry.get("id")
+                if isinstance(source_id, str) and source_id in unit_id_map:
+                    entry["id"] = unit_id_map[source_id]
+
+
+def _remap_mental_model_evidence(rows: list[dict], unit_id_map: dict[str, str]) -> None:
+    """Repair current and historical mental-model reflect-response evidence."""
+    for row in rows:
+        reflect_response = _decode_json_object(row.get("reflect_response"))
+        if isinstance(reflect_response, dict):
+            _remap_based_on_ids(reflect_response, unit_id_map)
+            row["reflect_response"] = reflect_response
+        previous = _decode_json_object(row.get("previous_reflect_response"))
+        if isinstance(previous, dict):
+            _remap_based_on_ids(previous, unit_id_map)
+            row["previous_reflect_response"] = previous
+
+
+def _decode_json_object(value: Any) -> Any:
+    """Accept decoded JSONB values and one or more serialized JSON layers."""
+    for _ in range(3):
+        if not isinstance(value, str):
+            return value
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        if decoded == value:
+            return value
+        value = decoded
+    return value
 
 
 async def _link_observation_sources(

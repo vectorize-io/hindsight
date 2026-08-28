@@ -16,6 +16,7 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from hindsight_api.alembic import _owned
 from hindsight_api.engine.memory_engine import MemoryEngine
 
 
@@ -325,6 +326,21 @@ class _FakeAlembicContext:
         self.config = SimpleNamespace(get_main_option=lambda name: target_schema if name == "target_schema" else None)
 
 
+def _capture_sql(monkeypatch) -> list[str]:
+    """Redirect every statement these migrations issue into a list.
+
+    They route their SQL through ``execute_unless_owned``, so the sink is
+    ``_owned.op`` — the same ``alembic.op`` proxy the migrations used to call
+    directly. ``HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES`` is cleared as well:
+    with it set, the guard would swallow the statements and every assertion
+    below would pass vacuously on an empty list.
+    """
+    monkeypatch.delenv(_owned.ENV_EXTERNALLY_OWNED_ROUTINES, raising=False)
+    executed: list[str] = []
+    monkeypatch.setattr(_owned.op, "execute", lambda sql: executed.append(str(sql)))
+    return executed
+
+
 def _capture_upgrade(migration, monkeypatch, target_schema: str | None, configured_schema: str = "public") -> list[str]:
     """Run the migration's ``_pg_upgrade`` for ``target_schema``, capturing SQL.
 
@@ -334,8 +350,7 @@ def _capture_upgrade(migration, monkeypatch, target_schema: str | None, configur
     monkeypatch.setattr(migration, "context", _FakeAlembicContext(target_schema))
     if hasattr(migration, "get_config"):
         monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema=configured_schema))
-    executed: list[str] = []
-    monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(str(sql)))
+    executed = _capture_sql(monkeypatch)
     migration._pg_upgrade()
     return executed
 
@@ -365,6 +380,29 @@ def test_routines_install_in_the_configured_schema(monkeypatch, target_schema, c
     assert not hasattr(migration, "_should_install_public_routines")
     # ...and neither must an advisory lock (unusable behind poolers; see #2817).
     assert "advisory" not in joined.lower()
+
+
+def test_an_owned_routine_is_left_alone_by_a_real_migration(monkeypatch):
+    """A deployment that owns a routine keeps its own implementation.
+
+    ``test_externally_owned_routines.py`` covers the guard and proves every
+    install site uses it; this drives a real migration end to end, so the two
+    halves cannot pass while the wiring between them is broken. Only the named
+    routine is skipped — the rest install exactly as before.
+    """
+    migration = _load_schema_local_migration()
+    monkeypatch.setattr(migration, "context", _FakeAlembicContext("hs_tenant"))
+    monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema="hs_tenant"))
+    executed: list[str] = []
+    monkeypatch.setattr(_owned.op, "execute", lambda sql: executed.append(str(sql)))
+    monkeypatch.setenv(_owned.ENV_EXTERNALLY_OWNED_ROUTINES, "mental_models_with_cron")
+
+    migration._pg_upgrade()
+    joined = "\n".join(executed)
+
+    assert "mental_models_with_cron" not in joined
+    for routine in ("banks_needing_consolidation", "schemas_with_expired_rows"):
+        assert f'CREATE OR REPLACE FUNCTION "hs_tenant".{routine}' in joined
 
 
 def test_tenant_runs_install_nothing_and_clean_up_strays(monkeypatch):
@@ -430,8 +468,7 @@ async def test_routines_callable_from_non_public_schema(memory: MemoryEngine, re
 def _capture_downgrade(migration, monkeypatch, target_schema, configured_schema) -> list[str]:
     monkeypatch.setattr(migration, "context", _FakeAlembicContext(target_schema))
     monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema=configured_schema))
-    executed: list[str] = []
-    monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(str(sql)))
+    executed = _capture_sql(monkeypatch)
     migration._pg_downgrade()
     return executed
 

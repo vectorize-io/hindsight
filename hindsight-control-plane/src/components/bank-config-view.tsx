@@ -118,10 +118,11 @@ type MentalModelsEdits = {
   mental_model_min_refresh_interval_seconds: number | null;
 };
 
-// Recall pipeline stages. null = inherit the server default (all three ship
+// Recall pipeline stages. null = inherit the server default (all four ship
 // enabled); explicit false switches that stage off for this bank, trading
-// recall breadth for latency. Semantic + BM25 always run.
+// recall breadth for latency. Semantic always runs — it is the baseline arm.
 type RecallEdits = {
+  enable_text_search: boolean | null;
   enable_temporal_retrieval: boolean | null;
   enable_graph_retrieval: boolean | null;
   enable_reranking: boolean | null;
@@ -344,6 +345,7 @@ function mentalModelsSlice(overrides: Record<string, any>): MentalModelsEdits {
 
 function recallSlice(overrides: Record<string, any>): RecallEdits {
   return {
+    enable_text_search: overrides.enable_text_search ?? null,
     enable_temporal_retrieval: overrides.enable_temporal_retrieval ?? null,
     enable_graph_retrieval: overrides.enable_graph_retrieval ?? null,
     enable_reranking: overrides.enable_reranking ?? null,
@@ -608,6 +610,7 @@ export function BankConfigView() {
       setBaseOverrides((prev) => {
         const next = { ...prev };
         for (const key of [
+          "enable_text_search",
           "enable_temporal_retrieval",
           "enable_graph_retrieval",
           "enable_reranking",
@@ -1042,6 +1045,7 @@ export function BankConfigView() {
         >
           {(
             [
+              ["enable_text_search", "recallTextSearch"],
               ["enable_temporal_retrieval", "recallTemporalRetrieval"],
               ["enable_graph_retrieval", "recallGraphRetrieval"],
               ["enable_reranking", "recallReranking"],

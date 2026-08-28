@@ -1179,6 +1179,170 @@ class TestRetainCompletedWebhook:
                 await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
             await memory.delete_bank(bank_id, request_context=request_context)
 
+    @staticmethod
+    async def _insert_retain_webhook(pool, webhook_id, bank_id: str) -> None:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                """,
+                webhook_id,
+                bank_id,
+                "https://example.com/retain-hook",
+                ["retain.completed"],
+            )
+
+    @staticmethod
+    async def _cleanup_retain_webhook(memory: MemoryEngine, bank_id: str, webhook_id, request_context) -> None:
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                bank_id,
+            )
+            await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @staticmethod
+    def _split_at(memory: MemoryEngine, monkeypatch, tokens_per_batch: int) -> list[int]:
+        """Force ``_run_retain_execution`` to split, and record how many sub-batches it made.
+
+        ``retain_batch_tokens`` is a static field read through the module-level
+        ``get_config``, so the override goes there rather than on the per-bank resolver.
+        Only that one field differs from the real config.
+
+        The returned list receives the sub-batch count. Without checking it these tests
+        would still pass if the batch never split at all — one sub-batch trivially satisfies
+        "fires once", and the invariant under test would go unexercised.
+        """
+        import dataclasses
+
+        from hindsight_api.config import _get_raw_config
+        from hindsight_api.engine import memory_engine as engine_module
+
+        narrowed = dataclasses.replace(_get_raw_config(), retain_batch_tokens=tokens_per_batch)
+        monkeypatch.setattr(engine_module, "get_config", lambda: narrowed)
+
+        counts: list[int] = []
+        real_iter = engine_module.iter_sub_batches
+
+        def _spy(*args, **kwargs):
+            # Counting means draining, and the retain loop consumes this lazily on purpose,
+            # so the spy re-yields from a list instead of returning the generator. Only the
+            # test pays for materialising it.
+            collected = list(real_iter(*args, **kwargs))
+            counts.append(len(collected))
+            return iter(collected)
+
+        monkeypatch.setattr(engine_module, "iter_sub_batches", _spy)
+        return counts
+
+    @pytest.mark.asyncio
+    async def test_retain_fires_outbox_once_across_packed_sub_batches(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """Items packed across several sub-batches queue each document's event exactly once.
+
+        A pre-built callback covers the whole operation and queues one row per content item,
+        so it must fire on exactly one sub-batch — the last, inside its transaction. Nothing
+        else guarantees delivery at this level, and both ways of getting it wrong are
+        silent: never firing loses every webhook while the retain still reports success,
+        and firing per sub-batch multiplies them. Asserting the exact count catches both —
+        four documents across four sub-batches is 4, against 0 and 16.
+        """
+        bank_id = f"wh-packed-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            await _ensure_bank(memory._pool, bank_id)
+            await self._insert_retain_webhook(memory._pool, webhook_id, bank_id)
+
+            # A budget small enough that each item lands in its own sub-batch.
+            split_counts = self._split_at(memory, monkeypatch, tokens_per_batch=12)
+            contents = [
+                {"content": f"Person {i} works at Company {i} in City {i}.", "document_id": f"doc-packed-{i}"}
+                for i in range(4)
+            ]
+
+            callback = memory._build_retain_outbox_callback(
+                bank_id=bank_id, contents=contents, operation_id="op-packed"
+            )
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            assert split_counts and split_counts[0] > 1, (
+                f"the batch never split, so nothing was tested (sub-batches: {split_counts})"
+            )
+            deliveries = await self._count_retain_deliveries(memory._pool, bank_id)
+            assert deliveries == len(contents), (
+                f"expected one retain.completed per document ({len(contents)}) fired from a single "
+                f"sub-batch, got {deliveries} across {split_counts[0]} sub-batches"
+            )
+        finally:
+            memory._webhook_manager = original_manager
+            await self._cleanup_retain_webhook(memory, bank_id, webhook_id, request_context)
+
+    @pytest.mark.asyncio
+    async def test_retain_fires_outbox_once_across_sliced_sub_batches(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """One oversized item sliced into many sub-batches queues retain.completed ONCE.
+
+        The other way a batch splits: a single document too large for the budget is cut
+        into slices that all share a document_id and run sequentially. The slices are
+        generated rather than enumerated from the input, so "which one is last" is decided
+        differently here than for packed items and needs its own coverage.
+        """
+        bank_id = f"wh-sliced-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            await _ensure_bank(memory._pool, bank_id)
+            await self._insert_retain_webhook(memory._pool, webhook_id, bank_id)
+
+            split_counts = self._split_at(memory, monkeypatch, tokens_per_batch=12)
+            # Long enough to span several native chunks: slices are cut on
+            # ``retain_chunk_size`` (3000 chars) boundaries, never inside one, so a body
+            # under that limit is a single chunk and yields a single sub-batch however
+            # small the token budget is. At ~12k chars this is four chunks, hence four
+            # slices — without the length the test passes without slicing anything.
+            contents = [
+                {
+                    "content": " ".join(f"Fact number {i} concerns Team {i} in Region {i}." for i in range(300)),
+                    "document_id": "doc-sliced",
+                }
+            ]
+
+            callback = memory._build_retain_outbox_callback(
+                bank_id=bank_id, contents=contents, operation_id="op-sliced"
+            )
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            assert split_counts and split_counts[0] > 1, (
+                f"the document was never sliced, so nothing was tested (sub-batches: {split_counts})"
+            )
+            deliveries = await self._count_retain_deliveries(memory._pool, bank_id)
+            assert deliveries == 1, (
+                f"expected exactly one retain.completed for the document, got {deliveries} "
+                f"across {split_counts[0]} slices"
+            )
+        finally:
+            memory._webhook_manager = original_manager
+            await self._cleanup_retain_webhook(memory, bank_id, webhook_id, request_context)
+
     @pytest.mark.asyncio
     async def test_retain_fires_outbox_when_final_batch_extracts_zero_facts(
         self, memory: MemoryEngine, request_context, monkeypatch

@@ -35,7 +35,7 @@ from ._thread_limits import apply_default_thread_limits
 
 apply_default_thread_limits()
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 
 # name -> (module, attribute). Kept as data so `__all__`, `__dir__` and the resolver cannot drift.
 _LAZY_EXPORTS: "dict[str, tuple[str, str]]" = {

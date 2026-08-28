@@ -119,3 +119,56 @@ def test_persistent_too_many_requests_exhausts_retry_budget() -> None:
 
     assert attempts == 3
     assert isinstance(exc_info.value.__context__, httpx.HTTPStatusError)
+
+
+def test_default_tei_batch_size_is_32() -> None:
+    """Unset env keeps the historical 32 texts per /embed request."""
+    import os
+
+    from hindsight_api.config import HindsightConfig
+
+    saved_provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER")
+    saved_batch = os.environ.pop("HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE", None)
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    try:
+        assert HindsightConfig.from_env().embeddings_tei_batch_size == 32
+    finally:
+        if saved_batch is not None:
+            os.environ["HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE"] = saved_batch
+        if saved_provider is None:
+            os.environ.pop("HINDSIGHT_API_LLM_PROVIDER", None)
+        else:
+            os.environ["HINDSIGHT_API_LLM_PROVIDER"] = saved_provider
+
+
+def test_tei_batch_size_env_var_reaches_the_client() -> None:
+    """The configured batch size is what encode() splits on, not the hardcoded 32."""
+    import os
+
+    from hindsight_api.config import HindsightConfig, clear_config_cache
+    from hindsight_api.engine.embeddings import create_embeddings_from_env
+
+    saved = {
+        key: os.environ.get(key)
+        for key in (
+            "HINDSIGHT_API_LLM_PROVIDER",
+            "HINDSIGHT_API_EMBEDDINGS_PROVIDER",
+            "HINDSIGHT_API_EMBEDDINGS_TEI_URL",
+            "HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE",
+        )
+    }
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_EMBEDDINGS_PROVIDER"] = "tei"
+    os.environ["HINDSIGHT_API_EMBEDDINGS_TEI_URL"] = "http://localhost:8080"
+    os.environ["HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE"] = "128"
+    clear_config_cache()
+    try:
+        assert HindsightConfig.from_env().embeddings_tei_batch_size == 128
+        assert create_embeddings_from_env().batch_size == 128
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        clear_config_cache()

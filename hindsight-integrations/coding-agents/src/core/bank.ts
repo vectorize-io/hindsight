@@ -51,13 +51,44 @@ export function getProjectRootFromGit(directory: string): string | null {
     const commonDir = execFileSync(
       "git",
       ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { cwd: directory, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000 }
+      {
+        cwd: directory,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1000,
+        windowsHide: true,
+      }
     ).trim();
     if (!commonDir) return null;
-    // clones + `git worktree add`: common-dir is `<main root>/.git`; bare repos: the dir itself.
-    return basename(commonDir) === ".git" ? dirname(commonDir) : commonDir;
+    // Clones + `git worktree add`: common-dir is `<main root>/.git`.
+    if (basename(commonDir) === ".git") return dirname(commonDir);
+
+    // A bare-hub keeps its bare repository in a hidden plumbing directory (usually `.bare`),
+    // while a standalone bare clone uses its directory name as the project identity. Check the
+    // common dir itself because a linked worktree reports `false` for --is-bare-repository.
+    if (basename(commonDir).startsWith(".") && isBareRepository(commonDir)) {
+      return dirname(commonDir);
+    }
+
+    // Preserve the historical name for standalone bare repositories such as `myrepo.git`.
+    return commonDir;
   } catch {
     return null;
+  }
+}
+
+function isBareRepository(commonDir: string): boolean {
+  try {
+    return (
+      execFileSync("git", ["-C", commonDir, "rev-parse", "--is-bare-repository"], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1000,
+        env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined },
+      }).trim() === "true"
+    );
+  } catch {
+    return false;
   }
 }
 

@@ -18,12 +18,6 @@ from hindsight_api.api.http import OperationResponse, OperationStatusResponse
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.worker.exceptions import RetryTaskAt
 
-# The reflect agent's fallback answer when the LLM returns nothing usable
-# (hindsight_api/engine/reflect/agent.py). Non-empty, so it survives the
-# empty-content guard in refresh_mental_model and completes wire-successful —
-# exactly the case populated_content must expose.
-NO_ANSWER_STUB = "No answer provided."
-
 
 @pytest.fixture
 async def bank_with_model(memory: MemoryEngine, request_context):
@@ -99,26 +93,6 @@ async def test_completed_refresh_enriches_result_metadata(bank_with_model, reque
     assert meta["content_len"] == 120
     assert meta["populated_content"] is True
     assert meta["based_on_counts"] == {"world": 3, "mental-models": 1}
-
-
-@pytest.mark.asyncio
-async def test_no_answer_stub_reads_as_unpopulated(bank_with_model, request_context, monkeypatch):
-    """The historical 19-char stub completes wire-successful but must not read as populated."""
-    memory, bank_id, mm = bank_with_model
-
-    operation_id = await _submit_with_fake_refresh(
-        memory, monkeypatch, bank_id, mm, request_context, _fake_refreshed(NO_ANSWER_STUB, {})
-    )
-
-    status = await memory.get_operation_status(
-        bank_id=bank_id, operation_id=operation_id, request_context=request_context
-    )
-    assert status["status"] == "completed"
-    meta = status["result_metadata"]
-
-    assert meta["content_len"] == len(NO_ANSWER_STUB)
-    assert meta["populated_content"] is False
-    assert meta["based_on_counts"] == {}
 
 
 # ---------------------------------------------------------------------------

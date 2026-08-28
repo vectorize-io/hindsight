@@ -161,7 +161,9 @@ async def test_batch_causal_targets_use_each_chunk_start(monkeypatch):
     # (#3649). Stubbing `_provider_impl` instead would model the pre-#3649 shape.
     batch_impl = Provider()
 
-    async def _batch_provider_impl():
+    # ``account_key`` pins a crash-recovery resume to the account that submitted
+    # the batch (#3671); this test never resumes, so it is always None here.
+    async def _batch_provider_impl(account_key: str | None = None):
         return batch_impl
 
     llm_config = SimpleNamespace(batch_provider_impl=_batch_provider_impl, provider="test")

@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from .tokenization import count_cl100k_tokens
+from .tokenization import count_prompt_tokens
 
 # Fraction of max_context_tokens reserved for tool results in the final synthesis prompt.
 # The remainder covers the system prompt, question, bank context, and output tokens.
@@ -524,13 +524,13 @@ def _cut_entry_to_budget(entry: dict, token_budget: int) -> dict:
         output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
     except (TypeError, ValueError):
         output_str = str(output)
-    tokens = count_cl100k_tokens(output_str)
+    tokens = count_prompt_tokens(output_str)
     while output_str and tokens > token_budget:
         # Proportional shrink with a safety margin; the loop guards against the
         # estimate landing high, and always makes progress.
         keep = min(len(output_str) - 1, max(1, int(len(output_str) * token_budget / tokens * 0.95)))
         output_str = output_str[:keep]
-        tokens = count_cl100k_tokens(output_str)
+        tokens = count_prompt_tokens(output_str)
     return {**entry, "output": {"truncated": True, "content": output_str}}
 
 
@@ -568,7 +568,7 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
         current_tokens += tokens
 
     for entry in context_history:
-        tokens = count_cl100k_tokens(_render_history_block(entry))
+        tokens = count_prompt_tokens(_render_history_block(entry))
         if tokens <= budget:
             _append_block(entry, tokens)
             continue
@@ -585,27 +585,27 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
         )
         if split_key is None:
             cut = _cut_entry_to_budget(entry, budget)
-            _append_block(cut, count_cl100k_tokens(_render_history_block(cut)))
+            _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
             continue
 
         items = output[split_key]
         piece: list = []
         for item in items:
             candidate = {**entry, "output": {**output, split_key: piece + [item]}}
-            if piece and count_cl100k_tokens(_render_history_block(candidate)) > budget:
+            if piece and count_prompt_tokens(_render_history_block(candidate)) > budget:
                 partial = {**entry, "output": {**output, split_key: piece}}
-                _append_block(partial, count_cl100k_tokens(_render_history_block(partial)))
+                _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
                 piece = []
                 candidate = {**entry, "output": {**output, split_key: [item]}}
-            single_tokens = count_cl100k_tokens(_render_history_block(candidate))
+            single_tokens = count_prompt_tokens(_render_history_block(candidate))
             if not piece and single_tokens > budget:
                 cut = _cut_entry_to_budget({**entry, "output": {**output, split_key: [item]}}, budget)
-                _append_block(cut, count_cl100k_tokens(_render_history_block(cut)))
+                _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
             else:
                 piece.append(item)
         if piece:
             partial = {**entry, "output": {**output, split_key: piece}}
-            _append_block(partial, count_cl100k_tokens(_render_history_block(partial)))
+            _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
 
     _close_current()
     return chunks
@@ -688,7 +688,7 @@ def build_final_prompt(
         truncated = False
         for entry in reversed(context_history):
             block = _render_history_block(entry)
-            block_tokens = count_cl100k_tokens(block)
+            block_tokens = count_prompt_tokens(block)
             if block_tokens > token_budget:
                 truncated = True
                 break
@@ -986,16 +986,13 @@ Examples
 _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS = 24_000
 
 
-def _truncate_cl100k(text: str, max_tokens: int) -> str:
-    """Truncate text to at most max_tokens using cl100k_base."""
+def _truncate_prompt_text(text: str, max_tokens: int) -> str:
+    """Truncate text to at most max_tokens under the configured encoding."""
     if max_tokens <= 0:
         return ""
-    from .tokenization import count_cl100k_tokens
+    from ..token_encoding import truncate_to_tokens
 
-    if count_cl100k_tokens(text) <= max_tokens:
-        return text
-    enc = __import__("tiktoken").get_encoding("cl100k_base")
-    return enc.decode(enc.encode(text)[:max_tokens])
+    return truncate_to_tokens(text, max_tokens).text
 
 
 def _fit_structured_delta_prompt_parts(
@@ -1008,8 +1005,8 @@ def _fit_structured_delta_prompt_parts(
     task_footer: str,
     max_input_tokens: int,
 ) -> tuple[str, str, str, bool]:
-    """Shrink large prompt sections to fit within max_input_tokens (cl100k estimate)."""
-    from .tokenization import count_cl100k_tokens
+    """Shrink large prompt sections to fit within max_input_tokens (tokenizer estimate)."""
+    from .tokenization import count_prompt_tokens
 
     fixed = (
         f"## Topic\n{source_query}\n\n"
@@ -1022,14 +1019,14 @@ def _fit_structured_delta_prompt_parts(
         f"{task_footer}"
     )
     facts_header = "## SUPPORTING FACTS (new since last refresh — integrate these)\n"
-    facts_prefix_tokens = count_cl100k_tokens(facts_header)
+    facts_prefix_tokens = count_prompt_tokens(facts_header)
     reserved_facts = min(4096, max(512, max_input_tokens // 8))
-    doc_budget = max(1024, (max_input_tokens - count_cl100k_tokens(fixed) - reserved_facts) * 55 // 100)
-    cand_budget = max(512, (max_input_tokens - count_cl100k_tokens(fixed) - reserved_facts) * 30 // 100)
+    doc_budget = max(1024, (max_input_tokens - count_prompt_tokens(fixed) - reserved_facts) * 55 // 100)
+    cand_budget = max(512, (max_input_tokens - count_prompt_tokens(fixed) - reserved_facts) * 30 // 100)
     facts_budget = max(256, reserved_facts - facts_prefix_tokens)
-    doc_json = _truncate_cl100k(current_document_json, doc_budget)
-    candidate = _truncate_cl100k(candidate_markdown, cand_budget)
-    facts_body = _truncate_cl100k(facts_block, facts_budget)
+    doc_json = _truncate_prompt_text(current_document_json, doc_budget)
+    candidate = _truncate_prompt_text(candidate_markdown, cand_budget)
+    facts_body = _truncate_prompt_text(facts_block, facts_budget)
     truncated = doc_json != current_document_json or candidate != candidate_markdown or facts_body != facts_block
     return doc_json, candidate, facts_body, truncated
 

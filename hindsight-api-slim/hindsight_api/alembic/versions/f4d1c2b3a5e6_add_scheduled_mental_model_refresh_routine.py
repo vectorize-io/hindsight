@@ -29,9 +29,10 @@ Create Date: 2026-06-23
 
 from collections.abc import Sequence
 
-from alembic import context, op
+from alembic import context
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.alembic._owned import execute_unless_owned
 
 revision: str = "f4d1c2b3a5e6"
 down_revision: str | Sequence[str] | None = "c7e9f1a3b5d2"
@@ -53,7 +54,8 @@ def _pg_upgrade() -> None:
     if not _should_install_public_routines(context.config.get_main_option("target_schema")):
         return
 
-    op.execute(
+    execute_unless_owned(
+        "mental_models_with_cron",
         """
         CREATE OR REPLACE FUNCTION public.mental_models_with_cron()
         RETURNS TABLE(schema_name text, bank_id text, mental_model_id text,
@@ -92,14 +94,14 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
 
 def _pg_downgrade() -> None:
     if not _should_install_public_routines(context.config.get_main_option("target_schema")):
         return
-    op.execute("DROP FUNCTION IF EXISTS public.mental_models_with_cron()")
+    execute_unless_owned("mental_models_with_cron", "DROP FUNCTION IF EXISTS public.mental_models_with_cron()")
 
 
 def upgrade() -> None:

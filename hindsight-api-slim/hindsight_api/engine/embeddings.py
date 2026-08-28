@@ -1692,7 +1692,12 @@ def create_embeddings_from_env() -> Embeddings:
         url = config.embeddings_tei_url
         if not url:
             raise ValueError(f"{ENV_EMBEDDINGS_TEI_URL} is required when {ENV_EMBEDDINGS_PROVIDER} is 'tei'")
-        return RemoteTEIEmbeddings(base_url=url, query_prefix=query_prefix, passage_prefix=passage_prefix)
+        return RemoteTEIEmbeddings(
+            base_url=url,
+            batch_size=config.embeddings_tei_batch_size,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
+        )
     elif provider == "local":
         return LocalSTEmbeddings(
             model_name=config.embeddings_local_model,

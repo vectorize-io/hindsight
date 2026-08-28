@@ -50,9 +50,13 @@ export interface HistoryImport {
   unattributed?: number;
 }
 
-/** Claude encodes a project directory as its absolute path with separators replaced by `-`. */
+/** Claude encodes a project directory as its absolute path with EVERY non-alphanumeric character
+ *  replaced by `-` — separators, dots, underscores, spaces, `+`, `@`, all of them. Case is kept,
+ *  and runs are not collapsed (`/a-1/-b` -> `-a-1--b`), so this is a 1:1 character substitution.
+ *  Verified against Claude Code 2.1.241: `hs_under_test` -> `hs-under-test`, and
+ *  `hs+odd@repo v2` -> `hs-odd-repo-v2`. */
 export function claudeProjectDir(repoDir: string, home = homedir()): string {
-  return join(home, ".claude", "projects", repoDir.replace(/[/.]/g, "-"));
+  return join(home, ".claude", "projects", repoDir.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 
 /** Is `dir` the repo itself or somewhere inside it? */
@@ -114,9 +118,24 @@ function firstLine(path: string, cap = 1_000_000): string | undefined {
   }
 }
 
+/**
+ * The entries of a directory, or none when there is nothing to list.
+ *
+ * `existsSync` answered only half of that: it is TRUE for a regular file sitting where a directory
+ * was expected — a stray `~/.claude/projects/-Users-x-dev-repo-sub` — and the `readdirSync` behind
+ * it then threw ENOTDIR out of `importLocalHistory`, which promises never to throw. One junk entry
+ * killed the whole `--import-conversations` run instead of costing that entry (#3771).
+ */
+function listDir(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return []; // missing, unreadable, or a stray file where a directory was expected
+  }
+}
+
 function jsonlFiles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  return listDir(dir)
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => join(dir, f));
 }
@@ -135,16 +154,14 @@ function claudeHistory(repoDir: string, home: string): HistoryImport {
   const root = join(home, ".claude", "projects");
   const exact = claudeProjectDir(repoDir, home);
   const prefix = exact + "-";
-  const dirs = existsSync(root)
-    ? readdirSync(root)
-        .map((d) => join(root, d))
-        .filter((d) => d === exact || d.startsWith(prefix))
-    : [];
+  const dirs = listDir(root)
+    .map((d) => join(root, d))
+    .filter((d) => d === exact || d.startsWith(prefix));
   const sessions: ChatSession[] = [];
   let unattributed = 0;
   for (const file of dirs.flatMap(jsonlFiles)) {
     // ONLY the cwd recorded inside the session may attribute it to a repo. Falling back to the
-    // directory name would be a guess: `/` and `.` both encode to `-`, so `repo-sub` is either the
+    // directory name would be a guess: every non-alphanumeric encodes to `-`, so `repo-sub` is either the
     // subdirectory `repo/sub` or an unrelated sibling repo — and a wrong guess files someone
     // else's conversation into this repo's memory, which is worse than importing nothing.
     // (Measured: 400/400 sampled sessions record a cwd, so this skips ~nothing in practice.)

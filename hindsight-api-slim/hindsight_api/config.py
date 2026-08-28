@@ -399,6 +399,7 @@ ENV_EMBEDDINGS_ONNX_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX"
 ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX"
 ENV_EMBEDDINGS_ONNX_OUTPUT_NAME = "HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
+ENV_EMBEDDINGS_TEI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
 ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
@@ -463,7 +464,7 @@ ENV_EMBEDDINGS_LITELLM_SDK_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL"
 ENV_EMBEDDINGS_LITELLM_SDK_API_BASE = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE"
 ENV_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS"
 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT"
-# Provider-agnostic per-input truncation cap (tiktoken cl100k_base tokens).
+# Provider-agnostic per-input truncation cap (tokens, see ENV_TOKENIZER_ENCODING).
 ENV_EMBEDDINGS_MAX_INPUT_TOKENS = "HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS"
 # Deprecated alias kept so existing deployments keep working; folded into
 # ENV_EMBEDDINGS_MAX_INPUT_TOKENS (the generic name) at load time.
@@ -627,6 +628,7 @@ ENV_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES = "HINDSIGHT_API_RETAIN_ENTITY_RESOL
 ENV_RETAIN_BATCH_ENABLED = "HINDSIGHT_API_RETAIN_BATCH_ENABLED"
 ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS"
 ENV_RETAIN_CHUNK_BATCH_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE"
+ENV_RETAIN_MEMORY_BUDGET_MB = "HINDSIGHT_API_RETAIN_MEMORY_BUDGET_MB"
 
 # File storage configuration
 ENV_FILE_STORAGE_TYPE = "HINDSIGHT_API_FILE_STORAGE_TYPE"
@@ -725,6 +727,7 @@ ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER = "HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_
 ENV_DB_SESSION_SETUP_ON_ACQUIRE = "HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE"
 ENV_ENTITY_TRGM_SIMILARITY_THRESHOLD = "HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD"
 ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY = "HINDSIGHT_API_ENTITY_INTRABATCH_MERGE_SIMILARITY"
+ENV_ENTITY_MERGE_MIN_SIMILARITY = "HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY"
 
 # Wall-clock cap on model/connection initialization at startup. If embeddings,
 # cross-encoder, or LLM verification hang (e.g. an offline HuggingFace download
@@ -801,6 +804,7 @@ def _parse_worker_slot_reservations() -> dict[str, int]:
 
 ENV_WORKER_CONSOLIDATION_BANK_PRIORITY = "HINDSIGHT_API_WORKER_CONSOLIDATION_BANK_PRIORITY"
 ENV_RETAIN_MAX_CONCURRENT = "HINDSIGHT_API_RETAIN_MAX_CONCURRENT"
+ENV_RETAIN_SUBBATCH_CONCURRENCY = "HINDSIGHT_API_RETAIN_SUBBATCH_CONCURRENCY"
 ENV_RETAIN_WALL_TIMEOUT = "HINDSIGHT_API_RETAIN_WALL_TIMEOUT"
 
 # Reflect agent settings
@@ -820,6 +824,7 @@ ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
 # (e.g. a chunk-extraction bank used as plain retrieval). These switch the
 # individual stages off; per-bank, so one bank can run lean without changing how
 # the rest of the deployment recalls.
+ENV_ENABLE_TEXT_SEARCH = "HINDSIGHT_API_ENABLE_TEXT_SEARCH"
 ENV_ENABLE_TEMPORAL_RETRIEVAL = "HINDSIGHT_API_ENABLE_TEMPORAL_RETRIEVAL"
 ENV_ENABLE_GRAPH_RETRIEVAL = "HINDSIGHT_API_ENABLE_GRAPH_RETRIEVAL"
 ENV_ENABLE_RERANKING = "HINDSIGHT_API_ENABLE_RERANKING"
@@ -988,6 +993,10 @@ DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
 DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
+# Texts per TEI /embed request. Also the batch size the streaming retain producer
+# coalesces its per-chunk embedding calls up to (see embedding_coalescer), so raising
+# it is how a TEI deployment with headroom trades requests for larger ones.
+DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE = 32
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
 DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = 768
 DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
@@ -1167,7 +1176,7 @@ DEFAULT_ANN_ITERATIVE_SCAN = True
 DEFAULT_ANN_MAX_SCAN_TUPLES = 4000
 
 # Text search extension (native PostgreSQL, vchord BM25, Timescale pg_textsearch,
-# pgroonga, or ParadeDB pg_search)
+# pgroonga, or ParadeDB pg_search). Unused by banks with enable_text_search off.
 DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_textsearch", "pgroonga", "pg_search"
 
 # PostgreSQL text search dictionary used by the native tsvector backend. Only
@@ -1186,12 +1195,20 @@ DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC: int | None = None
 # LiteLLM SDK defaults
 DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL = "cohere/embed-english-v3.0"
 DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "float"
-# Opt-in per-text input truncation (tiktoken cl100k_base tokens). Off by default;
+# Opt-in per-text input truncation (tokens, see ENV_TOKENIZER_ENCODING). Off by default;
 # set to the embedding model's real input limit (e.g. 8192 for Bedrock Titan V2, or a
 # llama.cpp server's context) to keep oversized content from permanently failing the
 # embed call. Applies to every embeddings provider. See #2501.
 DEFAULT_EMBEDDINGS_MAX_INPUT_TOKENS: int | None = None
 DEFAULT_RERANKER_LITELLM_SDK_MODEL = "cohere/rerank-english-v3.0"
+
+# Vocabulary used for every token count and chunk boundary in the engine. Server-level:
+# these counts back budgets that stand in for a model's context window, and a bank that
+# counted differently from its neighbours would make those budgets incomparable.
+# o200k_base is what current OpenAI models tokenize with; set cl100k_base to restore the
+# counts Hindsight produced before this default changed. See engine/token_encoding.py.
+ENV_TOKENIZER_ENCODING = "HINDSIGHT_API_TOKENIZER_ENCODING"
+DEFAULT_TOKENIZER_ENCODING = "o200k_base"
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8888
@@ -1236,6 +1253,13 @@ DEFAULT_RETAIN_STRATEGIES: dict | None = None  # Named retain strategies (dict o
 DEFAULT_RETAIN_CHUNK_BATCH_SIZE = (
     100  # Max chunks per streaming batch. Each chunk produces ~17 facts, so 100 chunks = ~1700 facts/batch.
 )
+# Bytes of extracted-but-unwritten state one retain operation may hold, as a hard ceiling
+# on top of the chunk count above. The count alone is not a memory bound — a chunk carries
+# however many facts the extractor found in it — so this is what a worker can actually be
+# sized against: peak per retain is roughly this, whatever the document. Budget for
+# WORKER_MAX_SLOTS concurrent retains when setting it. 0 disables it and restores the
+# count-only bound.
+DEFAULT_RETAIN_MEMORY_BUDGET_MB = 128
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
@@ -1373,6 +1397,17 @@ DEFAULT_ENTITY_TRGM_SIMILARITY_THRESHOLD = 0.15
 # that gap. This is a *merge* cutoff — deliberately stricter than the recall-only
 # ENTITY_TRGM_SIMILARITY_THRESHOLD above. Raise it toward 1.0 to merge only near-identical forms.
 DEFAULT_ENTITY_INTRABATCH_MERGE_SIMILARITY = 0.5
+# Minimum pg_trgm similarity a name must have with an EXISTING entity before that entity can
+# be reused for it. The composite resolution score (name + co-occurrence + recency) has no
+# floor of its own, so without this a name the trigram probe merely admitted as a candidate
+# (>= ENTITY_TRGM_SIMILARITY_THRESHOLD, 0.15) could still be merged onto purely because the
+# bank had seen it recently alongside the same entities — attributing a new person's facts to
+# an unrelated entity (#3751). Applied as a gate, not as a replacement for the name score, so
+# anything that merges above it is unaffected. Sits between the recall threshold (0.15) and the
+# stricter same-batch fold-in cutoff (ENTITY_INTRABATCH_MERGE_SIMILARITY, 0.5). Lower it for
+# corpora of very short names, where trigram similarity is unavoidably low ("Jon"/"John" is
+# 0.29); raise it to merge only clear surface variants.
+DEFAULT_ENTITY_MERGE_MIN_SIMILARITY = 0.3
 DEFAULT_MODEL_INIT_TIMEOUT = 300  # seconds (cap on startup model/connection init; covers first-time downloads)
 
 # Worker configuration (distributed task processing)
@@ -1390,6 +1425,10 @@ DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 DEFAULT_OPERATION_RETENTION_DAYS = 0
 DEFAULT_OPERATION_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
+# Sub-batches of ONE document processed at a time. Most of a sub-batch is a store round-trip, so
+# overlapping a few hides that wait. 1 keeps the splitter exactly one slice ahead of the work,
+# which is what bounds how much of a large document is resident; raise it knowingly.
+DEFAULT_RETAIN_SUBBATCH_CONCURRENCY = 1
 # Wall-clock ceiling for one retain task in the worker (0 disables). This is a
 # deadlock/wedge backstop, not a latency target: a retain that blocks forever on
 # a lock, an LLM permit or a queue put would otherwise hold its worker slot until
@@ -1422,6 +1461,10 @@ DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned 
 
 # Recall pipeline stages — all on by default, so recall behaviour is unchanged
 # unless a bank opts out.
+# The keyword arm. False leaves recall as pure vector search — the arm's SQL, its
+# query tokenization and its pg_stats term-selection lookup are all skipped, not
+# merely filtered to nothing.
+DEFAULT_ENABLE_TEXT_SEARCH = True
 DEFAULT_ENABLE_TEMPORAL_RETRIEVAL = True  # Temporal retrieval arm + the date-aware query analysis feeding it
 DEFAULT_ENABLE_GRAPH_RETRIEVAL = True  # Entity/link graph traversal arm
 DEFAULT_ENABLE_RERANKING = True  # Cross-encoder rerank of the fused candidates
@@ -2520,6 +2563,9 @@ class HindsightConfig:
     # to every newly-created bank, overriding the env/config defaults for any fields it sets.
     default_bank_template: dict | None
 
+    # Tokenization (server-level; see ENV_TOKENIZER_ENCODING)
+    tokenizer_encoding: str
+
     # Recall
     graph_retriever: str
     recall_max_concurrent: int
@@ -2548,6 +2594,7 @@ class HindsightConfig:
     retain_entity_resolution_batch_size: int  # Unique entity names per pg_trgm candidate lookup query
     retain_entity_resolution_max_candidates: int  # Max candidates scored per entity mention
     retain_chunk_batch_size: int  # Max chunks per streaming batch (0 = disabled)
+    retain_memory_budget_mb: int  # Max MB of in-flight extraction state per retain (0 = disabled)
 
     # File storage (static - server-level only)
     file_storage_type: str  # "native" (PostgreSQL) or "s3" (S3-compatible)
@@ -2616,6 +2663,7 @@ class HindsightConfig:
     reflect_source_facts_max_tokens: int
 
     # Recall pipeline stages (per-bank; all default True)
+    enable_text_search: bool
     enable_temporal_retrieval: bool
     enable_graph_retrieval: bool
     enable_reranking: bool
@@ -2661,6 +2709,7 @@ class HindsightConfig:
     db_session_setup_on_acquire: bool
     entity_trgm_similarity_threshold: float
     entity_intrabatch_merge_similarity: float
+    entity_merge_min_similarity: float
     model_init_timeout: float
 
     # Worker configuration (distributed task processing)
@@ -2676,6 +2725,7 @@ class HindsightConfig:
     operation_retention_days: int
     operation_cleanup_batch_size: int
     retain_max_concurrent: int
+    retain_subbatch_concurrency: int
     retain_wall_timeout: int
 
     # Reflect agent settings
@@ -2743,6 +2793,7 @@ class HindsightConfig:
     # Defaulted fields (source-compatible additions — existing direct constructor callers keep working).
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
+    embeddings_tei_batch_size: int = DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE
     embeddings_openai_dimensions: int | None = None
     embeddings_query_prefix: str = DEFAULT_EMBEDDINGS_QUERY_PREFIX
     embeddings_passage_prefix: str = DEFAULT_EMBEDDINGS_PASSAGE_PREFIX
@@ -2880,6 +2931,7 @@ class HindsightConfig:
         "entity_labels",
         "entities_allow_free_form",
         # Recall pipeline stages
+        "enable_text_search",
         "enable_temporal_retrieval",
         "enable_graph_retrieval",
         "enable_reranking",
@@ -3074,6 +3126,11 @@ class HindsightConfig:
         if not (0.0 < self.entity_intrabatch_merge_similarity <= 1.0):
             raise ValueError(
                 f"Invalid entity_intrabatch_merge_similarity: {self.entity_intrabatch_merge_similarity}. "
+                "Must be greater than 0 and at most 1."
+            )
+        if not (0.0 < self.entity_merge_min_similarity <= 1.0):
+            raise ValueError(
+                f"Invalid entity_merge_min_similarity: {self.entity_merge_min_similarity}. "
                 "Must be greater than 0 and at most 1."
             )
 
@@ -3480,6 +3537,11 @@ class HindsightConfig:
                 os.getenv(ENV_EMBEDDINGS_OPENAI_BATCH_SIZE),
                 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE,
             ),
+            embeddings_tei_batch_size=_parse_positive_int(
+                ENV_EMBEDDINGS_TEI_BATCH_SIZE,
+                os.getenv(ENV_EMBEDDINGS_TEI_BATCH_SIZE),
+                DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE,
+            ),
             embeddings_openai_dimensions=_parse_optional_positive_int(
                 ENV_EMBEDDINGS_OPENAI_DIMENSIONS,
                 os.getenv(ENV_EMBEDDINGS_OPENAI_DIMENSIONS),
@@ -3735,6 +3797,8 @@ class HindsightConfig:
             enable_dry_run_extract=os.getenv(ENV_ENABLE_DRY_RUN_EXTRACT, str(DEFAULT_ENABLE_DRY_RUN_EXTRACT)).lower()
             == "true",
             default_bank_template=_parse_default_bank_template(os.getenv(ENV_DEFAULT_BANK_TEMPLATE)),
+            # Tokenization
+            tokenizer_encoding=os.getenv(ENV_TOKENIZER_ENCODING, DEFAULT_TOKENIZER_ENCODING),
             # Recall
             graph_retriever=os.getenv(ENV_GRAPH_RETRIEVER, DEFAULT_GRAPH_RETRIEVER),
             recall_max_concurrent=int(os.getenv(ENV_RECALL_MAX_CONCURRENT, str(DEFAULT_RECALL_MAX_CONCURRENT))),
@@ -3795,6 +3859,7 @@ class HindsightConfig:
                 os.getenv(ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS, str(DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS))
             ),
             retain_chunk_batch_size=int(os.getenv(ENV_RETAIN_CHUNK_BATCH_SIZE, str(DEFAULT_RETAIN_CHUNK_BATCH_SIZE))),
+            retain_memory_budget_mb=int(os.getenv(ENV_RETAIN_MEMORY_BUDGET_MB, str(DEFAULT_RETAIN_MEMORY_BUDGET_MB))),
             # File storage
             file_storage_type=os.getenv(ENV_FILE_STORAGE_TYPE, DEFAULT_FILE_STORAGE_TYPE),
             file_storage_s3_bucket=os.getenv(ENV_FILE_STORAGE_S3_BUCKET) or None,
@@ -3962,6 +4027,9 @@ class HindsightConfig:
             entity_intrabatch_merge_similarity=float(
                 os.getenv(ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, str(DEFAULT_ENTITY_INTRABATCH_MERGE_SIMILARITY))
             ),
+            entity_merge_min_similarity=float(
+                os.getenv(ENV_ENTITY_MERGE_MIN_SIMILARITY, str(DEFAULT_ENTITY_MERGE_MIN_SIMILARITY))
+            ),
             model_init_timeout=float(os.getenv(ENV_MODEL_INIT_TIMEOUT, str(DEFAULT_MODEL_INIT_TIMEOUT))),
             # Worker configuration
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",
@@ -3991,6 +4059,9 @@ class HindsightConfig:
                 DEFAULT_OPERATION_CLEANUP_BATCH_SIZE,
             ),
             retain_max_concurrent=int(os.getenv(ENV_RETAIN_MAX_CONCURRENT, str(DEFAULT_RETAIN_MAX_CONCURRENT))),
+            retain_subbatch_concurrency=int(
+                os.getenv(ENV_RETAIN_SUBBATCH_CONCURRENCY, str(DEFAULT_RETAIN_SUBBATCH_CONCURRENCY))
+            ),
             retain_wall_timeout=int(os.getenv(ENV_RETAIN_WALL_TIMEOUT, str(DEFAULT_RETAIN_WALL_TIMEOUT))),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
@@ -4011,6 +4082,8 @@ class HindsightConfig:
                 if os.getenv(ENV_REFLECT_MAX_COMPLETION_TOKENS)
                 else DEFAULT_REFLECT_MAX_COMPLETION_TOKENS
             ),
+            enable_text_search=os.getenv(ENV_ENABLE_TEXT_SEARCH, str(DEFAULT_ENABLE_TEXT_SEARCH)).lower()
+            in ("true", "1", "yes"),
             enable_temporal_retrieval=os.getenv(
                 ENV_ENABLE_TEMPORAL_RETRIEVAL, str(DEFAULT_ENABLE_TEMPORAL_RETRIEVAL)
             ).lower()

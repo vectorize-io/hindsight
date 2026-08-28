@@ -47,6 +47,52 @@ describe("local history import", () => {
     expect(JSON.stringify(r.sessions)).not.toContain("unrelated");
   });
 
+  // Claude Code encodes EVERY non-alphanumeric character as `-`, not just `/` and `.`. Encoding
+  // only the separators left whole repositories invisible to `--import-conversations`: the install
+  // reported "no past sessions found on disk" while the transcripts sat there under the real name.
+  // A space is the common case in the field (`~/Documents/My Projects/...`), not just underscores.
+  it.each([
+    ["underscores", "/Users/x/dev/my_project", "-Users-x-dev-my-project"],
+    ["spaces", "/Users/x/My Projects/app", "-Users-x-My-Projects-app"],
+    ["mixed punctuation", "/Users/x/dev/hs+odd@repo v2", "-Users-x-dev-hs-odd-repo-v2"],
+    ["dots", "/Users/x/dev/repo.git", "-Users-x-dev-repo-git"],
+  ])("reads Claude sessions when the repository path contains %s", (_label, repo, encoded) => {
+    const h = newHome();
+    const dir = join(h, ".claude", "projects", encoded);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), `${claudeLine("user", "found me", repo)}\n`);
+
+    const r = importLocalHistory("claude-code", repo, h);
+
+    expect(r.sessions).toHaveLength(1);
+    expect(JSON.stringify(r.sessions)).toContain("found me");
+  });
+
+  // Case is preserved and runs are NOT collapsed, so the encoding stays a 1:1 substitution.
+  it("preserves case and does not collapse runs of separators", () => {
+    const h = newHome();
+    expect(claudeProjectDir("/tmp/a-1/-crewAI", h)).toBe(
+      join(h, ".claude", "projects", "-tmp-a-1--crewAI")
+    );
+  });
+
+  // The lossy encoding must never be trusted on its own: `my_repo` and `my-repo` collide, so the
+  // cwd recorded INSIDE the transcript is what actually attributes a session to a repository.
+  it("does not import a sibling repository that encodes to the same directory name", () => {
+    const h = newHome();
+    const dir = join(h, ".claude", "projects", "-Users-x-dev-my-repo");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "s1.jsonl"),
+      `${claudeLine("user", "the other one", "/Users/x/dev/my-repo")}\n`
+    );
+
+    const r = importLocalHistory("claude-code", "/Users/x/dev/my_repo", h);
+
+    expect(r.sessions).toHaveLength(0);
+    expect(JSON.stringify(r.sessions)).not.toContain("the other one");
+  });
+
   it("matches Codex rollouts by the cwd in their session_meta header", () => {
     const h = newHome();
     const day = join(h, ".codex", "sessions", "2026", "08", "03");
@@ -94,6 +140,40 @@ describe("local history import", () => {
   it("returns empty (not an error) when a supported harness has no history", () => {
     const h = newHome();
     const r = importLocalHistory("claude-code", "/repo/none", h);
+    expect(r.supported).toBe(true);
+    expect(r.sessions).toEqual([]);
+  });
+});
+
+/**
+ * `importLocalHistory` documents that it never throws, and its caller (`--import-conversations`)
+ * takes it at its word. A stray entry must therefore cost that entry, not the whole run (#3771).
+ */
+describe("a junk entry costs itself, not the import", () => {
+  it("skips a regular file sitting where a Claude project directory was expected", () => {
+    const h = newHome();
+    const repo = "/Users/x/dev/myrepo";
+    const dir = claudeProjectDir(repo, h);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), `${claudeLine("user", "the real session", repo)}\n`);
+    // Named like the project dir of a SUBDIRECTORY, so the prefix filter hands it to the listing;
+    // without the guard readdirSync threw ENOTDIR and nothing was imported.
+    writeFileSync(claudeProjectDir("/Users/x/dev/myrepo/sub", h), "not a folder");
+
+    const r = importLocalHistory("claude-code", repo, h);
+
+    expect(r.supported).toBe(true);
+    expect(r.sessions).toHaveLength(1);
+    expect(JSON.stringify(r.sessions)).toContain("the real session");
+  });
+
+  it("skips a regular file where ~/.claude/projects itself was expected", () => {
+    const h = newHome();
+    mkdirSync(join(h, ".claude"), { recursive: true });
+    writeFileSync(join(h, ".claude", "projects"), "not a folder");
+
+    const r = importLocalHistory("claude-code", "/Users/x/dev/myrepo", h);
+
     expect(r.supported).toBe(true);
     expect(r.sessions).toEqual([]);
   });

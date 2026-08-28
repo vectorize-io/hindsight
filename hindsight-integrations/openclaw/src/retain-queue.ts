@@ -1,9 +1,9 @@
 /**
  * JSONL-backed retain queue for buffering failed HTTP retains.
  *
- * When the remote Hindsight API is unreachable, retain requests are stashed
- * in a local JSONL file and flushed later. Only used in external API mode —
- * the local daemon handles its own persistence.
+ * When the Hindsight API is unreachable, retain requests are stashed in a local
+ * JSONL file and flushed later. Used in both modes: a locally spawned daemon is
+ * just as unreachable while it boots or after it crashes as a remote API is.
  *
  * Zero runtime dependencies; uses only Node built-ins.
  */

@@ -88,6 +88,12 @@ let usingExternalApi = false; // Track if using external API (skip daemon manage
 let supportsUpdateModeAppend = false;
 let appendCapabilityProbed = false;
 const MIN_VERSION_FOR_UPDATE_MODE_APPEND = "0.5.0";
+
+/** Whether retain is currently using session-scoped documents + `update_mode: 'append'`. */
+export function isAppendModeSupported(): boolean {
+  return supportsUpdateModeAppend;
+}
+
 export type AsyncRetainOperationIdCapability = "supported" | "unsupported" | "unknown";
 let asyncRetainOperationIdCapability: AsyncRetainOperationIdCapability = "unknown";
 const MIN_VERSION_FOR_ASYNC_RETAIN_OPERATION_ID = "0.8.6";
@@ -259,16 +265,81 @@ const sessionIdentityBySession = new Map<string, SessionIdentityRecord>();
 const skipHindsightTurnBySession = new Map<string, IdentitySkipReason>();
 const documentSequenceBySession = new Map<string, number>();
 
+// Random token minted once per host process and mixed into fallback (non-append)
+// document ids. `documentSequenceBySession` lives only in memory, so it restarts
+// at 1 on every host restart — and it is FIFO-capped at MAX_TRACKED_SESSIONS, so
+// a busy host can evict a live session's counter and recycle its ids without any
+// restart at all. Either way the replayed id hits an existing server-side
+// document, and retain's default `update_mode: 'replace'` *deletes* that
+// document's memories before reprocessing: months of history collapsed to a
+// single restart cycle's worth of turns. (#3686)
+let documentIdBootToken: string | null = null;
+
+/** Per-process token that keeps fallback document ids unique across restarts. */
+export function getDocumentIdBootToken(): string {
+  if (!documentIdBootToken) {
+    documentIdBootToken = randomUUID().replace(/-/g, "").slice(0, 8);
+  }
+  return documentIdBootToken;
+}
+
 // Cooldown + guard to prevent concurrent reinit attempts
 let lastReinitAttempt = 0;
 let isReinitInProgress = false;
 const REINIT_COOLDOWN_MS = 30_000;
 
-// Retain queue (external API mode only)
+// Retain queue (both external-API and local-daemon mode)
 let retainQueue: RetainQueue | null = null;
 let retainQueueFlushTimer: ReturnType<typeof setInterval> | null = null;
 let isFlushInProgress = false;
 const DEFAULT_FLUSH_INTERVAL_MS = 60_000; // 1 min
+
+/**
+ * Open the JSONL retain queue and start its periodic flush timer.
+ *
+ * Never throws: without the queue a failed retain is dropped exactly as it was
+ * before the queue existed, which is worth far less than taking the whole plugin
+ * down over an unwritable state directory.
+ */
+function initRetainQueue(
+  pluginConfig: PluginConfig,
+  expectedGeneration: number,
+  signal: globalThis.AbortSignal
+): void {
+  // service.start() can run again without an intervening stop() (gateway
+  // reloads); don't leak the previous generation's timer onto the new one.
+  if (retainQueueFlushTimer) {
+    clearInterval(retainQueueFlushTimer);
+    retainQueueFlushTimer = null;
+  }
+  try {
+    const queueDir = pluginConfig.retainQueuePath
+      ? dirname(pluginConfig.retainQueuePath)
+      : join(homedir(), ".openclaw", "data");
+    mkdirSync(queueDir, { recursive: true });
+    const queuePath =
+      pluginConfig.retainQueuePath || join(queueDir, "hindsight-retain-queue.jsonl");
+    const queueFlushInterval = pluginConfig.retainQueueFlushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+    const queueMaxAge = pluginConfig.retainQueueMaxAgeMs ?? -1;
+    retainQueue = new RetainQueue({ filePath: queuePath, maxAgeMs: queueMaxAge });
+    const pending = retainQueue.size();
+    if (pending > 0) {
+      log.info(`retain queue: ${pending} items pending from previous session, will flush shortly`);
+    }
+    debug(`[Hindsight] Retain queue initialized: ${queuePath}`);
+
+    // Periodic flush timer
+    if (queueFlushInterval > 0) {
+      retainQueueFlushTimer = setInterval(() => {
+        void flushRetainQueue(undefined, undefined, undefined, expectedGeneration, signal);
+      }, queueFlushInterval);
+      retainQueueFlushTimer.unref?.();
+    }
+  } catch (error) {
+    retainQueue = null;
+    log.warn(`could not initialize retain queue, continuing without it: ${error}`);
+  }
+}
 
 /**
  * Attempt to flush pending retains from the queue.
@@ -1453,6 +1524,22 @@ export function detectExternalApi(pluginConfig?: PluginConfig): {
 }
 
 /**
+ * The Hindsight API this plugin is currently talking to, whichever mode it is
+ * in: the configured external API, or the local daemon we spawned ourselves.
+ *
+ * Capability probing must not care which one it is — the embedded daemon serves
+ * the same `/version` endpoint as any other Hindsight API. Treating local-daemon
+ * mode as a special case is precisely what left `supportsUpdateModeAppend` stuck
+ * at `false` there, silently downgrading every retain to a per-turn document id.
+ * (#3686)
+ */
+function getActiveApiEndpoint(): { apiUrl: string | null; apiToken: string | null } {
+  const externalApi = detectExternalApi(currentPluginConfig ?? undefined);
+  if (externalApi.apiUrl) return externalApi;
+  return { apiUrl: hindsightServer?.getBaseUrl() ?? null, apiToken: null };
+}
+
+/**
  * Build HindsightClientOptions for the generated hindsight-client. In
  * external-API mode we use the configured URL/token; in local daemon mode
  * the caller overrides with the daemon's base URL after start().
@@ -1624,14 +1711,14 @@ async function refreshQueueOperationIdCapability(
     asyncRetainOperationIdCapability = "unknown";
     return "unknown";
   }
-  const externalApi = detectExternalApi(currentPluginConfig);
-  if (!externalApi.apiUrl) {
+  const endpoint = getActiveApiEndpoint();
+  if (!endpoint.apiUrl) {
     asyncRetainOperationIdCapability = "unknown";
     return "unknown";
   }
   return refreshAsyncRetainOperationIdCapability(
-    externalApi.apiUrl,
-    externalApi.apiToken,
+    endpoint.apiUrl,
+    endpoint.apiToken,
     expectedGeneration,
     signal
   );
@@ -1645,8 +1732,10 @@ async function refreshQueueOperationIdCapability(
  * overwrites prior turns server-side, and append itself requires stored
  * document text.
  *
- * Called from the same code paths as the health check, so capability is
- * always re-evaluated when the plugin (re)connects to the API.
+ * Called wherever the plugin (re)connects to an API — external *and* local
+ * daemon. It used to hang off the `checkExternalApiHealth` call sites only,
+ * which is why local-daemon mode never probed at all and silently retained
+ * with per-turn document ids. (#3686)
  */
 async function detectAppendCapability(
   apiUrl: string,
@@ -1974,52 +2063,15 @@ export default function (api: MoltbotPluginAPI) {
         // Get API port from config (default: 9077)
         const apiPort = pluginConfig.apiPort || 9077;
 
+        // Both modes get the queue: a local daemon is unreachable while it is
+        // still booting or after it has crashed, and a retain that fails then is
+        // just as lost as one that fails against a remote API. (#3686)
+        initRetainQueue(pluginConfig, startGeneration, serviceController.signal);
+
         if (externalApi.apiUrl) {
           // External API mode - skip local daemon
           usingExternalApi = true;
           debug(`[Hindsight] ✓ Using external API: ${externalApi.apiUrl}`);
-
-          // Initialize retain queue (external API mode only)
-          try {
-            const queueDir = pluginConfig.retainQueuePath
-              ? dirname(pluginConfig.retainQueuePath)
-              : join(homedir(), ".openclaw", "data");
-            mkdirSync(queueDir, { recursive: true });
-            const queuePath =
-              pluginConfig.retainQueuePath || join(queueDir, "hindsight-retain-queue.jsonl");
-            const queueFlushInterval =
-              pluginConfig.retainQueueFlushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
-            const queueMaxAge = pluginConfig.retainQueueMaxAgeMs ?? -1;
-            retainQueue = new RetainQueue({ filePath: queuePath, maxAgeMs: queueMaxAge });
-            const pending = retainQueue.size();
-            if (pending > 0) {
-              log.info(
-                `retain queue: ${pending} items pending from previous session, will flush shortly`
-              );
-            }
-            debug(`[Hindsight] Retain queue initialized: ${queuePath}`);
-
-            // Periodic flush timer
-            if (queueFlushInterval > 0) {
-              retainQueueFlushTimer = setInterval(() => {
-                void flushRetainQueue(
-                  undefined,
-                  undefined,
-                  undefined,
-                  startGeneration,
-                  serviceController.signal
-                );
-              }, queueFlushInterval);
-              retainQueueFlushTimer.unref?.();
-            }
-          } catch (error) {
-            // Degrade, don't refuse to start: without the queue a failed retain
-            // is dropped exactly as it was before the queue existed, which is
-            // worth far less than taking the whole plugin down over an
-            // unwritable state directory.
-            retainQueue = null;
-            log.warn(`could not initialize retain queue, continuing without it: ${error}`);
-          }
 
           if (externalApi.apiToken) {
             debug("[Hindsight] API token configured");
@@ -2089,6 +2141,11 @@ export default function (api: MoltbotPluginAPI) {
               debug("[Hindsight] Starting embedded server...");
               await hindsightServer.start();
 
+              // The daemon is a Hindsight API like any other: probe it for the
+              // same capabilities as an external one, or retains here silently
+              // fall back to per-turn document ids. (#3686)
+              await detectAppendCapability(hindsightServer.getBaseUrl());
+
               // Initialize client pointed at the local daemon URL
               debug("[Hindsight] Creating HindsightClient (local daemon)...");
               clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
@@ -2153,6 +2210,10 @@ export default function (api: MoltbotPluginAPI) {
           if (hindsightServer && isInitialized) {
             const healthy = await hindsightServer.checkHealth();
             if (healthy) {
+              // Same re-probe the external branch does after its health check:
+              // the daemon may have been restarted (SIGUSR1) onto a different
+              // embed version since we last looked. (#3686)
+              await detectAppendCapability(hindsightServer.getBaseUrl());
               debug("[Hindsight] Daemon is healthy");
               return;
             }
@@ -2214,6 +2275,7 @@ export default function (api: MoltbotPluginAPI) {
             });
 
             await hindsightServer.start();
+            await detectAppendCapability(hindsightServer.getBaseUrl());
 
             clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
             banksWithDefaultsApplied.clear();
@@ -2856,7 +2918,7 @@ ${memoriesFormatted}
         // request in front of every turn, and the answer changes at most once
         // per server restart — the queue flush re-probes on its own timer.
         const retainOperationIdCapability =
-          usingExternalApi && asyncRetainOperationIdCapability === "unknown"
+          asyncRetainOperationIdCapability === "unknown"
             ? await refreshQueueOperationIdCapability(retainGeneration, retainSignal)
             : asyncRetainOperationIdCapability;
         if (!retainLifecycleIsCurrent()) return;
@@ -2910,7 +2972,7 @@ ${memoriesFormatted}
         } catch (retainError) {
           if (!retainLifecycleIsCurrent()) return;
           retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
-          // Queue the failed retain for later delivery (external API mode only)
+          // Queue the failed retain for later delivery
           if (retainQueue) {
             retainQueue.enqueue(bankId, retainRequest, retainRequest.metadata);
             retainOutcome = "queued";
@@ -3073,9 +3135,13 @@ export function buildRetainRequest(
   // the same id would silently overwrite prior turns (behavior pre-#932), so
   // fall back to per-turn ids there.
   const useSessionScopedDoc = options?.appendSupported === true;
+  // The fallback id carries a per-process boot token because `turnIndex` comes
+  // from an in-memory counter: without it, a host restart replays
+  // `…:turn:000001` onto the previous cycle's document and `update_mode:
+  // 'replace'` deletes what was there. (#3686)
   const documentId = useSessionScopedDoc
     ? documentBase
-    : `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, "0")}`;
+    : `${documentBase}:${documentKind}:${getDocumentIdBootToken()}:${String(turnIndex).padStart(6, "0")}`;
   const provider = effectiveCtx?.messageProvider || parsedSession.provider;
   const channelId = sanitizeChannelId(effectiveCtx?.channelId, provider) || parsedSession.channel;
   const channelType = effectiveCtx?.messageProvider;

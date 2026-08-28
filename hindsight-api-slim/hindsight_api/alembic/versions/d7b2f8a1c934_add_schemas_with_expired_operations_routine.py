@@ -37,9 +37,10 @@ Create Date: 2026-07-20
 
 from collections.abc import Sequence
 
-from alembic import context, op
+from alembic import context
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.alembic._owned import execute_unless_owned
 from hindsight_api.config import get_config
 
 revision: str = "d7b2f8a1c934"
@@ -69,7 +70,10 @@ def _prefix(schema: str | None) -> str:
 
 
 def _drop_routine(schema: str | None) -> None:
-    op.execute(f"DROP FUNCTION IF EXISTS {_prefix(schema)}schemas_with_expired_operations(int)")
+    execute_unless_owned(
+        "schemas_with_expired_operations",
+        f"DROP FUNCTION IF EXISTS {_prefix(schema)}schemas_with_expired_operations(int)",
+    )
 
 
 def _pg_upgrade() -> None:
@@ -81,7 +85,8 @@ def _pg_upgrade() -> None:
         _drop_routine(_target_schema())
         return
     schema = _prefix(_target_schema())
-    op.execute(
+    execute_unless_owned(
+        "schemas_with_expired_operations",
         f"""
         CREATE OR REPLACE FUNCTION {schema}schemas_with_expired_operations(p_days int)
         RETURNS SETOF text
@@ -127,7 +132,7 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
 

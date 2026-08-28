@@ -102,7 +102,7 @@ export class HindsightServer {
     });
     const args = [...baseArgs, "daemon", "--profile", this.profile, "stop"];
 
-    const child = spawn(cmd, args, { stdio: "pipe" });
+    const child = spawn(cmd, args, { stdio: "pipe", windowsHide: true });
     this.pipeOutput(child, "daemon.stop");
 
     await new Promise<void>((resolve) => {
@@ -251,7 +251,7 @@ export class HindsightServer {
     env: NodeJS.ProcessEnv,
     label: string
   ): Promise<void> {
-    const child = spawn(cmd, args, { stdio: "pipe", env });
+    const child = spawn(cmd, args, { stdio: "pipe", env, windowsHide: true });
     let output = "";
     child.stdout?.on("data", (data: Buffer) => {
       const text = data.toString();

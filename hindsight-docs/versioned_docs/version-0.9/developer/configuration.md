@@ -56,8 +56,10 @@ Migrations will automatically create the schema if it doesn't exist and create a
 | `HINDSIGHT_API_DB_ACQUIRE_TIMEOUT` | Connection acquisition timeout in seconds. Bounds how long a caller waits for a free pool connection before failing (retried by the caller); `0` waits indefinitely. | `30` |
 | `HINDSIGHT_API_DB_STATEMENT_TIMEOUT` | Postgres `statement_timeout` applied to every pool connection, in seconds. Server-side safety net for runaway queries. Does **not** apply to Alembic migrations (which run on a separate psycopg2 engine). Set to `0` to disable. | `600` |
 | `HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER` | Optional Postgres `max_parallel_workers_per_gather` applied to every pool connection of this process. Unset leaves the server default. Set to `0` on background-worker processes so bulk maintenance queries (consolidation, graph upkeep) run serially instead of fanning out across CPU cores shared with latency-sensitive traffic. | unset |
+| `HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE` | Whether the per-connection session settings above (`statement_timeout`, `max_parallel_workers_per_gather`, the trigram threshold, the vector-search tuning, and — on the `vchord` text-search backend — the search path) are re-applied every time a connection is taken from the pool, not only when it is first opened. Keep this on unless the same settings are already pinned on the database role or the database itself (`ALTER ROLE … SET`), because releasing a connection resets it to the server defaults — with the re-apply off and nothing pinned server-side, reused connections quietly run without them, and on `vchord` recall fails outright rather than merely degrading. When they *are* pinned server-side the re-apply changes nothing and only costs a round trip per acquire, which is worth reclaiming on busy deployments behind a transaction-mode connection pooler. `application_name` is always re-applied and is unaffected by this setting. | `true` |
 | `HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` | Postgres `pg_trgm.similarity_threshold` applied to every pool connection, governing how close a name must be for entity resolution's `%` trigram match to treat it as a candidate. Must be between `0` (exclusive) and `1`. Lower catches more substring-ish matches at higher CPU cost on large entity sets; higher is stricter and cheaper. | `0.15` |
 | `HINDSIGHT_API_ENTITY_INTRABATCH_MERGE_SIMILARITY` | Trigram similarity (pg_trgm-equivalent, computed in-memory) at/above which two brand-new names created by the **same** retain are merged into a single entity (in-batch dedup of surface-form variants — e.g. the same name with different emoji/case/suffix). Must be between `0` (exclusive) and `1`. This is a *merge* cutoff, deliberately stricter than the recall-only threshold above; raise it toward `1.0` to merge only near-identical forms. | `0.5` |
+| `HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` | Minimum trigram similarity a name must have with an **existing** entity before that entity can be reused for it, whatever the other resolution signals say. Sits between the recall threshold above (`0.15`, which only decides what is *considered*) and the same-batch fold-in cutoff below (`0.5`). Must be between `0` (exclusive) and `1`. Lower it for corpora of very short names, where trigram similarity is unavoidably low (`Jon`/`John` is `0.29`); raise it to merge only clear surface variants. | `0.3` |
 
 For high-concurrency workloads, increase `DB_POOL_MAX_SIZE`. Each concurrent recall/think operation can use 2-4 connections.
 
@@ -76,6 +78,8 @@ hindsight-admin run-db-migration --schema tenant_acme
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_VECTOR_EXTENSION` | Vector index algorithm: `pgvector`, `vchord`, `pgvectorscale`, or `scann` | `pgvector` |
+| `HINDSIGHT_API_ANN_ITERATIVE_SCAN` | Let a vector index scan resume until the query's `LIMIT` is satisfied, instead of stopping when its first candidate list drains. With it off, a recall can never retrieve more rows than that list holds — on pgvector, `hnsw.ef_search` (200) — so a larger recall budget widens the SQL and retrieves nothing extra. Requires pgvector 0.8.0+; older servers reject the setting and it is dropped automatically after the first attempt. This is the operational kill switch: setting it to `false` and restarting restores the previous retrieval depth exactly, with no code change. | `true` |
+| `HINDSIGHT_API_ANN_MAX_SCAN_TUPLES` | Ceiling on how many tuples a single resumed scan may visit (`hnsw.max_scan_tuples`). This is the knob that governs what iterative scans cost: the filters that thin a result — the similarity floor, tags, date ranges — are applied *after* the index scan, so a selective query resumes repeatedly, and this bounds both the CPU it can spend and the memory it can hold (pgvector otherwise caps the latter at `work_mem × hnsw.scan_mem_multiplier`, which at this default is never approached). Lower it to trade retrieval depth back for latency; the initial scan is not counted, so even `1` leaves the pre-existing depth intact. pgvector's own default is `20000`. Ignored when iterative scans are off. | `4000` |
 
 Hindsight supports four PostgreSQL vector extensions:
 
@@ -132,6 +136,56 @@ Hindsight supports four PostgreSQL vector extensions:
 - Running on Google **AlloyDB** or **AlloyDB Omni**
 - Want managed ScaNN with `AUTO` mode tuning
 
+#### Limiting vector indexes on large deployments
+
+On `pgvector`, `pgvectorscale` and `vchord`, a bank's memories are indexed per
+`(bank, fact_type)`. By default every bank gets its own indexes when it is
+created, which is the right thing for most deployments and needs no
+configuration.
+
+It stops being the right thing when you have thousands of banks. These indexes
+all live on one shared table, and PostgreSQL inspects and locks **every** index
+on a table whenever it plans a query against it — so an index created for one
+bank is a cost paid by searches in every other bank. Past a few thousand banks,
+planning slows sharply and the server eventually runs out of lock-table space,
+failing reads *and* bank deletion alike.
+
+Setting a minimum size fixes that: a bank only gets its own indexes once it is
+large enough to benefit from them. Below the threshold PostgreSQL answers the
+same search from the `(bank_id, fact_type)` B-tree plus a top-N sort, which for
+a small bank is both faster and *exact* rather than approximate — so small banks
+lose nothing. The number of indexes becomes proportional to the number of
+**large** banks rather than to the number of banks, and bank count stops being a
+limit.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS` | Memories a bank needs, in one fact type, before that fact type gets its own vector index. `0` (the default) turns the threshold **off**: every bank is indexed from the moment it is created. `10000` is a good starting point for deployments with thousands of banks. | `0` |
+| `HINDSIGHT_API_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS` | Shortest gap between two index-maintenance runs for one bank. Stops a bank whose size hovers at the threshold from building and dropping the same index repeatedly. Unused while the threshold is off. | `900` |
+
+**With the threshold off (the default),** indexes are created inside the
+transaction that creates the bank — instantly, because the bank is empty — and
+dropped when the bank is deleted. Nothing inspects bank sizes, and no background
+operation runs.
+
+**With a threshold set,** bank creation, ingestion and import build no indexes at
+all, so no request ever waits on index DDL. Instead, a write that could move a
+bank across the threshold queues a background `vector_index_maintenance`
+operation, which builds an index when a bank grows past the threshold and removes
+it if the bank shrinks well below it (the gap between those two points prevents
+churn at the boundary). You will see these operations in the bank's operations
+list.
+
+To reconcile without waiting for a write — after a restore, an upgrade, or an
+extension switch — run:
+
+```bash
+hindsight-admin repair-bank --all
+```
+
+This works in both modes: with the threshold off it rebuilds any index a bank is
+missing, and with one set it also drops what a bank no longer earns.
+
 **Switching extensions:**
 
 If you need to switch from one extension to another:
@@ -150,7 +204,8 @@ If you need to switch from one extension to another:
 | `HINDSIGHT_API_TEXT_SEARCH_EXTENSION` | Text search backend: `native`, `vchord`, `pg_textsearch`, `pgroonga`, or `pg_search` | `native` |
 | `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE` | PostgreSQL text search dictionary used by the `native` backend (e.g. `english`, `french`, `simple`, `zhparser`) | `english` |
 | `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER` | ParadeDB `pg_search` tokenizer used when creating BM25 indexes. Empty uses ParadeDB's default tokenizer (`unicode_words`). | unset |
-| `HINDSIGHT_API_BM25_MAX_QUERY_TERMS` | Optional cap on the number of terms in the native PostgreSQL BM25 `tsquery`. Long queries OR-join every normalized token, which can match too much of a large bank. `0` keeps the historical uncapped behavior; a positive value bounds only the `native` backend (other BM25 backends receive the raw query). | `0` |
+| `HINDSIGHT_API_BM25_MAX_QUERY_TERMS` | Cap on the number of terms in the native PostgreSQL BM25 `tsquery`. Long queries OR-join every normalized token, and because native ranking has no IDF and re-ranks every match, an uncapped query over common terms can scan and rank a large fraction of the bank and time out. When the query exceeds the cap, the most **selective** terms are kept — those with the lowest tenant-wide document frequency, read for free from `pg_stats` (autovacuum-maintained, no reindex) — so a blunt truncation doesn't discard the high-signal terms. `0` restores the historical uncapped behavior; the cap bounds only the `native` backend (other BM25 backends receive the raw query and rank via their own index-native operators). | `16` |
+| `HINDSIGHT_API_BM25_SELECTIVE_TERMS` | When the cap above trims a query, whether to keep the most **selective** terms (lowest document frequency, from `pg_stats`) rather than the first N. `true` is strictly better for recall at no extra cost when stats exist; set `false` to opt out of the catalog read and cap by position. Ignored when the cap is `0`. | `true` |
 | `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` | When set, forces every LLM-generated artifact (retain facts, consolidation observations, reflect responses) into this language. Free-form (e.g. `Spanish`, `Japanese`). | unset |
 
 Hindsight supports five backends for BM25 keyword retrieval:
@@ -170,8 +225,8 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
-| `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot` | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
 | `HINDSIGHT_API_LLM_MAX_CONCURRENT` | Max concurrent LLM requests | `32` |
@@ -192,14 +247,14 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER` | Gemini service tier: `flex` for 50% cost savings (best-effort inference) | Unset (default tier) |
 | `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict of extra request-body params (e.g. `temperature`, `top_p`, `max_tokens`) merged into every LLM call. Applied across the OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI and LiteLLM (incl. Bedrock/Router) providers. Each provider merges them in its own native parameter space, so use that provider's field names (e.g. `max_tokens` for OpenAI/Anthropic vs `max_output_tokens` for Gemini). The native Ollama structured-output path is a special case — see the note below. Also useful for custom model servers (e.g. vLLM `chat_template_kwargs`). | `null` |
 | `HINDSIGHT_API_LLM_DEFAULT_HEADERS` | JSON dict passed as `default_headers` to provider SDK clients. Used by operators routing through proxies / request-tracing middleware (e.g. Cloudflare AI Gateway, Helicone, corporate proxies). Wired into the Anthropic provider, the OpenAI-compatible providers, Fireworks, Nous, the OpenAI Responses API, and the LiteLLM-backed providers (`litellm`, `litellmrouter`, `bedrock`); other providers can opt in. | `null` |
-| `HINDSIGHT_API_LLM_CACHE_AFFINITY` | Pin a conversation to one backend prompt cache on the OpenAI-compatible providers, Fireworks and Nous. Server-side prompt caches are per backend server, so the same conversation has to reach the same one for a cache hit. `xai_conv_id` sends xAI's documented `x-grok-conv-id` header; `openai_prompt_cache_key` sends OpenAI's `prompt_cache_key` field; `auto` picks one from the configured base URL host (x.ai / grok.com &rarr; `xai_conv_id`; native OpenAI or an openai.com / Azure OpenAI host &rarr; `openai_prompt_cache_key`; anything else &rarr; `none`); `none` sends nothing. The id is the operation's trace id, so every LLM call of one retain/reflect/consolidation run shares it. `auto` is an allowlist rather than a best-effort probe, so an unknown OpenAI-compatible backend (vLLM, ollama, groq, openrouter, a custom proxy) receives byte-identical requests to before; set `none` to disable entirely. Anthropic and Gemini/Vertex do their own caching and ignore this. | `auto` |
+| `HINDSIGHT_API_LLM_CACHE_AFFINITY` | Pin a conversation to one backend prompt cache on the OpenAI-compatible providers, Fireworks and Nous. Server-side prompt caches are per backend server, so the same conversation has to reach the same one for a cache hit. `xai_conv_id` sends xAI's documented `x-grok-conv-id` header; `openai_prompt_cache_key` sends OpenAI's `prompt_cache_key` field; `auto` picks one from the configured base URL host (x.ai / grok.com &rarr; `xai_conv_id`; native OpenAI or an openai.com host &rarr; `openai_prompt_cache_key`; anything else, including Azure OpenAI, &rarr; `none`); `none` sends nothing. The id is the operation's trace id, so every LLM call of one retain/reflect/consolidation run shares it. `auto` is an allowlist rather than a best-effort probe, so an unknown OpenAI-compatible backend (vLLM, ollama, groq, openrouter, a custom proxy) receives byte-identical requests to before; set `none` to disable entirely. Anthropic and Gemini/Vertex do their own caching and ignore this. | `auto` |
 | `HINDSIGHT_API_LLM_STRICT_SCHEMA` | Grammar-enforce structured output via `json_schema` `strict: true` instead of the soft "schema-in-prompt + `json_object`" path. Typed Pydantic response models are serialized directly into the OpenAI strict subset: every object rejects additional properties, every declared property is required, and nullable fields remain nullable. Use it with weaker self-hosted models that return prose preambles, markdown ` ```json ` fences, or invalid JSON — which otherwise fail to parse and wedge retain/consolidation. Applies to OpenAI-compatible backends (OpenAI, LM Studio, Ollama, Volcano, llama.cpp, vLLM), Codex, and LiteLLM; Gemini already enforces its native `response_schema` regardless, and providers without a strict mode ignore it. LM Studio, Ollama, and Volcano are the most common cases: their soft path skips even `json_object` mode (they don't honor it reliably), so a small model's raw output goes unconstrained — enabling this flag is the fix for a `JSONDecodeError` during retain on those backends. | `false` |
 | `HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN` | Override `HINDSIGHT_API_LLM_STRICT_SCHEMA` for retain (fact extraction) only. Applies to both the streaming and batch extraction paths. | Inherits global |
 | `HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT` | Override `HINDSIGHT_API_LLM_STRICT_SCHEMA` for reflect's structured-output extraction only. | Inherits global |
 | `HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION` | Override `HINDSIGHT_API_LLM_STRICT_SCHEMA` for consolidation only (both the batch consolidation call and observation dedup). | Inherits global |
 | `HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS` | Whether the LLM backend accepts JSON Schema `maxItems` in structured-output schemas. Set to `false` for backends such as Bedrock Converse that reject this keyword; consolidation still enforces observation caps after parsing. | `true` |
 | `HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL` | Request structured output from the LiteLLM-backed providers (`litellm`, `litellmrouter`, `bedrock`) with a single forced tool call — the response schema becomes the tool's parameters — instead of `response_format`. Set to `true` for backends that reject `response_format` outright. This is region-dependent on Bedrock Claude: `ap-southeast-2` (`au.*` inference profiles) refuses the translated Converse `outputConfig` with `Extra inputs are not permitted`, while the same model in `us-east-1` (`us.*`) accepts it and needs nothing here. Verified against both. If the model answers without calling the tool, the reply is parsed as text as before. Other providers ignore it. | `false` |
-| `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` | Optional native Ollama `num_ctx` override for structured-output calls. Leave unset to use the model/server default; set a positive integer only when you need a larger context window. | Unset |
+| `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` | Optional native Ollama `num_ctx` override. Leave unset to use the model/server default; set a positive integer only when you need a larger context window. Setting it also routes free-form calls (including the startup connection probe) through the native `/api/chat` API, since the OpenAI-compatible endpoint cannot express a context size — see the note below. | Unset |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
 | `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models#provider-capabilities). | `true` |
 | `HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED` | For reflect specifically, roll a step-by-step context cache forward through the agent's tool loop so each turn reuses the whole prior conversation (system + tools + all prior tool results) at the cached-input rate instead of only the static prefix. Requires `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED`. The per-reflect caches are ephemeral and deleted when the reflect ends. Set to `false` to run reflect uncached while leaving prompt caching on elsewhere. | `true` |
@@ -207,7 +262,9 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 When `HINDSIGHT_API_LLM_PROVIDER=ollama`, Hindsight no longer sends the previous native API default `num_ctx=16384` unless you set it explicitly. To keep the old request behavior, set `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX=16384`; otherwise Ollama uses the model Modelfile or server default.
 
-**`HINDSIGHT_API_LLM_EXTRA_BODY` on the native Ollama path.** For structured-output calls, Ollama uses its native `/api/chat` API, whose request body has *two tiers* — this differs from the OpenAI-compatible endpoint, where the SDK flattens everything to top-level. On the native path `extra_body` is split accordingly:
+**When Hindsight uses Ollama's native API.** Structured-output calls always use the native `/api/chat` API, for schema enforcement. Free-form calls join them as soon as `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` is set, because Ollama's OpenAI-compatible handler parses a fixed set of fields and drops the rest — there is no way to express `num_ctx` on `/v1/chat/completions`, nested under `options` or otherwise. That matters on a shared Ollama host: Ollama keys a loaded model instance by context size, so a call at the server default reloads the model and re-tunes it for every other consumer.
+
+**`HINDSIGHT_API_LLM_EXTRA_BODY` on the native Ollama path.** The native request body has *two tiers* — this differs from the OpenAI-compatible endpoint, where the SDK flattens everything to top-level. On the native path `extra_body` is split accordingly:
 
 - **Top-level native fields** (`think`, `keep_alive`, ...) pass through directly. For example, gpt-oss models require a thinking level for structured extraction, so set `HINDSIGHT_API_LLM_EXTRA_BODY='{"think": "low"}'` (thinking is disabled by default).
 - **Generation parameters** (`seed`, `top_p`, `top_k`, `num_ctx`, `temperature`, ...) live under Ollama's `options` object, so nest them: `HINDSIGHT_API_LLM_EXTRA_BODY='{"options": {"seed": 42, "top_p": 0.9}}'`. On the OpenAI-compatible endpoints these same params are top-level instead.
@@ -459,11 +516,17 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "round-robin", "weights": [3, 1]}'
 
 **Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
 
-The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the primary member only; failover/round-robin apply to the interactive retain/reflect/consolidation calls.
+The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the first batch-capable member in declared order, which need not be the primary — so a chain whose primary has no batch API can still use `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` as long as one member supports it. That member serves the whole batch (submit, polling and retrieval all target the account that holds it), so batch does not fail over the way the interactive retain/reflect/consolidation calls do. An in-flight batch is bound to the account that submitted it, so if the worker restarts mid-batch it resumes on that same account even when the chain has since been reordered or extended. Removing that member — or rotating its API key — while a batch is still running makes the operation fail with an explicit error instead of polling a different account.
 
 ### Built-in llama.cpp
 
-The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB). Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB) into `~/.hindsight/models`. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+
+:::warning Not available in the Docker image
+The published `ghcr.io/vectorize-io/hindsight` image deliberately leaves llama.cpp out, so `HINDSIGHT_API_LLM_PROVIDER=llamacpp` cannot run there — it fails immediately with a message telling you so.
+
+For local inference in Docker, run llama.cpp as its own container and point Hindsight at its OpenAI-compatible API with `HINDSIGHT_API_LLM_PROVIDER=openai` and `HINDSIGHT_API_LLM_BASE_URL`. A ready-to-run setup is in [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm).
+:::
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -489,6 +552,8 @@ export HINDSIGHT_API_LLAMACPP_EXTRA_ARGS="--n_threads 8"
 
 :::note
 The llama.cpp server is shared across all LLM operations (retain, reflect, consolidation). Set `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` to allow retain and consolidation to run concurrently without blocking each other.
+
+Auto-downloaded models land in `~/.hindsight/models`. Keep that directory on persistent storage — if it is discarded between restarts, every restart re-downloads the full model.
 :::
 
 ### Per-Operation LLM Configuration
@@ -598,6 +663,8 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 |----------|-------------|---------|
 | `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS` | Applies to **every** provider. If set, truncate each text to this many tokens (tiktoken `cl100k_base`, approximate) before embedding. Set it to the model's real input limit (e.g. `8192` for Bedrock Titan V2, or a llama.cpp server's context, with a little headroom) so oversized content is truncated instead of failing the embed call permanently. Off by default. (Deprecated alias: `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS`.) | - |
+| `HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX` | Text prepended to every search before it is embedded. Set it when your endpoint serves an asymmetric model that expects a search instruction — e.g. `task: search result \| query: ` for `google/embeddinggemma-300m`, or `query: ` for E5. Applies to the providers that only accept plain text (`tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `litellm`, `litellm-sdk`); see the note below for the ones that don't need it. Trailing spaces are kept as written. | - (no prefix) |
+| `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX` | Text prepended to every stored memory/document before it is embedded — e.g. `title: none \| text: ` for `google/embeddinggemma-300m`, or `passage: ` for E5. Same providers as above. Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider. Models that ship their own search-text and stored-text instructions (e.g. the Qwen3-Embedding family) have them applied automatically — see the note below. | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
@@ -657,6 +724,10 @@ Embedding provider selection, credentials, base URLs, model choices, dimensions,
 Some embedding models are trained to see a short instruction in front of a search, and nothing (or a different instruction) in front of the text being stored. With the `local` provider, Hindsight applies whichever instructions the model itself ships with — you don't configure anything. The default `BAAI/bge-small-en-v1.5` ships none, so nothing changes for existing deployments; `Qwen/Qwen3-Embedding-*` ships one for searches only, which is what makes those models retrieve accurately.
 
 The rare case to watch for is a model that also instructs the **stored** side. Switching to one of those changes how new memories are indexed, so anything already stored was indexed differently and will compare poorly against it. Re-index the bank (export and re-import it) after adopting such a model. Search-side-only instructions, which covers every model listed above, need no re-indexing.
+
+Most providers can't discover those instructions the way `local` does. A remote endpoint that takes plain text and returns a vector — `tei`, `litellm`, `litellm-sdk`, and anything behind an OpenAI-compatible `/embeddings` URL (`llama-server`, `infinity-emb`, vLLM, ...) — only ever receives the text, so you supply the instructions yourself with `HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX` and `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX`. Leaving them unset sends the text unchanged, which is what the symmetric hosted models expect.
+
+Two providers need nothing and ignore both settings: `local` (applies the model's own prompts) and `zeroentropy` (tells the API which side it is embedding). The `onnx` provider has its own pair, `HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX` / `..._PASSAGE_PREFIX`, which default to the E5 instructions.
 
 :::
 
@@ -1193,6 +1264,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_LOG_JSON_FIELDS` | Comma-separated allowlist of JSON log fields to emit (e.g. `severity,message,tenant`). Available: `severity`, `message`, `timestamp`, `logger`, `tenant`, `exception`. Empty = all fields. | `""` (all) |
 | `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
 | `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Increase if a legitimate first-time model download needs more time. | `300` |
+| `HINDSIGHT_API_STARTUP_WAIT_SECONDS` | **Docker image only.** How long the container waits for the API to answer `/health` before it stops and restarts. Raising `HINDSIGHT_API_MODEL_INIT_TIMEOUT` above the default raises this wait too, so a slow first-time model download is not cut short; set this to override the wait on its own. | `300`, or `HINDSIGHT_API_MODEL_INIT_TIMEOUT` + 30s when that is longer |
 
 ### Retrieval
 
@@ -1221,6 +1293,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS` | For the `exponential` decay function: the age (in days) at which a memory is considered neutral — younger memories get a recency boost, older ones a penalty. Smaller values favour very recent memories more aggressively. Only used when `HINDSIGHT_API_RECENCY_DECAY_FUNCTION=exponential`. | `90` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY` | Max concurrent mental model refreshes | `8` |
 | `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY` | Track history of content changes to each mental model (previous content + timestamp), stored one row per change in the `mental_model_history` table. Set to `false` to disable entirely — no history rows are written, reducing storage if audit trails are not needed. **This is how you turn the feature off** (not a zero cap). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS` | Minimum seconds between two *automatic* refreshes of the same mental model — the after-consolidation trigger and the cron schedule. A trigger that fires sooner is not dropped: its refresh is queued and parked until the window closes, and every further trigger in the meantime folds into that one queued refresh, so a burst of small retains costs one refresh instead of one per retain. Raise it when a bank ingests continuously and its models do not need to be current to the minute — the parked refresh still sees everything that accumulated while it waited. Explicit refreshes (API, MCP, control plane) ignore the floor and run immediately, and additionally release a parked refresh they fold into. `0` = no floor, every trigger refreshes at once. Hierarchical — overridable per bank via the [config API](#hierarchical-configuration), and per model via `trigger.min_refresh_interval_seconds` (which wins, including an explicit `0` to exempt one hot model from a bank-wide floor). | `0` |
 | `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` | Max history rows kept per mental model. On each refresh the previous version is inserted into the `mental_model_history` table and the oldest rows beyond this cap are deleted, so per-model history can't grow without bound. `0` or a negative value **removes the cap** (history then grows with every refresh — unbounded); to turn history off entirely set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` instead. | `50` |
 
 The five embedding-dependent gates—main semantic retrieval, graph seeds, temporal retrieval, semantic-link
@@ -1331,7 +1404,8 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_WALL_TIMEOUT` | Wall-clock ceiling in seconds for one retain task in the worker. A retain that blocks indefinitely (lock contention, an unreachable LLM endpoint) is cancelled and marked `failed` instead of holding its worker slot until the process restarts, so it can be retried. Set well above your slowest healthy retain; `0` disables. | `3600` |
 | `HINDSIGHT_API_RETAIN_BATCH_TOKENS` | Max characters per sub-batch for async retain auto-splitting | `10000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE` | Max chunks per streaming batch when retain ingests long documents. Each chunk produces roughly 17 facts, so the default 100 chunks ≈ 1700 facts per batch. Lower to cap memory/LLM pressure on large documents; raise for smaller chunks. Configurable per bank. | `100` |
-| `HINDSIGHT_API_RETAIN_ENTITY_LOOKUP` | Entity lookup method during retain: `full` (exact match) or `trigram` (fuzzy trigram matching) | `trigram` |
+| `HINDSIGHT_API_RETAIN_MEMORY_BUDGET_MB` | Megabytes of extracted-but-unwritten state one retain operation may hold. `HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE` bounds how many chunks are in flight, but not what they weigh — a chunk carries however many facts the extractor found in it — so this is the ceiling to size a worker against: peak per retain is roughly this figure whatever the document. Budget for `WORKER_MAX_SLOTS` concurrent retains. Over budget, extraction waits for the write path to catch up rather than growing. `0` disables it and restores the chunk-count-only bound. | `128` |
+| `HINDSIGHT_API_RETAIN_ENTITY_LOOKUP` | How retain finds *candidate* existing entities for an extracted name: `trigram` probes the pg_trgm index for similar names, `full` loads every entity in the bank and keeps the ones whose name is an exact or substring match. Both then run the same scoring pass (see [How entity resolution decides](#how-entity-resolution-decides)) — so this is not only a performance choice, it changes which names can merge at all. | `trigram` |
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` | Max candidates scored per entity mention. The fuzzy lookup keeps only this many best matches per name (ranked by trigram / Jaro-Winkler similarity) before the scoring pass. On banks holding thousands of near-identical names an uncapped candidate set turns one retain into minutes of CPU, which stalls the worker's health checks; matches ranked below the first ~100 never win anyway. Raise only if entities that should merge are being duplicated. | `200` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
@@ -1363,6 +1437,76 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 ```
 
 > **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](/developer/api/memory-banks#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](/developer/retain#entity-labels) for details.
+
+#### How entity resolution decides
+
+Resolving an extracted name against the entities already in a bank happens in **two
+stages, and each stage uses a different measure of similarity**. That distinction matters
+before you tune any of the thresholds above: the number that is easiest to compute by
+hand is not the number that decides the match.
+
+**Stage 1 — which existing entities are considered.** With `trigram` (the default),
+Postgres returns entities whose lowercased canonical name is trigram-similar to the
+extracted name, gated by
+[`HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD`](#database-connection-pool) — **`0.15`**,
+which is deliberately looser than pg_trgm's own `0.3` default. At most
+`HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` survive, ranked by that
+similarity. With `full`, candidates are instead the entities whose name is an exact or
+substring match. Label entities never enter this stage; they resolve by exact match only.
+
+**Stage 2 — whether one of them is reused.** Each candidate is scored, and the best one
+is reused if it clears **`0.6`**. Otherwise a new entity is created.
+
+| Signal | Weight | What it measures |
+|--------|--------|------------------|
+| Name similarity | up to **0.5** | A character-sequence ratio between the two lowercased names (Python's `difflib.SequenceMatcher`) — **not** the trigram similarity from stage 1 |
+| Co-occurring entities | up to **0.3** | How many of the *other* entities extracted from the same fact this candidate already co-occurs with, each weighted by how selective it is |
+| Temporal proximity | up to **0.2** | How close the fact's date is to the candidate's `last_seen`, decaying linearly to zero at 7 days |
+
+Before any of that is counted, the candidate must reach
+`HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` (**`0.3`**) in trigram similarity. That floor
+exists because the two stages measure different things and can disagree, most sharply on
+short names: the sequence ratio rewards any shared run of characters, so `Tigran` and `Iran`
+score `0.80` on it — higher than `Alice`/`Alice Chen` (`0.67`), a merge the resolver exists
+to make — while trigram ranks them correctly at `0.20` and `0.55`. Without the floor, the
+remaining signals are worth `0.5` of the `0.6` needed, so a name that merely resembled an
+existing entity could be merged onto it by the bank's history alone.
+
+Two further checks run before the score. A candidate must **agree word by word**: every word of
+the shorter name has to find a counterpart in the longer one (an equal word, an abbreviation of
+one, or a near-miss spelling). Whole-name similarity otherwise lets a long shared word drown out
+a completely different short one — `John Smith` and `Jane Smith` are `0.47` by trigram and `0.80`
+by sequence ratio, so two people sharing a surname would merge. Single-word names are exempt,
+since with one word the floor above already is the word-level check. And in the other direction,
+a candidate whose trigram set is *identical* to the name's is reused outright, whatever the other
+signals say: pg_trgm builds trigrams per word, so identical sets mean the two forms differ only in
+case, punctuation or decoration (`Wren 🎵` and `Wren`, `GPT-4` and `GPT 4`).
+
+The co-occurrence weighting matters for the same reason. An entity such as `user` co-occurs
+with nearly every fact in a mature bank, so sharing it says almost nothing; each shared
+entity is discounted by how many distinct entities it co-occurs with, and a partner seen
+alongside a hundred others is worth a tenth of one seen alongside a single other.
+
+So there are three thresholds, and they answer different questions:
+
+| Threshold | Default | Question |
+|---|---|---|
+| `ENTITY_TRGM_SIMILARITY_THRESHOLD` | `0.15` | Which existing entities are even looked at? |
+| `ENTITY_MERGE_MIN_SIMILARITY` | `0.3` | Which of them may be merged onto? |
+| `ENTITY_INTRABATCH_MERGE_SIMILARITY` | `0.5` | Which brand-new names in one retain are folded together? |
+
+**If unrelated entities are merging,** raise `HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY`.
+Genuine surface variants of one name usually sit between `0.4` and `0.7`, so there is room
+above the default. For names that must never be fuzzy-matched at all, model them as
+[entity labels](/developer/retain#entity-labels), or pass them yourself with
+[`resolve_entities: false`](/developer/api/retain#resolve_entities).
+
+**If variants that should merge are staying separate,** lower
+`HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` — short names are the usual reason, since
+trigram similarity on them is unavoidably low. If lowering it changes nothing, the candidate
+is not reaching stage 2 at all: lower `HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD` too,
+and check that `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES` is not truncating the
+right candidate away on a bank with many similar names.
 
 #### Skip storing raw document text
 
@@ -1711,10 +1855,10 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](/developer/api/operations#consolidation). Configurable per bank. | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS` | Interval for the background sweep that re-schedules consolidation for banks with unconsolidated facts but no consolidation in progress — recovering facts left unscheduled when a consolidation operation failed terminally (e.g. the LLM provider was unavailable). Only applies to banks with auto-consolidation enabled. `0` disables the sweep — but see the note below: that stops work being *scheduled*, not work already queued from *running*. | `300` |
-| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS` | How often the background loop checks for cron-scheduled mental models that are due for a refresh. This is only the *check* cadence; the actual schedule is the per-model `trigger.refresh_cron` expression set on the mental model. A due model is refreshed only when it is stale (new memories in its scope since the last refresh). `0` disables the sweep — but see the note below: that stops work being *scheduled*, not work already queued from *running*. | `60` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS` | How often the background loop checks for cron-scheduled mental models that are due for a refresh. This is only the *check* cadence; the actual schedule is the per-model `trigger.refresh_cron` expression set on the mental model. A due model is refreshed only when it is stale (new memories in its scope since the last refresh). It also sets a **floor on cron granularity** — at the default, a `* * * * *` schedule fires every 5 minutes, not every minute; lower it if you need finer schedules, at the cost of a more frequent cross-tenant scan (see [Background Maintenance](#background-maintenance)). `0` disables the sweep — but see the note below: that stops work being *scheduled*, not work already queued from *running*. | `300` |
 | `HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY` | Track history of changes to each observation (previous text/tags/dates + timestamp), stored one row per change in the `observation_history` table. Set to `false` to disable entirely — no history rows are written. **This is how you turn the feature off** (not a zero cap). | `true` |
 | `HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENTRIES` | Max history rows kept per observation. On each update the previous version is inserted into the `observation_history` table and the oldest rows beyond this cap are deleted, so an often-reinforced observation's history can't grow without bound. `0` or a negative value **removes the cap** (unbounded); to turn history off entirely set `HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY=false` instead. | `50` |
-| `HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS` | Outer retry attempts for the consolidation LLM batch call. Each attempt uses the inner retry budget (`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES`). Worst-case API calls per batch = `MAX_ATTEMPTS × (LLM_MAX_RETRIES + 1)`. | `3` |
+| `HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS` | Outer retry attempts for the consolidation LLM batch call, used only for connection and rate-limit style failures (with backoff between attempts). Malformed or schema-invalid output is not re-sent — the batch fails immediately and is split into smaller batches instead. A provider quota exhaustion is not retried here at all: the whole job is rescheduled for when quota reopens. Each retried attempt uses the inner retry budget (`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES`), so worst-case API calls per batch = `MAX_ATTEMPTS × (LLM_MAX_RETRIES + 1)`. | `3` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND` | Maximum memories processed per consolidation round. When the limit is reached, the job yields its worker slot and re-queues itself so other banks get fair scheduling. Mental model refreshes only run on the final round. `0` = unlimited. Configurable per bank. | `100` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
@@ -1855,7 +1999,7 @@ export HINDSIGHT_API_MCP_ENABLED_TOOLS=recall
 export HINDSIGHT_API_MCP_ENABLED_TOOLS=recall,reflect
 ```
 
-Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`.
+Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_knowledge_base_tree`, `search_knowledge_base`, `get_knowledge_page`, `create_knowledge_folder`, `create_knowledge_page`, `update_knowledge_node`, `delete_knowledge_node`.
 
 This can also be overridden per bank via the [config API](#hierarchical-configuration):
 
@@ -1899,7 +2043,8 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
 | `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker (total across all operation types) | `10` |
 | `HINDSIGHT_API_OPERATION_RETENTION_DAYS` | Static server-wide retention window for completed, failed, and cancelled operation rows, including their task payload and result metadata. `0` (the default) keeps them indefinitely; set a positive number of days to enable automatic pruning. | `0` |
-| `HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE` | Maximum expired terminal operation rows deleted per tenant schema during each cleanup cycle. The cleanup job runs once per maintenance tick, so this also sets the drain rate for a backlog. Must be a positive integer. | `1000` |
+| `HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE` | Maximum expired terminal operation rows deleted per tenant schema during each cleanup cycle. Together with the cleanup interval this sets the drain rate for a backlog. Must be a positive integer. | `1000` |
+| `HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS` | How often the cleanup cycle runs. Each cycle costs one cross-tenant discovery round-trip, so the interval is the main lever on that cost for deployments with many tenants (see [Background Maintenance](#background-maintenance)). `0` disables the job. | `900` |
 | `HINDSIGHT_API_WORKER_CONSOLIDATION_RESERVED_SLOTS` | Reserved (minimum) slots for consolidation within `WORKER_MAX_SLOTS` — a floor that guarantees capacity, **not** a per-type cap (bank-serialization preserved). See the note below. | `2` |
 | `HINDSIGHT_API_WORKER_CONSOLIDATION_BANK_PRIORITY` | Per-bank priority for consolidation scheduling (see note below) | _(unset)_ |
 | `HINDSIGHT_API_WORKER_RETAIN_RESERVED_SLOTS` | Reserved (minimum) slots for retain within `WORKER_MAX_SLOTS`. | `0` |
@@ -2010,6 +2155,38 @@ LLM request tracing records every LLM call Hindsight makes — for retain, refle
 | `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `1` |
 | `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` | Truncate stored input/output beyond this many characters (keeps the row, stores a truncated preview). | `50000` |
 
+### Background Maintenance {#background-maintenance}
+
+A single periodic loop in every API/worker process drives Hindsight's recurring
+housekeeping: the `audit_log` / `llm_requests` retention sweeps, terminal
+operation cleanup, the consolidation reconcile, and the cron-scheduled mental
+model refresh.
+
+The loop runs in **every** process with no leader election, which is safe by
+construction — the sweeps are idempotent deletes, and the two jobs that enqueue
+work dedupe against in-flight operations inside the inserting transaction. What
+it is not is free at scale: each job starts with a cross-tenant discovery call
+that probes every schema holding the relevant table, and every process pays that
+probe. The cost scales with tenant count while the work it finds does not, so on
+a large multi-tenant deployment **the cadences are the knob that matters**.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_RETENTION_SWEEP_INTERVAL_SECONDS` | How often expired `audit_log` and `llm_requests` rows are deleted across all tenant schemas. Retention windows are measured in days, so this only affects how promptly expired rows disappear. `0` disables the sweeps. | `3600` |
+| `HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS` | How often expired terminal operation rows are pruned. See [Distributed Workers](#distributed-workers) for the retention window and batch size. `0` disables the job. | `900` |
+| `HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS` | Upper bound on a random delay applied before a process runs its **first** maintenance tick. Every job is due on that first tick, so without an offset a fleet started together — a deploy or rolling restart — runs every sweep in every process at the same instant. `0` disables the jitter for a deterministic start. | `60` |
+
+:::tip Tuning for many tenants
+
+At a few hundred tenants the defaults are irrelevant. At tens of thousands, the
+per-tick discovery scan dominates, and the jobs whose retention is counted in
+*days* have no reason to probe every schema every minute. Raise
+`HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS` and
+`HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS` first — they are the two most
+frequent sweeps — and keep the jitter enabled so restarts don't align the fleet.
+
+:::
+
 ### Programmatic Configuration
 
 You can also configure the API programmatically using `MemoryEngine.from_env()`:
@@ -2034,12 +2211,14 @@ Hindsight provides OpenTelemetry-based observability for LLM calls, conforming t
 | `HINDSIGHT_API_OTEL_TRACES_ENABLED` | Enable distributed tracing for LLM calls | `false` |
 | `HINDSIGHT_API_OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint URL (e.g., Grafana LGTM, Langfuse, etc.) | - |
 | `HINDSIGHT_API_OTEL_EXPORTER_OTLP_HEADERS` | Headers for OTLP exporter (format: "key1=value1,key2=value2") | - |
-| `HINDSIGHT_API_OTEL_SERVICE_NAME` | Service name for traces | `hindsight-api` |
+| `HINDSIGHT_API_OTEL_SERVICE_NAME` | Service name for traces. Applies to the API and to standalone workers, which default to `hindsight-worker` when it is unset. | `hindsight-api` |
 | `HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT` | Deployment environment name (e.g., development, staging, production) | `development` |
 | `HINDSIGHT_API_METRICS_INCLUDE_BANK_ID` | Include `bank_id` in OTel metric attributes. Enable only for deployments with few banks — high cardinality causes unbounded memory growth. | `false` |
 | `HINDSIGHT_API_METRICS_BACKLOG_ENABLED` | Expose async-operation queue depth and consolidation-backlog gauges (`hindsight_async_operations`, `hindsight_consolidation_backlog`, `hindsight_consolidation_failed`). Runs periodic per-schema `COUNT` queries on a background task. | `false` |
+| `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` | Comma-separated URL patterns excluded from request tracing | `health,metrics` |
 
 **Features:**
+- Continues the caller's trace when a `traceparent` header is present
 - Full prompts and completions recorded as events
 - Token usage tracking (input/output)
 - Model and provider information
@@ -2195,6 +2374,21 @@ Configuration fields are categorized for security:
    - Infrastructure: `database_url`, `port`, `host`, `worker_count`
    - Provider/Model selection: `llm_provider`, `llm_model` (requires presets - not yet implemented)
    - Performance tuning: `llm_max_concurrent`, `llm_timeout`, retrieval settings, optimization flags
+
+#### Concurrent Config Writes
+
+Config writes to the same bank are serialized. Validation and persistence run as
+one unit: the write locks the bank row, re-checks the update against the
+overrides actually committed at that moment, and only then merges it. Two
+requests can therefore never combine into a configuration that neither of them
+validated — for example one raising `retain_chunk_size` while the other removes
+the retain strategy that made the larger size legal.
+
+There is no conflict status to handle and no retry to implement. A request that
+loses the race is rejected with the same `400` validation error it would have
+received had the two updates arrived one after the other; a request whose fields
+are still valid against the newer state succeeds. Fields that no constraint spans
+are merged independently, so unrelated concurrent updates all survive.
 
 #### Enabling the API
 

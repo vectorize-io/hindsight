@@ -9,12 +9,13 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ..llm_interface import ProviderRateLimitResetError
+from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
 from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
@@ -481,24 +482,149 @@ _RECURSIVE_TEXT_SEPARATORS = [
 ]
 
 
-def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
-    """Sentence-aware split of a single unit that overflowed the budget.
+def _iter_separator_splits(text: str, separator: str) -> Iterator[str]:
+    """Yield ``text`` cut at every occurrence of ``separator``, separator kept on the right.
 
-    Used when one JSONL line / conversation turn is so large it can't be kept
-    whole within the configured structured-chunk limit. The resulting fragments
-    are no longer valid JSON, but the fact extractor treats every chunk as plain
-    text.
+    The lazy equivalent of what ``RecursiveCharacterTextSplitter`` gets from
+    ``re.split("(sep)", text)`` under its default ``keep_separator=True``: the piece before
+    the first match, then one piece per match running from that match to the next. Empty
+    pieces are dropped, matching the ``[s for s in splits if s]`` filter there.
+
+    Lazy because the eager form is the expensive half of chunking a large body — splitting a
+    45 MB document on ``". "`` materialises 646k substrings (~80 MB live, and far more RSS
+    once the allocator has fragmented) purely to feed a greedy packer that reads them once,
+    in order (#3756). An empty separator degrades to per-character iteration, which is the
+    same last-resort behaviour as ``list(text)`` without the 47M single-character strings.
     """
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    if not separator:
+        yield from text
+        return
+    previous = 0
+    for match in re.finditer(re.escape(separator), text):
+        piece = text[previous : match.start()]
+        if piece:
+            yield piece
+        previous = match.start()
+    tail = text[previous:]
+    if tail:
+        yield tail
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=max_chars,
-        chunk_overlap=0,
-        length_function=len,
-        is_separator_regex=False,
-        separators=_RECURSIVE_TEXT_SEPARATORS,
-    )
-    return splitter.split_text(text)
+
+def _iter_recursive_splits(text: str, max_chars: int, separators: list[str]) -> Iterator[str]:
+    """Sentence-aware split of ``text`` into chunks of at most ``max_chars``, streamed.
+
+    A faithful, lazy re-implementation of ``RecursiveCharacterTextSplitter._split_text`` for
+    the one configuration retain used it in (``chunk_overlap=0``, ``keep_separator=True``,
+    ``strip_whitespace=True``, ``length_function=len``). The algorithm is unchanged — pick
+    the most-preferred separator present, cut on it, pack the pieces greedily, and recurse
+    with the remaining separators into any piece that is still over budget — so the
+    boundaries it produces are identical.
+
+    That identity is load-bearing rather than incidental: chunk boundaries are content
+    hashes that delta retain matches against, and ``chunk_id`` is derived from a chunk's
+    index. Boundaries that shifted would make every stored chunk of every document look
+    changed. ``test_chunking_streams.py`` pins the output against the langchain splitter
+    directly, so a drift shows up as a test failure rather than as a silent re-ingest.
+
+    The greedy packing is inlined rather than run over a collected list of "good" pieces the
+    way ``_split_text`` collects ``good_splits``. Collecting first is what an eager
+    implementation can afford: prose has no over-budget piece to interrupt the run, so the
+    list grows to hold every piece in the document — 646k of them for a 45 MB body, ~80 MB,
+    which is the whole cost this function exists to avoid. Packing as pieces arrive keeps at
+    most one chunk's worth alive (#3756).
+    """
+    separator = separators[-1]
+    remaining: list[str] = []
+    for index, candidate in enumerate(separators):
+        if not candidate:
+            separator = candidate
+            break
+        if re.search(re.escape(candidate), text):
+            separator = candidate
+            remaining = separators[index + 1 :]
+            break
+
+    # The chunk being packed. Whitespace-stripping and the drop of an empty result mirror
+    # ``_join_docs``; resetting at an over-budget piece mirrors ``_split_text`` starting a
+    # fresh ``good_splits`` run after one.
+    buffered: list[str] = []
+    buffered_len = 0
+
+    def _flush() -> Iterator[str]:
+        nonlocal buffered, buffered_len
+        if buffered:
+            packed = "".join(buffered).strip()
+            buffered = []
+            buffered_len = 0
+            if packed:
+                yield packed
+
+    for piece in _iter_separator_splits(text, separator):
+        if len(piece) < max_chars:
+            if buffered and buffered_len + len(piece) > max_chars:
+                yield from _flush()
+            buffered.append(piece)
+            buffered_len += len(piece)
+            continue
+        # Over budget even alone: close the run so ordering is preserved, then split this
+        # piece further, or emit it whole when no separator is left to try.
+        yield from _flush()
+        if remaining:
+            yield from _iter_recursive_splits(piece, max_chars, remaining)
+        else:
+            yield piece
+    yield from _flush()
+
+
+def iter_chunks(text: str, max_chars: int, structured_chunk_size: int | None = None) -> Iterator[str]:
+    """Stream the chunks of ``text``, in order — the lazy form of :func:`chunk_text`.
+
+    Yields exactly what ``chunk_text`` returns, one chunk at a time, so a caller that
+    consumes chunks as it goes never holds the whole document's chunk list. Retain's
+    producer works that way: a 45 MB body is 32k chunks that cost ~130 MB live and several
+    hundred MB of RSS once materialised together, and the pipeline only ever needs the one
+    it is extracting from (#3756).
+
+    See :func:`chunk_text` for what the chunking itself guarantees.
+    """
+    # If text is small enough, return as-is
+    if len(text) <= max_chars:
+        yield text
+        return
+
+    structured_limit = structured_chunk_size if structured_chunk_size is not None else max_chars
+
+    # Try to parse as JSON conversation array
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        parsed = None
+
+    if isinstance(parsed, list) and all(isinstance(turn, dict) for turn in parsed):
+        # This looks like a conversation - chunk at turn boundaries
+        yield from _iter_conversation_chunks(parsed, max_chars, structured_limit)
+        return
+
+    if isinstance(parsed, dict):
+        # A single JSON object — e.g. one JSONL line handed back to the extractor
+        # after the producer already pre-chunked it. It is one structured unit:
+        # keep it whole up to the structured limit, else split it as text within
+        # the chunk budget. Without this, a lone object (one line, so _chunk_jsonl
+        # declines) would fall through to plain-text splitting and re-split a chunk
+        # the producer deliberately kept whole — breaking idempotency (issue #2301).
+        if len(text) <= structured_limit:
+            yield text
+        else:
+            yield from _iter_recursive_splits(text, max_chars, _RECURSIVE_TEXT_SEPARATORS)
+        return
+
+    # Try to parse as JSONL (newline-delimited JSON objects, e.g. session logs)
+    if _looks_like_jsonl(text):
+        yield from _iter_jsonl_chunks(text, max_chars, structured_limit)
+        return
+
+    # Fall back to sentence-aware text splitting
+    yield from _iter_recursive_splits(text, max_chars, _RECURSIVE_TEXT_SEPARATORS)
 
 
 def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
@@ -516,6 +642,9 @@ def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = No
     re-chunks every piece during extraction; if a piece re-split, its sub-chunks
     would inherit one chunk_index and collide on ``chunk_id`` (issue #2301).
 
+    Materialises every chunk. Prefer :func:`iter_chunks` for anything document-sized —
+    this is the convenience form for callers that need random access or a length.
+
     Args:
         text: Input text to chunk (plain text, JSON conversation, or JSONL)
         max_chars: Target maximum characters per chunk
@@ -525,43 +654,10 @@ def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = No
     Returns:
         List of text chunks, roughly under max_chars
     """
-    # If text is small enough, return as-is
-    if len(text) <= max_chars:
-        return [text]
-
-    structured_limit = structured_chunk_size if structured_chunk_size is not None else max_chars
-
-    # Try to parse as JSON conversation array
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        parsed = None
-
-    if isinstance(parsed, list) and all(isinstance(turn, dict) for turn in parsed):
-        # This looks like a conversation - chunk at turn boundaries
-        return _chunk_conversation(parsed, max_chars, structured_limit)
-
-    if isinstance(parsed, dict):
-        # A single JSON object — e.g. one JSONL line handed back to the extractor
-        # after the producer already pre-chunked it. It is one structured unit:
-        # keep it whole up to the structured limit, else split it as text within
-        # the chunk budget. Without this, a lone object (one line, so _chunk_jsonl
-        # declines) would fall through to plain-text splitting and re-split a chunk
-        # the producer deliberately kept whole — breaking idempotency (issue #2301).
-        if len(text) <= structured_limit:
-            return [text]
-        return _split_oversized_unit(text, max_chars)
-
-    # Try to parse as JSONL (newline-delimited JSON objects, e.g. session logs)
-    jsonl_chunks = _chunk_jsonl(text, max_chars, structured_limit)
-    if jsonl_chunks is not None:
-        return jsonl_chunks
-
-    # Fall back to sentence-aware text splitting
-    return _split_oversized_unit(text, max_chars)
+    return list(iter_chunks(text, max_chars, structured_chunk_size=structured_chunk_size))
 
 
-def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int) -> list[str]:
+def _iter_conversation_chunks(turns: list[dict], max_chars: int, structured_limit: int) -> Iterator[str]:
     """
     Chunk a conversation array at turn boundaries, preserving complete turns.
 
@@ -570,18 +666,18 @@ def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int
         max_chars: Maximum characters per chunk
         structured_limit: Maximum characters for a single turn to keep whole
 
-    Returns:
-        List of JSON-serialized chunks, each containing complete turns
+    Yields:
+        JSON-serialized chunks, each containing complete turns
     """
-
-    chunks = []
-    current_chunk = []
+    current_chunk: list[dict] = []
     current_size = 2  # Account for "[]"
+    emitted = False
 
-    def _flush() -> None:
-        nonlocal current_chunk, current_size
+    def _flush() -> Iterator[str]:
+        nonlocal current_chunk, current_size, emitted
         if current_chunk:
-            chunks.append(json.dumps(current_chunk, ensure_ascii=False))
+            emitted = True
+            yield json.dumps(current_chunk, ensure_ascii=False)
             current_chunk = []
             current_size = 2  # Reset to "[]"
 
@@ -596,66 +692,102 @@ def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int
         # exceeds the chunk budget — otherwise a downstream re-chunk would split
         # it again and collide on chunk_id (issue #2301).
         if turn_unit_size > structured_limit:
-            _flush()
-            chunks.extend(_split_oversized_unit(turn_json, min(structured_limit, max_chars)))
+            yield from _flush()
+            for fragment in _iter_recursive_splits(
+                turn_json, min(structured_limit, max_chars), _RECURSIVE_TEXT_SEPARATORS
+            ):
+                emitted = True
+                yield fragment
             continue
 
         # If adding this turn would exceed limit and we have turns, save current chunk
         if current_size + turn_size > max_chars and current_chunk:
-            _flush()
+            yield from _flush()
 
         # Add turn to current chunk
         current_chunk.append(turn)
         current_size += turn_size
 
     # Add final chunk if non-empty
-    _flush()
+    yield from _flush()
 
-    return chunks if chunks else [json.dumps(turns, ensure_ascii=False)]
+    if not emitted:
+        yield json.dumps(turns, ensure_ascii=False)
 
 
-def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] | None:
+def _iter_nonblank_lines(text: str) -> Iterator[str]:
+    """Yield ``text``'s non-blank lines without materialising them all.
+
+    ``str.splitlines()`` on a document-sized body allocates a second copy of it as N
+    separate strings; the JSONL path reads its lines strictly in order and twice (once to
+    decide the format, once to pack), so it can afford to re-scan instead of retaining
+    (#3756). Splits on ``\\n`` only, and strips a trailing ``\\r``, which is what
+    ``splitlines`` does for the CR/LF forms JSONL can realistically arrive in.
+    """
+    start = 0
+    length = len(text)
+    while start < length:
+        end = text.find("\n", start)
+        if end == -1:
+            end = length
+        line = text[start:end]
+        if line.endswith("\r"):
+            line = line[:-1]
+        # `not line.isspace()` rather than `line.strip()`: both answer "does this line have a
+        # non-whitespace character", but strip() BUILDS the stripped copy to answer it. A body
+        # with no newline at all is one line, so on a 45 MB one that is a 45 MB copy allocated
+        # to decide the line is not blank (#3756). isspace() scans and allocates nothing.
+        if line and not line.isspace():
+            yield line
+        start = end + 1
+
+
+def _looks_like_jsonl(text: str) -> bool:
+    """Whether ``text`` is newline-delimited JSON: 2+ non-blank lines, each a JSON object.
+
+    Every line has to be checked — one line that is not an object disqualifies the whole
+    body — but none of the parsed objects is kept, so this scans rather than collects.
+    Non-JSONL input is rejected on its first line, so prose never gets scanned twice.
+    """
+    seen = 0
+    for line in _iter_nonblank_lines(text):
+        try:
+            parsed = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            return False
+        if not isinstance(parsed, dict):
+            return False
+        seen += 1
+    return seen >= 2
+
+
+def _iter_jsonl_chunks(text: str, max_chars: int, structured_limit: int) -> Iterator[str]:
     """Chunk newline-delimited JSON (JSONL) at line boundaries.
 
-    Detects JSONL — two or more non-empty lines, each a complete JSON object —
-    and packs whole lines into chunks so no line is split across chunks (multiple
-    short lines may share a chunk). A line that overflows ``max_chars`` is kept
-    whole only up to ``structured_limit``. Returns ``None`` if the input is not
-    JSONL, so the caller falls back to plain-text splitting.
+    Packs whole lines into chunks so no line is split across chunks (multiple short lines
+    may share a chunk). A line that overflows ``max_chars`` is kept whole only up to
+    ``structured_limit``. Call only for text :func:`_looks_like_jsonl` accepted.
 
     Args:
-        text: Input text to inspect/chunk.
+        text: Input text to chunk.
         max_chars: Maximum characters per chunk.
         structured_limit: Maximum characters for a single JSONL line to
             keep whole.
 
-    Returns:
-        List of JSONL chunks (lines joined by newline), or ``None`` if not JSONL.
+    Yields:
+        JSONL chunks (lines joined by newline).
     """
-    lines = [line for line in text.splitlines() if line.strip()]
-    if len(lines) < 2:
-        return None
-
-    for line in lines:
-        try:
-            obj = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            return None
-        if not isinstance(obj, dict):
-            return None
-
-    chunks: list[str] = []
     current_chunk: list[str] = []
     current_size = 0
 
-    def _flush() -> None:
+    def _flush() -> Iterator[str]:
         nonlocal current_chunk, current_size
         if current_chunk:
-            chunks.append("\n".join(current_chunk))
+            yield "\n".join(current_chunk)
             current_chunk = []
             current_size = 0
 
-    for line in lines:
+    for line in _iter_nonblank_lines(text):
         line_unit_size = len(line)
         line_size = len(line) + 1  # +1 for the joining newline
 
@@ -664,21 +796,19 @@ def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] 
         # exceeds the chunk budget — otherwise a downstream re-chunk would split
         # it again and collide on chunk_id (issue #2301).
         if line_unit_size > structured_limit:
-            _flush()
-            chunks.extend(_split_oversized_unit(line, min(structured_limit, max_chars)))
+            yield from _flush()
+            yield from _iter_recursive_splits(line, min(structured_limit, max_chars), _RECURSIVE_TEXT_SEPARATORS)
             continue
 
         # If adding this line would exceed the limit and we have lines, flush.
         # A line up to structured_limit is kept whole (a bounded overflow).
         if current_size + line_size > max_chars and current_chunk:
-            _flush()
+            yield from _flush()
 
         current_chunk.append(line)
         current_size += line_size
 
-    _flush()
-
-    return chunks
+    yield from _flush()
 
 
 # =============================================================================
@@ -1492,6 +1622,17 @@ async def _extract_facts_from_chunk(
                     # In verbatim mode, 'what' is intentionally absent — text is backfilled from chunk
                     if extraction_mode != "verbatim":
                         logger.warning(f"Skipping fact {i}: missing 'what' field")
+                        # Count it as malformed so the re-prompt below covers this case too.
+                        # A model that emits well-formed JSON with the wrong field shape (no
+                        # schema enforcement, e.g. JSON-mode-only models) otherwise drops every
+                        # fact on the first attempt and returns [] without ever retrying, and
+                        # the retain still completes — silent data loss (#3708).
+                        #
+                        # Only *absent* text keys count. A key that is present but empty or
+                        # "N/A" is the model saying "nothing to extract here", which re-prompting
+                        # cannot improve — skip it as quietly as before.
+                        if not any(key in llm_fact for key in ("what", "factual_core", "text")):
+                            has_malformed_facts = True
                         continue
 
                 # Critical field: fact_type — "assistant" maps to "experience", everything else is "world".
@@ -1660,6 +1801,22 @@ async def _extract_facts_from_chunk(
                     f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{outer_attempts}. Retrying..."
                 )
                 continue
+
+            # Every fact the model returned was unusable, on every attempt. Raise
+            # instead of returning [] so the failure reaches the worker's retry
+            # machinery and ultimately fails the operation loudly — the same rule the
+            # non-dict response above follows (#1833). Without this the retain commits
+            # a document with 0 memory units and reports `completed`, so callers cannot
+            # tell schema-drifted extraction from content that genuinely held no facts
+            # (#3708). A model that legitimately returns `"facts": []` never lands here:
+            # nothing was dropped, so has_malformed_facts stays False.
+            if has_malformed_facts and not chunk_facts:
+                raise RuntimeError(
+                    f"Fact extraction failed: all {len(raw_facts)} facts returned by the LLM were "
+                    f"unusable after {outer_attempts} attempts (wrong shape or missing required fields). "
+                    f"Model '{llm_config.model}' may not honour the extraction schema — consider enabling "
+                    f"HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN or using a model with strict schema support."
+                )
 
             return chunk_facts, usage
 
@@ -1914,6 +2071,21 @@ async def extract_facts_from_text(
                 ),
             ) from quota_errors[0]
 
+        # A content-policy refusal is deterministic: the offending chunk earns
+        # the same refusal on every replay, so no amount of task-level retrying
+        # can complete this retain. Re-raise the permanent type (rather than a
+        # generic RuntimeError) so the worker fails the operation immediately
+        # instead of burning a full retry schedule on it (issue #3690). One
+        # refused chunk is enough — the retain cannot succeed while it is in the
+        # batch, whatever the other failures were.
+        policy_errors = [err for _, err in failed_chunks if isinstance(err, ProviderContentPolicyError)]
+        if policy_errors:
+            raise ProviderContentPolicyError(
+                f"Fact extraction refused by provider content policy: {len(policy_errors)} of "
+                f"{len(failed_chunks)} failed chunks ({len(chunks)} total) were refused; retrying cannot "
+                f"succeed. First failures: {failed_summary}"
+            ) from policy_errors[0]
+
         # Fail the entire retain — partial extraction is not acceptable.
         # All successfully extracted facts are discarded because the transaction
         # hasn't committed yet. The worker poller will retry the entire task.
@@ -2009,22 +2181,13 @@ async def extract_facts_from_contents_batch_api(
     # Check config for causal link extraction (used throughout)
     extract_causal_links = config.retain_extract_causal_links
 
-    # Resolve the provider implementation that serves the batch. For a multi-LLM
-    # chain this is the first batch-capable member (not necessarily the primary);
-    # for a single provider it is the primary itself, and ``None`` when nothing
-    # configured can serve a batch at all. The whole batch lifecycle (submit →
-    # poll → retrieve) must target this ONE impl, so resolve it once and reuse it.
-    batch_impl = await llm_config.batch_provider_impl()
-
-    if batch_impl is None:
-        raise RuntimeError(
-            f"retain_batch_enabled=True but provider '{llm_config.provider}' does not "
-            f"support the batch API. This should have been caught at startup — check "
-            f"HINDSIGHT_API_RETAIN_BATCH_ENABLED and your LLM provider configuration."
-        )
-
-    # Check if we're resuming an existing batch (crash recovery)
+    # Check if we're resuming an existing batch (crash recovery). This is read
+    # BEFORE the serving member is resolved: a resume must target the account
+    # that owns the batch, not whichever member the current configuration would
+    # pick for a fresh one.
     batch_id = None
+    submitted_account: str | None = None
+    submitted_provider: str | None = None
     if operation_id and pool:
         from ..db_utils import acquire_with_retry
         from ..task_backend import fq_table
@@ -2041,24 +2204,54 @@ async def extract_facts_from_contents_batch_api(
             if isinstance(metadata, str):
                 metadata = json.loads(metadata)
             batch_id = metadata.get("batch_id")
-
             if batch_id:
-                # Member selection is deterministic by declared order, but the
-                # chain configuration can change between the submit and the
-                # resume (a member added, removed, or given batch capacity). A
-                # batch_id only exists on the account that created it, so polling
-                # a different one would hang until the wall clock ran out and then
-                # report a provider error nobody can act on. Fail on the mismatch
-                # instead, naming both sides.
+                submitted_account = metadata.get("batch_account")
                 submitted_provider = metadata.get("batch_provider")
-                if submitted_provider and submitted_provider != batch_impl.provider:
-                    raise RuntimeError(
-                        f"Cannot resume batch {batch_id}: it was submitted to "
-                        f"'{submitted_provider}' but the retain LLM configuration now "
-                        f"serves batch from '{batch_impl.provider}'. Restore the LLM "
-                        f"member that submitted it, or fail this operation and retain again."
-                    )
-                logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
+
+    # Resolve the provider implementation that serves the batch. For a multi-LLM
+    # chain a fresh batch goes to the first batch-capable member (not necessarily
+    # the primary); for a single provider it is the primary itself, and ``None``
+    # when nothing configured can serve a batch at all. The whole batch lifecycle
+    # (submit → poll → retrieve) must target this ONE impl, so resolve it once
+    # and reuse it.
+    #
+    # Resuming pins the lookup to the account that submitted the batch. The chain
+    # configuration can change between submit and resume — a member added,
+    # removed, reordered, or given batch capacity — and two members of the same
+    # provider on different credentials are indistinguishable by provider name,
+    # so "first batch-capable member" can resolve to an account that has never
+    # seen this batch id (#3671).
+    batch_impl = await llm_config.batch_provider_impl(account_key=submitted_account)
+
+    if batch_impl is None:
+        if batch_id:
+            # Polling an account that does not own the batch would hang until the
+            # wall clock ran out and then report a provider error nobody can act
+            # on. Fail before the first poll instead, naming both sides.
+            raise RuntimeError(
+                f"Cannot resume batch {batch_id}: it was submitted by the LLM member "
+                f"'{submitted_account or submitted_provider}', which the retain LLM "
+                f"configuration no longer serves batch from. Restore the LLM member "
+                f"(provider, base URL and API key) that submitted it, or fail this "
+                f"operation and retain again."
+            )
+        raise RuntimeError(
+            f"retain_batch_enabled=True but provider '{llm_config.provider}' does not "
+            f"support the batch API. This should have been caught at startup — check "
+            f"HINDSIGHT_API_RETAIN_BATCH_ENABLED and your LLM provider configuration."
+        )
+
+    if batch_id:
+        # Batches submitted before ``batch_account`` was persisted carry only the
+        # provider name; keep guarding those on the coarse signal we do have.
+        if submitted_account is None and submitted_provider and submitted_provider != batch_impl.provider:
+            raise RuntimeError(
+                f"Cannot resume batch {batch_id}: it was submitted to "
+                f"'{submitted_provider}' but the retain LLM configuration now "
+                f"serves batch from '{batch_impl.provider}'. Restore the LLM "
+                f"member that submitted it, or fail this operation and retain again."
+            )
+        logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
 
     # Step 1: Chunk all contents and build batch requests (skip if resuming)
     all_chunks_info = []  # List of (chunk_text, content_index, chunk_index_in_content, event_date, context)
@@ -2117,6 +2310,10 @@ async def extract_facts_from_contents_batch_api(
             batch_state = {
                 "batch_id": batch_id,
                 "batch_provider": batch_impl.provider,
+                # Binds the batch to the exact account that owns it, so a resume
+                # after a member reorder resolves that account instead of a
+                # same-provider lookalike (#3671). Non-secret by construction.
+                "batch_account": batch_impl.batch_account_key,
                 "chunk_count": len(batch_requests),
             }
 
@@ -2274,6 +2471,16 @@ async def extract_facts_from_contents_batch_api(
             if not what:
                 what = get_value("text")
             if not what:
+                # Same schema-drift signal as the streaming path (#3708): a fact object
+                # carrying none of the text keys means the model ignored the schema.
+                # The batch API cannot re-prompt a single request, so record it on the
+                # operation instead — that is what extraction_errors is for, and
+                # HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS can escalate it to a failure.
+                # A key that is present but empty/"N/A" stays a quiet skip.
+                if not any(key in llm_fact for key in ("what", "factual_core", "text")):
+                    message = f"{custom_id}: fact {i} has no 'what'/'factual_core'/'text' field"
+                    logger.warning(message)
+                    extraction_errors.add(message)
                 continue
 
             when = get_value("when")

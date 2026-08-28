@@ -9,6 +9,7 @@ import asyncio
 import heapq
 import json
 import logging
+import math
 import re
 from collections import defaultdict
 from collections.abc import Iterator
@@ -65,6 +66,11 @@ class _SimilarNamePair:
 # single-retain new-entity count while bounding the tail.
 _INTRABATCH_MAX_NAMES = 250
 
+# Trigram similarity at which two names are the same words in some order, differing only in case,
+# punctuation or decoration — pg_trgm builds its trigrams per word, so identical sets means the
+# separators are all that differ. Name evidence that strong stands on its own.
+_IDENTICAL_TRIGRAMS: Final[float] = 1.0
+
 # A pg_trgm "word" is a maximal run of alphanumerics (Unicode letters/digits, underscore excluded);
 # everything else (space, punctuation, emoji) is a separator. This is why decoration variants like
 # "Wren <emoji>" collapse to the same trigram set.
@@ -82,6 +88,19 @@ def _trigram_set(text: str) -> set[str]:
     return trigrams
 
 
+def _trigram_set_similarity(ta: set[str], tb: set[str]) -> float:
+    """Jaccard index of two already-computed trigram sets.
+
+    Split out from ``_trigram_similarity`` so callers that compare one name against many
+    (the candidate scoring loop, the O(N^2) in-batch pass) build each set once instead of
+    once per comparison — the loop runs up to ``entity_resolution_max_candidates`` times per
+    mention on the retain hot path (GH-3211).
+    """
+    intersection = len(ta & tb)
+    union = len(ta) + len(tb) - intersection
+    return intersection / union if union else 0.0
+
+
 def _trigram_similarity(a: str, b: str) -> float:
     """pg_trgm ``similarity(a, b)`` computed in-memory — the Jaccard index of the trigram sets.
 
@@ -90,10 +109,89 @@ def _trigram_similarity(a: str, b: str) -> float:
     Doing it in Python keeps the in-batch dedup off the retain transaction's DB connection and makes
     it backend-agnostic (Postgres, Oracle, and the pg_trgm-absent "full" fallback all behave alike).
     """
-    ta, tb = _trigram_set(a), _trigram_set(b)
-    intersection = len(ta & tb)
-    union = len(ta) + len(tb) - intersection
-    return intersection / union if union else 0.0
+    return _trigram_set_similarity(_trigram_set(a), _trigram_set(b))
+
+
+# Sequence ratio at/above which two *words* count as the same word. Calibrated on the pair this
+# exists to reject — "John Smith" vs "Jane Smith", where john/jane is 0.50 — against the legitimate
+# word-level differences below it: são/sao 0.67, waler/wall 0.67, arbor/arbour 0.91. Abbreviations
+# (corp/corporation, 0.53) are admitted by the prefix rule instead, not by lowering this.
+_MIN_TOKEN_SIMILARITY: Final[float] = 0.6
+
+
+def _tokens_match(a: str, b: str) -> bool:
+    """Whether two words are plausibly the same word — equal, an abbreviation of, or a near-miss."""
+    return a == b or a.startswith(b) or b.startswith(a) or SequenceMatcher(None, a, b).ratio() >= _MIN_TOKEN_SIMILARITY
+
+
+def _tokens_are_compatible(a: str, b: str) -> bool:
+    """Whether two multi-word names agree word by word.
+
+    Whole-name similarity lets one long shared word drown out a completely different short one:
+    "John Smith" and "Jane Smith" are 0.47 by trigram and 0.80 by sequence ratio, so two people who
+    share a surname and a workplace scored as one entity. Every word of the shorter name has to find
+    a counterpart in the longer one — the same floor the whole name already faces, applied where the
+    evidence actually is.
+
+    Single-word names are exempt, and deliberately: with one token the whole-name check *is* the
+    token check, and imposing this on top would reject real variants that have no long shared word
+    to hide behind ("Nick"/"Nicolas" is 0.55).
+    """
+    ta, tb = _TRGM_WORD.findall(a.lower()), _TRGM_WORD.findall(b.lower())
+    if len(ta) < 2 and len(tb) < 2:
+        return True
+    short, rest = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return all(any(_tokens_match(word, other) for other in rest) for word in short)
+
+
+@dataclass
+class _CooccurrenceIndex:
+    """Co-occurrence facts the scoring pass needs, built once per resolution batch."""
+
+    # entity_id -> lowercased names of the entities it co-occurs with (named ones only).
+    by_entity: dict[str, set[str]] = field(default_factory=dict)
+    # lowercased entity name -> how many distinct entities it co-occurs with.
+    degree_by_name: dict[str, int] = field(default_factory=dict)
+
+
+def _build_cooccurrence_index(rows: list[Any], id_to_name: dict[str, str]) -> _CooccurrenceIndex:
+    """Index co-occurrence rows by entity, and count each named entity's degree.
+
+    ``rows`` must cover the full neighbourhood of every id in ``id_to_name`` for the degrees
+    to be exact — every caller fetches with ``entity_id_1 = ANY(...) OR entity_id_2 = ANY(...)``
+    over exactly those ids (or over the whole bank), so they are. Degree is counted over *all*
+    partners, including ones outside ``id_to_name``: it measures how indiscriminate an entity
+    is, which is the whole point of the weighting in ``_cooccurrence_weight``.
+    """
+    index = _CooccurrenceIndex()
+    neighbours: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        eid1, eid2 = row["entity_id_1"], row["entity_id_2"]
+        neighbours[eid1].add(eid2)
+        neighbours[eid2].add(eid1)
+        index.by_entity.setdefault(eid1, set())
+        index.by_entity.setdefault(eid2, set())
+        if eid2 in id_to_name:
+            index.by_entity[eid1].add(id_to_name[eid2])
+        if eid1 in id_to_name:
+            index.by_entity[eid2].add(id_to_name[eid1])
+    for entity_id, name in id_to_name.items():
+        # Same name from two ids can only happen mid-merge; keep the larger degree.
+        index.degree_by_name[name] = max(index.degree_by_name.get(name, 0), len(neighbours[entity_id]))
+    return index
+
+
+def _cooccurrence_weight(degree: int) -> float:
+    """How much one shared co-occurrence partner is worth, damped by how common it is.
+
+    "This name turns up next to the same entities as the candidate" is only evidence when
+    those entities are selective. A hub like ``user`` co-occurs with nearly everything in a
+    mature bank, so an unweighted overlap handed it the same vote as a rare partner — enough,
+    on its own, to merge a new person's facts onto an unrelated entity (#3751). Inverse square
+    root: a partner seen with one other entity keeps its full vote, one seen with 100 is worth
+    0.1, one seen with 1500 is worth 0.026.
+    """
+    return 1.0 / math.sqrt(max(degree, 1))
 
 
 def _find_intrabatch_similar_pairs(names: list[str], threshold: float) -> list[_SimilarNamePair]:
@@ -104,10 +202,7 @@ def _find_intrabatch_similar_pairs(names: list[str], threshold: float) -> list[_
     for i in range(len(names)):
         ti = trigrams[i]
         for j in range(i + 1, len(names)):
-            tj = trigrams[j]
-            intersection = len(ti & tj)
-            union = len(ti) + len(tj) - intersection
-            if union and intersection / union >= threshold:
+            if _trigram_set_similarity(ti, trigrams[j]) >= threshold:
                 pairs.append(_SimilarNamePair(name_a=names[i], name_b=names[j]))
     return pairs
 
@@ -266,6 +361,7 @@ class EntityResolver:
         entity_resolution_batch_size: int = 100,
         intrabatch_merge_similarity: float = 0.5,
         entity_resolution_max_candidates: int = 200,
+        merge_min_similarity: float = 0.3,
     ):
         """
         Initialize entity resolver.
@@ -280,9 +376,14 @@ class EntityResolver:
             intrabatch_merge_similarity: pg_trgm similarity at/above which two new
                 names created by the same retain are merged into one entity.
             entity_resolution_max_candidates: Max candidates scored per entity
-                mention. Scoring is a synchronous SequenceMatcher call per
-                candidate, so an unbounded candidate set turns one resolution
-                batch into minutes of event-loop-blocking CPU (GH-3211).
+                mention. Every candidate costs synchronous string comparison on
+                the event-loop thread — a trigram set, and for those that clear
+                the floor a word-level check and a SequenceMatcher pass — so an
+                unbounded candidate set turns one resolution batch into minutes
+                of event-loop-blocking CPU (GH-3211).
+            merge_min_similarity: Minimum pg_trgm similarity with an EXISTING
+                entity before that entity may be reused for a name, regardless of
+                what the other scoring signals say (#3751).
         """
         self.pool = pool
         self.entity_lookup = entity_lookup
@@ -290,6 +391,7 @@ class EntityResolver:
             raise ValueError("entity_resolution_batch_size must be >= 1")
         self.entity_resolution_batch_size = entity_resolution_batch_size
         self._intrabatch_merge_similarity = intrabatch_merge_similarity
+        self._merge_min_similarity = merge_min_similarity
         if entity_resolution_max_candidates < 1:
             raise ValueError("entity_resolution_max_candidates must be >= 1")
         self.entity_resolution_max_candidates = entity_resolution_max_candidates
@@ -433,7 +535,8 @@ class EntityResolver:
 
         Each mention may carry ``"resolve": False`` to opt out of resolution. The
         default, True, treats a name as a *guess* at which entity is meant, so
-        similar existing entities are scored on name similarity + co-occurrence +
+        existing entities that are similar enough to be merged onto at all (see
+        ``merge_min_similarity``) are scored on name similarity + co-occurrence +
         recency and the best above threshold is reused. False takes the name
         literally: an existing entity is reused only when its canonical name
         matches case-insensitively, any other name creates its own entity, and it
@@ -558,19 +661,9 @@ class EntityResolver:
         )
 
         # Build co-occurrence map: entity_id -> set of co-occurring entity names (lowercase)
-        cooccurrence_map: dict[str, set[str]] = {}
-        for row in all_cooccurrences:
-            eid1, eid2 = row["entity_id_1"], row["entity_id_2"]
-            # Add both directions
-            if eid1 not in cooccurrence_map:
-                cooccurrence_map[eid1] = set()
-            if eid2 not in cooccurrence_map:
-                cooccurrence_map[eid2] = set()
-            # Map to canonical names for comparison with nearby_entities
-            if eid2 in entity_id_to_name:
-                cooccurrence_map[eid1].add(entity_id_to_name[eid2])
-            if eid1 in entity_id_to_name:
-                cooccurrence_map[eid2].add(entity_id_to_name[eid1])
+        cooccurrences = _build_cooccurrence_index(all_cooccurrences, entity_id_to_name)
+        cooccurrence_map = cooccurrences.by_entity
+        cooccurrence_degrees = cooccurrences.degree_by_name
 
         # Build candidate map for each entity text
         all_candidates = {}  # Maps entity_text -> list of candidates
@@ -604,6 +697,7 @@ class EntityResolver:
             cooccurrence_map,
             taxonomy_lookup,
             labels_cfg,
+            cooccurrence_degrees,
         )
 
     async def _resolve_entities_batch_trigram(
@@ -709,6 +803,7 @@ class EntityResolver:
 
         # Fetch co-occurrences only for the candidate entities (not all bank entities)
         cooccurrence_map: dict[str, set[str]] = {}
+        cooccurrence_degrees: dict[str, int] = {}
         if candidate_ids:
             candidate_id_list = list(candidate_ids)
             cooc_rows = await conn.fetch(
@@ -726,16 +821,9 @@ class EntityResolver:
                 for cands in all_candidates.values()
                 for row in [{"id": c[0], "canonical_name": c[1]} for c in cands]
             }
-            for row in cooc_rows:
-                eid1, eid2 = row["entity_id_1"], row["entity_id_2"]
-                if eid1 not in cooccurrence_map:
-                    cooccurrence_map[eid1] = set()
-                if eid2 not in cooccurrence_map:
-                    cooccurrence_map[eid2] = set()
-                if eid2 in id_to_name:
-                    cooccurrence_map[eid1].add(id_to_name[eid2])
-                if eid1 in id_to_name:
-                    cooccurrence_map[eid2].add(id_to_name[eid1])
+            cooccurrences = _build_cooccurrence_index(cooc_rows, id_to_name)
+            cooccurrence_map = cooccurrences.by_entity
+            cooccurrence_degrees = cooccurrences.degree_by_name
 
         return await self._resolve_from_candidates(
             conn,
@@ -746,6 +834,7 @@ class EntityResolver:
             cooccurrence_map,
             taxonomy_lookup,
             labels_cfg,
+            cooccurrence_degrees,
         )
 
     async def _resolve_entities_batch_oracle_fuzzy(
@@ -856,6 +945,7 @@ class EntityResolver:
 
         # Fetch co-occurrences only for the candidate entities (not all bank entities)
         cooccurrence_map: dict[str, set[str]] = {}
+        cooccurrence_degrees: dict[str, int] = {}
         if candidate_ids:
             candidate_id_list = list(candidate_ids)
             cooc_rows = await conn.fetch(
@@ -873,16 +963,9 @@ class EntityResolver:
                 for cands in all_candidates.values()
                 for row in [{"id": c[0], "canonical_name": c[1]} for c in cands]
             }
-            for row in cooc_rows:
-                eid1, eid2 = row["entity_id_1"], row["entity_id_2"]
-                if eid1 not in cooccurrence_map:
-                    cooccurrence_map[eid1] = set()
-                if eid2 not in cooccurrence_map:
-                    cooccurrence_map[eid2] = set()
-                if eid2 in id_to_name:
-                    cooccurrence_map[eid1].add(id_to_name[eid2])
-                if eid1 in id_to_name:
-                    cooccurrence_map[eid2].add(id_to_name[eid1])
+            cooccurrences = _build_cooccurrence_index(cooc_rows, id_to_name)
+            cooccurrence_map = cooccurrences.by_entity
+            cooccurrence_degrees = cooccurrences.degree_by_name
 
         return await self._resolve_from_candidates(
             conn,
@@ -893,6 +976,7 @@ class EntityResolver:
             cooccurrence_map,
             taxonomy_lookup,
             labels_cfg,
+            cooccurrence_degrees,
         )
 
     def _intrabatch_canonical_map(self, entities_to_create: list[_EntityToCreate]) -> dict[str, str]:
@@ -937,6 +1021,7 @@ class EntityResolver:
         cooccurrence_map: dict[str, set[str]],
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        cooccurrence_degrees: dict[str, int] | None = None,
     ) -> list[ResolvedEntity]:
         """Shared scoring + upsert logic used by every lookup strategy.
 
@@ -958,6 +1043,7 @@ class EntityResolver:
 
         for idx, entity_data in enumerate(entities_data):
             entity_text = entity_data["text"]
+            entity_text_lower = entity_text.lower()
             nearby_entities = entity_data.get("nearby_entities", [])
             # Use per-entity date if available, otherwise fall back to batch-level date
             entity_event_date = entity_data.get("event_date", unit_event_date)
@@ -1007,7 +1093,6 @@ class EntityResolver:
             if is_label:
                 # Exact case-insensitive match only for label entities
                 exact_match: ResolvedEntity | None = None
-                entity_text_lower = entity_text.lower()
                 for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                     if canonical_name.lower() == entity_text_lower:
                         exact_match = ResolvedEntity(
@@ -1030,6 +1115,14 @@ class EntityResolver:
             best_score = 0.0
 
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
+            mention_trigrams = _trigram_set(entity_text_lower)
+            # Weight each nearby name by how selective it is, once per mention rather than
+            # once per candidate. Only the numerator is weighted: dividing by the weights too
+            # would normalise the damping straight back out whenever the hub is the *only*
+            # nearby name, which is the exact case that needs damping. With every degree at 1
+            # (nothing known) this is arithmetically the old overlap-count fraction.
+            degrees = cooccurrence_degrees or {}
+            nearby_weights = {name: _cooccurrence_weight(degrees.get(name, 1)) for name in nearby_entity_set}
 
             for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                 # Hand the loop back periodically so /health (and every other task
@@ -1050,39 +1143,73 @@ class EntityResolver:
                 if labels_cfg and _is_label_entity(canonical_name, labels_cfg, taxonomy_lookup or set()):
                     continue
 
-                score = 0.0
+                # The trigram probe admits candidates at a deliberately loose recall
+                # threshold (0.15), and the signals below can total 0.5 on their own — so
+                # without a floor here a name merely *considered* similar could be merged
+                # onto purely because the bank had seen it recently next to the same
+                # entities (#3751). The two measures disagree most on short names, where a
+                # coincidental shared run inflates the sequence ratio: "Tigran"/"Iran" is
+                # 0.80 by SequenceMatcher but 0.20 by trigram, higher than "Alice"/"Alice
+                # Chen" (0.67) on the metric that decides and far lower on the one that
+                # ranks them correctly. Gate on trigram, and leave the score above the gate
+                # alone: SequenceMatcher stays load-bearing for typo variants that arrive
+                # with no co-occurrence context at all ("Dr Waler" -> "Dr Wall").
+                canonical_lower = canonical_name.lower()
+                name_trigram_similarity = _trigram_set_similarity(mention_trigrams, _trigram_set(canonical_name))
+                if name_trigram_similarity < self._merge_min_similarity:
+                    continue
 
-                # 1. Name similarity (0-0.5)
-                name_similarity = SequenceMatcher(None, entity_text.lower(), canonical_name.lower()).ratio()
-                score += name_similarity * 0.5
+                # ...and word by word, since whole-name similarity lets one long shared word drown
+                # out a completely different short one (see _tokens_are_compatible).
+                if not _tokens_are_compatible(entity_text_lower, canonical_lower):
+                    continue
 
-                # 2. Co-occurring entities (0-0.3)
-                if nearby_entity_set:
-                    co_entities = cooccurrence_map.get(candidate_id, set())
-                    overlap = len(nearby_entity_set & co_entities)
-                    co_entity_score = overlap / len(nearby_entity_set)
-                    score += co_entity_score * 0.3
+                if name_trigram_similarity >= _IDENTICAL_TRIGRAMS:
+                    # Identical trigram sets: the same words, differing only in case, punctuation or
+                    # decoration ("Wren 🎵" / "Wren", "GPT-4" / "GPT 4"). The in-batch pass already
+                    # unifies names like these on the name alone and at a *lower* bar (0.5), so
+                    # requiring history here made two forms one entity or two depending only on
+                    # whether they arrived in the same retain — #3107 fixed that half only.
+                    score = 1.0
+                else:
+                    score = 0.0
 
-                # 3. Temporal proximity (0-0.2)
-                if last_seen and entity_event_date:
-                    # Normalize timezone awareness for comparison
-                    event_date_utc = (
-                        entity_event_date if entity_event_date.tzinfo else entity_event_date.replace(tzinfo=UTC)
-                    )
-                    last_seen_utc = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
-                    days_diff = abs((event_date_utc - last_seen_utc).total_seconds() / 86400)
-                    if days_diff < 7:
-                        temporal_score = max(0, 1.0 - (days_diff / 7))
-                        score += temporal_score * 0.2
+                    # 1. Name similarity (0-0.5)
+                    name_similarity = SequenceMatcher(None, entity_text_lower, canonical_lower).ratio()
+                    score += name_similarity * 0.5
+
+                    # 2. Co-occurring entities (0-0.3), each weighted by how selective it is
+                    if nearby_entity_set:
+                        co_entities = cooccurrence_map.get(candidate_id, set())
+                        matched_weight = sum(nearby_weights[name] for name in nearby_entity_set & co_entities)
+                        score += (matched_weight / len(nearby_entity_set)) * 0.3
+
+                    # 3. Temporal proximity (0-0.2)
+                    if last_seen and entity_event_date:
+                        # Normalize timezone awareness for comparison
+                        event_date_utc = (
+                            entity_event_date if entity_event_date.tzinfo else entity_event_date.replace(tzinfo=UTC)
+                        )
+                        last_seen_utc = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
+                        days_diff = abs((event_date_utc - last_seen_utc).total_seconds() / 86400)
+                        if days_diff < 7:
+                            temporal_score = max(0, 1.0 - (days_diff / 7))
+                            score += temporal_score * 0.2
 
                 if score > best_score:
                     best_score = score
                     best_candidate = ResolvedEntity(entity_id=candidate_id, canonical_name=canonical_name)
 
-            # Apply unified threshold
+            # Apply unified threshold, inclusively and on a rounded score. The weights are
+            # decimal fractions binary floating point cannot represent exactly, so a score
+            # *of* 0.6 used to land on either side of a strict `>` depending only on which
+            # signals produced it: 0.4 name + 0.2 recency sums to 0.6000000000000001 and
+            # merged, while 0.3 name + 0.3 co-occurrence sums to 0.6 and did not. Rounding
+            # makes equal scores compare equal; `>=` keeps the verdict the common
+            # composition already got, so nothing that merges today stops merging here.
             threshold = 0.6
 
-            if best_score > threshold and best_candidate is not None:
+            if round(best_score, 6) >= threshold and best_candidate is not None:
                 resolved[idx] = best_candidate
                 entities_to_update.append(_EntityStat(entity_id=best_candidate.entity_id, event_date=entity_event_date))
             else:

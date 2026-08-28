@@ -27,7 +27,7 @@ from hindsight_api.engine.reflect.prompts import (
     build_reduce_prompt,
     split_context_history,
 )
-from hindsight_api.engine.reflect.tokenization import count_cl100k_tokens
+from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 
 # The splitter floors its per-chunk budget at _MIN_SPLIT_CHUNK_TOKENS, so tests
@@ -70,7 +70,7 @@ class TestSplitContextHistory:
         assert len(chunks) > 1
         for chunk in chunks:
             rendered = "".join(_render_history_block(e) for e in chunk)
-            assert count_cl100k_tokens(rendered) <= _BUDGET_TOKENS
+            assert count_prompt_tokens(rendered) <= _BUDGET_TOKENS
         # Every entry survives, in original order.
         original_ids = [item["id"] for e in history for item in e["output"]["memories"]]
         assert _ids_in(chunks) == original_ids
@@ -84,7 +84,7 @@ class TestSplitContextHistory:
         assert len(chunks) > 1
         for chunk in chunks:
             rendered = "".join(_render_history_block(e) for e in chunk)
-            assert count_cl100k_tokens(rendered) <= _BUDGET_TOKENS
+            assert count_prompt_tokens(rendered) <= _BUDGET_TOKENS
             # Partial blocks keep the tool name and sibling keys.
             assert all(e["tool"] == "search_observations" for e in chunk)
             assert all(e["output"]["query"] == "q" for e in chunk)
@@ -100,7 +100,7 @@ class TestSplitContextHistory:
         cut = chunks[0][0]
         assert cut["output"]["truncated"] is True
         assert cut["output"]["content"]
-        assert count_cl100k_tokens(_render_history_block(cut)) <= _BUDGET_TOKENS + 32
+        assert count_prompt_tokens(_render_history_block(cut)) <= _BUDGET_TOKENS + 32
 
     def test_budget_floor_prevents_per_entry_fanout(self):
         """A tiny configured budget must not shred the history into one chunk
@@ -145,7 +145,7 @@ class TestSplitSynthesisAgentFlow:
             # which output made it into the result.
             if "extract evidence" in messages[0]["content"]:
                 return (
-                    f"- claim from prompt of {count_cl100k_tokens(messages[1]['content'])} tokens "
+                    f"- claim from prompt of {count_prompt_tokens(messages[1]['content'])} tokens "
                     "(mentioned_at: 2026-01-01; occurred: unknown; memory_ids: mem-1)",
                     TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
                 )

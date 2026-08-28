@@ -193,14 +193,14 @@ install_node_deps() {
 # ---------------------------------------------------------------------------
 
 prewarm_models() {
-    step "Pre-download ML models & tokenizer (offline readiness)"
+    step "Pre-download ML models (offline readiness)"
     # Respect provider/model overrides from .env; default to local + repo
     # defaults (BAAI/bge-small-en-v1.5, cross-encoder/ms-marco-MiniLM-L-6-v2).
     set -a; [ -f "$ROOT_DIR/.env" ] && . "$ROOT_DIR/.env"; set +a
 
     # Only the "local" provider downloads weights; remote providers (TEI,
-    # OpenAI, Cohere, ...) fetch nothing here. tiktoken is always cached
-    # because token counting runs regardless of provider.
+    # OpenAI, Cohere, ...) fetch nothing here. The tokenizer needs no step at
+    # all — quicktok ships its vocabularies in the wheel.
     local emb_model="" rer_model=""
     if [ "${HINDSIGHT_API_EMBEDDINGS_PROVIDER:-local}" = "local" ]; then
         emb_model="${HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL:-BAAI/bge-small-en-v1.5}"
@@ -215,6 +215,14 @@ prewarm_models() {
         info "reranker provider is '${HINDSIGHT_API_RERANKER_PROVIDER}' — no local weights to fetch"
     fi
 
+    # With the tokenizer needing no cache, an all-remote setup has nothing left to
+    # fetch here — say so rather than starting a python process to warm nothing.
+    if [ -z "$emb_model" ] && [ -z "$rer_model" ]; then
+        ok "nothing to pre-download (no local providers configured)"
+        SUMMARY+=("models: none needed (remote providers)")
+        return
+    fi
+
     # Retry with exponential backoff for transient network failures, matching
     # the Docker build. Models land in the shared HF hub cache, so a re-run is
     # a fast cache validation rather than a re-download.
@@ -226,11 +234,6 @@ prewarm_models() {
 import os
 
 os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
-
-import tiktoken
-
-print("  caching tiktoken cl100k_base encoding...", flush=True)
-tiktoken.get_encoding("cl100k_base")
 
 emb = os.environ.get("PREWARM_EMB") or ""
 rer = os.environ.get("PREWARM_RER") or ""
@@ -335,7 +338,7 @@ Next steps:
   • API only:                ./scripts/dev/start-api.sh
   • Run API tests:           cd hindsight-api-slim && uv run pytest tests/
 
-The local embedding/reranker models and tiktoken encoding are cached, so the
-API can run fully offline (default local providers). Re-run with --skip-models
-to skip that step.
+The local embedding/reranker models are cached, so the API can run fully
+offline (default local providers). Re-run with --skip-models to skip that
+step. The tokenizer needs no cache: its vocabularies ship in the wheel.
 EOF

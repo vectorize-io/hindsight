@@ -135,9 +135,16 @@ async def retrieve_semantic_bm25_combined_sql(
     min_semantic: float | None = None,
     min_keyword: float | None = None,
     graph_seed_min_similarity: float | None = None,
+    enable_text_search: bool = True,
 ) -> dict[str, SemanticBm25Result]:
     """
     Combined semantic + BM25 retrieval for multiple fact types in a single query.
+
+    The BM25 half is conditional. It is omitted when the query has no word characters
+    to search for, and when ``enable_text_search`` is False — the pure-vector mode, where
+    the emitted SQL is the semantic UNION alone and every BM25 cost (tokenization, the
+    pg_stats term-selection lookup, the ``@@``/rank scan) is skipped rather than run and
+    discarded.
 
     Uses UNION ALL of per-fact_type subqueries so that each arm has its own
     ORDER BY ... LIMIT, enabling the partial HNSW indexes per fact_type instead
@@ -177,7 +184,10 @@ async def retrieve_semantic_bm25_combined_sql(
     result_dict = {ft: SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None) for ft in fact_types}
 
     config = get_config()
-    tokens = tokenize_query(query_text)
+    # No tokens means no BM25 arm, which is exactly what a bank with text search switched
+    # off wants — so the flag is applied here rather than at a second gate. Tokenizing
+    # feeds nothing else, so skipping it is a real saving, not just tidiness.
+    tokens = tokenize_query(query_text) if enable_text_search else []
 
     # Per-request retrieval-level score floors (recall min_scores.semantic / .keyword)
     # override the global config defaults for this query, pruning weak matches in
@@ -811,6 +821,7 @@ async def retrieve_all_fact_types_parallel(
     min_semantic: float | None = None,
     min_keyword: float | None = None,
     temporal_window: "TemporalWindow | None" = None,
+    enable_text_search: bool = True,
     enable_temporal_retrieval: bool = True,
     enable_graph_retrieval: bool = True,
 ) -> MultiFactTypeRetrievalResult:
@@ -835,6 +846,9 @@ async def retrieve_all_fact_types_parallel(
         temporal_window: Caller-supplied window for the temporal arm. When set, it is used
             verbatim instead of analysing the query text for dates. Gated by
             enable_temporal_retrieval like any other source of a window.
+        enable_text_search: Run the keyword (BM25) arm. False leaves the arm out of the
+            SQL entirely rather than filtering its rows away, so recall is a pure vector
+            query and pays none of the arm's cost.
         enable_temporal_retrieval: Run the temporal arm. False also skips the date-aware
             query analysis that feeds it (no constraint means nothing to filter on).
         enable_graph_retrieval: Run the entity/link graph arm. False skips those queries
@@ -890,6 +904,7 @@ async def retrieve_all_fact_types_parallel(
         created_before=created_before,
         min_semantic=min_semantic,
         min_keyword=min_keyword,
+        enable_text_search=enable_text_search,
         enable_graph=enable_graph_retrieval,
     )
 

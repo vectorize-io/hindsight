@@ -568,6 +568,8 @@ export class HindsightClient {
       enableObservations?: boolean;
       /** Controls what gets synthesised into observations. Replaces built-in rules. */
       observationsMission?: string;
+      /** Run the keyword (BM25) retrieval arm during recall. False leaves pure vector search. */
+      enableTextSearch?: boolean;
       /** Run the temporal retrieval arm during recall, and the date-aware query analysis feeding it. */
       enableTemporalRetrieval?: boolean;
       /** Run the entity/link graph traversal arm during recall. */
@@ -596,6 +598,7 @@ export class HindsightClient {
         retain_structured_chunk_size: options.retainStructuredChunkSize,
         enable_observations: options.enableObservations,
         observations_mission: options.observationsMission,
+        enable_text_search: options.enableTextSearch,
         enable_temporal_retrieval: options.enableTemporalRetrieval,
         enable_graph_retrieval: options.enableGraphRetrieval,
         enable_reranking: options.enableReranking,
@@ -671,6 +674,8 @@ export class HindsightClient {
       retainStructuredChunkSize?: number;
       enableObservations?: boolean;
       observationsMission?: string;
+      /** Run the keyword (BM25) retrieval arm during recall. False leaves pure vector search. */
+      enableTextSearch?: boolean;
       /** Run the temporal retrieval arm during recall, and the date-aware query analysis feeding it. */
       enableTemporalRetrieval?: boolean;
       /** Run the entity/link graph traversal arm during recall. */
@@ -700,6 +705,8 @@ export class HindsightClient {
       updates.enable_observations = options.enableObservations;
     if (options.observationsMission !== undefined)
       updates.observations_mission = options.observationsMission;
+    if (options.enableTextSearch !== undefined)
+      updates.enable_text_search = options.enableTextSearch;
     if (options.enableTemporalRetrieval !== undefined)
       updates.enable_temporal_retrieval = options.enableTemporalRetrieval;
     if (options.enableGraphRetrieval !== undefined)
@@ -1145,8 +1152,8 @@ export class HindsightClient {
    * returned `operation_id` to know when the first build has finished.
    *
    * Omit `trigger` to use the page defaults (observation-only, delta mode,
-   * refresh after consolidation); a supplied trigger replaces those defaults
-   * rather than merging with them.
+   * refresh after consolidation); a supplied trigger is applied as a patch over
+   * them, so the fields you leave out keep their defaults.
    */
   async createKnowledgePage(
     bankId: string,
@@ -1154,7 +1161,13 @@ export class HindsightClient {
     sourceQuery: string,
     options?: {
       parentId?: string | null;
-      /** Scopes which memories the page is built from. A `type:<x>` tag also sets the page's rendered type. */
+      /**
+       * Scopes which memories the page is built from — these are a filter, not labels, and a
+       * `type:<x>` tag sets the page's rendered type while still filtering. A tagged page
+       * defaults to `all_strict`: a memory must carry EVERY tag and untagged memories are
+       * excluded, so tags the bank's memories don't carry build an empty page. Pass
+       * `trigger.tagsMatch: "all"` to keep the tags but include untagged memories.
+       */
       tags?: string[];
       maxTokens?: number;
       trigger?: {
@@ -1404,6 +1417,7 @@ export class HindsightClient {
     options?: {
       documentIds?: string[];
       includeObservations?: boolean;
+      includeKnowledgeBase?: boolean;
       /** Milliseconds between operation-status polls (default 2000). */
       pollIntervalMs?: number;
       /** Maximum milliseconds to wait for the export to finish (default 300000). */
@@ -1418,6 +1432,9 @@ export class HindsightClient {
         ...(options?.documentIds !== undefined ? { document_id: options.documentIds } : {}),
         ...(options?.includeObservations !== undefined
           ? { include_observations: options.includeObservations }
+          : {}),
+        ...(options?.includeKnowledgeBase !== undefined
+          ? { include_knowledge_base: options.includeKnowledgeBase }
           : {}),
       },
       signal: options?.signal,

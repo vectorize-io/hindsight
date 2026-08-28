@@ -50,9 +50,10 @@ Create Date: 2026-07-20
 
 from collections.abc import Sequence
 
-from alembic import context, op
+from alembic import context
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.alembic._owned import execute_unless_owned
 from hindsight_api.config import get_config
 
 revision: str = "b6d2f8a4c1e7"
@@ -92,7 +93,8 @@ def _pg_upgrade() -> None:
         return
     schema = _prefix(_target_schema())
 
-    op.execute(
+    execute_unless_owned(
+        "banks_needing_consolidation",
         f"""
         CREATE OR REPLACE FUNCTION {schema}banks_needing_consolidation()
         RETURNS TABLE(schema_name text, bank_id text)
@@ -133,10 +135,11 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
-    op.execute(
+    execute_unless_owned(
+        "schemas_with_expired_rows",
         f"""
         CREATE OR REPLACE FUNCTION {schema}schemas_with_expired_rows(
             p_table text, p_ts_col text, p_days int
@@ -173,10 +176,11 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
-    op.execute(
+    execute_unless_owned(
+        "mental_models_with_cron",
         f"""
         CREATE OR REPLACE FUNCTION {schema}mental_models_with_cron()
         RETURNS TABLE(schema_name text, bank_id text, mental_model_id text,
@@ -215,15 +219,19 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
 
 def _drop_routines(schema: str | None) -> None:
     prefix = _prefix(schema)
-    op.execute(f"DROP FUNCTION IF EXISTS {prefix}mental_models_with_cron()")
-    op.execute(f"DROP FUNCTION IF EXISTS {prefix}schemas_with_expired_rows(text, text, int)")
-    op.execute(f"DROP FUNCTION IF EXISTS {prefix}banks_needing_consolidation()")
+    execute_unless_owned("mental_models_with_cron", f"DROP FUNCTION IF EXISTS {prefix}mental_models_with_cron()")
+    execute_unless_owned(
+        "schemas_with_expired_rows", f"DROP FUNCTION IF EXISTS {prefix}schemas_with_expired_rows(text, text, int)"
+    )
+    execute_unless_owned(
+        "banks_needing_consolidation", f"DROP FUNCTION IF EXISTS {prefix}banks_needing_consolidation()"
+    )
 
 
 def _drop_stray_copies() -> None:

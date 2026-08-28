@@ -4,9 +4,11 @@ Recall runs four arms (semantic, BM25, graph, temporal) and then a cross-encoder
 rerank. A bank whose content has no relational or temporal structure pays latency
 for arms it cannot use, so each stage can be switched off per bank:
 
-    enable_temporal_retrieval / enable_graph_retrieval / enable_reranking
+    enable_text_search / enable_temporal_retrieval / enable_graph_retrieval /
+    enable_reranking
 
-All three default to True, so recall behaviour is unchanged unless a bank opts out.
+All four default to True, so recall behaviour is unchanged unless a bank opts out.
+Semantic is the one arm with no switch — it is the baseline retrieval.
 """
 
 from contextlib import asynccontextmanager
@@ -29,13 +31,14 @@ def stub_retrieval(monkeypatch):
     the seams IT uses: the shared connection acquire, the dense+BM25 SQL, the temporal SQL, and the
     graph retriever (installed into the module-global cache, restored automatically at teardown).
     """
-    calls = {"temporal_extraction": 0, "temporal_combined": 0, "graph": 0}
+    calls = {"temporal_extraction": 0, "temporal_combined": 0, "graph": 0, "text_search": None}
 
     @asynccontextmanager
     async def fake_acquire_with_retry(pool, *args, **kwargs):
         yield object()
 
     async def fake_semantic_bm25_combined_sql(*args, **kwargs):
+        calls["text_search"] = kwargs["enable_text_search"]
         return {"world": retrieval_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
 
     async def fake_temporal_combined_sql(*args, **kwargs):
@@ -91,6 +94,7 @@ async def test_all_stages_run_by_default(stub_retrieval):
     assert calls["temporal_extraction"] == 1
     assert calls["temporal_combined"] == 1
     assert calls["graph"] == 1
+    assert calls["text_search"] is True
 
 
 @pytest.mark.asyncio
@@ -119,6 +123,25 @@ async def test_disabling_graph_retrieval_skips_the_graph_arm(stub_retrieval):
     assert calls["temporal_extraction"] == 1
     assert calls["temporal_combined"] == 1
     assert result.results_by_fact_type["world"].graph == []
+
+
+@pytest.mark.asyncio
+async def test_disabling_text_search_reaches_the_dense_sql_builder(stub_retrieval):
+    """The keyword arm is switched off inside the UNION query, not after it.
+
+    Semantic and BM25 are one SQL statement, so there is no separate call to skip —
+    the flag has to arrive at the builder. test_enable_text_search_flag covers what
+    the builder then leaves out.
+    """
+    calls, _FakeGraphRetriever = stub_retrieval
+
+    await _run(enable_text_search=False)
+
+    assert calls["text_search"] is False
+    # The other arms are unaffected.
+    assert calls["temporal_extraction"] == 1
+    assert calls["temporal_combined"] == 1
+    assert calls["graph"] == 1
 
 
 @pytest.mark.asyncio
@@ -178,7 +201,7 @@ def _bank(prefix: str) -> str:
 
 @pytest.mark.asyncio
 async def test_bank_override_reaches_the_retrieval_arms(memory, request_context, monkeypatch):
-    """The bank's temporal/graph settings arrive at the retrieval call itself."""
+    """The bank's text-search/temporal/graph settings arrive at the retrieval call itself."""
     bank_id = _bank("recall_toggle_arms")
     await memory._ensure_bank_exists(bank_id, request_context)
 
@@ -188,6 +211,7 @@ async def test_bank_override_reaches_the_retrieval_arms(memory, request_context,
     async def spy(*args, **kwargs):
         seen.append(
             {
+                "text_search": kwargs["enable_text_search"],
                 "temporal": kwargs["enable_temporal_retrieval"],
                 "graph": kwargs["enable_graph_retrieval"],
             }
@@ -197,13 +221,14 @@ async def test_bank_override_reaches_the_retrieval_arms(memory, request_context,
     monkeypatch.setattr(retrieval_module, "retrieve_all_fact_types_parallel", spy)
 
     await memory.recall_async(bank_id=bank_id, query="anything", request_context=request_context)
-    assert seen[-1] == {"temporal": True, "graph": True}, "a bank with no overrides runs every arm"
+    assert seen[-1] == {"text_search": True, "temporal": True, "graph": True}, "a bank with no overrides runs every arm"
 
     await memory._config_resolver.update_bank_config(
-        bank_id, {"enable_temporal_retrieval": False, "enable_graph_retrieval": False}
+        bank_id,
+        {"enable_text_search": False, "enable_temporal_retrieval": False, "enable_graph_retrieval": False},
     )
     await memory.recall_async(bank_id=bank_id, query="anything", request_context=request_context)
-    assert seen[-1] == {"temporal": False, "graph": False}
+    assert seen[-1] == {"text_search": False, "temporal": False, "graph": False}
 
 
 @pytest.mark.asyncio

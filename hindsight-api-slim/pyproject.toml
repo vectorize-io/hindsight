@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.9.1"
+version = "0.9.2"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 license = "MIT"
 readme = "README.md"
@@ -15,7 +15,6 @@ dependencies = [
     "openai>=1.66.0",  # Responses API (client.responses.create, reasoning=, text.format) for the openai-responses provider
     "pydantic>=2.0.0",
     "rich>=13.0.0",
-    "langchain-text-splitters>=0.3.0",
     "fastapi[standard]>=0.120.3",
     "uvicorn>=0.38.0",
     "wsproto>=1.0.0",
@@ -28,7 +27,11 @@ dependencies = [
     "pgvector>=0.4.1",
     "greenlet>=3.2.4,<3.4.0", # 3.4.0 lacks arm64 wheels for manylinux_2_41
     "psycopg2-binary>=2.9.11",
-    "tiktoken>=0.12.0",
+    # Tokenizer for all token counting and chunking. Replaces tiktoken: same ids,
+    # several times faster, a count-only API that allocates no id list, and the
+    # vocabularies ship in the wheel so nothing is downloaded at runtime.
+    # Contained to engine/token_encoding.py — see that module for the rationale.
+    "quicktok-v1>=0.4.0",
     "httpx>=0.27.0",
     "PyJWT[crypto]>=2.8.0",
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
@@ -81,8 +84,6 @@ dependencies = [
     # Transitive dependency security fixes
     "pyasn1>=0.6.3", # DoS vulnerability fix
     "urllib3>=2.7.0", # Decompression-bomb safeguards bypass + sensitive header forwarding fixes
-    "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
-    "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "protobuf>=7.35.1", # JSON recursion depth bypass fix (>=6.33.5); requires otel>=1.44 (proto <1.44 caps protobuf<7.0)
     "pillow>=12.3.0", # Multiple HIGH image parsing vulnerabilities fixed in 12.3.0
     "cryptography>=50.0.0", # GHSA-g6cj-pr64-35w5: Bleichenbacher oracle in PKCS#7 EnvelopedData decryption (supersedes the >=48.0.1 GHSA-537c-gmf6-5ccf floor). GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
@@ -148,6 +149,15 @@ all = [
 ]
 test = [
     "pytest>=7.0.0",
+    # Test-only since #3756: retain's plain-text chunker is now a streaming
+    # implementation of RecursiveCharacterTextSplitter, so langchain left the runtime
+    # dependencies entirely and is kept solely as the reference implementation
+    # tests/test_chunking_streams.py diffs the streaming splitter against. Its two
+    # transitive security floors moved here with it — they were only ever reachable
+    # through this package.
+    "langchain-text-splitters>=0.3.0",
+    "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
+    "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "pytest-asyncio>=0.21.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.0.0",
@@ -203,6 +213,15 @@ filterwarnings = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.0",
+    # Test-only since #3756: retain's plain-text chunker is now a streaming
+    # implementation of RecursiveCharacterTextSplitter, so langchain left the runtime
+    # dependencies entirely and is kept solely as the reference implementation
+    # tests/test_chunking_streams.py diffs the streaming splitter against. Its two
+    # transitive security floors moved here with it — they were only ever reachable
+    # through this package.
+    "langchain-text-splitters>=0.3.0",
+    "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
+    "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "pytest-asyncio>=1.3.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",

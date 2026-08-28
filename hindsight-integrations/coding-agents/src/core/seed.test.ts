@@ -13,7 +13,7 @@ describe("startBackgroundSeed", () => {
     expect(spawn).toHaveBeenCalledWith(
       "node",
       ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", String(DEFAULT_SEED_LIMIT)],
-      { detached: true, stdio: expect.anything() }
+      { detached: true, stdio: expect.anything(), windowsHide: true }
     );
     expect(spawn.mock.results[0].value.unref).toHaveBeenCalled();
   });
@@ -38,7 +38,7 @@ describe("startBackgroundSeed", () => {
     expect(spawn).toHaveBeenCalledWith(
       "node",
       ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", "50"],
-      { detached: true, stdio: expect.anything() }
+      { detached: true, stdio: expect.anything(), windowsHide: true }
     );
   });
 
@@ -60,7 +60,7 @@ describe("startBackgroundSeed", () => {
         "--harness",
         "antigravity-cli",
       ],
-      { detached: true, stdio: expect.anything() }
+      { detached: true, stdio: expect.anything(), windowsHide: true }
     );
   });
 

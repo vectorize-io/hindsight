@@ -227,7 +227,7 @@ describe("buildHookOutput", () => {
     });
     expect(client.reflect).not.toHaveBeenCalled();
     expect(out.context ?? "").not.toContain("<hindsight_memory>");
-    // Tool-only mode's pull trigger: the roster refresh must carry the reflect-on-new-goals rule.
+    // Tool-only mode's pull trigger: the roster refresh must carry the pages-first rule.
     const cfg2 = resolveConfig({ autoReflect: false, pageRefreshEveryTurns: 1 });
     const out2 = await buildHookOutput({
       harness: "claude-code",

@@ -1,5 +1,7 @@
 import asyncio
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +13,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     OpenAICompatibleLLM,
     OutputTooLongError,
     ProviderResponseError,
+    _rate_limit_retry_at,
 )
 from hindsight_api.worker.stage import StageHolder, bind_holder, set_stage
 
@@ -452,3 +455,39 @@ async def test_a_malformed_body_that_is_not_truncated_still_gets_repaired():
         )
 
     assert result.facts == ["alpha", "beta"]
+
+
+@pytest.mark.parametrize(
+    ("headers", "message", "expected_seconds"),
+    [
+        # OpenAI's Go-style duration headers: a single component ("8.64s")
+        # and a compound one ("6m0s") that a naive parser reads as 0s.
+        ({"x-ratelimit-reset-tokens": "8.64s"}, "Rate limit reached", 8.64),
+        ({"x-ratelimit-reset-requests": "6m0s"}, "Rate limit reached", 360),
+        # Requests and tokens can reset at different times; wait for the max.
+        (
+            {"x-ratelimit-reset-requests": "6m0s", "x-ratelimit-reset-tokens": "233ms"},
+            "Rate limit reached",
+            360,
+        ),
+        # A full or nearly-full header budget must not mask a longer quota
+        # window reported in the response body.
+        ({"x-ratelimit-reset-tokens": "0s"}, "Rate limit reached; try again in 5 hours", 5 * 3600),
+        ({"x-ratelimit-reset-tokens": "233ms"}, "Rate limit reached; try again in 5 hours", 5 * 3600),
+        # Retry-After is an explicit server instruction and must not be
+        # extended by a conflicting free-text body hint.
+        (
+            {"retry-after": "1", "x-ratelimit-reset-tokens": "233ms"},
+            "Rate limit reached; try again in 5 hours",
+            1,
+        ),
+    ],
+)
+def test_rate_limit_retry_at_uses_latest_header_or_body_reset(
+    headers: Mapping[str, str], message: str, expected_seconds: float
+) -> None:
+    error = SimpleNamespace(body={"message": message}, response=SimpleNamespace(headers=headers))
+    retry_at = _rate_limit_retry_at(error)
+    assert retry_at is not None
+    wait = (retry_at - datetime.now(UTC)).total_seconds()
+    assert expected_seconds - 1 < wait <= expected_seconds + 1

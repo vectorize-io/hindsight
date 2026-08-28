@@ -8,6 +8,12 @@ import PageHero from '@site/src/components/PageHero';
 
 [← OpenClaw integration](../../sdks/integrations/openclaw.md)
 
+## [0.11.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.11.1)
+
+**Bug Fixes**
+
+- Fixed conversation history being lost when the plugin runs its own local Hindsight daemon: every restart of the OpenClaw host replaced the documents retained before it, so long-running sessions kept only the most recent stretch of their history. Retains that fail while the daemon is unavailable are now queued and retried instead of dropped.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/d97b560e2" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>d97b560e2</a>
+
 ## [0.11.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.11.0)
 
 **Features**

@@ -214,6 +214,7 @@ class InMemoryMemories(MemoriesExtension):
         created_before=None,
         min_semantic=None,
         min_keyword=None,
+        enable_text_search=True,
         enable_graph=True,
     ):
         # The one recall interface. This store owns its links (no separate graph arm), so it

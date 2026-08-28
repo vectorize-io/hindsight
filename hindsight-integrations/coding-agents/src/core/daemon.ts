@@ -75,7 +75,11 @@ export async function isServerHealthy(baseUrl: string, timeoutMs = 2_000): Promi
 export function hasRustToolchain(): boolean {
   if (process.platform !== "darwin") return true; // wheels cover linux + windows
   try {
-    execFileSync("cargo", ["--version"], { stdio: "pipe", timeout: 10_000 });
+    execFileSync("cargo", ["--version"], {
+      stdio: "pipe",
+      timeout: 10_000,
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;
@@ -85,7 +89,11 @@ export function hasRustToolchain(): boolean {
 /** Is `uv`/`uvx` on PATH? The daemon is fetched and run through it. */
 export function hasUvx(): boolean {
   try {
-    execFileSync("uvx", ["--version"], { stdio: "pipe", timeout: 10_000 });
+    execFileSync("uvx", ["--version"], {
+      stdio: "pipe",
+      timeout: 10_000,
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;
@@ -144,7 +152,11 @@ export function detectLlm(env: NodeJS.ProcessEnv = process.env): LlmChoice | und
 
 function onPath(bin: string): boolean {
   try {
-    execFileSync("which", [bin], { stdio: "pipe", timeout: 5_000 });
+    execFileSync("which", [bin], {
+      stdio: "pipe",
+      timeout: 5_000,
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;
@@ -195,6 +207,7 @@ export function startDaemonDetached(
     const child = spawnFn("node", [starter, "--harness", harness], {
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
     });
     // spawn() failures often surface ASYNCHRONOUSLY as an 'error' event; unhandled, that would
     // crash the hook.

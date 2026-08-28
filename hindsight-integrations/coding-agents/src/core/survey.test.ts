@@ -83,6 +83,7 @@ describe("startCodebaseSurvey", () => {
     expect(options.cwd).toBe("/repo");
     expect(options.detached).toBe(true);
     expect(options.stdio).toBe("ignore");
+    expect(options.windowsHide).toBe(true);
     expect(options.env.HINDSIGHT_DISABLE_HOOKS).toBe("1");
 
     const child = spawn.mock.results[0].value;

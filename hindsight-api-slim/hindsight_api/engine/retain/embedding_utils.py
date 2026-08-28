@@ -28,7 +28,7 @@ class EmbeddingsBackend(Protocol):
 
 
 def _truncate_inputs(texts: list[str], max_input_tokens: int, backend: EmbeddingsBackend) -> list[str]:
-    """Cap each input at ``max_input_tokens`` tiktoken tokens before it reaches the provider.
+    """Cap each input at ``max_input_tokens`` tokens before it reaches the provider.
 
     Remote providers with a fixed input-token limit (e.g. Bedrock Titan V2's hard 8192
     cap, or a llama.cpp ``/v1/embeddings`` server) reject an oversized text with a

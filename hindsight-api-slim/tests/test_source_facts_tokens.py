@@ -11,7 +11,7 @@ fewer source facts when the budget is tight vs. unlimited.
 import pytest
 
 from hindsight_api.config import _get_raw_config
-from hindsight_api.engine.memory_engine import Budget, _get_tiktoken_encoding
+from hindsight_api.engine.memory_engine import Budget, get_token_encoding
 
 
 @pytest.fixture(autouse=True)
@@ -198,7 +198,7 @@ class TestRecallSourceFactsRankOrder:
 
             # Budget the top result's sources exactly: everything behind it must be
             # what gets dropped.
-            encoding = _get_tiktoken_encoding()
+            encoding = get_token_encoding()
             top_ids = with_sources[0].source_fact_ids
             budget = sum(len(encoding.encode(unlimited.source_facts[sid].text)) for sid in top_ids)
 

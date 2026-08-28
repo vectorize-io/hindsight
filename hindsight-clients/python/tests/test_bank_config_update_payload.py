@@ -56,12 +56,14 @@ def test_update_bank_config_forwards_recall_pipeline_toggles(monkeypatch):
     client = Hindsight(base_url="http://example.invalid")
     client.update_bank_config(
         "test-bank",
+        enable_text_search=False,
         enable_temporal_retrieval=False,
         enable_graph_retrieval=False,
         enable_reranking=False,
     )
 
     assert captured["updates"] == {
+        "enable_text_search": False,
         "enable_temporal_retrieval": False,
         "enable_graph_retrieval": False,
         "enable_reranking": False,
@@ -116,6 +118,7 @@ def test_create_bank_forwards_recall_pipeline_toggles(monkeypatch):
         "test-bank",
         retain_extraction_mode="chunks",
         enable_observations=False,
+        enable_text_search=False,
         enable_temporal_retrieval=False,
         enable_graph_retrieval=False,
         enable_reranking=False,
@@ -124,6 +127,7 @@ def test_create_bank_forwards_recall_pipeline_toggles(monkeypatch):
     body = captured["body"]
     assert body["retain_extraction_mode"] == "chunks"
     assert body["enable_observations"] is False
+    assert body["enable_text_search"] is False
     assert body["enable_temporal_retrieval"] is False
     assert body["enable_graph_retrieval"] is False
     assert body["enable_reranking"] is False
@@ -172,5 +176,5 @@ def test_create_bank_omits_recall_pipeline_toggles_when_unset(monkeypatch):
     client.create_bank("test-bank")
 
     body = captured["body"]
-    for name in ("enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking"):
+    for name in ("enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking"):
         assert name not in body

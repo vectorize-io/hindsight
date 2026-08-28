@@ -180,12 +180,13 @@ describe("startDaemonDetached", () => {
     const [cmd, args, opts] = spawn.mock.calls[0] as unknown as [
       string,
       string[],
-      { detached: boolean; stdio: string },
+      { detached: boolean; stdio: string; windowsHide: boolean },
     ];
     expect(cmd).toBe("node");
     expect(args[0]).toMatch(/daemon-start\.js$/);
     expect(opts.detached).toBe(true);
     expect(opts.stdio).toBe("ignore");
+    expect(opts.windowsHide).toBe(true);
     // An async spawn 'error' event would otherwise crash the hook process.
     expect(child.on).toHaveBeenCalledWith("error", expect.any(Function));
     expect(child.unref).toHaveBeenCalled();

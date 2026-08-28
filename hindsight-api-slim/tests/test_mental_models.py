@@ -2445,13 +2445,14 @@ class TestMentalModelRefreshMaxTokens:
         assert content, "refresh produced empty content"
 
         # The provider enforces the cap exactly in its own tokenizer, but our
-        # local count uses tiktoken (cl100k_base) which can disagree with
-        # provider tokenizers (Gemini's SentencePiece in particular tends to run
-        # ~30% higher for English prose). We use a generous tolerance — the test
-        # is guarding against the regression where the cap was ignored entirely
-        # and content grew toward reflect_async's default of 4096 tokens. At
-        # cap=200 we've observed cl100k counts up to ~1.9x; the 4096-ignored
-        # regression would land ~20x, so a wide tolerance still catches it.
+        # local count uses the configured encoding (o200k_base by default), which
+        # can disagree with provider tokenizers (Gemini's SentencePiece in
+        # particular tends to run ~30% higher for English prose). We use a
+        # generous tolerance — the test is guarding against the regression where
+        # the cap was ignored entirely and content grew toward reflect_async's
+        # default of 4096 tokens. At cap=200 we've observed local counts up to
+        # ~1.9x; the 4096-ignored regression would land ~20x, so a wide tolerance
+        # still catches it.
         observed_tokens = count_tokens(content)
         tolerance = 2.5
         assert observed_tokens <= cap * tolerance, (

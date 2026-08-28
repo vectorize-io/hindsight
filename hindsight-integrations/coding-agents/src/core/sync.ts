@@ -19,6 +19,7 @@ function gitTry(repo: string, ...args: string[]): string | null {
     return execFileSync("git", ["-C", repo, ...args], {
       encoding: "utf8",
       maxBuffer: 1 << 28,
+      windowsHide: true,
     }).trim();
   } catch {
     return null;

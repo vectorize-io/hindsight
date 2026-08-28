@@ -98,7 +98,10 @@ async function gitSyncNote(args: {
   try {
     const { execFileSync } = await import("node:child_process");
     const n = Number(
-      execFileSync("git", ["-C", cwd, "rev-list", "--count", "HEAD"], { encoding: "utf8" }).trim()
+      execFileSync("git", ["-C", cwd, "rev-list", "--count", "HEAD"], {
+        encoding: "utf8",
+        windowsHide: true,
+      }).trim()
     );
     if (n > 0) target = Math.min(DEEPEN_DIFF_TARGET, n);
   } catch {

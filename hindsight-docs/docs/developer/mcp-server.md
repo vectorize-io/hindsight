@@ -566,7 +566,7 @@ The `config_updates` object accepts any bank-configurable field by its Python fi
 
 - `reflect_mission` — mission/context for Reflect operations
 - `retain_mission` — steers what gets extracted during `retain()`
-- `retain_extraction_mode` — `concise` (default), `verbose`, or `custom`
+- `retain_extraction_mode` — `concise` (default), `verbose`, `custom`, `verbatim`, or `chunks`
 - `retain_custom_instructions` — custom extraction prompt (active when mode is `custom`)
 - `retain_chunk_size` — target maximum characters for each content chunk
 - `retain_structured_chunk_size` — maximum characters for a single JSONL line or conversation turn to keep whole

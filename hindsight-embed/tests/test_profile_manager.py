@@ -1,6 +1,8 @@
 """Tests for profile_manager module."""
 
+import builtins
 import json
+import pathlib
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -79,6 +81,33 @@ class TestProfileManager:
         assert "HINDSIGHT_API_PORT=" in config_content
         assert "port" not in metadata["profiles"]["test-profile"]
         assert "created_at" in metadata["profiles"]["test-profile"]
+
+    def test_profile_config_uses_utf8_when_locale_is_not_utf8(self, profile_manager, temp_hindsight_dir, monkeypatch):
+        """Profile templates remain readable with a legacy default code page."""
+        original_open = pathlib.Path.open
+        original_builtin_open = builtins.open
+
+        def add_legacy_encoding(args, kwargs):
+            mode = kwargs.get("mode", args[0] if args else "r")
+            if kwargs.get("encoding") is None and "b" not in mode:
+                kwargs["encoding"] = "gbk"
+
+        def legacy_locale_open(path, *args, **kwargs):
+            add_legacy_encoding(args, kwargs)
+            return original_open(path, *args, **kwargs)
+
+        def legacy_builtin_open(file, *args, **kwargs):
+            add_legacy_encoding(args, kwargs)
+            return original_builtin_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "open", legacy_locale_open)
+        monkeypatch.setattr(builtins, "open", legacy_builtin_open)
+
+        profile_manager.create_profile("legacy-locale", {"CUSTOM_DESCRIPTION": "memory — retained"})
+
+        config_path = temp_hindsight_dir / "profiles" / "legacy-locale.env"
+        assert "memory — retained" in config_path.read_text(encoding="utf-8")
+        assert profile_manager.load_profile_config("legacy-locale")["CUSTOM_DESCRIPTION"] == "memory — retained"
 
     def test_create_profile_invalid_name(self, profile_manager):
         """Test creating profile with invalid name fails."""

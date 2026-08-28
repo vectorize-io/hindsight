@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.9.1"
+    "version": "0.9.2"
   },
   "paths": {
     "/health": {
@@ -4937,7 +4937,7 @@
           "Document Transfer"
         ],
         "summary": "Export documents (async)",
-        "description": "Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true also carries consolidated observations (whole-bank export only).",
+        "description": "Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).",
         "operationId": "export_documents",
         "parameters": [
           {
@@ -4981,6 +4981,18 @@
               "title": "Include Observations"
             },
             "description": "Also export consolidated observations (restored on import; whole-bank only)"
+          },
+          {
+            "name": "include_knowledge_base",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)",
+              "default": false,
+              "title": "Include Knowledge Base"
+            },
+            "description": "Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)"
           },
           {
             "name": "authorization",
@@ -7639,6 +7651,18 @@
             "title": "Observations Mission",
             "description": "Controls what gets synthesised"
           },
+          "enable_text_search": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Text Search",
+            "description": "Toggle the keyword (BM25) arm during recall, leaving pure vector search"
+          },
           "enable_temporal_retrieval": {
             "anyOf": [
               {
@@ -8835,6 +8859,18 @@
             "title": "Observations Mission",
             "description": "Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely."
           },
+          "enable_text_search": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Text Search",
+            "description": "Toggle the keyword (BM25) retrieval arm during recall. Disabling leaves pure vector search: the arm is left out of the query entirely rather than filtered to nothing, so none of its cost is paid. Also drops the keyword arm from knowledge-page search."
+          },
           "enable_temporal_retrieval": {
             "anyOf": [
               {
@@ -9104,7 +9140,8 @@
                 "type": "null"
               }
             ],
-            "title": "Tags"
+            "title": "Tags",
+            "description": "Tags that SCOPE which memories this page is built from \u2014 not labels. Every tag here, including a `type:<x>` tag used to set the page's rendered type, is part of the filter. By default a tagged page matches with `all_strict`: a memory must carry EVERY one of these tags, and untagged memories are excluded entirely. Tags invented for the page (a topic, a document type) therefore match nothing unless your memories were retained with those exact tags, and the page generates as 'I don't have information about this'. Omit this field to build the page from the whole bank, or set `trigger.tags_match` to 'all' to require the tags while still including untagged memories."
           },
           "max_tokens": {
             "anyOf": [
@@ -12774,7 +12811,7 @@
               }
             ],
             "title": "Tags Match",
-            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh."
+            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match."
           },
           "tag_groups": {
             "anyOf": [
@@ -12965,7 +13002,7 @@
               }
             ],
             "title": "Tags Match",
-            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh."
+            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match."
           },
           "tag_groups": {
             "anyOf": [
@@ -15690,7 +15727,8 @@
                 "type": "null"
               }
             ],
-            "title": "Tags"
+            "title": "Tags",
+            "description": "Replaces the page's tags, which SCOPE which memories it is built from. Pass `[]` to clear them and rebuild the page from the whole bank \u2014 the fix when a page generates 'I don't have information about this' because its tags match no memory. See the matching rules on this field in `CreatePageRequest`; `trigger.tags_match` widens them."
           },
           "max_tokens": {
             "anyOf": [

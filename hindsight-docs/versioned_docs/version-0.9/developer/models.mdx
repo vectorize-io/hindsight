@@ -268,6 +268,34 @@ export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
 
 ---
 
+### GitHub Copilot Setup
+
+Use a GitHub Copilot subscription for Hindsight's extraction, consolidation, and reflection calls through the official GitHub Copilot SDK.
+
+**Prerequisites:**
+- An active GitHub Copilot entitlement
+- Copilot CLI signed in under the same operating-system user that runs Hindsight
+
+**Configure Hindsight:**
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=github-copilot
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6-terra
+# No HINDSIGHT_API_LLM_API_KEY is needed.
+```
+
+The provider starts one shared Copilot runtime for all Hindsight LLM lanes. That runtime uses a hook-free temporary `COPILOT_HOME` containing only the signed-in account selection; the credential itself is resolved by the runtime from the system keychain or an existing `gh` CLI login. Each call then uses an isolated transient session with repository instructions, skills, Copilot memory, built-in tools, and the cross-session store disabled. This prevents the memory integration from recursively retaining its own extraction calls.
+
+For automation, the Copilot SDK also accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`. With one of those set, Copilot CLI never has to have been run on the host, so containers and CI images work with no `~/.copilot` at all. GitHub Actions and server-to-server deployments must have the appropriate Copilot organization policy and token permissions.
+
+**Important notes:**
+- Usage counts against the authenticated account or organization's Copilot allowance and AI Credits.
+- `HINDSIGHT_API_LLM_BASE_URL` optionally points to an existing headless Copilot runtime, such as `http://127.0.0.1:4321`; it is not an LLM-provider endpoint for this provider.
+- GitHub-hosted Copilot sessions do not expose temperature or maximum-output-token controls through the SDK, so those Hindsight settings are not applied.
+- Embeddings and reranking continue to use Hindsight's separately configured providers; their local defaults require no API key.
+
+---
+
 ### OpenAI Codex Setup (ChatGPT Plus/Pro)
 
 Use your ChatGPT Plus or Pro subscription for Hindsight without separate OpenAI Platform API costs.
@@ -629,10 +657,13 @@ export HINDSIGHT_API_LLM_BASE_URL=https://<resource>.openai.azure.com/openai/dep
   directly first to isolate which layer is failing.
 - Gateways and proxies must preserve the same path shape (`/openai/v1` or
   `/openai/deployments/...?api-version=`).
-- Azure accepts the `prompt_cache_key` field that
-  [`HINDSIGHT_API_LLM_CACHE_AFFINITY`](./configuration#llm-provider) sends under
-  `auto`, on every `api-version` from `2024-02-01` onward, so the default needs
-  no adjustment for Azure.
+- Azure OpenAI accepts `prompt_cache_key` on GPT deployments (it improves cache
+  routing on GPT-5.6 and later), but the same `*.openai.azure.com` endpoint also
+  serves non-OpenAI Foundry models (DeepSeek, Llama, Mistral) that reject it with
+  `unrecognized_request_argument`. The host alone can't tell the two apart, so
+  [`HINDSIGHT_API_LLM_CACHE_AFFINITY`](./configuration#llm-provider) resolves
+  `auto` to `none` for Azure hosts. If your deployment serves an OpenAI model,
+  set it explicitly to `openai_prompt_cache_key`.
 
 ---
 

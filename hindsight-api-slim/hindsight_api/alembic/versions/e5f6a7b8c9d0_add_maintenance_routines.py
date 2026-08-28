@@ -34,9 +34,10 @@ Create Date: 2026-06-05
 
 from collections.abc import Sequence
 
-from alembic import context, op
+from alembic import context
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.alembic._owned import execute_unless_owned
 
 revision: str = "e5f6a7b8c9d0"
 down_revision: str | Sequence[str] | None = "a7b8c9d0e1f2"
@@ -63,7 +64,8 @@ def _pg_upgrade() -> None:
     # Auto-consolidation is filtered here only at the bank level (cheap prune);
     # the full hierarchical resolution (global -> tenant -> bank, plus
     # enable_observations) is done by the caller for the small returned set.
-    op.execute(
+    execute_unless_owned(
+        "banks_needing_consolidation",
         """
         CREATE OR REPLACE FUNCTION public.banks_needing_consolidation()
         RETURNS TABLE(schema_name text, bank_id text)
@@ -97,13 +99,14 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
     # Schemas holding at least one row of p_table older than p_days. p_ts_col is
     # the timestamp column to compare. Returns nothing when p_days <= 0
     # (retention disabled).
-    op.execute(
+    execute_unless_owned(
+        "schemas_with_expired_rows",
         """
         CREATE OR REPLACE FUNCTION public.schemas_with_expired_rows(
             p_table text, p_ts_col text, p_days int
@@ -134,15 +137,17 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
 
 def _pg_downgrade() -> None:
     if not _is_base_schema_run():
         return
-    op.execute("DROP FUNCTION IF EXISTS public.banks_needing_consolidation()")
-    op.execute("DROP FUNCTION IF EXISTS public.schemas_with_expired_rows(text, text, int)")
+    execute_unless_owned("banks_needing_consolidation", "DROP FUNCTION IF EXISTS public.banks_needing_consolidation()")
+    execute_unless_owned(
+        "schemas_with_expired_rows", "DROP FUNCTION IF EXISTS public.schemas_with_expired_rows(text, text, int)"
+    )
 
 
 def upgrade() -> None:

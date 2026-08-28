@@ -228,7 +228,7 @@ async function main() {
           const shas = execFileSync(
             "git",
             ["-C", REPO!, "rev-list", `-n`, String(DEEPEN_DIFF_TARGET), "HEAD"],
-            { encoding: "utf8" }
+            { encoding: "utf8", windowsHide: true }
           )
             .trim()
             .split("\n")

@@ -101,6 +101,7 @@ class PostgresMemories(MemoriesExtension):
         created_before: datetime | None = None,
         min_semantic: float | None = None,
         min_keyword: float | None = None,
+        enable_text_search: bool = True,
         enable_graph: bool = True,
     ) -> "dict[str, RecallArms]":
         """Run every recall arm for Postgres by orchestrating the split per-arm SQL internally.
@@ -151,6 +152,7 @@ class PostgresMemories(MemoriesExtension):
                 min_semantic=min_semantic,
                 min_keyword=min_keyword,
                 graph_seed_min_similarity=graph_seed_min_similarity,
+                enable_text_search=enable_text_search,
             )
 
             temporal_by_ft: dict[str, list] = {}
@@ -228,6 +230,7 @@ class PostgresMemories(MemoriesExtension):
         min_semantic: float | None = None,
         min_keyword: float | None = None,
         graph_seed_min_similarity: float | None = None,
+        enable_text_search: bool = True,
     ) -> "dict[str, SemanticBm25Result]":
         """The dense + keyword arms, as one UNION query.
 
@@ -256,6 +259,7 @@ class PostgresMemories(MemoriesExtension):
             min_semantic=min_semantic,
             min_keyword=min_keyword,
             graph_seed_min_similarity=graph_seed_min_similarity,
+            enable_text_search=enable_text_search,
         )
 
     async def temporal_search(

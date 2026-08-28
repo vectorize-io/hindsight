@@ -515,6 +515,12 @@ export type BankTemplateConfig = {
    */
   observations_mission?: string | null;
   /**
+   * Enable Text Search
+   *
+   * Toggle the keyword (BM25) arm during recall, leaving pure vector search
+   */
+  enable_text_search?: boolean | null;
+  /**
    * Enable Temporal Retrieval
    *
    * Toggle the temporal arm (and its date-aware query analysis) during recall
@@ -1220,6 +1226,12 @@ export type CreateBankRequest = {
    */
   observations_mission?: string | null;
   /**
+   * Enable Text Search
+   *
+   * Toggle the keyword (BM25) retrieval arm during recall. Disabling leaves pure vector search: the arm is left out of the query entirely rather than filtered to nothing, so none of its cost is paid. Also drops the keyword arm from knowledge-page search.
+   */
+  enable_text_search?: boolean | null;
+  /**
    * Enable Temporal Retrieval
    *
    * Toggle the temporal retrieval arm during recall, together with the date-aware query analysis that feeds it. Useful for banks whose content carries no meaningful dates.
@@ -1395,6 +1407,8 @@ export type CreatePageRequest = {
   parent_id?: string | null;
   /**
    * Tags
+   *
+   * Tags that SCOPE which memories this page is built from — not labels. Every tag here, including a `type:<x>` tag used to set the page's rendered type, is part of the filter. By default a tagged page matches with `all_strict`: a memory must carry EVERY one of these tags, and untagged memories are excluded entirely. Tags invented for the page (a topic, a document type) therefore match nothing unless your memories were retained with those exact tags, and the page generates as 'I don't have information about this'. Omit this field to build the page from the whole bank, or set `trigger.tags_match` to 'all' to require the tags while still including untagged memories.
    */
   tags?: Array<string> | null;
   /**
@@ -3693,7 +3707,7 @@ export type MentalModelTriggerInput = {
   /**
    * Tags Match
    *
-   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
+   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
@@ -3787,7 +3801,7 @@ export type MentalModelTriggerOutput = {
   /**
    * Tags Match
    *
-   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
+   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
@@ -5262,6 +5276,8 @@ export type UpdateNodeRequest = {
   source_query?: string | null;
   /**
    * Tags
+   *
+   * Replaces the page's tags, which SCOPE which memories it is built from. Pass `[]` to clear them and rebuild the page from the whole bank — the fix when a page generates 'I don't have information about this' because its tags match no memory. See the matching rules on this field in `CreatePageRequest`; `trigger.tags_match` widens them.
    */
   tags?: Array<string> | null;
   /**
@@ -8262,6 +8278,12 @@ export type ExportDocumentsData = {
      * Also export consolidated observations (restored on import; whole-bank only)
      */
     include_observations?: boolean;
+    /**
+     * Include Knowledge Base
+     *
+     * Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)
+     */
+    include_knowledge_base?: boolean;
   };
   url: "/v1/default/banks/{bank_id}/document-transfer/export";
 };

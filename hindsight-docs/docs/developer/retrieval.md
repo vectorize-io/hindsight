@@ -356,7 +356,7 @@ The boosts are intentionally conservative — they nudge the ranking without ove
 
 ### Stage 4: Token Truncation
 
-After scoring, results are sorted by `final_score` and selected top-down until the `max_tokens` budget is exhausted. Only the memory text counts toward the budget — metadata is free.
+After scoring, results are sorted by `final_score` and selected top-down until the `max_tokens` budget is exhausted. Only the memory text counts toward the budget — metadata is free. A result too long for what is left of the budget is skipped and the packing continues with the next one, so a single long fact does not cost you the shorter ones ranked behind it. If nothing fits at all, the top-ranked result is still returned whole, so a query that matched something is never answered with an empty list.
 
 ---
 

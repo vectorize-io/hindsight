@@ -48,6 +48,21 @@
       "manifest_file": "templates/personal-assistant.json"
     },
     {
+      "id": "business-executive",
+      "name": "Business Executive",
+      "description": "For executives and operators tracking clients, sales opportunities, project delivery, and product development from meeting transcripts. Extracts decisions, commitments, owners, and status changes, and builds pipeline, delivery, product, and relationship mental models. High literalism for precise recall of numbers, dates, and commitments.",
+      "category": "business",
+      "integrations": [
+        "hermes",
+        "openclaw",
+        "langgraph",
+        "crewai",
+        "pydantic-ai",
+        "local-mcp"
+      ],
+      "manifest_file": "templates/business-executive.json"
+    },
+    {
       "id": "hermes-gateway-bot",
       "name": "Gateway / Community Bot",
       "description": "For agents that talk to many people across chat platforms (Telegram, Discord, Slack). Keeps per-person profiles distinct, learns each community's norms, and tracks open threads across users.",

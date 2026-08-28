@@ -5,6 +5,7 @@ Link creation utilities for temporal, semantic, and entity links.
 import logging
 import re
 import time
+from collections.abc import Sequence
 from datetime import UTC
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
@@ -19,7 +20,7 @@ from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
 from ..db.postgresql import setting_rejected_by_server
 from ..memory_engine import fq_table
-from .types import CausalRelation, EntityResolutionResult
+from .types import CausalRelation, EmbeddingLike, EntityResolutionResult, embedding_to_pgvector
 
 logger = logging.getLogger(__name__)
 
@@ -524,7 +525,7 @@ async def compute_semantic_links_ann(
     conn,
     bank_id: str,
     unit_ids: list[str],
-    embeddings: list[list[float]],
+    embeddings: Sequence[EmbeddingLike],
     fact_types: list[str] | None = None,
     top_k: int = 50,
     *,
@@ -607,10 +608,7 @@ async def compute_semantic_links_ann(
         t_setup = time_mod.time()
         await conn.execute("CREATE TEMP TABLE _ann_seeds (unit_id text, emb_text text, fact_type text) ON COMMIT DROP")
 
-        records = [
-            (uid, emb if isinstance(emb, str) else str(emb), ft)
-            for uid, emb, ft in zip(unit_ids, embeddings, fact_types)
-        ]
+        records = [(uid, embedding_to_pgvector(emb), ft) for uid, emb, ft in zip(unit_ids, embeddings, fact_types)]
         await conn.copy_records_to_table("_ann_seeds", records=records, columns=["unit_id", "emb_text", "fact_type"])
         logger.debug(f"[ANN] Temp table setup: {time_mod.time() - t_setup:.3f}s ({len(records)} seeds)")
 
@@ -674,7 +672,7 @@ async def compute_semantic_links_ann(
 
 def compute_semantic_links_within_batch(
     unit_ids: list[str],
-    embeddings: list[list[float]],
+    embeddings: Sequence[EmbeddingLike],
     top_k: int = 50,
     *,
     threshold: float,
@@ -735,7 +733,7 @@ async def create_semantic_links_batch(
     conn,
     bank_id: str,
     unit_ids: list[str],
-    embeddings: list[list[float]],
+    embeddings: Sequence[EmbeddingLike],
     top_k: int = 50,
     *,
     threshold: float,

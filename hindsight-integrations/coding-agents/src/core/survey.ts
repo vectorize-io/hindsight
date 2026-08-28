@@ -338,6 +338,7 @@ export function startCodebaseSurvey(
         cwd: repoDir,
         detached: true,
         stdio: "ignore",
+        windowsHide: true,
         env: plan.env,
       });
       // spawn() failures (binary not found, EACCES, sandboxed environments) often arrive

@@ -178,19 +178,25 @@ class MultiLLMProvider:
         """
         return (await self.batch_provider_impl()) is not None
 
-    async def batch_provider_impl(self) -> "LLMInterface | None":
+    async def batch_provider_impl(self, account_key: str | None = None) -> "LLMInterface | None":
         """The implementation serving batch, or ``None`` when no member can.
 
-        Selection is deterministic by declared member order (primary first), so
-        both the initial submit and a crash-recovery resume select the same
-        member as long as the chain configuration is unchanged — the whole batch
+        Selection is deterministic by declared member order (primary first), so a
+        fresh batch goes to the first batch-capable member — the whole batch
         lifecycle (submit → poll → retrieve) must target a single provider
-        account. It does not fail over: a batch already submitted to one account
-        cannot be polled from another, and ``fact_extraction`` guards a resume
-        whose stored provider no longer matches this selection.
+        account, and it does not fail over: a batch already submitted to one
+        account cannot be polled from another.
+
+        Declared order is *not* enough to resume one, though. The chain can be
+        reordered or extended across a restart, and two members of the same
+        provider on different accounts look identical by provider name, so
+        "first capable member" can resolve to an account that never saw the
+        batch (#3671). A resume therefore passes the ``account_key`` recorded at
+        submit time and gets back the member that owns the batch, or ``None`` —
+        never a lookalike.
         """
         for member in self._members:
-            impl = await member.batch_provider_impl()
+            impl = await member.batch_provider_impl(account_key)
             if impl is not None:
                 return impl
         return None

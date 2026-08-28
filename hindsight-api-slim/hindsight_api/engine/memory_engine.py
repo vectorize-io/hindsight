@@ -14,6 +14,7 @@ import contextvars
 import copy
 import difflib
 import functools
+import hashlib
 import inspect
 import json
 import logging
@@ -21,7 +22,7 @@ import random
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
@@ -62,7 +63,7 @@ from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
 from .db.postgresql import apply_session_settings as _apply_session_settings
 from .db_budget import budgeted_operation
-from .llm_interface import ProviderRateLimitResetError
+from .llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
 from .llm_trace import (
     LLMRequestEntry,
     LLMRequestListResponse,
@@ -201,8 +202,8 @@ def _bind_bank_id(
 
 
 def count_tokens(text: str) -> int:
-    """Count tokens in text using tiktoken (cl100k_base encoding for GPT-4/3.5)."""
-    return len(_get_tiktoken_encoding().encode(text))
+    """Count tokens in text under the configured encoding (see engine/token_encoding.py)."""
+    return _token_encoding_count(text)
 
 
 def _parse_chunk_id(chunk_id: str | None) -> "tuple[str, str, int] | None":
@@ -511,6 +512,7 @@ from enum import Enum
 
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
+from .fact_budget import select_facts_within_budget
 from .llm_wrapper import ConfiguredLLMProvider, LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
 from .mental_model_refresh import (
     MentalModelDeltaOperations,
@@ -570,6 +572,7 @@ from .task_backend import TaskBackend
 #                     arm's top hits a slot (used by consolidation dedup recall, where RRF
 #                     buried the near-identical twin below budget). See interleave_fusion.
 RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
+from .token_encoding import count_tokens as _token_encoding_count
 from .token_encoding import get_token_encoding
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
@@ -719,36 +722,27 @@ def _is_oracledb_integrity_error(e: Exception) -> bool:
 
 
 @dataclass
-class _SubBatchSplit:
-    """Result of packing retain contents into sub-batches.
+class _SubBatch:
+    """One sub-batch, and everything the retain loop needs to run it.
 
-    ``sub_batches[i]`` is a list of RetainContentDict items that should
-    be processed together. ``origin_indices[i]`` lists the indices into
-    the original ``contents`` list that contributed items to
-    ``sub_batches[i]``; callers that present per-input results to the
-    user (such as ``retain_batch_async``) use this mapping to merge
-    results belonging to the same original content back together when
-    an oversized item was chunked across multiple sub-batches.
+    Carrying a sub-batch's parts together is what lets the splitter yield them. The shape
+    this replaces was parallel lists — contents, origins, body overrides, chunk counts —
+    read by a shared index, and a caller reading ``sub_batches[i]`` alongside
+    ``chunk_counts[i]`` needs every list materialised. A caller reading ``sub.contents``
+    and ``sub.chunk_count`` needs only the sub-batch it is holding.
 
-    ``document_body_overrides[i]`` is the full original body of the
-    oversized item that produced ``sub_batches[i]``, or ``None`` when
-    the sub-batch was not produced by chunking an oversized item. The
-    orchestrator uses this as the ``documents.original_text`` payload
-    so that slicing an item across sub-batches does not persist a
-    partial body (see issue #1838).
-
-    ``chunk_counts[i]`` is how many native chunks ``sub_batches[i]``
-    holds. The splitter knows this exactly (it cut on native chunk
-    boundaries), so callers must read it from here rather than
-    re-deriving it: the orchestrator consumes each item's ``content``
-    while streaming, and re-chunking afterwards silently yields 1
-    (see issue #1888).
+    ``is_last`` is resolved by the producer, which looks one sub-batch ahead. The retain
+    loop cannot derive it — there is no length to compare against any more — and it must
+    know, because the transactional-outbox callback fires inside the last sub-batch's
+    transaction and nowhere else (see ``tests/test_webhooks.py``).
     """
 
-    sub_batches: list[list[RetainContentDict]]
-    origin_indices: list[list[int]]
-    document_body_overrides: list[str | None] = field(default_factory=list)
-    chunk_counts: list[int] = field(default_factory=list)
+    contents: list[RetainContentDict]
+    origins: list[int]
+    document_body: "ScreenedDocumentBody | None"
+    chunk_count: int
+    index: int  # 1-based, for logging and the is-first-batch decision
+    is_last: bool
 
 
 @dataclass
@@ -794,26 +788,85 @@ class _RetainChunkingConfig:
     structured_chunk_size: int | None
 
 
-def _pack_native_chunks(chunks: list[str], tokens_per_batch: int) -> list[list[str]]:
+def _pack_native_chunks(chunks: Iterable[str], tokens_per_batch: int) -> Iterator[list[str]]:
     """Group consecutive native chunks into runs of at most ``tokens_per_batch``.
 
     A single chunk over the budget becomes a run of its own: the native chunk is
     the atom of the retain pipeline and must never be cut (see
     ``_split_contents_into_sub_batches``).
+
+    Takes and yields lazily so an oversized item is packed a run at a time. Holding
+    every chunk of a document at once is what made retain's memory scale with the
+    document rather than with a working set (#3756); a run is bounded by
+    ``tokens_per_batch``, so this holds one sub-batch's worth at a time instead.
     """
-    runs: list[list[str]] = []
     current: list[str] = []
     current_tokens = 0
     for chunk in chunks:
         chunk_tokens = count_tokens(chunk)
         if current and current_tokens + chunk_tokens > tokens_per_batch:
-            runs.append(current)
+            yield current
             current, current_tokens = [], 0
         current.append(chunk)
         current_tokens += chunk_tokens
     if current:
-        runs.append(current)
-    return runs
+        yield current
+
+
+@dataclass(frozen=True)
+class _NativeChunkSpan:
+    """Where a run of native chunks came from in the document that produced it.
+
+    ``text`` is the slice of the source that yielded the run, or ``None`` when the run could
+    not be located in it. ``cursor`` is where the next run's search starts: the end of this
+    run when it was located, and the unchanged input cursor when it was not.
+    """
+
+    text: str | None
+    cursor: int
+
+
+def _span_of_native_chunks(
+    source: str,
+    chunks: list[str],
+    cursor: int,
+) -> _NativeChunkSpan:
+    r"""The original span of ``source`` covering a run of consecutive native chunks.
+
+    ``_rejoin_native_chunks`` reconstructs a run by guessing which separator sat between its
+    chunks — a merged JSON array, ``"\n\n"``, ``"\n"`` — and gives up when none of them
+    re-chunks back to the run it was given. Giving up is expensive: the caller then emits one
+    sub-batch per chunk, and a sub-batch's cost is largely fixed regardless of how many chunks it
+    carries, so a run that the guessing cannot reproduce becomes many retains instead of one.
+
+    The guessing is avoidable. The chunks came from ``source``, in order, so the text that produced
+    them is the slice from the first chunk's start to the last chunk's end — separators included,
+    whatever they were. When the chunks are substrings of the source, locating them costs a forward
+    scan with a cursor that only moves right, so a document is still walked once overall.
+
+    When they are NOT — ``iter_chunks`` re-serializes a JSON conversation array per chunk, and
+    rebuilds JSONL as ``"\n".join`` of its non-blank lines — no chunk is ever found, ``cursor``
+    cannot advance, and each attempt rescans the whole body from where it started. That is why the
+    caller stops attempting after the first miss: whether a document's chunks are substrings of it
+    is decided once, by the branch ``iter_chunks`` takes for the whole document, so one miss
+    settles it. Left unbounded it costs a full scan per run: splitting a 44 MB conversation into
+    its 985 sub-batches took 52s instead of 22s, and the gap grows with the square of the
+    document — the class of cost #3756 removed from this path.
+
+    Returns ``text=None`` if any chunk cannot be located from ``cursor``, and the caller falls
+    back to the rejoin exactly as before. The caller also verifies that the slice re-chunks to the
+    same run, so a span that would change the split is rejected rather than trusted.
+    """
+    start = source.find(chunks[0], cursor)
+    if start < 0:
+        return _NativeChunkSpan(text=None, cursor=cursor)
+    end = start
+    for chunk in chunks:
+        found = source.find(chunk, end)
+        if found < 0:
+            return _NativeChunkSpan(text=None, cursor=cursor)
+        end = found + len(chunk)
+    return _NativeChunkSpan(text=source[start:end], cursor=end)
 
 
 def _rejoin_native_chunks(
@@ -856,98 +909,119 @@ def _rejoin_native_chunks(
     return None
 
 
-def _screen_document_body_overrides(
-    overrides: list[str | None],
-    config: HindsightConfig,
-) -> list[str | None]:
-    """Memory Defense screen each distinct document body override once.
+@dataclass(frozen=True)
+class ScreenedDocumentBody:
+    """A document body that has been Memory Defense screened and content-hashed once.
 
-    The splitter hands every slice of an oversized item the same body, so
-    screening it inside the retain path would rescan the whole document once
-    per sub-batch (issue #3282). Screen here instead — the orchestrator takes
-    an override as already screened (see ``redact_document_body``).
+    ``content_hash`` is ``sha256`` of the sanitized ``text`` — byte-identical to what
+    ``handle_document_tracking`` stores on the ``documents`` row, so the retain path can
+    take it as given instead of recomputing it. That recomputation was the one piece of
+    work that still scaled with (sub-batches x document size): every slice of an oversized
+    item carries the same body, and each one re-sanitized and re-hashed the whole thing.
+    On a 45 MB body split into ~1,200 sub-batches that is ~0.9s of work repeated 1,200
+    times — about 18 minutes spent proving the same hash (#3756).
     """
+
+    text: str
+    content_hash: str
+
+
+def _screen_document_body(body: str, config: HindsightConfig) -> ScreenedDocumentBody:
+    """Memory Defense screen one document body and hash what screening produced.
+
+    The hash is of the REDACTED text, because that is what gets written — a hash taken
+    before redaction would describe a document that was never stored, and every ownership
+    check against it would miss. Callers cache by body; this does no caching of its own.
+    """
+    from .retain.fact_extraction import _sanitize_text
     from .retain.orchestrator import redact_document_body
 
-    screened: dict[str, str] = {}
-    result: list[str | None] = []
-    for body in overrides:
-        if body is None:
-            result.append(None)
-            continue
-        if body not in screened:
-            screened[body] = redact_document_body(body, config)
-        result.append(screened[body])
-    return result
+    redacted = redact_document_body(body, config)
+    sanitized = _sanitize_text(redacted) or ""
+    return ScreenedDocumentBody(text=redacted, content_hash=_sha256_windowed(sanitized))
 
 
-def _split_contents_into_sub_batches(
+# How much text is encoded to bytes at a time when hashing a document body. Slicing a str
+# by character index never splits a character, so the concatenated windows are byte-identical
+# to encoding the whole string — this only changes how much of it exists at once.
+_HASH_WINDOW_CHARS = 1024 * 1024
+
+
+def _sha256_windowed(text: str) -> str:
+    """``sha256`` of ``text``'s UTF-8 bytes, without materialising them all.
+
+    ``text.encode()`` on a document body allocates a second full copy of it purely to feed
+    the hash — 45 MB for a 45 MB document, the last allocation in the retain front half that
+    still scaled with the input (#3756). Feeding the digest a megabyte at a time gives the
+    same hex digest at a bounded cost.
+    """
+    digest = hashlib.sha256()
+    for start in range(0, len(text), _HASH_WINDOW_CHARS):
+        digest.update(text[start : start + _HASH_WINDOW_CHARS].encode())
+    return digest.hexdigest()
+
+
+@dataclass
+class _RawSubBatch:
+    """A sub-batch as the splitter produces it, before the body is screened.
+
+    Separate from :class:`_SubBatch` because screening needs a resolved config, which the
+    pure splitting logic has no business knowing about, and because ``is_last`` is decided
+    a layer up by lookahead.
+    """
+
+    contents: list[RetainContentDict]
+    origins: list[int]
+    body_override: str | None
+    chunk_count: int
+
+
+def _iter_raw_sub_batches(
     contents: list[RetainContentDict],
     tokens_per_batch: int,
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
-) -> _SubBatchSplit:
-    """Pack retain contents into sub-batches whose combined token count
-    stays at or below ``tokens_per_batch``.
+) -> Iterator[_RawSubBatch]:
+    """Stream the sub-batches of ``contents`` — see ``_split_contents_into_sub_batches``.
 
-    Any single item that already exceeds the budget is cut into slices, because
-    passing it through as one ``1/1`` sub-batch contradicts the splitter's log
-    and OOMs the orchestrator under realistic memory limits (see issue #1571).
+    Yields rather than collects so a large submission's slices never exist all at once.
+    The slices ARE the document, cut up: for a 45 MB body they measure 45.5 MB, held for
+    the whole retain on top of the submitted body itself. Streaming them takes that to
+    ~0.1 MB and the front half's live set from two copies of the document to one — one
+    being the floor, since the submitted body has to survive to be written as
+    ``documents.original_text`` (#3756).
 
-    **Slices are always cut on native chunk boundaries** — the same
-    ``chunk_text(chunk_size, structured_chunk_size)`` boundaries the retain
-    pipeline itself uses — and every slice is verified to re-chunk back to
-    exactly the chunks it holds. That keeps one invariant true no matter how a
-    document arrives:
-
-        the chunks stored for a document depend only on its body,
-        never on how transport split it.
-
-    Everything downstream is built on that invariant and silently degrades
-    without it: delta retain and the streaming recovery pass both match stored
-    chunks by content hash (a slice cutting mid-chunk matches nothing, so
-    unchanged history is re-extracted — issue #3282), and ``chunk_index``
-    bookkeeping assumes a slice contributes a whole number of chunks (#1888).
-    A slice therefore honours ``tokens_per_batch`` only down to one native
-    chunk; below that, ``retain_chunk_size`` is the real bound.
-
-    ``chunk_size``/``structured_chunk_size`` have no default on purpose: they
-    must be the bank's resolved retain chunking settings, and quietly falling
-    back to the global default would reintroduce exactly the misalignment this
-    function exists to prevent.
-
-    Used by the in-process ``retain_batch_async`` path, which processes
-    the returned sub-batches SEQUENTIALLY with ``is_first_batch=(i==1)``.
-    The async submission path uses ``_split_contents_into_async_children``
-    instead, which never fragments a single item across children — see
-    that helper for the reasoning.
+    Safe to consume lazily even though the caller mutates what it is handed (``retain_batch``
+    pops ``content`` off each sub-batch item as it streams): every item is read before the
+    sub-batch containing it is yielded, so a consumer can only ever mutate entries this has
+    already passed.
     """
     from .retain import fact_extraction
 
-    def _chunks_of(text: str) -> list[str]:
-        return fact_extraction.chunk_text(text, chunk_size, structured_chunk_size=structured_chunk_size)
+    def _chunks_of(text: str) -> Iterator[str]:
+        return fact_extraction.iter_chunks(text, chunk_size, structured_chunk_size=structured_chunk_size)
 
-    sub_batches: list[list[RetainContentDict]] = []
-    origin_indices: list[list[int]] = []
-    document_body_overrides: list[str | None] = []
-    chunk_counts: list[int] = []
     current_batch: list[RetainContentDict] = []
     current_batch_origins: list[int] = []
     current_batch_tokens = 0
     current_batch_chunks = 0
 
-    def _flush() -> None:
+    def _flush() -> _RawSubBatch | None:
         nonlocal current_batch, current_batch_origins, current_batch_tokens, current_batch_chunks
-        if current_batch:
-            sub_batches.append(current_batch)
-            origin_indices.append(current_batch_origins)
-            document_body_overrides.append(None)
-            chunk_counts.append(current_batch_chunks)
-            current_batch = []
-            current_batch_origins = []
-            current_batch_tokens = 0
-            current_batch_chunks = 0
+        if not current_batch:
+            return None
+        flushed = _RawSubBatch(
+            contents=current_batch,
+            origins=current_batch_origins,
+            body_override=None,
+            chunk_count=current_batch_chunks,
+        )
+        current_batch = []
+        current_batch_origins = []
+        current_batch_tokens = 0
+        current_batch_chunks = 0
+        return flushed
 
     for original_idx, item in enumerate(contents):
         content_str = item.get("content", "") or ""
@@ -963,32 +1037,112 @@ def _split_contents_into_sub_batches(
             # writes the full original text to documents.original_text — not
             # just its own slice (otherwise the last slice would clobber the
             # body with a truncated payload; see issue #1838).
-            _flush()
+            pending = _flush()
+            if pending is not None:
+                yield pending
+            # Cursor into `content_str` for `_span_of_native_chunks`. Runs arrive in document
+            # order and only ever move forward, so one cursor serves them all and the document is
+            # scanned once rather than per run.
+            span_cursor = 0
+            # Whether this document's chunks are substrings of it at all. A miss means they are
+            # not — a re-serialized JSON conversation, JSONL rebuilt from its non-blank lines —
+            # and that is a property of the whole document, not of one run. Every later attempt
+            # would miss too, and each miss rescans the body from `span_cursor` (which a miss
+            # cannot advance), so retrying costs a full scan per run. One miss settles it; the
+            # rejoin is what handles those shapes anyway.
+            span_locatable = True
             for run in _pack_native_chunks(_chunks_of(content_str), tokens_per_batch):
-                joined = _rejoin_native_chunks(run, chunk_size, structured_chunk_size)
+                # Prefer the ORIGINAL span over a guessed rejoin: it carries whatever separators
+                # the document actually used, so it reconstructs runs the guessing cannot. Verified
+                # the same way either candidate is — a slice that would change the split is
+                # rejected, not trusted. A single-chunk run needs no verification: its span is that
+                # chunk exactly, so there is nothing a re-chunk could disagree with.
+                joined = None
+                if span_locatable:
+                    span = _span_of_native_chunks(content_str, run, span_cursor)
+                    span_cursor = span.cursor
+                    joined = span.text
+                    if joined is None:
+                        span_locatable = False
+                    elif len(run) > 1 and list(_chunks_of(joined)) != run:
+                        joined = None
+                if joined is None:
+                    joined = _rejoin_native_chunks(run, chunk_size, structured_chunk_size)
                 slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]
                 for slice_text, slice_chunk_count in slices:
                     chunk_item = cast(RetainContentDict, {**item, "content": slice_text})
-                    sub_batches.append([chunk_item])
-                    origin_indices.append([original_idx])
-                    document_body_overrides.append(content_str)
-                    chunk_counts.append(slice_chunk_count)
+                    yield _RawSubBatch(
+                        contents=[chunk_item],
+                        origins=[original_idx],
+                        body_override=content_str,
+                        chunk_count=slice_chunk_count,
+                    )
             continue
 
         if current_batch and current_batch_tokens + item_tokens > tokens_per_batch:
-            _flush()
+            pending = _flush()
+            if pending is not None:
+                yield pending
         current_batch.append(item)
         current_batch_origins.append(original_idx)
         current_batch_tokens += item_tokens
-        current_batch_chunks += len(_chunks_of(content_str))
+        current_batch_chunks += sum(1 for _ in _chunks_of(content_str))
 
-    _flush()
-    return _SubBatchSplit(
-        sub_batches=sub_batches,
-        origin_indices=origin_indices,
-        document_body_overrides=document_body_overrides,
-        chunk_counts=chunk_counts,
-    )
+    pending = _flush()
+    if pending is not None:
+        yield pending
+
+
+def iter_sub_batches(
+    contents: list[RetainContentDict],
+    tokens_per_batch: int,
+    *,
+    chunk_size: int,
+    structured_chunk_size: int | None,
+    config: HindsightConfig,
+) -> Iterator[_SubBatch]:
+    """Stream screened, hashed, last-flagged sub-batches ready for the retain loop.
+
+    Wraps :func:`_iter_raw_sub_batches` with the two things the loop needs and the raw
+    splitter cannot supply: the Memory Defense screening and content hash of each distinct
+    document body (cached, so an oversized item's identical body is screened once however
+    many slices it produced — issue #3282), and ``is_last``, from a one-item lookahead.
+    """
+    screened: dict[str, ScreenedDocumentBody] = {}
+
+    def _screen(body: str | None) -> ScreenedDocumentBody | None:
+        if body is None:
+            return None
+        if body not in screened:
+            screened[body] = _screen_document_body(body, config)
+        return screened[body]
+
+    index = 0
+    held: _RawSubBatch | None = None
+    for raw in _iter_raw_sub_batches(
+        contents, tokens_per_batch, chunk_size=chunk_size, structured_chunk_size=structured_chunk_size
+    ):
+        if held is not None:
+            index += 1
+            yield _SubBatch(
+                contents=held.contents,
+                origins=held.origins,
+                document_body=_screen(held.body_override),
+                chunk_count=held.chunk_count,
+                index=index,
+                is_last=False,
+            )
+        held = raw
+    if held is not None:
+        index += 1
+        yield _SubBatch(
+            contents=held.contents,
+            origins=held.origins,
+            document_body=_screen(held.body_override),
+            chunk_count=held.chunk_count,
+            index=index,
+            is_last=True,
+        )
 
 
 def _split_contents_into_async_children(
@@ -1099,6 +1253,10 @@ def _is_non_retryable_task_error(e: Exception) -> bool:
         isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError)
         or _is_oracledb_integrity_error(e)
         or _is_invalid_embedding_dimension_error(e)
+        # A provider content-policy refusal is a function of the content, not of
+        # the moment: re-running the task feeds the same chunk to the same model
+        # and earns the same refusal (issue #3690).
+        or isinstance(e, ProviderContentPolicyError)
     )
 
 
@@ -1193,17 +1351,8 @@ logger = logging.getLogger(__name__)
 from .db_utils import acquire_with_retry, retry_with_backoff
 
 
-def _get_tiktoken_encoding():
-    """Get cached tiktoken encoding (cl100k_base for GPT-4/3.5).
-
-    Returns a wrapper that tolerates special-token literals in user content
-    (see hindsight_api.engine.token_encoding).
-    """
-    return get_token_encoding()
-
-
 def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix: str = "") -> str:
-    """Bound a recall query to ``max_query_tokens`` cl100k tokens (``0`` disables the cap).
+    """Bound a recall query to ``max_query_tokens`` tokens (``0`` disables the cap).
 
     Truncation, not rejection: this runs on the path every *internal* caller takes
     (consolidation, reflect tools, MCP tools, the context extension), and those must
@@ -1215,16 +1364,16 @@ def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix
     if max_query_tokens <= 0 or len(query) <= max_query_tokens:
         return query
 
-    encoding = _get_tiktoken_encoding()
-    tokens = encoding.encode(query)
-    if len(tokens) <= max_query_tokens:
+    encoding = get_token_encoding()
+    query_tokens = encoding.count(query)
+    if query_tokens <= max_query_tokens:
         return query
 
     logger.warning(
-        f"{log_prefix}Query truncated to {max_query_tokens} tokens (was {len(tokens)}); "
+        f"{log_prefix}Query truncated to {max_query_tokens} tokens (was {query_tokens}); "
         f"raise HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS to allow longer queries"
     )
-    return encoding.decode(tokens[:max_query_tokens])
+    return encoding.decode(encoding.encode(query)[:max_query_tokens])
 
 
 @dataclass(frozen=True)
@@ -1863,6 +2012,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_statement_timeout = config.db_statement_timeout
         self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
         self._entity_trgm_similarity_threshold = config.entity_trgm_similarity_threshold
+        self._entity_merge_min_similarity = config.entity_merge_min_similarity
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -2131,7 +2281,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._put_semaphore = asyncio.Semaphore(get_config().retain_max_concurrent)
 
         # initialize encoding eagerly to avoid delaying the first time
-        _get_tiktoken_encoding()
+        get_token_encoding()
 
         # Store operation validator extension (optional)
         self._operation_validator = operation_validator
@@ -2320,6 +2470,8 @@ class MemoryEngine(MemoryEngineInterface):
                 "facts_imported": result.facts_imported,
                 "observations_imported": result.observations_imported,
                 "observations_skipped": result.observations_skipped,
+                "mental_models_imported": result.mental_models_imported,
+                "knowledge_pages_imported": result.knowledge_pages_imported,
                 "skipped_document_ids": result.skipped_document_ids,
                 "remapped_document_ids": result.remapped_document_ids,
             }
@@ -2354,6 +2506,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id = task_dict.get("operation_id")
         document_ids = task_dict.get("document_ids")
         include_observations = task_dict.get("include_observations", False)
+        include_knowledge_base = task_dict.get("include_knowledge_base", False)
         if not bank_id:
             raise ValueError("bank_id is required for export_documents task")
 
@@ -2368,7 +2521,11 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         archive_bytes = await self.export_documents_async(
-            bank_id, context, document_ids, include_observations=include_observations
+            bank_id,
+            context,
+            document_ids,
+            include_observations=include_observations,
+            include_knowledge_base=include_knowledge_base,
         )
 
         # A fresh uuid per export keeps concurrent/repeat exports of the same bank
@@ -3673,18 +3830,17 @@ class MemoryEngine(MemoryEngineInterface):
         if not operation_id:
             return
 
-        from .reflect.agent import NO_ANSWER_TEXT
-
         content = refreshed.get("content") or ""
         stripped = content.strip()
         reflect_response = refreshed.get("reflect_response") or {}
         based_on = reflect_response.get("based_on") or {}
         outcome = RefreshMentalModelOutcomeMetadata(
             content_len=len(content),
-            # The no-answer stub and the pending placeholder complete
-            # wire-successful but carry no real synthesis — a length check
-            # alone would read them as populated.
-            populated_content=bool(stripped) and stripped not in (MENTAL_MODEL_PENDING_CONTENT, NO_ANSWER_TEXT),
+            # The pending placeholder completes wire-successful but carries no
+            # real synthesis — a length check alone would read it as populated.
+            # Reflect's own failure stubs are gone: a run with no answer now
+            # raises (#2959), so no refresh reaches here carrying one.
+            populated_content=bool(stripped) and stripped != MENTAL_MODEL_PENDING_CONTENT,
             based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
             delta_ops_applied=len(reflect_response.get("delta_operations_applied") or []),
             delta_ops_skipped=len(reflect_response.get("delta_operations_skipped") or []),
@@ -4316,6 +4472,7 @@ class MemoryEngine(MemoryEngineInterface):
             entity_resolution_batch_size=self._retain_entity_resolution_batch_size,
             intrabatch_merge_similarity=self._entity_intrabatch_merge_similarity,
             entity_resolution_max_candidates=self._retain_entity_resolution_max_candidates,
+            merge_min_similarity=self._entity_merge_min_similarity,
         )
 
         # Initialize config resolver for hierarchical configuration
@@ -4473,7 +4630,11 @@ class MemoryEngine(MemoryEngineInterface):
             health.update(self._pool_health_stats(backend))
             return health
         except Exception as e:
-            return {"status": "unhealthy", "database": "error", "error": str(e)}
+            # repr, not str: asyncpg raises several connection/pool errors with
+            # no args, and str(e) is "" for those — the probe payload is what an
+            # operator reads first when the database looks down, so it must name
+            # the exception class even when the message is empty.
+            return {"status": "unhealthy", "database": "error", "error": repr(e)}
 
     @staticmethod
     def _pool_health_stats(backend: Any) -> dict:
@@ -5183,31 +5344,18 @@ class MemoryEngine(MemoryEngineInterface):
             retain_config = await self._resolve_retain_config(bank_id, request_context, strategy)
             chunking_config = self._retain_chunking_config(retain_config)
 
-            split = _split_contents_into_sub_batches(
+            # Streamed, not collected: the slices are the document cut up, and holding
+            # them all costs a second copy of it for the whole retain (#3756). Each is
+            # screened, hashed and flagged as it arrives; ``is_last`` comes from a
+            # one-item lookahead inside the generator, because there is no length to
+            # compare ``i`` against any more.
+            sub_batch_stream = iter_sub_batches(
                 contents,
                 tokens_per_batch,
                 chunk_size=chunking_config.chunk_size,
                 structured_chunk_size=chunking_config.structured_chunk_size,
+                config=retain_config,
             )
-            sub_batches = split.sub_batches
-            origin_indices = split.origin_indices
-            # Every slice of an oversized item carries the same full body as its
-            # documents.original_text payload, and that body never goes through
-            # per-item screening. Screen each distinct body once here rather than
-            # inside every sub-batch (issue #3282).
-            document_body_overrides = _screen_document_body_overrides(split.document_body_overrides, retain_config)
-
-            sub_batch_sizes = [len(b) for b in sub_batches]
-            # Keep the per-sub-batch sizes log compact when an oversize
-            # single item gets chunked into many [1]-sized sub-batches.
-            if len(sub_batches) <= 20:
-                logger.info(f"Split into {len(sub_batches)} sub-batches: {sub_batch_sizes} items each")
-            else:
-                logger.info(
-                    f"Split into {len(sub_batches)} sub-batches "
-                    f"(items per sub-batch: min={min(sub_batch_sizes)}, "
-                    f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
-                )
 
             # Preserve the public contract: one result list per input
             # content. When an oversize single item is chunked across
@@ -5266,70 +5414,179 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                     )
 
-            for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
-                # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
-                if operation_id and not await self._check_op_alive(operation_id):
-                    logger.info(
-                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping after {i - 1}/{len(sub_batches)} sub-batches"
-                    )
-                    cancelled = True
-                    break
+            sub_batches_run = 0
+            # Chunk texts accumulated across the sub-batches of each document, written by
+            # `flush_document_bodies` below. Same lifetime as `chunk_offsets`: this retain only.
+            from .retain.orchestrator import DocumentBodyAccumulator
 
-                sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
-                logger.info(
-                    f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
-                )
-                # Live worker stage for the in-flight sub-batch; the durable progress
-                # snapshot is written *after* the sub-batch commits (below) so processed
-                # reflects work actually done and reaches total on completion.
-                set_stage(f"batch_retain.sub_batch.{i}")
+            body_accum: dict[str, DocumentBodyAccumulator] = {}
 
-                # Resolve the document this sub-batch writes to so we can offset
-                # its chunk_index past chunks already stored by earlier sub-batches
-                # of the same document. A grouped call passes ``document_id``, so
-                # every sub-batch shares it; otherwise only the oversized-single-
-                # item split shares a document_id across sub-batches (packed
-                # multi-item sub-batches carry distinct document_ids, offset 0).
-                sub_doc_id = document_id or (sub_batch[0].get("document_id") if len(sub_batch) == 1 else None)
-                sub_offset = chunk_offsets.get(sub_doc_id, 0) if sub_doc_id else 0
+            @dataclass
+            class _SubBatchOutcome:
+                """One sub-batch's results, carried back from its task.
 
-                # How many chunks this sub-batch contributes, from the splitter.
-                # It must NOT be re-derived here: retain_batch consumes (pops)
-                # each item's "content" while streaming, so reading it back
-                # after the call yields "" — and chunk_text("") returns [""]
-                # (count 1), advancing the per-document cursor by 1 regardless
-                # of the real chunk count (issue #1888).
-                sub_chunk_count = split.chunk_counts[i - 1]
+                A named type rather than a tuple so the merge below reads by field: the sub-batch
+                INDEX is what the results are re-sorted by (completion order is not document
+                order), and `origins` maps each result back to the caller's input item.
+                """
 
-                sub_results, sub_usage, sub_processed = await self._retain_batch_async_internal(
+                index: int
+                origins: list[int]
+                results: list[list[str]]
+                usage: "TokenUsage"
+                processed: int | None
+
+            # Sub-batches of one document used to run strictly one after another, but most of a
+            # sub-batch is a round-trip to the store — I/O wait, holding no GIL — so running a few
+            # concurrently overlaps a wait rather than paying it end to end.
+            #
+            # Default 1 keeps today's behaviour exactly; a deployment opts in.
+            # From the resolved config, not read inline per retain.
+            concurrency = max(1, get_config().retain_subbatch_concurrency)
+            pending: list[asyncio.Task] = []
+            collected: list[_SubBatchOutcome] = []
+
+            async def _run_sub(idx: int, contents_, origins_, offset_, is_last_, body_, body_hash_):
+                r, u, pr = await self._retain_batch_async_internal(
                     bank_id=bank_id,
-                    contents=sub_batch,
+                    contents=contents_,
                     request_context=request_context,
                     document_id=document_id,
-                    is_first_batch=i == 1,  # Only upsert on first batch
+                    is_first_batch=idx == 1,  # Only upsert on first batch
                     fact_type_override=fact_type_override,
                     document_tags=document_tags,
                     operation_id=operation_id,
                     strategy=strategy,
                     # Outbox callback runs inside the last sub-batch's transaction so the
                     # webhook delivery row is committed atomically with the final retain data.
-                    outbox_callback=outbox_callback if i == len(sub_batches) else None,
-                    outbox_callback_factory=outbox_callback_factory if i == len(sub_batches) else None,
-                    document_body_override=document_body_overrides[i - 1],
-                    chunk_index_offset=sub_offset,
+                    outbox_callback=outbox_callback if is_last_ else None,
+                    outbox_callback_factory=outbox_callback_factory if is_last_ else None,
+                    document_body_override=body_,
+                    document_body_hash=body_hash_,
+                    chunk_index_offset=offset_,
+                    body_accum=body_accum,
                 )
+                return _SubBatchOutcome(index=idx, origins=origins_, results=r, usage=u, processed=pr)
 
-                # Advance the document's chunk_index cursor by the number of
-                # chunks this sub-batch produced (counted above, before the
-                # orchestrator consumed the content), so the next sub-batch
-                # sharing the document continues the sequence.
-                if sub_doc_id:
-                    # retain_batch only prepends the existing body on the global
-                    # first sub-batch (is_first_batch == i == 1), so fold its chunk
-                    # count in only there.
+            try:
+                for sub in sub_batch_stream:
+                    i = sub.index
+                    sub_batch = sub.contents
+                    sub_origins = sub.origins
+                    # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
+                    if operation_id and not await self._check_op_alive(operation_id):
+                        logger.info(
+                            f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled "
+                            f"(bank deleted), stopping after {i - 1} sub-batches"
+                        )
+                        cancelled = True
+                        # Cancel what is already in flight. Without this the gather below would run
+                        # every dispatched sub-batch to completion AFTER the operation was found dead,
+                        # which is the opposite of what the check is for.
+                        for t in pending:
+                            t.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        pending = []
+                        break
+
+                    sub_batches_run = i
+                    sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
+                    # No "i of N": N is not known until the stream ends, and computing it up
+                    # front would mean splitting the document twice. Operators follow a long
+                    # retain through the chunk-level "storing N/total" progress the streaming
+                    # pipeline writes, which is unaffected.
+                    logger.info(f"Processing sub-batch {i}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens")
+                    # Live worker stage for the in-flight sub-batch; the durable progress
+                    # snapshot is written *after* the sub-batch commits (below) so processed
+                    # reflects work actually done and reaches total on completion.
+                    set_stage(f"batch_retain.sub_batch.{i}")
+
+                    # Resolve the document this sub-batch writes to so we can offset
+                    # its chunk_index past chunks already stored by earlier sub-batches
+                    # of the same document. A grouped call passes ``document_id``, so
+                    # every sub-batch shares it; otherwise only the oversized-single-
+                    # item split shares a document_id across sub-batches (packed
+                    # multi-item sub-batches carry distinct document_ids, offset 0).
+                    sub_doc_id = document_id or (sub_batch[0].get("document_id") if len(sub_batch) == 1 else None)
+                    sub_offset = chunk_offsets.get(sub_doc_id, 0) if sub_doc_id else 0
+
+                    # How many chunks this sub-batch contributes, from the splitter.
+                    # It must NOT be re-derived here: retain_batch consumes (pops)
+                    # each item's "content" while streaming, so reading it back
+                    # after the call yields "" — and chunk_text("") returns [""]
+                    # (count 1), advancing the per-document cursor by 1 regardless
+                    # of the real chunk count (issue #1888). Taking it from the splitter is also what
+                    # lets the offset be assigned BEFORE dispatch, which is what makes concurrent
+                    # sub-batches possible at all.
+                    sub_chunk_count = sub.chunk_count
+
+                    # Advance the document's chunk_index cursor by the number of chunks this sub-batch
+                    # produced, so the next sub-batch sharing the document continues the sequence.
+                    if sub_doc_id:
+                        # retain_batch only prepends the existing body on the global
+                        # first sub-batch (is_first_batch == i == 1), so fold its chunk
+                        # count in only there.
+                        if i == 1:
+                            sub_chunk_count += append_prepend_chunks.get(sub_doc_id, 0)
+                        chunk_offsets[sub_doc_id] = sub_offset + sub_chunk_count
+
+                    task = asyncio.create_task(
+                        _run_sub(
+                            i,
+                            sub_batch,
+                            sub_origins,
+                            sub_offset,
+                            sub.is_last,
+                            sub.document_body.text if sub.document_body else None,
+                            sub.document_body.content_hash if sub.document_body else None,
+                        )
+                    )
+                    pending.append(task)
+                    # The first sub-batch is a barrier: it upserts the document row that every later
+                    # sub-batch's ownership check reads, and in append mode it is the one that prepends
+                    # the existing body.
                     if i == 1:
-                        sub_chunk_count += append_prepend_chunks.get(sub_doc_id, 0)
-                    chunk_offsets[sub_doc_id] = sub_offset + sub_chunk_count
+                        collected.append(await task)
+                        pending.remove(task)
+                        continue
+
+                    # Throttle DISPATCH, not just execution. `sub_batch_stream` is a synchronous
+                    # generator, so if this loop never suspends it runs to exhaustion and every
+                    # sub-batch's text is alive at once in a pending task's closure — which is what
+                    # keeps a large document from being resident. A semaphore inside the task does not
+                    # help: it bounds how many RUN, not how many have been created. Waiting here for a
+                    # slot keeps the splitter one slice ahead of the work, which is what it was at
+                    # concurrency 1 before any of this.
+                    while len(pending) >= concurrency:
+                        done, still = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        pending = list(still)
+                        collected.extend(t.result() for t in done)
+
+                if pending:
+                    # return_exceptions so one failure does not leave siblings running unawaited —
+                    # that orphans their store and DB writes past the caller unwinding, and logs
+                    # "Task exception was never retrieved". The first error is re-raised below, after
+                    # every task has settled.
+                    results = await asyncio.gather(*pending, return_exceptions=True)
+                    for r in results:
+                        if isinstance(r, BaseException):
+                            raise r
+                        collected.append(r)
+            finally:
+                # In a `finally` so a failed sub-batch still writes what its siblings accumulated.
+                # Otherwise the last slices since the previous doubling are lost, and for a document
+                # that never reached a flush that is the whole body — leaving memories with no
+                # chunk texts, which is worse than the per-sub-batch writes this replaces.
+                from .retain.orchestrator import flush_document_bodies
+
+                await flush_document_bodies(body_accum)
+
+            # Merge in sub-batch order, not completion order, so `per_input_results` is identical
+            # whatever order concurrent sub-batches finished in.
+            for outcome in sorted(collected, key=lambda o: o.index):
+                sub_origins, sub_results = outcome.origins, outcome.results
+                sub_usage, sub_processed = outcome.usage, outcome.processed
                 # sub_results aligns 1:1 with sub_batch items; map each
                 # back to its source input via origin_indices so callers
                 # iterating with ``zip(contents, results)`` still align.
@@ -5347,7 +5604,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             total_time = time.time() - start_time
             logger.info(
-                f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from {len(contents)} contents in {total_time:.3f}s"
+                f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from "
+                f"{len(contents)} contents across {sub_batches_run} sub-batches in {total_time:.3f}s"
             )
             result = per_input_results
         else:
@@ -5390,7 +5648,9 @@ class MemoryEngine(MemoryEngineInterface):
         outbox_callback_factory: RetainOutboxCallbackFactory | None = None,
         strategy: str | None = None,
         document_body_override: str | None = None,
+        document_body_hash: str | None = None,
         chunk_index_offset: int = 0,
+        body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
     ) -> tuple[list[list[str]], "TokenUsage", int | None]:
         """
         Internal method for batch processing without chunking logic.
@@ -5453,7 +5713,9 @@ class MemoryEngine(MemoryEngineInterface):
                 outbox_callback_factory=outbox_callback_factory,
                 db_semaphore=self._put_semaphore,
                 document_body_override=document_body_override,
+                document_body_hash=document_body_hash,
                 chunk_index_offset=chunk_index_offset,
+                body_accum=body_accum,
                 # Stream chunk-level "storing N/total" progress to the operation row as
                 # the document's chunks commit (more useful than the coarse sub-batch tick).
                 progress_callback=self._write_operation_progress,
@@ -5533,6 +5795,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_ids: list[str] | None = None,
         include_observations: bool = False,
+        include_knowledge_base: bool = False,
     ) -> bytes:
         """Export documents from a bank into a transfer ZIP archive (no LLM, no embeddings).
 
@@ -5554,6 +5817,7 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id,
             document_ids,
             include_observations=include_observations,
+            include_knowledge_base=include_knowledge_base,
             memories=get_memories(),
         )
 
@@ -5563,6 +5827,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_ids: list[str] | None = None,
         include_observations: bool = False,
+        include_knowledge_base: bool = False,
     ) -> dict[str, Any]:
         """Submit an async document-export operation and return its ``operation_id``.
 
@@ -5576,8 +5841,10 @@ class MemoryEngine(MemoryEngineInterface):
         """
         # Reject the incoherent combination up front — same guard export_documents
         # raises — so the caller gets an immediate 400 rather than a failed task.
-        if include_observations and document_ids is not None:
-            raise ValueError("include_observations is only supported when exporting the whole bank (omit document_id)")
+        if (include_observations or include_knowledge_base) and document_ids is not None:
+            raise ValueError(
+                "include_observations and include_knowledge_base are only supported when exporting the whole bank (omit document_id)"
+            )
 
         await self._authenticate_tenant(request_context)
         await self._get_backend()
@@ -5585,6 +5852,7 @@ class MemoryEngine(MemoryEngineInterface):
         task_payload: dict[str, Any] = {
             "document_ids": list(document_ids) if document_ids else None,
             "include_observations": include_observations,
+            "include_knowledge_base": include_knowledge_base,
         }
         if request_context.tenant_id:
             task_payload["_tenant_id"] = request_context.tenant_id
@@ -6020,6 +6288,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Recall pipeline stages, resolved per bank. A bank can switch off arms its
         # content cannot use, trading recall breadth for latency.
+        enable_text_search = bool(budget_config_dict.get("enable_text_search", True))
         enable_temporal_retrieval = bool(budget_config_dict.get("enable_temporal_retrieval", True))
         enable_graph_retrieval = bool(budget_config_dict.get("enable_graph_retrieval", True))
         reranking = _resolve_reranking(budget_config_dict, reranking)
@@ -6082,6 +6351,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
                             reranking=reranking,
                             reranker_max_candidates=reranker_max_candidates,
+                            enable_text_search=enable_text_search,
                             enable_temporal_retrieval=enable_temporal_retrieval,
                             enable_graph_retrieval=enable_graph_retrieval,
                         )
@@ -6224,6 +6494,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_source_facts_tokens_per_observation: int = -1,
         reranking: RecallReranking = "cross_encoder",
         reranker_max_candidates: int | None = None,
+        enable_text_search: bool = True,
         enable_temporal_retrieval: bool = True,
         enable_graph_retrieval: bool = True,
     ) -> RecallResultModel:
@@ -6362,6 +6633,7 @@ class MemoryEngine(MemoryEngineInterface):
                         min_semantic=min_scores.semantic if min_scores else None,
                         min_keyword=min_scores.keyword if min_scores else None,
                         temporal_window=temporal_window,
+                        enable_text_search=enable_text_search,
                         enable_temporal_retrieval=enable_temporal_retrieval,
                         enable_graph_retrieval=enable_graph_retrieval,
                     )
@@ -6515,15 +6787,19 @@ class MemoryEngine(MemoryEngineInterface):
                         fact_type=ft_name,
                     )
 
-                    # Add BM25 retrieval results for this fact type
-                    tracer.add_retrieval_results(
-                        method_name="bm25",
-                        results=to_tuple_format(rr.bm25),
-                        duration_seconds=rr.timings.get("bm25", 0.0),
-                        score_field="bm25_score",
-                        metadata={"limit": thinking_budget},
-                        fact_type=ft_name,
-                    )
+                    # Add BM25 retrieval results for this fact type, unless the bank has
+                    # text search off — then the arm was never in the SQL, and recording
+                    # an empty entry would read as "ran, matched nothing" rather than
+                    # "absent". Same reasoning as the graph guard below.
+                    if enable_text_search:
+                        tracer.add_retrieval_results(
+                            method_name="bm25",
+                            results=to_tuple_format(rr.bm25),
+                            duration_seconds=rr.timings.get("bm25", 0.0),
+                            score_field="bm25_score",
+                            metadata={"limit": thinking_budget},
+                            fact_type=ft_name,
+                        )
 
                     # Add graph retrieval results for this fact type.
                     # Skipped entirely when the arm is off: an empty graph entry is
@@ -6987,7 +7263,7 @@ class MemoryEngine(MemoryEngineInterface):
 
                 if chunk_ids_ordered:
                     chunks_dict = {}
-                    encoding = _get_tiktoken_encoding()
+                    encoding = get_token_encoding()
 
                     # Fetch all candidate chunks in a single query. Token-budget accounting
                     # happens in Python after the fetch — one round-trip is always faster
@@ -7096,11 +7372,12 @@ class MemoryEngine(MemoryEngineInterface):
 
                         row = chunks_lookup[chunk_id]
                         chunk_text = row["chunk_text"]
-                        chunk_tokens = len(encoding.encode(chunk_text))
+                        chunk_tokens = encoding.count(chunk_text)
 
                         if total_chunk_tokens + chunk_tokens > max_chunk_tokens:
                             remaining_tokens = max_chunk_tokens - total_chunk_tokens
                             if remaining_tokens > 0:
+                                # Only now are the ids needed — the fits-in-budget path above never builds them.
                                 truncated_text = encoding.decode(encoding.encode(chunk_text)[:remaining_tokens])
                                 chunks_dict[chunk_id] = ChunkInfo(
                                     chunk_text=truncated_text, chunk_index=row["chunk_index"], truncated=True
@@ -7113,8 +7390,8 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             total_chunk_tokens += chunk_tokens
 
-            # Chunk fetch involves up to two SQL round-trips plus per-chunk tiktoken
-            # encoding; record it only when chunks were actually requested (issue #2361).
+            # Chunk fetch involves up to two SQL round-trips plus per-chunk token
+            # counting; record it only when chunks were actually requested (issue #2361).
             if tracer and include_chunks:
                 tracer.add_phase_metric(
                     "chunk_fetch",
@@ -7125,24 +7402,34 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 6: Token budget filtering
             step_start = time.time()
 
-            # Convert to dict for token filtering (backward compatibility)
-            top_dicts = [sr.to_dict() for sr in top_scored]
-            filtered_dicts, total_tokens = self._filter_by_token_budget(top_dicts, max_tokens)
-
-            # Convert back to list of IDs and filter scored_results
-            filtered_ids = {d["id"] for d in filtered_dicts}
-            top_scored = [sr for sr in top_scored if sr.id in filtered_ids]
+            encoding = get_token_encoding()
+            selection = select_facts_within_budget(
+                fact_ids_ordered=[sr.id for sr in top_scored],
+                text_by_id={sr.id: sr.retrieval.text for sr in top_scored},
+                max_tokens=max_tokens,
+                count_tokens=encoding.count,
+            )
+            total_tokens = selection.total_tokens
+            selected_ids = set(selection.ids)
+            top_scored = [sr for sr in top_scored if sr.id in selected_ids]
 
             step_duration = time.time() - step_start
+            truncated_note = " (truncated)" if selection.truncated else ""
             log_buffer.append(
-                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens in {step_duration:.3f}s"
+                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens"
+                f"{truncated_note} in {step_duration:.3f}s"
             )
 
             if tracer:
                 tracer.add_phase_metric(
                     "token_filtering",
                     step_duration,
-                    {"results_selected": len(top_scored), "tokens_used": total_tokens, "max_tokens": max_tokens},
+                    {
+                        "results_selected": len(top_scored),
+                        "tokens_used": total_tokens,
+                        "max_tokens": max_tokens,
+                        "truncated": selection.truncated,
+                    },
                 )
 
             # Record visits + build the JSON-serializable result dicts. Timed as one
@@ -7341,7 +7628,7 @@ class MemoryEngine(MemoryEngineInterface):
                                     )
                                 }
 
-                            encoding = _get_tiktoken_encoding()
+                            encoding = get_token_encoding()
 
                             def _make_source_fact(sid: str, r: Any) -> MemoryFact:
                                 return MemoryFact(
@@ -7364,14 +7651,14 @@ class MemoryEngine(MemoryEngineInterface):
                                 text_by_id={sid: r["text"] for sid, r in source_row_by_id.items()},
                                 max_total_tokens=max_source_facts_tokens,
                                 max_tokens_per_observation=max_source_facts_tokens_per_observation,
-                                count_tokens=lambda text: len(encoding.encode(text)),
+                                count_tokens=encoding.count,
                             )
                             source_facts_truncated = selection.truncated
                             source_facts_dict = {
                                 sid: _make_source_fact(sid, source_row_by_id[sid]) for sid in selection.ids
                             }
 
-            # Source-fact enrichment is two SQL passes + tiktoken encoding; record it
+            # Source-fact enrichment is two SQL passes + token counting; record it
             # only when requested (issue #2361).
             if tracer and include_source_facts:
                 tracer.add_phase_metric(
@@ -7574,41 +7861,6 @@ class MemoryEngine(MemoryEngineInterface):
             if not quiet:
                 logger.error("\n" + "\n".join(log_buffer), exc_info=True)
             raise RuntimeError(f"Failed to search memories ({type(e).__name__}): {e!r}") from e
-
-    def _filter_by_token_budget(
-        self, results: list[dict[str, Any]], max_tokens: int
-    ) -> tuple[list[dict[str, Any]], int]:
-        """
-        Filter results to fit within token budget.
-
-        Counts tokens only for the 'text' field using tiktoken (cl100k_base encoding).
-        Stops before including a fact that would exceed the budget.
-
-        Args:
-            results: List of search results
-            max_tokens: Maximum tokens allowed
-
-        Returns:
-            Tuple of (filtered_results, total_tokens_used)
-        """
-        encoding = _get_tiktoken_encoding()
-
-        filtered_results = []
-        total_tokens = 0
-
-        for result in results:
-            text = result.get("text", "")
-            text_tokens = len(encoding.encode(text))
-
-            # Check if adding this result would exceed budget
-            if total_tokens + text_tokens <= max_tokens:
-                filtered_results.append(result)
-                total_tokens += text_tokens
-            else:
-                # Stop before including a fact that would exceed limit
-                break
-
-        return filtered_results, total_tokens
 
     def _observations_via_source_match_sql(
         self,
@@ -14307,9 +14559,9 @@ class MemoryEngine(MemoryEngineInterface):
                 # which crosses the 4096 default after a couple of hundred refreshes).
                 # The model is told where it stands so it can reclaim space from
                 # stale content; truncating here would delete knowledge instead.
-                from .reflect.tokenization import count_cl100k_tokens
+                from .reflect.tokenization import count_prompt_tokens
 
-                document_tokens = count_cl100k_tokens(current_content)
+                document_tokens = count_prompt_tokens(current_content)
                 user_prompt = build_structured_delta_prompt(
                     current_document_json=current_doc.model_dump_json(),
                     candidate_markdown=reflect_result.text,
@@ -14376,7 +14628,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # Surfaced rather than enforced: a page that keeps growing past
                         # its budget is a page whose content needs a decision, and that
                         # is visible here instead of only in the byte count.
-                        final_tokens = count_cl100k_tokens(final_content)
+                        final_tokens = count_prompt_tokens(final_content)
                         reflect_response_payload["document_tokens"] = final_tokens
                         reflect_response_payload["document_budget"] = doc_max_tokens
                         if final_tokens > doc_max_tokens:
@@ -14912,6 +15164,19 @@ class MemoryEngine(MemoryEngineInterface):
                     else:
                         previous_reflect_response = raw_rr
 
+            # A supplied trigger PATCHES the stored one (see _merge_trigger): callers
+            # send only the fields they set, so the rest have to be read back rather
+            # than defaulted. Only paid for when a trigger is actually being changed.
+            if trigger is not None:
+                trigger_row = await conn.fetchrow(
+                    f"SELECT trigger FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+                trigger = self._merge_trigger(
+                    trigger, base=self._stored_trigger(trigger_row["trigger"]) if trigger_row else {}
+                )
+
             # Build dynamic update
             updates = []
             params: list[Any] = [bank_id, mental_model_id]
@@ -15252,7 +15517,7 @@ class MemoryEngine(MemoryEngineInterface):
     # bank's consolidated **observations** (not raw facts), refreshed incrementally
     # (delta) after each consolidation, and excluding other mental models so a page
     # never reflects on sibling pages. A client's own ``trigger`` MERGES over these
-    # (see ``_merge_page_trigger``), so overriding one field keeps the rest.
+    # (see ``_merge_trigger``), so overriding one field keeps the rest.
     KNOWLEDGE_PAGE_DEFAULT_TRIGGER = {
         "mode": "delta",
         "fact_types": ["observation"],
@@ -15260,11 +15525,11 @@ class MemoryEngine(MemoryEngineInterface):
         "refresh_after_consolidation": True,
     }
 
-    def _merge_page_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Layer the fields a client actually set over ``base``, so a page trigger patches.
+    def _merge_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Layer the fields a client actually set over ``base``, so a trigger patches.
 
         ``base`` is what the unstated fields keep: ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
-        on create, the page's CURRENT trigger on update.
+        when omitted (page creation), otherwise the model's CURRENT trigger.
 
         Both used to be all-or-nothing — a supplied trigger REPLACED whatever was
         there. Since the API model fills every unset field with its own defaults, a
@@ -15274,6 +15539,13 @@ class MemoryEngine(MemoryEngineInterface):
         sibling pages. That is what the coding-agents plugin had been doing to every
         page it created (#3506). The API layer now sends only the fields the client
         actually set (``model_dump(exclude_unset=True)``), and they merge here.
+
+        #3506 fixed only the two page routes, so the same replace-not-merge bug
+        outlived it on ``PATCH /mental-models/{id}`` — which is the route the control
+        plane uses to edit a page's advanced options, and which the MCP
+        ``update_mental_model`` tool drives with a ONE-KEY dict
+        (``{"refresh_after_consolidation": ...}``). Editing one setting there wiped
+        every other one. Hence this is now the shared merge for any mental model.
 
         The two refresh triggers stay mutually exclusive, as ``MentalModelTrigger``
         requires of a stated pair: setting one drops an unstated other rather than
@@ -15469,7 +15741,7 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
         embedding = await self._generate_mental_model_embedding(name, content)
         effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
-        effective_trigger = self._merge_page_trigger(trigger)
+        effective_trigger = self._merge_trigger(trigger)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
         try:
@@ -15632,7 +15904,8 @@ class MemoryEngine(MemoryEngineInterface):
         The BM25 arm is dispatched on the configured text-search backend
         (:func:`knowledge_bm25_arm`); backends whose ``mental_models`` BM25 index
         is unpopulated (``vchord``) degrade to a vector-only search rather than
-        erroring.
+        erroring. ``enable_text_search=false`` drops that arm outright, leaving a
+        vector-only ranking.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator and not _nested_operation_authorized.get():
@@ -15664,10 +15937,31 @@ class MemoryEngine(MemoryEngineInterface):
         # BM25 clauses for the configured text-search backend (same per-backend
         # dispatch the memory-recall BM25 arm uses — see knowledge_bm25_arm).
         text_search_extension = get_config().text_search_extension
+        # enable_text_search is per bank, so it is resolved rather than read off the
+        # global config: a bank that switched the keyword arm off in recall must not
+        # keep hitting a text index here. Costs one config round trip, the same one
+        # recall already pays. With no embedding either there is no arm left to run,
+        # so the search has no answer to give rather than a degraded one.
+        bank_config = await self._config_resolver.get_bank_config(bank_id, request_context)
+        enable_text_search = bool(bank_config.get("enable_text_search", True))
+        if not enable_text_search and emb_str is None:
+            return []
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            if emb_str is not None:
+            if emb_str is not None and not enable_text_search:
+                # Vector-only: no BM25 arm to fuse with, so rank straight off the ANN scan.
+                sql = f"""
+                    SELECT kp.id, kp.name, kp.mental_model_id,
+                           LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
+                           1.0 / (60 + ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector)) AS score
+                    FROM {join}
+                    WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
+                    ORDER BY mm.embedding <=> $1::vector
+                    LIMIT {limit}
+                """
+                rows = await conn.fetch(sql, emb_str, bank_id)
+            elif emb_str is not None:
                 bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$3")
                 # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
                 # independently, then RRF-fused (k=60) in SQL.
@@ -15818,7 +16112,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             # The page's CURRENT trigger comes back with it: a supplied trigger patches
-            # that rather than replacing it (see _merge_page_trigger).
+            # that rather than replacing it (see _merge_trigger).
             row = await conn.fetchrow(
                 f"SELECT kp.mental_model_id, mm.trigger FROM {fq_table('knowledge_pages')} kp "
                 f"LEFT JOIN {fq_table('mental_models')} mm "
@@ -15830,9 +16124,7 @@ class MemoryEngine(MemoryEngineInterface):
         if row is None or row["mental_model_id"] is None:
             return None
         effective_trigger = (
-            self._merge_page_trigger(trigger, base=self._stored_trigger(row["trigger"]))
-            if trigger is not None
-            else None
+            self._merge_trigger(trigger, base=self._stored_trigger(row["trigger"])) if trigger is not None else None
         )
         # The write is already authorized above; the backing mental-model update
         # runs without re-invoking the validator.

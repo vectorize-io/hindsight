@@ -67,6 +67,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "retain_structured_chunk_size": 1800,
     "enable_observations": False,
     "observations_mission": "Observations cover preferences and skills only.",
+    "enable_text_search": False,
     "enable_temporal_retrieval": False,
     "enable_graph_retrieval": False,
     "enable_reranking": False,

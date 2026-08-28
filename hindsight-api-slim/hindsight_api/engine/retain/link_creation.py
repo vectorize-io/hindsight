@@ -5,9 +5,10 @@ Handles creation of temporal, semantic, and causal links between facts.
 """
 
 import logging
+from collections.abc import Sequence
 
 from . import link_utils
-from .types import ProcessedFact
+from .types import EmbeddingLike, ProcessedFact
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ async def create_semantic_links_batch(
     conn,
     bank_id: str,
     unit_ids: list[str],
-    embeddings: list[list[float]],
+    embeddings: Sequence[EmbeddingLike],
     threshold: float,
     pre_computed_ann_links: list[tuple] | None = None,
     ops=None,

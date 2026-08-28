@@ -105,6 +105,47 @@ No external dependencies needed.
 
 See [perf/README.md](perf/README.md) for detailed documentation.
 
+### Token Counting (micro)
+
+Measures the tiktoken token counting recall does per candidate fact, chunk and
+reranker document — wall time, CPU time (all threads) and peak *traced*
+allocation, against a set of cheaper spellings of the same count. No DB, no LLM,
+no network.
+
+```bash
+# All workloads
+./scripts/benchmarks/run-token-count-bench.sh
+
+# One call site, more repeats, raw results
+./scripts/benchmarks/run-token-count-bench.sh --workload facts_200 --repeats 10 --json tok.json
+
+# Against real text rather than the synthetic generator (a small vocabulary
+# flatters every BPE implementation)
+./scripts/benchmarks/run-token-count-bench.sh --corpus /path/to/text
+
+# On the 200k vocabulary instead of production's cl100k_base
+./scripts/benchmarks/run-token-count-bench.sh --encoding o200k_base
+
+# Include the quicktok candidate encoder (deliberately not a project dependency)
+cd hindsight-dev && uv run --with quicktok-v1 token-count-bench
+```
+
+**Options:**
+- `--workload NAME` - Run one workload (repeatable); shaped after a real call site
+- `--encoding NAME` - Vocabulary to measure (default `cl100k_base`, what production
+  uses). `o200k_base` is the current OpenAI vocabulary; measuring it says nothing
+  about switching production to it, which would change every token count and
+  therefore every budget.
+- `--repeats N` - Timed repeats per variant, best-of (default: 5)
+- `--threads N` - `num_threads` for the parallel batch variant
+- `--corpus PATH` - Slice workload texts out of a real text file
+- `--no-conformance` - Skip the count-agreement check on adversarial inputs
+- `--json PATH` - Save raw results
+
+Every variant is checked against the production count first, on inputs that have
+broken token counting before (special-token literals, unicode, empty). A variant
+that counts differently — or raises — is reported as such, never as a speedup.
+
 ## Visualizer
 
 View benchmark results in a web UI:

@@ -54,6 +54,7 @@ async def insert_facts(
     # Imported here: `retain` reaches back into the engine for `fq_table`, so a
     # module-level import would close the cycle once the engine imports this store.
     from ...retain.fact_extraction import _sanitize_text
+    from ...retain.types import embedding_to_pgvector
 
     # Prepare data for batch insert
     fact_texts = []
@@ -73,8 +74,9 @@ async def insert_facts(
 
     for fact in facts:
         fact_texts.append(_sanitize_text(fact.fact_text))
-        # Convert embedding to string for asyncpg vector type
-        embeddings.append(str(fact.embedding))
+        # Convert embedding to the pgvector literal asyncpg binds to `vector`. Retain
+        # carries it packed (`array("f")`), whose `str()` is a repr, not a literal.
+        embeddings.append(embedding_to_pgvector(fact.embedding))
         # event_date: Use occurred_start if available, otherwise use mentioned_at
         # This maintains backward compatibility while handling None occurred_start
         event_dates.append(fact.occurred_start if fact.occurred_start is not None else fact.mentioned_at)

@@ -1,7 +1,7 @@
 """Input-robustness regression tests.
 
 Covers the "server 500s on unusual-but-valid input" class:
-- #1883: content containing tiktoken special-token literals (e.g. ``<|endoftext|>``).
+- #1883: content containing tokenizer special-token literals (e.g. ``<|endoftext|>``).
 - #1875: queries/content containing an unpaired UTF-16 surrogate (e.g. a half-emoji).
 """
 
@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pytest
 
 from hindsight_api.engine.llm_wrapper import sanitize_llm_output, sanitize_text
-from hindsight_api.engine.reflect.tokenization import count_cl100k_tokens
+from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
 from hindsight_api.engine.token_encoding import count_tokens, get_token_encoding
 
 # A lone high surrogate — valid in a Python str, but rejected by the Rust
@@ -19,13 +19,13 @@ LONE_SURROGATE = "deploy the \ud83d service"
 SPECIAL_TOKEN_TEXT = "The fix was to sanitize the <|endoftext|> token before sending."
 
 
-# --- Prong A: tiktoken tolerates special-token literals (#1883) ------------------
+# --- Prong A: the tokenizer tolerates special-token literals (#1883) ------------
 
 
 def test_count_tokens_handles_special_token_literal():
-    # Default tiktoken disallowed_special="all" would raise ValueError here.
+    # The tokenizer's default disallowed_special="all" would raise ValueError here.
     assert count_tokens(SPECIAL_TOKEN_TEXT) > 0
-    assert count_cl100k_tokens(SPECIAL_TOKEN_TEXT) > 0
+    assert count_prompt_tokens(SPECIAL_TOKEN_TEXT) > 0
 
 
 def test_encode_decode_roundtrip_with_special_token():

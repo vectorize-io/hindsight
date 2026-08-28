@@ -672,7 +672,9 @@ async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request
     from hindsight_api.engine.retain.types import CausalRelation, ChunkMetadata, ExtractedFact
 
     chunks = ["first-streaming-chunk", "second-streaming-chunk"]
-    monkeypatch.setattr(fact_extraction, "chunk_text", lambda *_args, **_kwargs: chunks)
+    # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
+    # `chunk_text` is `list(iter_chunks(...))`, so this stubs both forms at once.
+    monkeypatch.setattr(fact_extraction, "iter_chunks", lambda *_args, **_kwargs: iter(chunks))
 
     async def extract_chunk_facts(contents, *_args, **_kwargs):
         chunk_text = contents[0].content
@@ -739,7 +741,9 @@ async def test_degenerate_fact_preserves_later_chunk_provenance(memory, request_
     from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact
 
     chunks = ["chunk-zero-source", "chunk-one-source"]
-    monkeypatch.setattr(fact_extraction, "chunk_text", lambda *_args, **_kwargs: chunks)
+    # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
+    # `chunk_text` is `list(iter_chunks(...))`, so this stubs both forms at once.
+    monkeypatch.setattr(fact_extraction, "iter_chunks", lambda *_args, **_kwargs: iter(chunks))
 
     real_fact_by_chunk = {chunks[0]: "chunk zero real fact", chunks[1]: "chunk one real fact"}
 

@@ -286,7 +286,6 @@ describe("HindsightClient.seedPages", () => {
     expect(patches[0].body).toEqual({
       source_query: drifted.source_query,
       tags: drifted.tags,
-      trigger: buildPageTrigger(),
     });
   });
 
@@ -321,10 +320,9 @@ describe("HindsightClient.seedPages", () => {
     }
   });
 
-  // The common case in the field: a server older than #3572 reports no trigger at all, so the
-  // policy is unknowable and gets re-sent. Cheap, idempotent, and self-healing once the server
-  // starts answering — but it must still be trigger-ONLY, or every run rebuilds all five pages.
-  it("re-sends the trigger to a server that does not report one", async () => {
+  // A server older than #3572 does not report a page's trigger. That makes the policy unknowable,
+  // not divergent; sending a trigger-only PATCH would be rejected by servers older than #3549.
+  it("does not write when a server does not report a trigger", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
       {
@@ -342,9 +340,35 @@ describe("HindsightClient.seedPages", () => {
     const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
     await c.seedPages();
 
+    expect(calls).toHaveLength(1); // the tree GET only
+    expect(calls.every((k) => k.method === "GET")).toBe(true);
+  });
+
+  it("still reconciles source-query drift when the server hides trigger", async () => {
+    const calls: any[] = [];
+    const drifted = PAGES[0];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p === drifted ? "an older wording of the query" : p.source_query,
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
     const patches = calls.filter((k) => k.method === "PATCH");
-    expect(patches).toHaveLength(PAGES.length);
-    for (const patch of patches) expect(patch.body).toEqual({ trigger: buildPageTrigger() });
+    expect(patches).toHaveLength(1);
+    expect(patches[0].body).toEqual({
+      source_query: drifted.source_query,
+      tags: drifted.tags,
+    });
   });
 
   it("names the repository in every seeded query, so synthesis can exclude a dependency's facts", async () => {

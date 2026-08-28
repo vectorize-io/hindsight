@@ -272,6 +272,10 @@ const opencode: HarnessInstaller = {
  * `dist/prime-agent.js` in the `extensions` array of `~/.prime/agent/settings.json`; Prime Agent
  * loads that file's default export at session start. The entry path contains MARKER (the package is
  * `hindsight-coding-agents`), so uninstall's MARKER filter removes exactly what install added.
+ *
+ * The skill goes to Prime Agent's OWN `~/.prime/agent/skills`, not the shared `~/.agents/skills`
+ * root it also reads: `uninstallSkill` removes a fixed directory name, so installing to the shared
+ * root would make `uninstall prime-agent` delete Codex's and dsh's copy too (#3772).
  */
 const primeAgent: HarnessInstaller = {
   name: "prime-agent",
@@ -283,18 +287,22 @@ const primeAgent: HarnessInstaller = {
     const exts: string[] = Array.isArray(cfg.extensions) ? cfg.extensions : [];
     cfg.extensions = [...exts.filter((p) => !String(p).includes(MARKER)), entry];
     writeJson(path, cfg);
+    installSkill(c, "prime-agent", join(c.home, ".prime", "agent", "skills"));
     c.log?.(`prime-agent: extension registered in ${path}`);
   },
   uninstall(c) {
     const path = join(c.home, ".prime", "agent", "settings.json");
-    if (!existsSync(path)) return;
-    const cfg = readJson(path);
-    if (Array.isArray(cfg.extensions)) {
-      cfg.extensions = cfg.extensions.filter((p: string) => !String(p).includes(MARKER));
-      if (!cfg.extensions.length) delete cfg.extensions;
-      writeJson(path, cfg);
+    if (existsSync(path)) {
+      const cfg = readJson(path);
+      if (Array.isArray(cfg.extensions)) {
+        cfg.extensions = cfg.extensions.filter((p: string) => !String(p).includes(MARKER));
+        if (!cfg.extensions.length) delete cfg.extensions;
+        writeJson(path, cfg);
+      }
     }
-    c.log?.("prime-agent: extension entry removed");
+    // Outside the settings guard on purpose: a hand-deleted settings.json must not strand the skill.
+    uninstallSkill(c, join(c.home, ".prime", "agent", "skills"));
+    c.log?.("prime-agent: extension entry + skill removed");
   },
 };
 

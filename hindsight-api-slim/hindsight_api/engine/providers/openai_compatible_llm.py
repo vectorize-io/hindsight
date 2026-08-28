@@ -416,6 +416,27 @@ _RATE_LIMIT_WINDOW_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Go's time.Duration.String() format used by OpenAI's x-ratelimit-reset-requests
+# / x-ratelimit-reset-tokens response headers, e.g. "6m0s", "8.64s", "233ms".
+# These are structured, computer-generated values (unlike the free-text error
+# message, which is written for humans and shouldn't be scraped when a
+# proper header is available) but their components run together with no
+# separator, so they must be consumed contiguously from the start or bailed
+# on (a naive single-component match would silently read "6m0s" as "0s").
+_GO_DURATION_RE = re.compile(r"(?P<amount>\d+(?:\.\d+)?)(?P<unit>ms|s|m|h|d)")
+_GO_DURATION_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def _parse_go_duration_seconds(text: str) -> float | None:
+    total = 0.0
+    pos = 0
+    for m in _GO_DURATION_RE.finditer(text.strip()):
+        if m.start() != pos:
+            break
+        total += float(m.group("amount")) * _GO_DURATION_UNIT_SECONDS[m.group("unit")]
+        pos = m.end()
+    return total if pos else None
+
 
 def _status_error_body_text(e: APIStatusError) -> str:
     body: Any = getattr(e, "body", None)
@@ -473,34 +494,59 @@ def _parse_reset_at_datetime(value: str) -> datetime | None:
 
 def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
     now = datetime.now(UTC)
+    retry_candidates: list[datetime] = []
     response = getattr(e, "response", None)
     headers = getattr(response, "headers", None)
+    has_future_retry_after = False
     if headers is not None:
         retry_at = _parse_retry_after_header(headers.get("retry-after") or headers.get("Retry-After"), now)
         if retry_at is not None and retry_at > now:
-            return retry_at
+            retry_candidates.append(retry_at)
+            has_future_retry_after = True
+
+        # Requests, tokens, and longer body-reported quotas are independent
+        # budgets. Collect every future reset so a full/near-full header budget
+        # cannot hide a longer daily or usage-cap window reported in the body.
+        reset_seconds: list[float] = []
+        for key in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+            if key in headers:
+                seconds = _parse_go_duration_seconds(headers[key])
+                if seconds is not None and seconds > 0:
+                    reset_seconds.append(seconds)
+        if reset_seconds:
+            retry_candidates.append(now + timedelta(seconds=max(reset_seconds)))
 
     body_text = _status_error_body_text(e)
+    body_retry_at: datetime | None = None
     reset_match = _RATE_LIMIT_RESET_AT_RE.search(body_text)
     if reset_match:
         retry_at = _parse_reset_at_datetime(reset_match.group("reset_at"))
         if retry_at is not None and retry_at > now:
-            return retry_at
+            body_retry_at = retry_at
 
-    window_match = _RATE_LIMIT_WINDOW_RE.search(body_text)
-    if not window_match:
-        return None
-    amount = int(window_match.group("amount"))
-    unit = window_match.group("unit").lower()
-    if unit == "second":
-        seconds = amount
-    elif unit == "minute":
-        seconds = amount * 60
-    elif unit == "hour":
-        seconds = amount * 3600
-    else:
-        seconds = amount * 86400
-    return now + timedelta(seconds=seconds)
+    if body_retry_at is None:
+        window_match = _RATE_LIMIT_WINDOW_RE.search(body_text)
+        if window_match:
+            amount = int(window_match.group("amount"))
+            unit = window_match.group("unit").lower()
+            if unit == "second":
+                seconds = amount
+            elif unit == "minute":
+                seconds = amount * 60
+            elif unit == "hour":
+                seconds = amount * 3600
+            else:
+                seconds = amount * 86400
+            retry_at = now + timedelta(seconds=seconds)
+            if retry_at > now:
+                body_retry_at = retry_at
+
+    # Retry-After is an explicit server instruction and must not be extended
+    # by a less reliable, free-text error message. Body hints remain useful
+    # alongside reset headers when Retry-After is absent.
+    if body_retry_at is not None and not has_future_retry_after:
+        retry_candidates.append(body_retry_at)
+    return max(retry_candidates, default=None)
 
 
 def _raise_provider_quota_defer(

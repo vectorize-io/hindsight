@@ -172,14 +172,13 @@ from hindsight_api.engine.memory_engine import (
     Budget,
     RetainOperationConflictError,
     _current_schema,
-    _get_tiktoken_encoding,
 )
 from hindsight_api.engine.mental_model_refresh import (
     MentalModelDryRunRefreshResult,
     RefreshMentalModelOperationDetails,
 )
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
-from hindsight_api.engine.reflect import ReflectToolCallError
+from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolCallError
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
     DryRunExtractionResult,
@@ -191,6 +190,7 @@ from hindsight_api.engine.response_models import (
 )
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.structured_output import validate_response_schema
+from hindsight_api.engine.token_encoding import get_token_encoding
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.liveness import LivenessResponse, liveness_response
 from hindsight_api.metrics import (
@@ -1413,6 +1413,14 @@ class CreateBankRequest(BaseModel):
         default=None,
         description="Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely.",
     )
+    enable_text_search: bool | None = Field(
+        default=None,
+        description=(
+            "Toggle the keyword (BM25) retrieval arm during recall. Disabling leaves pure vector "
+            "search: the arm is left out of the query entirely rather than filtered to nothing, so "
+            "none of its cost is paid. Also drops the keyword arm from knowledge-page search."
+        ),
+    )
     enable_temporal_retrieval: bool | None = Field(
         default=None,
         description=(
@@ -1467,6 +1475,7 @@ class CreateBankRequest(BaseModel):
             "retain_structured_chunk_size",
             "enable_observations",
             "observations_mission",
+            "enable_text_search",
             "enable_temporal_retrieval",
             "enable_graph_retrieval",
             "enable_reranking",
@@ -2246,8 +2255,11 @@ class MentalModelTrigger(BaseModel):
         description=(
             "Override how the model's tags filter memories during refresh. "
             "If not set, defaults to 'all_strict' when the model has tags (security isolation) "
-            "or 'any' when the model has no tags. "
-            "Set to 'any' to include untagged memories alongside tagged ones during refresh."
+            "or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY "
+            "one of the model's tags and untagged memories are excluded, which is why a model "
+            "tagged with labels its memories do not carry refreshes to empty content. "
+            "Set to 'all' to keep requiring the tags while including untagged memories, or to "
+            "'any' to include untagged memories alongside any single tag match."
         ),
     )
     tag_groups: list[TagGroup] | None = Field(
@@ -2461,7 +2473,19 @@ class CreatePageRequest(BaseModel):
     name: str
     source_query: str
     parent_id: str | None = None
-    tags: list[str] | None = None
+    tags: list[str] | None = Field(
+        default=None,
+        description=(
+            "Tags that SCOPE which memories this page is built from — not labels. Every tag here, "
+            "including a `type:<x>` tag used to set the page's rendered type, is part of the filter. "
+            "By default a tagged page matches with `all_strict`: a memory must carry EVERY one of "
+            "these tags, and untagged memories are excluded entirely. Tags invented for the page "
+            "(a topic, a document type) therefore match nothing unless your memories were retained "
+            "with those exact tags, and the page generates as 'I don't have information about this'. "
+            "Omit this field to build the page from the whole bank, or set `trigger.tags_match` to "
+            "'all' to require the tags while still including untagged memories."
+        ),
+    )
     max_tokens: int | None = None
     trigger: MentalModelTrigger | None = None
 
@@ -2475,7 +2499,15 @@ class UpdateNodeRequest(BaseModel):
     # Page-only options (updated on the backing mental model). Changing
     # source_query schedules an async refresh so the page rebuilds.
     source_query: str | None = None
-    tags: list[str] | None = None
+    tags: list[str] | None = Field(
+        default=None,
+        description=(
+            "Replaces the page's tags, which SCOPE which memories it is built from. Pass `[]` to "
+            "clear them and rebuild the page from the whole bank — the fix when a page generates "
+            "'I don't have information about this' because its tags match no memory. See the "
+            "matching rules on this field in `CreatePageRequest`; `trigger.tags_match` widens them."
+        ),
+    )
     max_tokens: int | None = None
     trigger: MentalModelTrigger | None = Field(
         default=None,
@@ -2697,6 +2729,9 @@ class BankTemplateConfig(BaseModel):
     )
     enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")
     observations_mission: str | None = Field(default=None, description="Controls what gets synthesised")
+    enable_text_search: bool | None = Field(
+        default=None, description="Toggle the keyword (BM25) arm during recall, leaving pure vector search"
+    )
     enable_temporal_retrieval: bool | None = Field(
         default=None, description="Toggle the temporal arm (and its date-aware query analysis) during recall"
     )
@@ -4736,8 +4771,7 @@ def _register_routes(app: FastAPI):
 
         # Validate query length to prevent expensive operations on oversized queries
         max_query_tokens = get_config().recall_max_query_tokens
-        encoding = _get_tiktoken_encoding()
-        query_tokens = len(encoding.encode(request.query))
+        query_tokens = get_token_encoding().count(request.query)
         if query_tokens > max_query_tokens:
             raise HTTPException(
                 status_code=400,
@@ -5046,6 +5080,14 @@ def _register_routes(app: FastAPI):
             raise
         except LLMNotAvailableError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except ReflectNoAnswerError as e:
+            # The loop ran but produced no answer (a done call with an empty answer,
+            # a final synthesis that returned nothing). Reflect used to substitute a
+            # placeholder sentence and return 200, which read as a real answer to
+            # every caller and got stored as one (#2959). There is nothing to
+            # return, so this is a failure like any other.
+            logger.warning("Reflect produced no answer in bank %s: %s", bank_id, e)
+            raise HTTPException(status_code=500, detail=str(e))
         except ReflectToolCallError as e:
             # The configured model/transport can't drive reflect's tool-calling loop.
             # The request itself is fine, so this is a server-side (500) failure, not a
@@ -5709,7 +5751,13 @@ def _register_routes(app: FastAPI):
                 source_query=body.source_query,
                 max_tokens=body.max_tokens,
                 tags=body.tags,
-                trigger=body.trigger.model_dump() if body.trigger else None,
+                # Only the fields the client actually set: the engine patches them over
+                # the model's current trigger. A full dump would carry this model's own
+                # defaults (mode="full", exclude_mental_models=False, no cron) into every
+                # update, so changing one setting silently reset the rest — which for a
+                # knowledge page meant losing delta mode and its observation-only scope.
+                # Same fix as #3506, which corrected only the page routes.
+                trigger=body.trigger.model_dump(exclude_unset=True) if body.trigger else None,
                 request_context=request_context,
             )
             if mental_model is None:
@@ -7359,7 +7407,8 @@ def _register_routes(app: FastAPI):
         "GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata "
         "carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, "
         "and filename. Pass document_id query params to export specific documents, or omit to export the whole "
-        "bank; include_observations=true also carries consolidated observations (whole-bank export only).",
+        "bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries "
+        "Mental Models plus Knowledge Pages (all whole-bank export only).",
         operation_id="export_documents",
         tags=["Document Transfer"],
     )
@@ -7368,6 +7417,10 @@ def _register_routes(app: FastAPI):
         document_id: list[str] | None = Query(default=None, description="Document id(s) to export; omit for all"),
         include_observations: bool = Query(
             default=False, description="Also export consolidated observations (restored on import; whole-bank only)"
+        ),
+        include_knowledge_base: bool = Query(
+            default=False,
+            description="Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)",
         ),
         request_context: RequestContext = Depends(get_request_context),
     ):
@@ -7391,6 +7444,7 @@ def _register_routes(app: FastAPI):
                     request_context,
                     list(document_id) if document_id else None,
                     include_observations=include_observations,
+                    include_knowledge_base=include_knowledge_base,
                 )
             except ValueError as e:
                 # e.g. include_observations combined with a document_id subset.

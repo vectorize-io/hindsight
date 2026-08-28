@@ -797,7 +797,17 @@ export class ControlPlaneClient {
    */
   async createKnowledgePage(
     bankId: string,
-    body: { name: string; source_query: string; parent_id?: string | null; tags?: string[] }
+    body: {
+      name: string;
+      source_query: string;
+      parent_id?: string | null;
+      /** Scopes which memories build the page — see `trigger.tags_match`, which defaults
+       *  to `all_strict` (every tag required, untagged memories excluded). */
+      tags?: string[];
+      /** Refresh settings. Applied as a patch over the knowledge-page defaults, so sending
+       *  one field does not reset the rest. */
+      trigger?: { tags_match?: TagsMatch };
+    }
   ) {
     return this.fetchApi<{ page_id: string; mental_model_id: string; operation_id: string | null }>(
       `/api/knowledge-base/pages?bank_id=${encodeURIComponent(bankId)}`,
@@ -827,6 +837,7 @@ export class ControlPlaneClient {
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
+        tags_match?: TagsMatch;
       };
     }
   ) {
@@ -1745,17 +1756,20 @@ export class ControlPlaneClient {
   /**
    * Export documents from a bank as a transfer ZIP archive (no LLM re-extraction).
    * Pass documentIds to export specific documents, or omit to export the whole bank.
-   * Set includeObservations to also carry consolidated observations.
+   * Set includeObservations to also carry consolidated observations. Set
+   * includeKnowledgeBase to carry Mental Models and Knowledge Pages.
    * Returns the raw zip Blob so callers can trigger a download.
    */
   async exportDocuments(
     bankId: string,
     documentIds?: string[],
-    includeObservations = false
+    includeObservations = false,
+    includeKnowledgeBase = false
   ): Promise<Blob> {
     const params = new URLSearchParams({ bank_id: bankId });
     (documentIds || []).forEach((id) => params.append("document_id", id));
     if (includeObservations) params.set("include_observations", "true");
+    if (includeKnowledgeBase) params.set("include_knowledge_base", "true");
     // Direct fetch (not fetchApi) because the response is a binary zip, not JSON.
     const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`));
     if (!response.ok) {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -110,6 +110,33 @@ describe("optInOnly", () => {
     expect(isOptedIn(byPath, worktree)).toBe(true);
     expect(isOptedIn(byMap, worktree)).toBe(true);
     expect(deriveBankId(byMap, worktree, "claude-code")).toBe("client-x");
+  });
+
+  it("carries hub approval and mapping to bare-hub worktrees", () => {
+    const hub = join(root, "bare-hub");
+    const bare = join(hub, ".bare");
+    const seed = join(root, "bare-seed");
+    mkdirSync(hub, { recursive: true });
+    execFileSync("git", ["init", "--bare", "-q", bare]);
+    execFileSync("git", ["init", "-q", "-b", "main", seed]);
+    execFileSync("git", ["-C", seed, "config", "user.email", "test@example.invalid"]);
+    execFileSync("git", ["-C", seed, "config", "user.name", "Test"]);
+    execFileSync("git", ["-C", seed, "commit", "--allow-empty", "-qm", "seed"]);
+    execFileSync("git", ["-C", seed, "push", "-q", bare, "HEAD:refs/heads/main"]);
+    writeFileSync(join(hub, ".git"), "gitdir: ./.bare\n");
+    const worktree = join(root, "bare-worktree");
+    execFileSync("git", ["--git-dir", bare, "worktree", "add", "-q", worktree, "main"]);
+
+    const canonicalHub = realpathSync(hub);
+    const byPath = resolveConfig({ optInOnly: true, optInPaths: [canonicalHub] });
+    expect(isOptedIn(byPath, worktree)).toBe(true);
+
+    const byMap = resolveConfig({
+      optInOnly: true,
+      mapPathToBank: { [canonicalHub]: "bare-project" },
+    });
+    expect(isOptedIn(byMap, worktree)).toBe(true);
+    expect(deriveBankId(byMap, worktree, "codex")).toBe("bare-project");
   });
 
   // The session root reaches the removed worktree for EVERY harness; CLAUDE_PROJECT_DIR only

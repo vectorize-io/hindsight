@@ -31,9 +31,10 @@ Create Date: 2026-06-19
 
 from collections.abc import Sequence
 
-from alembic import context, op
+from alembic import context
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.alembic._owned import execute_unless_owned
 
 revision: str = "c7e9f1a3b5d2"
 down_revision: str | Sequence[str] | None = "e1f2a3b4c5d6"
@@ -57,7 +58,8 @@ def _pg_upgrade() -> None:
 
     # Same body as b2d4f6a8c1e3, but each per-schema query runs in its own
     # subtransaction so a schema dropped mid-scan is skipped, not fatal.
-    op.execute(
+    execute_unless_owned(
+        "banks_needing_consolidation",
         """
         CREATE OR REPLACE FUNCTION public.banks_needing_consolidation()
         RETURNS TABLE(schema_name text, bank_id text)
@@ -98,10 +100,11 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
-    op.execute(
+    execute_unless_owned(
+        "schemas_with_expired_rows",
         """
         CREATE OR REPLACE FUNCTION public.schemas_with_expired_rows(
             p_table text, p_ts_col text, p_days int
@@ -138,7 +141,7 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
 

@@ -225,6 +225,25 @@ def test_export_bank_covers_schema():
     assert sum(len(b) for b in buckets) == len(classified), "a table is classified in more than one bucket"
 
 
+def test_remap_mental_model_evidence_updates_current_and_history():
+    """Transfer remapping changes only known memory-unit ids in both payloads."""
+    from hindsight_api.engine.transfer.importer import _remap_mental_model_evidence
+
+    rows = [
+        {
+            "reflect_response": {"based_on": {"world": [{"id": "old", "text": "fact"}]}},
+        },
+        {
+            "previous_reflect_response": json.dumps({"based_on": {"observation": [{"id": "obs-old"}]}}),
+        },
+    ]
+
+    _remap_mental_model_evidence(rows, {"old": "new", "obs-old": "obs-new"})
+
+    assert rows[0]["reflect_response"]["based_on"]["world"][0]["id"] == "new"
+    assert rows[1]["previous_reflect_response"]["based_on"]["observation"][0]["id"] == "obs-new"
+
+
 def test_topological_page_order_is_parent_first():
     """Nodes always sort so a parent precedes its children (self-FK safe)."""
     from hindsight_api.engine.transfer.importer import _topological_page_order
@@ -707,6 +726,79 @@ async def test_bank_export_import_exact_roundtrip(memory, request_context):
         assert after_semantic > 0, "semantic links should be regenerated on import"
         # Facts were re-embedded on import (no NULL vectors).
         assert after["null_embeddings"] == 0
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_bank_roundtrip_remaps_mental_model_based_on_ids(memory, request_context):
+    """Whole-bank restore rewrites current and historical evidence ids.
+
+    Mental-model rows keep their ids, but replayed facts receive new ids. The
+    persisted reflect response must follow those new ids so provenance and
+    retraction checks continue to work after migration.
+    """
+    bank = _unique_bank("bank_mm_based_on")
+    try:
+        await _retain(memory, bank, "Alice works at Google.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            fact_id = await conn.fetchval(
+                f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'world' LIMIT 1", bank
+            )
+        await memory.create_mental_model(
+            bank,
+            name="Work model",
+            source_query="where does Alice work",
+            content="Alice works at Google.",
+            mental_model_id="mm-based-on",
+            request_context=request_context,
+        )
+        based_on = {"world": [{"id": str(fact_id), "text": "Alice works at Google."}]}
+        # Force persisted evidence because the public API generates this field
+        # during refresh and cannot create a deterministic source-id fixture.
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('mental_models')} SET reflect_response = $3::jsonb WHERE bank_id = $1 AND id = $2",
+                bank,
+                "mm-based-on",
+                json.dumps({"text": "Alice works at Google.", "based_on": based_on}),
+            )
+        await memory.update_mental_model(
+            bank,
+            mental_model_id="mm-based-on",
+            content="Alice works at Google, in California.",
+            request_context=request_context,
+        )
+
+        from hindsight_api.engine.transfer import export_bank
+
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
+        await memory.delete_bank(bank, request_context=request_context)
+        await memory.import_bank_async(archive, request_context)
+
+        restored = await memory.get_mental_model(bank, "mm-based-on", detail="full", request_context=request_context)
+        restored_ids = {
+            fact["id"] for fact in (restored["reflect_response"] or {}).get("based_on", {}).get("world", [])
+        }
+        async with acquire_with_retry(backend) as conn:
+            live_ids = {
+                str(row["id"])
+                for row in await conn.fetch(
+                    f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'world'", bank
+                )
+            }
+        assert restored_ids <= live_ids
+        assert str(fact_id) not in restored_ids
+
+        history = await memory.get_mental_model_history(bank, "mm-based-on", request_context=request_context)
+        historical_ids = {
+            fact["id"] for fact in (history[0]["previous_reflect_response"] or {}).get("based_on", {}).get("world", [])
+        }
+        assert historical_ids <= live_ids
+        assert str(fact_id) not in historical_ids
     finally:
         await memory.delete_bank(bank, request_context=request_context)
 
@@ -1213,6 +1305,54 @@ async def test_export_import_observations(memory, request_context):
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
+async def test_export_import_mental_models_and_knowledge_pages(memory, request_context):
+    """The document-transfer flags carry optional bank knowledge into a target bank."""
+    source = _unique_bank("transfer_knowledge_src")
+    target = _unique_bank("transfer_knowledge_dst")
+    try:
+        await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+        page = await memory.create_knowledge_page(
+            source,
+            name="Work policy",
+            source_query="what is the work policy",
+            content="People's workplaces are useful context.",
+            request_context=request_context,
+        )
+
+        archive = await memory.export_documents_async(
+            source,
+            request_context,
+            include_observations=True,
+            include_knowledge_base=True,
+        )
+        parsed = parse_archive(archive)
+        assert parsed.manifest.mental_model_count == 1
+        assert parsed.manifest.knowledge_page_count == 1
+        assert parsed.observations and all(observation.created_at is not None for observation in parsed.observations)
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            assert "mental_models.json" in zf.namelist()
+            assert "knowledge_pages.json" in zf.namelist()
+
+        result = await _import(memory, target, archive, request_context)
+        assert result["mental_models_imported"] == 1
+        assert result["knowledge_pages_imported"] == 1
+
+        mental_models = await memory.list_mental_models(target, with_staleness=True, request_context=request_context)
+        assert mental_models.total == 1
+        assert mental_models.items[0]["name"] == "Work policy"
+        nodes = await memory.list_knowledge_nodes(target, request_context=request_context)
+        assert [(node["name"], node["mental_model_id"]) for node in nodes] == [("Work policy", page["mental_model_id"])]
+        search_results = await memory.search_knowledge_pages(
+            target, "work policy", limit=5, request_context=request_context
+        )
+        assert any(result["name"] == "Work policy" for result in search_results)
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_import_triggers_consolidation(memory, request_context):
     """Importing (without observations) triggers consolidation in the target bank,
     so observations get generated there — same as a normal retain."""
@@ -1331,9 +1471,11 @@ async def test_include_observations_requires_whole_bank_export(memory, request_c
     src = _unique_bank("transfer_obs_subset")
     try:
         await _retain(memory, src, "Alice works at Google.", request_context, "doc-1")
-        # Subset export (document_ids set) + observations must be rejected.
+        # Bank-level knowledge cannot be combined with a document subset.
         with pytest.raises(ValueError, match="whole bank"):
             await memory.export_documents_async(src, request_context, ["doc-1"], include_observations=True)
+        with pytest.raises(ValueError, match="whole bank"):
+            await memory.export_documents_async(src, request_context, ["doc-1"], include_knowledge_base=True)
         # Whole-bank export with observations is fine; subset without observations is fine.
         await memory.export_documents_async(src, request_context, include_observations=True)
         await memory.export_documents_async(src, request_context, ["doc-1"])
@@ -1879,8 +2021,8 @@ async def test_export_bank_asks_for_the_store_when_the_caller_did_not_pass_one(m
     stayed. Asserted on archive contents, because an empty archive is exactly what the broken
     version returned successfully.
     """
-    from hindsight_api.engine.transfer import export as export_mod
     import hindsight_api.engine.memories as memories_mod
+    from hindsight_api.engine.transfer import export as export_mod
 
     # Patch the lookup, not `_resolve_memories` itself — the resolution is what is under test, and
     # `_resolve_memories` imports `get_memories` at call time.

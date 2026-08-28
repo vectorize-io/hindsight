@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from hindsight_api.config import clear_config_cache
-from hindsight_api.engine.memory_engine import _split_contents_into_sub_batches
+from tests.sub_batch_helpers import collect_sub_batches
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, RetainContent
 
@@ -48,7 +48,7 @@ def _fast_split_env(monkeypatch):
 
 def _make_replacement_body() -> str:
     """Build a multi-line body comfortably above the 100-token splitter
-    threshold so ``_split_contents_into_sub_batches`` chunks it into more
+    threshold so ``collect_sub_batches`` chunks it into more
     than one sub-batch.
     """
     lines = [
@@ -185,7 +185,7 @@ async def test_append_after_zero_fact_header_slice_skips_unchanged_history(
     # Slices are cut on native chunk boundaries, so a tiny token budget yields
     # one sub-batch per chunk of the body — the header lands alone in the first
     # one, followed by the history slices this test replays.
-    split = _split_contents_into_sub_batches(
+    split = collect_sub_batches(
         [{"content": initial_body, "document_id": document_id}],
         100,
         chunk_size=3000,

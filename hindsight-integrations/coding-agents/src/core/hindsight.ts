@@ -24,7 +24,7 @@ export interface KnowledgeNode {
   /** The page's source query (OKF `description`) — what a re-sync compares against. */
   description?: string;
   /** The page's EFFECTIVE refresh policy, on servers new enough to report it (#3572). Absent
-   *  everywhere else, which `seedPages()` reads as "unknown, re-send it". */
+   *  everywhere else, which `seedPages()` reads as "unknown, leave it alone". */
   trigger?: { tags_match?: string };
   children?: KnowledgeNode[];
 }
@@ -618,23 +618,24 @@ export class HindsightClient {
           return;
         }
         if (r.status !== 409) created++;
-      } else if (
-        hit.description !== page.source_query ||
-        hit.trigger?.tags_match !== pageTrigger.tags_match
-      ) {
+      } else {
+        const sourceDrift = hit.description !== page.source_query;
+        // Older servers omit trigger from the tree, so an absent value means unknown rather
+        // than drift. Those servers also reject a trigger-only PATCH as an empty update.
+        const triggerDrift =
+          hit.trigger != null && hit.trigger.tags_match !== pageTrigger.tags_match;
+        if (!sourceDrift && !triggerDrift) continue;
+
         // The name IS the match key, so it can't drift; the source query and the trigger can.
-        // The trigger is re-sent because it is the only way a policy change reaches a page that
-        // already exists — `tags_match` (see PAGE_TAGS_MATCH) is a fix every previously seeded
-        // page needs, and a `pageTriggerType` change never reached one either. Servers that don't
-        // report a page's trigger on the tree yet answer "unknown" and get it re-sent every run:
-        // the PATCH is idempotent and schedules no refresh unless the source query also changed.
-        const patch: { trigger: PageTrigger; source_query?: string; tags?: string[] } = {
-          trigger: pageTrigger,
-        };
-        if (hit.description !== page.source_query) {
+        // The trigger is re-sent when the server reports it drifting, because it is the only way
+        // a policy change reaches a page that already exists. Servers that do not report a page's
+        // trigger leave its policy unknown; source-query drift can still be reconciled safely.
+        const patch: { trigger?: PageTrigger; source_query?: string; tags?: string[] } = {};
+        if (sourceDrift) {
           patch.source_query = page.source_query;
           patch.tags = page.tags;
         }
+        if (triggerDrift) patch.trigger = pageTrigger;
         const r = await this.req(
           "PATCH",
           this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(hit.id)}`),

@@ -34,7 +34,7 @@ from .structured_doc import (
     render_document,
     split_markdown,
 )
-from .tokenization import count_cl100k_tokens
+from .tokenization import count_prompt_tokens
 from .tools_schema import get_reflect_tools
 
 
@@ -61,10 +61,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
 
-# Fallback answer when the LLM returns nothing usable. Consumers that need to
-# tell a real answer from this placeholder (e.g. refresh outcome metadata's
-# populated_content) compare against this constant rather than the literal.
-NO_ANSWER_TEXT = "No answer provided."
+
+class ReflectNoAnswerError(RuntimeError):
+    """The agent finished without producing an answer.
+
+    Reflect used to substitute a human-readable placeholder here ("No answer
+    provided.", or an iteration-limit sentence). Both are non-empty strings, so
+    every downstream emptiness check let them through and callers could not tell
+    a failed run from a real one -- a mental-model refresh persisted the
+    placeholder over a document built across months of refreshes and reported
+    ``completed`` with no error (#2959). A run that produced nothing is a
+    failure, so it raises like any other, and callers that write what reflect
+    returns simply never reach the write.
+    """
 
 
 class ReflectToolCallError(RuntimeError):
@@ -275,21 +284,21 @@ OUTPUT:"""
 
 
 def _count_messages_tokens(messages: list[dict[str, Any]]) -> int:
-    """Estimate the token count of the messages list using cl100k_base encoding."""
+    """Estimate the token count of the messages list using the configured encoding."""
     total = 0
     for msg in messages:
         content = msg.get("content") or ""
         if isinstance(content, str):
-            total += count_cl100k_tokens(content)
+            total += count_prompt_tokens(content)
         elif isinstance(content, list):
             for part in content:
                 if isinstance(part, dict) and isinstance(part.get("text"), str):
-                    total += count_cl100k_tokens(part["text"])
+                    total += count_prompt_tokens(part["text"])
         # Tool call arguments and results also count
         for tc in msg.get("tool_calls") or []:
             if isinstance(tc, dict):
                 func = tc.get("function", {})
-                total += count_cl100k_tokens(func.get("arguments", ""))
+                total += count_prompt_tokens(func.get("arguments", ""))
     return total
 
 
@@ -744,8 +753,18 @@ async def _run_reflect_agent_inner(
             prompt = build_reduce_prompt(query, list(claim_sections), bank_profile, context, max_tokens=max_tokens)
             answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
 
+        if not (answer or "").strip():
+            # Tools were disabled for this call and the model still returned nothing.
+            # There is no answer to hand back, so the run failed -- see #2959 for why
+            # a placeholder here is worse than an exception.
+            raise ReflectNoAnswerError(
+                f"Reflect's final synthesis returned no text after {iterations_completed} iteration(s) "
+                f"over {len(chunks)} context chunk(s)."
+            )
+
         structured_output = None
-        if response_schema and answer:
+        # ``answer`` is non-empty past the guard above, so only the schema gates this.
+        if response_schema:
             struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
             structured_output = struct.structured_output
             total_input_tokens += struct.input_tokens
@@ -1144,17 +1163,13 @@ async def _run_reflect_agent_inner(
                 # Keep context history for fallback final prompt
                 context_history.append({"tool": tc.name, "input": input_dict, "output": output})
 
-    # Should not reach here
-    answer = "I was unable to formulate a complete answer within the iteration limit."
-    _log_completion(answer, max_iterations, forced=True)
-    return ReflectAgentResult(
-        text=answer,
-        iterations=max_iterations,
-        tools_called=total_tools_called,
-        tool_trace=tool_trace,
-        llm_trace=_get_llm_trace(),
-        usage=_get_usage(),
-        directives_applied=directives_applied,
+    # Unreachable in practice: the last iteration returns the forced synthesis
+    # above, so the loop cannot fall out of the bottom. Kept as a hard failure
+    # rather than a fallback sentence -- if it ever does fire, the run produced
+    # no answer, and inventing one here is exactly the silent overwrite of #2959.
+    raise ReflectNoAnswerError(
+        f"Reflect exhausted its {max_iterations} iteration(s) without producing an answer "
+        f"({total_tools_called} tool call(s) made)."
     )
 
 
@@ -1236,11 +1251,19 @@ async def _process_done_tool(
     else:
         answer = args.get("answer", "").strip()
     if not answer:
-        document = None
-        answer = NO_ANSWER_TEXT
+        # The model called ``done`` with nothing in it -- typically its output was
+        # cut off mid-tool-call by the completion cap, so the answer field arrived
+        # empty even though the evidence was gathered. Fail instead of standing in
+        # a placeholder: it is non-empty, so every downstream emptiness guard reads
+        # it as a real answer and stores it over working content (#2959).
+        raise ReflectNoAnswerError(
+            f"Reflect's done tool returned no answer (iteration {iterations}, "
+            f"{total_tools_called} tool call(s) made). The model's output may have been "
+            "truncated before the answer field was written."
+        )
 
     final_usage = usage
-    if llm_config and max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
+    if llm_config and max_tokens is not None and count_prompt_tokens(answer) > max_tokens:
         rewrite_start = time.time()
         # In document mode the trim is asked for as a document too. Asking for
         # prose here would put the model back in the business of writing the

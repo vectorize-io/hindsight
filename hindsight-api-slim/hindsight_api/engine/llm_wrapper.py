@@ -1013,7 +1013,7 @@ class LLMProvider:
         """Whether the underlying provider supports the OpenAI/Groq Batch API."""
         return await self._provider_impl.supports_batch_api()
 
-    async def batch_provider_impl(self) -> LLMInterface | None:
+    async def batch_provider_impl(self, account_key: str | None = None) -> LLMInterface | None:
         """The implementation serving batch, or ``None`` when it cannot serve one.
 
         Exists so the batch path (``extract_facts_from_contents_batch_api``) can
@@ -1022,8 +1022,15 @@ class LLMProvider:
         while a single provider returns its own. Returning ``None`` rather than a
         provider that would reject every batch call keeps the "can it serve one?"
         answer in one place — the caller raises on ``None``.
+
+        ``account_key`` is a :attr:`LLMInterface.batch_account_key` persisted when
+        an in-flight batch was submitted. Passing it restricts the answer to the
+        account that actually owns that batch, so a same-provider lookalike is
+        rejected (``None``) instead of being handed the wrong credentials.
         """
         if not await self._provider_impl.supports_batch_api():
+            return None
+        if account_key is not None and self._provider_impl.batch_account_key != account_key:
             return None
         return self._provider_impl
 

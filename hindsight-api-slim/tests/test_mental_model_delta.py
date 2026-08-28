@@ -2235,7 +2235,7 @@ class TestDeltaRefreshGeminiEval:
         of appending anyway — which is the whole reason the budget is stated
         rather than enforced by truncation.
         """
-        from hindsight_api.engine.reflect.tokenization import count_cl100k_tokens
+        from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
 
         bank_id = f"eval-budget-{uuid.uuid4().hex[:8]}"
         # A document padded with obsolete history: there is plenty here that a
@@ -2267,7 +2267,7 @@ class TestDeltaRefreshGeminiEval:
             max_tokens=budget,
             request_context=request_context,
         )
-        before = count_cl100k_tokens(seeded["first"]["content"])
+        before = count_prompt_tokens(seeded["first"]["content"])
         assert before > budget, f"the fixture must start over budget, got {before} <= {budget}"
 
         await gemini_memory.retain_batch_async(
@@ -2280,7 +2280,7 @@ class TestDeltaRefreshGeminiEval:
         refreshed = await gemini_memory.refresh_mental_model(
             bank_id=bank_id, mental_model_id=mental_model_id, request_context=request_context
         )
-        after = count_cl100k_tokens(refreshed["content"])
+        after = count_prompt_tokens(refreshed["content"])
         rr = refreshed.get("reflect_response") or {}
         print(f"[budget] {before} -> {after} tokens against a {budget}-token budget")
 

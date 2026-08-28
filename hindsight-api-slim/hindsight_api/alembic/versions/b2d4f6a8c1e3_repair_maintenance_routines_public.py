@@ -37,9 +37,10 @@ Create Date: 2026-06-08
 
 from collections.abc import Sequence
 
-from alembic import context, op
+from alembic import context
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.alembic._owned import execute_unless_owned
 
 revision: str = "b2d4f6a8c1e3"
 down_revision: str | Sequence[str] | None = "e5f6a7b8c9d0"
@@ -66,7 +67,8 @@ def _pg_upgrade() -> None:
     # Auto-consolidation is filtered here only at the bank level (cheap prune);
     # the full hierarchical resolution (global -> tenant -> bank, plus
     # enable_observations) is done by the caller for the small returned set.
-    op.execute(
+    execute_unless_owned(
+        "banks_needing_consolidation",
         """
         CREATE OR REPLACE FUNCTION public.banks_needing_consolidation()
         RETURNS TABLE(schema_name text, bank_id text)
@@ -100,13 +102,14 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
     # Schemas holding at least one row of p_table older than p_days. p_ts_col is
     # the timestamp column to compare. Returns nothing when p_days <= 0
     # (retention disabled).
-    op.execute(
+    execute_unless_owned(
+        "schemas_with_expired_rows",
         """
         CREATE OR REPLACE FUNCTION public.schemas_with_expired_rows(
             p_table text, p_ts_col text, p_days int
@@ -137,7 +140,7 @@ def _pg_upgrade() -> None:
             END LOOP;
         END;
         $fn$;
-        """
+        """,
     )
 
 

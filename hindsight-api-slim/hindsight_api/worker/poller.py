@@ -653,7 +653,7 @@ class WorkerPoller:
 
         try:
             from ..config import get_config
-            from ..engine.memory_engine import count_tokens
+            from ..engine.token_encoding import count_tokens
 
             peer_rows = await self._backend.ops.fetch_foldable_retain_peers(
                 conn,

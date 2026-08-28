@@ -206,6 +206,7 @@ Search memories to provide personalized responses.
 | `tag_groups` | list[object] | No | Compound boolean tag filter. Mutually exclusive with `tags`; each leaf has its own `match` value |
 | `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
 | `min_scores` | object | No | Optional per-stage score floors, e.g. `{"reranker": 0.5}`. Keys: `semantic`/`keyword` (retrieval-level cutoffs), `reranker`/`final` (post-ranking). All inclusive and AND-ed; omit for no filtering. Reranker scores aren't calibrated across queries — calibrate before use |
+| `temporal_window` | object | No | An explicit `{"start": ISO, "end": ISO}` period to search over, used instead of reading dates out of the query text. Ranks memories dated inside the window higher; it does not drop the ones outside it, so it can't restrict results to a period |
 
 **Example:**
 ```json
@@ -382,7 +383,15 @@ Clear a mental model's content while keeping its definition. After clearing, cal
 
 ### list_banks (multi-bank mode only)
 
-List all available memory banks.
+List available memory banks, most recently written first. The response carries the
+total number of matching banks alongside the page, so large deployments can be
+walked with `offset`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | No | Case-insensitive substring matched against bank ID and name |
+| `limit` | integer | No | Maximum number of banks to return (default: 100) |
+| `offset` | integer | No | Number of banks to skip (default: 0) |
 
 ---
 
@@ -588,6 +597,91 @@ Clear all memories from a bank without deleting the bank itself. Optionally filt
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `type` | string | No | Fact type to clear: `world`, `experience`, or `observation`. If not specified, clears all |
+
+---
+
+### get_knowledge_base_tree
+
+Browse the knowledge base as a nested tree of folders and pages. Each page reports `is_stale`: `false` means it is provably up to date, `true` means the bank has been written to since the page last refreshed.
+
+---
+
+### search_knowledge_base
+
+Find knowledge pages by relevance (hybrid BM25 + vector search over page names and content). Returns ranked pages with a snippet each.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | What to search for |
+| `limit` | integer | No | Maximum pages to return, 1–50 (default: 10) |
+
+---
+
+### get_knowledge_page
+
+Read a knowledge page as a markdown document (YAML frontmatter + synthesized body).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | string | Yes | The ID of the page to read (a `kp-...` node id) |
+
+---
+
+### create_knowledge_folder
+
+Create a folder in the knowledge base. Folders group pages and hold no content of their own.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Folder name |
+| `parent_id` | string | No | Parent folder id (a `kf-...` node id). Omit to create at the top level |
+
+---
+
+### create_knowledge_page
+
+Create a page — a living document whose content is synthesized from the bank's memories by running `source_query`. Content is generated asynchronously; use the returned `operation_id` to track completion.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Page name (unique within its folder) |
+| `source_query` | string | Yes | The question this page answers and rebuilds itself from |
+| `parent_id` | string | No | Parent folder id (a `kf-...` node id). Omit to create at the top level |
+| `tags` | array | No | Tags scoping which memories the page is built from |
+| `max_tokens` | integer | No | Maximum tokens for the generated content (default: 4096) |
+| `refresh_after_consolidation` | boolean | No | Whether the page rebuilds after each consolidation. Omit to keep the knowledge-page default (`true`) |
+
+---
+
+### update_knowledge_node
+
+Rename or move a folder/page, and/or update a page's options. Only the arguments you pass are changed. Changing `source_query` schedules an async refresh so the page rebuilds against the new question.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `node_id` | string | Yes | The folder (`kf-...`) or page (`kp-...`) to update |
+| `name` | string | No | New name for the node |
+| `parent_id` | string | No | Folder id to move the node into, or `"root"` to move it to the top level |
+| `source_query` | string | No | Pages only — the new question the page answers |
+| `tags` | array | No | Pages only — replacement tag list (pass `[]` to clear) |
+| `max_tokens` | integer | No | Pages only — new maximum tokens for the generated content |
+| `refresh_after_consolidation` | boolean | No | Pages only — whether the page rebuilds after each consolidation |
+
+---
+
+### delete_knowledge_node
+
+Delete a folder or page and its whole subtree. Each deleted page takes its backing mental model with it.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `node_id` | string | Yes | The folder (`kf-...`) or page (`kp-...`) to delete |
+
+:::note
+Exporting the knowledge base is deliberately not an MCP tool — it returns the whole
+bank as a single markdown bundle. Use the HTTP endpoint
+`GET /v1/default/banks/{bank_id}/knowledge-base/export` instead.
+:::
 
 ---
 

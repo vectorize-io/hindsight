@@ -16,7 +16,13 @@ from typing import Any, Callable
 
 from pydantic import ValidationError
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+    ProviderContentPolicyError,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -63,6 +69,27 @@ def _result_error_detail(message: Any) -> str:
     """
     detail = (message.result or "").strip() or message.subtype or "unknown error"
     return f"Claude Code reported an error: {detail}"
+
+
+#: The link a content-policy (AUP) refusal always carries, e.g. "API Error:
+#: Sonnet 4.5 can't help with this. Start a new session to continue.\n\nLearn
+#: more: https://www.anthropic.com/legal/aup". Matching the link rather than the
+#: apologetic prose keeps the test narrow: a false positive would turn an
+#: ordinary transient error into a permanent one (issue #3690).
+_POLICY_REFUSAL_MARKER = "anthropic.com/legal/aup"
+
+
+def _result_error(message: Any) -> Exception:
+    """Build the exception for an ``is_error`` ResultMessage.
+
+    A content-policy refusal is permanent, so it gets its own type: the retry
+    loops below re-raise it untouched instead of replaying the same prompt, and
+    the worker fails the task rather than rescheduling it.
+    """
+    text = _result_error_detail(message)
+    if _POLICY_REFUSAL_MARKER in text.lower():
+        return ProviderContentPolicyError(text)
+    return RuntimeError(text)
 
 
 class ClaudeCodeLLM(LLMInterface):
@@ -270,7 +297,7 @@ class ClaudeCodeLLM(LLMInterface):
                             # Surface the CLI's actual error text (e.g. quota
                             # exhaustion) instead of the SDK's subtype-based
                             # fallback exception (issue #2702).
-                            raise RuntimeError(_result_error_detail(message))
+                            raise _result_error(message)
 
                 # The Claude Agent SDK doesn't report exact counts; stash the same
                 # char/4 estimate the success path traces so a later parse/validate
@@ -370,6 +397,12 @@ class ClaudeCodeLLM(LLMInterface):
                 # Pydantic schema validation failure — retrying with the same
                 # input won't produce a different schema.  Raise immediately
                 # instead of burning quota on identical calls (#1412).
+                raise
+
+            except ProviderContentPolicyError:
+                # Content-policy refusal: the model declined this exact content,
+                # so every replay earns the same refusal. Raise immediately
+                # instead of spending the full retry budget on it (#3690).
                 raise
 
             except Exception as e:
@@ -627,7 +660,7 @@ class ClaudeCodeLLM(LLMInterface):
                                 # above and break before reaching this branch. Only a genuine
                                 # error with nothing to return should surface (issue #2702).
                                 if not tool_calls:
-                                    raise RuntimeError(_result_error_detail(message))
+                                    raise _result_error(message)
 
                 # Record metrics
                 duration = time.time() - start_time
@@ -660,6 +693,10 @@ class ClaudeCodeLLM(LLMInterface):
                     input_tokens=estimated_input,
                     output_tokens=estimated_output,
                 )
+
+            except ProviderContentPolicyError:
+                # Permanent refusal — see the same guard in call() (#3690).
+                raise
 
             except Exception as e:
                 last_exception = e

@@ -8,7 +8,7 @@ exceeded Postgres' stack depth (SQLSTATE 54001).
 """
 
 from hindsight_api.engine.memory_engine import (
-    _get_tiktoken_encoding,
+    get_token_encoding,
     _truncate_query_to_token_limit,
     count_tokens,
 )
@@ -65,7 +65,7 @@ def test_degenerate_repetition_stays_far_below_the_tsquery_stack_cliff():
 
 def test_truncation_never_raises_on_special_token_literals():
     """Internal callers must degrade, never fail — including on content that merely
-    mentions a tiktoken special-token literal (issue #1883)."""
+    mentions a special-token literal (issue #1883)."""
     query = "<|endoftext|> " * 1000
 
     bounded = _truncate_query_to_token_limit(query, 500)
@@ -79,4 +79,4 @@ def test_truncated_query_round_trips_through_the_encoder():
     bounded = _truncate_query_to_token_limit(query, 500)
 
     assert isinstance(bounded, str)
-    assert _get_tiktoken_encoding().encode(bounded) == _get_tiktoken_encoding().encode(query)[:500]
+    assert get_token_encoding().encode(bounded) == get_token_encoding().encode(query)[:500]

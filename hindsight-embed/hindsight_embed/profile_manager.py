@@ -416,7 +416,7 @@ class ProfileManager:
         # the profile carries the full documented option set as comments.
         from .env_template import render_config
 
-        config_path.write_text(render_config(config))
+        config_path.write_text(render_config(config), encoding="utf-8")
 
         # Metadata now only tracks discovery + timestamps; the port moved to .env.
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -548,7 +548,7 @@ class ProfileManager:
         ov = _PortOverrides()
         if not config_path.exists():
             return ov
-        for line in config_path.read_text().splitlines():
+        for line in config_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line.startswith("export "):
                 line = line[7:]
@@ -601,7 +601,7 @@ class ProfileManager:
             return config
 
         # Parse .env file
-        with open(paths.config) as f:
+        with open(paths.config, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 # Skip comments and empty lines

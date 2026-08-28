@@ -16,7 +16,11 @@ const US = "\x1f";
 const RS = "\x1e"; // record separator between commits in gitLogText
 
 function git(repo: string, ...args: string[]): string {
-  return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 1 << 28 });
+  return execFileSync("git", ["-C", repo, ...args], {
+    encoding: "utf8",
+    maxBuffer: 1 << 28,
+    windowsHide: true,
+  });
 }
 
 /** The bank-facing name for a repo — WORKTREE-AWARE (all worktrees produce the main checkout's

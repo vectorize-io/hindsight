@@ -68,7 +68,7 @@ How it works:
 - **Automatic splitting**: Hindsight automatically splits large batches (>10,000 tokens) into optimized sub-batches
 - **Parallel processing**: Sub-batches are processed concurrently in the background
 - **Status tracking**: Parent operation aggregates status from all sub-batches
-- **Token-based**: Batching uses tiktoken for accurate token counting, not character counts
+- **Token-based**: Batching counts real tokens, not characters
 
 Benefits:
 - Send entire documents or datasets in one API call
