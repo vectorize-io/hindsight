@@ -308,6 +308,16 @@ class RecallRequest(BaseModel):
         default=None,
         description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to all fact types if not specified.",
     )
+    force_engine_recall: bool = Field(
+        default=False,
+        description=(
+            "Answer this ONE request with the API's own recall pipeline instead of letting the "
+            "store answer it. For comparing the two paths over the same data — once a store stops "
+            "declining, there is otherwise no way to reach the API's pipeline at all. Per request "
+            "rather than per bank on purpose: a per-bank switch invites leaving a bank on the "
+            "slower path indefinitely, whereas this persists nothing. Not for production traffic."
+        ),
+    )
     prefer_observations: bool = Field(
         default=False,
         description=(
@@ -4843,6 +4853,7 @@ def _register_routes(app: FastAPI):
                         enable_trace=request.trace,
                         fact_type=fact_types,
                         prefer_observations=request.prefer_observations,
+                        _force_engine_recall=request.force_engine_recall,
                         question_date=question_date,
                         include_entities=include_entities,
                         max_entity_tokens=max_entity_tokens,

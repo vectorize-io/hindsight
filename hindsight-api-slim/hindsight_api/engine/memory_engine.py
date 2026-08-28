@@ -18,7 +18,6 @@ import hashlib
 import inspect
 import json
 import logging
-import os
 import random
 import sys
 import time
@@ -6224,6 +6223,7 @@ class MemoryEngine(MemoryEngineInterface):
         _connection_budget: int | None = None,
         _quiet: bool = False,
         reranking: RecallReranking = "cross_encoder",
+        _force_engine_recall: bool = False,
     ) -> RecallResultModel:
         """
         Recall memories using N*4-way parallel retrieval (N fact types × 4 retrieval methods).
@@ -6435,6 +6435,7 @@ class MemoryEngine(MemoryEngineInterface):
                             enable_text_search=enable_text_search,
                             enable_temporal_retrieval=enable_temporal_retrieval,
                             enable_graph_retrieval=enable_graph_retrieval,
+                            force_engine_recall=_force_engine_recall,
                         )
                         break  # Success - exit retry loop
                     except OperationCancelledError:
@@ -6578,6 +6579,7 @@ class MemoryEngine(MemoryEngineInterface):
         enable_text_search: bool = True,
         enable_temporal_retrieval: bool = True,
         enable_graph_retrieval: bool = True,
+        force_engine_recall: bool = False,
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -6686,13 +6688,13 @@ class MemoryEngine(MemoryEngineInterface):
             # Whether a store can answer a request is a property of the request, not an opinion
             # about the bank, so there is deliberately nothing per-bank to configure.
             #
-            # The one exception is a PROCESS-level escape hatch, and it exists for a specific
-            # reason rather than as a general off switch: proving the two paths agree requires
-            # running both over the same data, and once the store stops declining there is no
-            # other way to reach this pipeline. It is deliberately an env var and not bank config
-            # — a per-bank flag would invite leaving one bank on the slow path indefinitely,
-            # which is the situation the decline was meant to end.
-            if not os.getenv("HINDSIGHT_API_FORCE_ENGINE_RECALL"):
+            # The one exception is `force_engine_recall`, and it exists for a specific reason
+            # rather than as a general off switch: proving the two paths agree means running both
+            # over the same data, and once the store stops declining there is no other way to
+            # reach this pipeline. It is PER REQUEST — not per bank, which would invite leaving a
+            # bank on the slower path indefinitely, and not an env var, which would need an API
+            # restart to compare and so could not be run whenever someone wants an answer.
+            if not force_engine_recall:
                 from .memories import FullRecallRequest
                 from .memories import get_memories as _get_memories_for_full_recall
 
