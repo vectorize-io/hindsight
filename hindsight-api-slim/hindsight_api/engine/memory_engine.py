@@ -5410,7 +5410,16 @@ class MemoryEngine(MemoryEngineInterface):
             _session_config = await self._resolve_retain_config(bank_id, request_context, strategy)
             retain_session = await _store.begin_retain(bank_id=bank_id, config=_session_config)
 
-        if total_tokens > tokens_per_batch:
+        # A store that owns persistence does NOT sub-batch. Splitting exists to bound what one
+        # unit of work holds and to give the sub-batches something to run concurrently over — and
+        # neither survives the session: the session buffers until commit either way, so slicing no
+        # longer bounds the footprint, and it commits once regardless of how many slices produced
+        # it. What the split does still do is skew behaviour, because `is_first_batch` is true only
+        # for slice 1: the delta check runs for the handful of documents in that slice and is
+        # silently skipped for every other document in the retain.
+        #
+        # Postgres keeps splitting. Its writes really are per sub-batch, so the bound is real there.
+        if retain_session is None and total_tokens > tokens_per_batch:
             # Split into smaller batches based on token count
             logger.info(
                 f"Large batch detected ({total_tokens:,} tokens from {len(contents)} items). Splitting into sub-batches of ~{tokens_per_batch:,} tokens each..."

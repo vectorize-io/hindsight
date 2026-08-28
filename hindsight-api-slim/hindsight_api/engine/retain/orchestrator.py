@@ -679,7 +679,8 @@ async def _streaming_session_retain(
     be able to answer with them.
     """
     from ..memories.base import RetainDocumentPart, build_fact_records
-    from . import fact_storage
+    from . import entity_processing, fact_storage
+    from .entity_processing import UserEntities
 
     chunk_id_by_index = {}
     if batch_chunk_meta:
@@ -697,7 +698,24 @@ async def _streaming_session_retain(
     batch_result_ids = _map_results_to_contents(batch_contents, batch_processed, unit_ids or [])
 
     records = list(build_fact_records(unit_ids or [], batch_processed, effective_doc_id))
-    names = entity_resolver.pending_names_by_unit() if hasattr(entity_resolver, "pending_names_by_unit") else {}
+
+    # Entity NAMES, unresolved — the store resolves and mints. Built exactly as the path this
+    # replaces builds them, and it must be: `UserEntities` (not a bare list), because the merge
+    # reads `.entities` and `.resolve` off it, and `resolve` is what distinguishes a caller
+    # correcting a name from the extractor guessing one. The user-supplied entities on the content
+    # item are merged with whatever extraction found.
+    user_entities_per_content = {
+        idx: UserEntities(entities=content.entities, resolve=getattr(content, "resolve_entities", True))
+        for idx, content in enumerate(batch_contents)
+        if getattr(content, "entities", None)
+    }
+    _texts, _dates, entities_per_fact = entity_processing._prepare_facts_for_entity_processing(
+        batch_processed, user_entities_per_content
+    )
+    names = {
+        (unit_ids or [])[i]: [e["text"] for e in entities_per_fact[i]]
+        for i in range(min(len(unit_ids or []), len(entities_per_fact)))
+    }
 
     # Only the FIRST batch of a document may replace: a later one would tombstone the siblings this
     # same retain just wrote. Latched here, where the replace is actually handed over.
@@ -1260,7 +1278,20 @@ async def retain_batch(
             result_unit_ids: list[list[str]] = [[] for _ in contents_dicts]
             total_usage = TokenUsage()
             total_processed_tokens: int | None = 0
-            for doc_key, (group_dicts, group_contents) in groups.items():
+            # Without sub-batching there is nothing else running these in parallel, so the groups
+            # do it themselves. Hardcoded rather than a knob: it is not a capacity dial, it is how
+            # many documents of ONE retain may be in flight, and the retain is already bounded by
+            # the caller's own concurrency and by the session's flush threshold.
+            _GROUP_CONCURRENCY = 8
+            _group_sem = asyncio.Semaphore(_GROUP_CONCURRENCY) if retain_session is not None else None
+
+            async def _run_group(doc_key, group_dicts, group_contents):
+                if _group_sem is None:
+                    return await _one_group(doc_key, group_dicts, group_contents)
+                async with _group_sem:
+                    return await _one_group(doc_key, group_dicts, group_contents)
+
+            async def _one_group(doc_key, group_dicts, group_contents):
                 group_outbox_callback = (
                     outbox_callback_factory(group_dicts) if outbox_callback_factory is not None else outbox_callback
                 )
@@ -1299,6 +1330,14 @@ async def retain_batch(
                     agent_name=agent_name,
                     retain_session=retain_session,
                 )
+                # Returned rather than merged in place: the groups may run concurrently, and the
+                # usage totals are not safe to accumulate from several tasks at once. The driver
+                # below merges them in one place, in group order, so the result does not depend on
+                # which group happened to finish first.
+                return doc_key, group_ids, group_usage, group_processed
+
+            group_results = await asyncio.gather(*(_run_group(k, gd, gc) for k, (gd, gc) in groups.items()))
+            for doc_key, group_ids, group_usage, group_processed in group_results:
                 for group_idx, orig_idx in enumerate(original_indices[doc_key]):
                     if group_idx < len(group_ids):
                         result_unit_ids[orig_idx] = group_ids[group_idx]
