@@ -162,12 +162,6 @@ metrics:
 The worker monitor requires `worker.enabled: true`. Without the operator,
 scrape `svc/<release>-api:8888/metrics` and `svc/<release>-worker:8889/metrics`
 directly with annotation-based discovery or static targets.
-          service: api
-  tls:
-    - secretName: hindsight-tls
-      hosts:
-        - hindsight.example.com
-```
 
 ## Upgrading
 
