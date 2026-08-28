@@ -109,6 +109,32 @@ describe("maxParallelRetains", () => {
   });
 });
 
+describe("transcriptHygiene", () => {
+  const ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ENV };
+  });
+
+  it("defaults to off so the beta pass is opt-in", () => {
+    expect(resolveConfig({}).transcriptHygiene).toBe("off");
+  });
+
+  it("accepts semantic-beta from config and env fallback", () => {
+    expect(resolveConfig({ transcriptHygiene: "semantic-beta" }).transcriptHygiene).toBe(
+      "semantic-beta"
+    );
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_TRANSCRIPT_HYGIENE = "semantic-beta";
+    expect(loadConfig({ path: globalCfg }).transcriptHygiene).toBe("semantic-beta");
+  });
+
+  it("ignores unknown values rather than enabling an unintended write-back transform", () => {
+    expect(resolveConfig({ transcriptHygiene: "aggressive" as never }).transcriptHygiene).toBe(
+      "off"
+    );
+  });
+});
+
 /**
  * #3590: the hindsight_reflect tool aborted at a hardcoded 120s. The tool's window is now its own
  * knob, defaulting ABOVE the server's 300s reflect wall timeout — and it inherits an explicitly

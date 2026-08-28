@@ -9,6 +9,15 @@ import type { HindsightClient } from "./hindsight";
 import { buildRetain, runRetainHook } from "./retain-hook";
 import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
+const SINGLE_RETAIN_CALL_COUNT = 1;
+const REF_ID_PLUS_GROUPED_ACTION_TURNS = 2;
+const FIRST_RETAIN_CALL_INDEX = 0;
+const GROUPED_ACTION_TURN_INDEX = 1;
+const RUN_HOOK_GROUPED_ACTION_COUNT = 2;
+const SEMANTIC_BETA_GROUPED_ACTION_COUNT = 3;
+const SEMANTIC_BETA_THREE_ACTIONS_HEADER = `Action breadcrumbs (${SEMANTIC_BETA_GROUPED_ACTION_COUNT} grouped):`;
+const SEMANTIC_BETA_TWO_ACTIONS_HEADER = `Action breadcrumbs (${RUN_HOOK_GROUPED_ACTION_COUNT} grouped):`;
+
 /** The Stop event `runRetainHook` reads from fd 0; every other read stays real. */
 let stdin = "";
 vi.mock("node:fs", async (importOriginal) => {
@@ -109,6 +118,46 @@ describe("buildRetain", () => {
     });
 
     expect(retainSpy).not.toHaveBeenCalled();
+  });
+
+  it("applies semantic-beta transcript hygiene before retain write-back", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "tool_use", name: "Bash", input: { command: "npm test" } },
+            { type: "tool_use", name: "Edit", input: { file_path: "src/uploader.ts" } },
+            { type: "tool_use", name: "Bash", input: { command: "npm run build" } },
+          ],
+        },
+      }),
+    ];
+    writeFileSync(file, lines.join("\n"));
+
+    const retainSpy = vi.fn().mockResolvedValue(undefined);
+    const client = { retain: retainSpy } as unknown as HindsightClient;
+
+    await buildRetain({
+      harness: "claude-code",
+      sessionId: "sess-hygiene",
+      transcriptPath: file,
+      client,
+      transcriptHygiene: "semantic-beta",
+    });
+
+    expect(retainSpy).toHaveBeenCalledTimes(SINGLE_RETAIN_CALL_COUNT);
+    const [content] = retainSpy.mock.calls[FIRST_RETAIN_CALL_INDEX];
+    const parsed = (content as string)
+      .split("\n")
+      .map((line) => JSON.parse(line) as { role: string; content: string });
+    expect(parsed).toHaveLength(REF_ID_PLUS_GROUPED_ACTION_TURNS);
+    expect(parsed[GROUPED_ACTION_TURN_INDEX]).toMatchObject({
+      role: "action",
+      content: `${SEMANTIC_BETA_THREE_ACTIONS_HEADER}\n- Bash npm test\n- Edit src/uploader.ts\n- Bash npm run build`,
+    });
   });
 
   it("fails open on retain error", async () => {
@@ -320,6 +369,29 @@ describe("runRetainHook honors retainSessions", () => {
     const { retain, makeClient } = stubClient();
     await runRetainHook(spec, makeClient);
     expect(retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors transcriptHygiene from the resolved config", async () => {
+    rawConfig = { transcriptHygiene: "semantic-beta" };
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "tool_use", name: "Bash", input: { command: "npm test" } },
+              { type: "tool_use", name: "Read", input: { file_path: "README.md" } },
+            ],
+          },
+        }),
+      ].join("\n")
+    );
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    const [content] = retain.mock.calls[FIRST_RETAIN_CALL_INDEX];
+    expect(content as string).toContain(SEMANTIC_BETA_TWO_ACTIONS_HEADER);
   });
 
   it("retainSessions: false -> no write-back, and no client is even built", async () => {

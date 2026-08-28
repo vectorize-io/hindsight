@@ -18,6 +18,11 @@ import { DEFAULT_SEED_LIMIT } from "./seed";
 import { isOptedIn } from "./bank";
 import { log } from "./log";
 import { DEFAULT_OBSERVATION_SCOPES, type ObservationScopes } from "./hindsight";
+import {
+  DEFAULT_TRANSCRIPT_HYGIENE,
+  TRANSCRIPT_HYGIENE_MODES,
+  type TranscriptHygieneMode,
+} from "./transcript-hygiene";
 
 /** Default config-file path: ~/.hindsight/coding-agent.json */
 export // HINDSIGHT_CONFIG joins the two env exceptions (diag/log files): it points at THE config file,
@@ -82,6 +87,10 @@ export interface RawConfig {
    *  cadence alike. Gates ONLY the transcript — recall, git ingest, seeding and the memory
    *  tools keep working (that is `disabled`'s job). */
   retainSessions?: boolean;
+  /** Optional beta pass over already-normalized session turns before write-back. Default "off".
+   *  "semantic-beta" groups consecutive action breadcrumbs into one audited action turn while
+   *  preserving user and assistant text. */
+  transcriptHygiene?: TranscriptHygieneMode;
   /** Cap on concurrent retain-related requests the client sends to the API (default 10):
    *  drain()'s per-operation polls and deepen's chat/git retain pools. A single request returning
    *  200 while bursts get 429s means the server is rate-limiting concurrency, not total volume —
@@ -181,6 +190,7 @@ export interface Config {
   harness: string;
   disabled: boolean;
   retainSessions: boolean;
+  transcriptHygiene: TranscriptHygieneMode;
   maxParallelRetains: number;
   reflectTimeoutMs: number;
   reflectToolTimeoutMs: number;
@@ -272,6 +282,16 @@ function resolveObservationScopes(raw: RawConfig["observationScopes"]): Observat
   return DEFAULT_OBSERVATION_SCOPES;
 }
 
+function resolveTranscriptHygiene(raw: RawConfig["transcriptHygiene"]): TranscriptHygieneMode {
+  if (raw === undefined) return DEFAULT_TRANSCRIPT_HYGIENE;
+  if ((TRANSCRIPT_HYGIENE_MODES as readonly string[]).includes(raw)) return raw;
+  log.warn(
+    "config",
+    `ignoring transcriptHygiene=${JSON.stringify(raw)} — expected off|semantic-beta`
+  );
+  return DEFAULT_TRANSCRIPT_HYGIENE;
+}
+
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */
 export function resolveConfig(raw: RawConfig = {}): Config {
   const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
@@ -306,6 +326,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // write sessions back by default, every harness
+    transcriptHygiene: resolveTranscriptHygiene(raw.transcriptHygiene),
     maxParallelRetains: raw.maxParallelRetains || 10,
     reflectTimeoutMs: raw.reflectTimeoutMs || 120000,
     // Inherit an explicitly-raised reflectTimeoutMs (that is what users reaching for a longer
@@ -418,6 +439,7 @@ const ENV_KEYS = {
   harness: "HINDSIGHT_HARNESS",
   disabled: "HINDSIGHT_DISABLED",
   retainSessions: "HINDSIGHT_RETAIN_SESSIONS",
+  transcriptHygiene: "HINDSIGHT_TRANSCRIPT_HYGIENE",
   maxParallelRetains: "HINDSIGHT_MAX_PARALLEL_RETAINS",
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",

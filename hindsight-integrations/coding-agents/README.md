@@ -408,11 +408,34 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `surveyBudgetUsd`       | `2`                                  | survey spend cap — Claude recipe only (`claude -p --max-budget-usd`); other agents rely on their read-only sandbox                                                                                                                                                                                                                                                                                                                                |
 | `surveyRefreshCommits`  | `20`                                 | re-run the survey at SessionStart once this many commits have accrued since the last one, so the structural pages track an architecture that keeps moving (`0` = survey a cold repo only, never again)                                                                                                                                                                                                                                            |
 | `retainSessions`        | `true`                               | session write-back, honored by every harness: hook harnesses write the transcript on Stop, plugin harnesses (opencode, Kilo) upsert it every turn plus an idle flush that captures the reply the per-turn pass can't see. Set `false` — globally, per harness, or per bank — to stop writing transcripts (the background history import stops with it) while recall, git ingest and the memory tools keep working                                 |
+| `transcriptHygiene`     | `"off"`                              | optional beta pass over already-normalized session turns before write-back. `"semantic-beta"` groups consecutive action breadcrumbs into one audited action turn while preserving user and assistant text. It is additive, opt-in, and can be enabled globally, per harness, or per bank                                                                                                                     |
 | `maxParallelRetains`    | `10`                                 | cap on concurrent retain-related requests: drain()'s per-op polls plus deepen's chat/git retain pools. The API rate-limits bursts, not single requests — if you see 429s, lower this rather than raising it                                                                                                                                                                                                                                       |
 | `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                                                                                                                                                                                                                                        |
 | `gitIngest`             | `"message"`                          | git depth for seeding AND staying current (same engine): `"message"` = commit messages only (one doc, re-upserted when HEAD moves); `"full"` = messages + per-commit full diffs (progressive, newest first); `"none"` = git off                                                                                                                                                                                                                   |
 | `harnesses.<name>`      | —                                    | per-harness override of any field above                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `harness`               | `opencode`                           | **deepen engine only**: which session format `--conversations` is read as                                                                                                                                                                                                                                                                                                                                                                         |
+
+### Beta transcript hygiene
+
+The default retain path remains unchanged. Set `transcriptHygiene` to `"semantic-beta"` to test the
+beta reducer on session write-back:
+
+```jsonc
+{
+  "transcriptHygiene": "semantic-beta",
+  "harnesses": {
+    "codex": { "transcriptHygiene": "semantic-beta" },
+    "claude-code": { "transcriptHygiene": "off" }
+  }
+}
+```
+
+The beta pass runs after the harness reader has normalized Codex, Claude Code, Antigravity and
+other supported transcript formats into the shared JSONL turn shape. It does not rewrite user or
+assistant prose. It only groups adjacent `role:"action"` breadcrumbs, which keeps tool lineage
+available to extraction while reducing line pressure from action-heavy coding sessions. Each run
+emits a `transcript_hygiene_beta` diagnostic receipt with the input/output turn counts and grouped
+action counts.
 
 `pageTriggerType`/`pageTriggerCron` decide only **when** a page refreshes. **How** it refreshes
 belongs to the server: Hindsight creates a knowledge page with a delta refresh (each pass edits the

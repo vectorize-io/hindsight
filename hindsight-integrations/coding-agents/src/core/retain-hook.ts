@@ -26,6 +26,11 @@ import type { RetainCursorStore } from "./retain-cursor";
 import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
 import { fileCursorStore, sessionRootDir } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
+import {
+  applyTranscriptHygiene,
+  DEFAULT_TRANSCRIPT_HYGIENE,
+  type TranscriptHygieneMode,
+} from "./transcript-hygiene";
 
 /** Headroom left before the host's kill: the response still has to come back after the last wait. */
 const HOST_DEADLINE_MARGIN_MS = 2000;
@@ -76,6 +81,8 @@ export async function buildRetain(args: {
   readTranscript?: TranscriptReader;
   /** Configured retainTags/retainMetadata, already resolved for this session (core/retain-stamp.ts). */
   stamp?: RetainStamp;
+  /** Optional beta transcript hygiene pass, already resolved from config. */
+  transcriptHygiene?: TranscriptHygieneMode;
   /** Injectable for tests; defaults to the per-session temp file (a Stop hook has no memory). */
   cursors?: RetainCursorStore;
   /** Absolute time the host will kill this process; bounds any rate-limit retry. */
@@ -84,7 +91,10 @@ export async function buildRetain(args: {
   const { harness, sessionId, transcriptPath, client } = args;
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
 
-  const turns = readTranscript(transcriptPath);
+  const rawTurns = readTranscript(transcriptPath);
+  const hygiene = applyTranscriptHygiene(args.transcriptHygiene ?? DEFAULT_TRANSCRIPT_HYGIENE, rawTurns);
+  const turns = hygiene.turns;
+  if (hygiene.receipt.applied) diag(harness, "transcript_hygiene_beta", hygiene.receipt);
   if (turns.length === 0) return;
 
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
@@ -167,6 +177,7 @@ export async function runRetainHook(
     transcriptPath,
     client,
     readTranscript: spec.readTranscript,
+    transcriptHygiene: cfg.transcriptHygiene,
     retryUntil: hostDeadline,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,
