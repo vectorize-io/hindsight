@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "Fehler beim Ausführen der Suche",
     "tooltipCrossEncoder": "Cross-Encoder-Score (primäres Relevanzsignal)",
     "tooltipTemporal": "Zeitliche Nähe-Verstärkung (±10 % — nur bei zeitbezogenen Abfragen aktiv)",
-    "tooltipRecency": "Aktualitäts-Verstärkung (±10 % — basierend auf dem Alter der Erinnerung)"
+    "tooltipRecency": "Aktualitäts-Verstärkung (±10 % — basierend auf dem Alter der Erinnerung)",
+    "temporalWindowLabel": "Zeitfenster",
+    "temporalWindowStart": "Fensterbeginn",
+    "temporalWindowEnd": "Fensterende",
+    "temporalWindowTo": "bis",
+    "temporalWindowClear": "Leeren",
+    "temporalWindowHint": "Überspringt die Datumserkennung in der Abfrage und stuft Erinnerungen aus diesem Zeitraum höher ein. Erinnerungen außerhalb werden nicht ausgeblendet. Zeiten gelten als UTC; beide Enden setzen, damit es wirkt.",
+    "temporalWindowReversed": "Das Ende des Zeitfensters liegt vor seinem Beginn."
   },
   "webhooksView": {
     "title": "Webhooks",

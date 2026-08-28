@@ -26,6 +26,7 @@ from .types import GraphRetrievalTimings, RetrievalResult
 
 if TYPE_CHECKING:
     from ..query_analyzer import QueryAnalyzer
+    from ..response_models import TemporalWindow
 
 logger = logging.getLogger(__name__)
 
@@ -809,6 +810,7 @@ async def retrieve_all_fact_types_parallel(
     created_before: datetime | None = None,
     min_semantic: float | None = None,
     min_keyword: float | None = None,
+    temporal_window: "TemporalWindow | None" = None,
     enable_temporal_retrieval: bool = True,
     enable_graph_retrieval: bool = True,
 ) -> MultiFactTypeRetrievalResult:
@@ -830,6 +832,9 @@ async def retrieve_all_fact_types_parallel(
         thinking_budget: Budget for graph traversal and retrieval limits
         question_date: Optional date when question was asked (for temporal filtering)
         query_analyzer: Query analyzer to use (defaults to TransformerQueryAnalyzer)
+        temporal_window: Caller-supplied window for the temporal arm. When set, it is used
+            verbatim instead of analysing the query text for dates. Gated by
+            enable_temporal_retrieval like any other source of a window.
         enable_temporal_retrieval: Run the temporal arm. False also skips the date-aware
             query analysis that feeds it (no constraint means nothing to filter on).
         enable_graph_retrieval: Run the entity/link graph arm. False skips those queries
@@ -849,13 +854,20 @@ async def retrieve_all_fact_types_parallel(
     temporal_extraction_start = time.time()
     temporal_constraint = None
     if enable_temporal_retrieval:
-        from .temporal_extraction import extract_temporal_constraint_async
+        if temporal_window is not None:
+            # The caller already knows the range it means, so there is nothing to
+            # infer. Skipping the analysis is also the point: it is pure CPU
+            # serialised through a single worker, and costs up to ~1.3s on
+            # document-sized query text (see temporal_extraction).
+            temporal_constraint = (temporal_window.start, temporal_window.end)
+        else:
+            from .temporal_extraction import extract_temporal_constraint_async
 
-        # Off the event loop: this is pure CPU and would otherwise stall every
-        # other in-flight request in the process, not just this recall.
-        temporal_constraint = await extract_temporal_constraint_async(
-            query_text, reference_date=question_date, analyzer=query_analyzer
-        )
+            # Off the event loop: this is pure CPU and would otherwise stall every
+            # other in-flight request in the process, not just this recall.
+            temporal_constraint = await extract_temporal_constraint_async(
+                query_text, reference_date=question_date, analyzer=query_analyzer
+            )
     temporal_extraction_time = time.time() - temporal_extraction_start
     timings["temporal_extraction"] = temporal_extraction_time
 

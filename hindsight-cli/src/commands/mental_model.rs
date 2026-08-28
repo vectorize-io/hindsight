@@ -174,7 +174,10 @@ pub fn create(
     match response {
         Ok(result) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Mental model created, operation_id: {}", result.operation_id));
+                ui::print_success(&format!(
+                    "Mental model created, operation_id: {}",
+                    result.operation_id
+                ));
             } else {
                 output::print_output(&result, output_format)?;
             }
@@ -218,22 +221,23 @@ pub fn update(
 
     // Only build a trigger override when the user actually passed the flag;
     // sending None leaves the existing trigger config untouched on the server.
-    let trigger = trigger_refresh_after_consolidation.map(|refresh| types::MentalModelTriggerInput {
-        mode: types::Mode::Full,
-        refresh_after_consolidation: refresh,
-        refresh_cron: None,
-        min_refresh_interval_seconds: None,
-        exclude_mental_models: false,
-        exclude_mental_model_ids: None,
-        fact_types: None,
-        tag_groups: None,
-        tags_match: None,
-        include_chunks: None,
-        recall_max_tokens: None,
-        recall_chunks_max_tokens: None,
-        response_schema: None,
-        keep_trace: false,
-    });
+    let trigger =
+        trigger_refresh_after_consolidation.map(|refresh| types::MentalModelTriggerInput {
+            mode: types::Mode::Full,
+            refresh_after_consolidation: refresh,
+            refresh_cron: None,
+            min_refresh_interval_seconds: None,
+            exclude_mental_models: false,
+            exclude_mental_model_ids: None,
+            fact_types: None,
+            tag_groups: None,
+            tags_match: None,
+            include_chunks: None,
+            recall_max_tokens: None,
+            recall_chunks_max_tokens: None,
+            response_schema: None,
+            keep_trace: false,
+        });
 
     let request = types::UpdateMentalModelRequest {
         name,
@@ -252,7 +256,10 @@ pub fn update(
     match response {
         Ok(mental_model) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Mental model '{}' updated successfully", mental_model_id));
+                ui::print_success(&format!(
+                    "Mental model '{}' updated successfully",
+                    mental_model_id
+                ));
                 println!();
                 print_mental_model_detail(&mental_model);
             } else {
@@ -303,7 +310,10 @@ pub fn delete(
     match response {
         Ok(_) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Mental model '{}' deleted successfully", mental_model_id));
+                ui::print_success(&format!(
+                    "Mental model '{}' deleted successfully",
+                    mental_model_id
+                ));
             } else {
                 println!("{{\"success\": true}}");
             }
@@ -342,7 +352,10 @@ pub fn refresh(
                 ));
                 println!("  {} {}", ui::dim("Status:"), operation.status);
                 println!();
-                println!("{}", ui::dim("Use 'hindsight operations get' to check the operation status."));
+                println!(
+                    "{}",
+                    ui::dim("Use 'hindsight operations get' to check the operation status.")
+                );
             } else {
                 output::print_output(&operation, output_format)?;
             }
@@ -405,7 +418,11 @@ pub fn dry_run_refresh(
                 ui::dim("Retrieved:"),
                 format_counts(&result.facts.retrieved)
             );
-            println!("  {} {}", ui::dim("Used:"), format_counts(&result.facts.used));
+            println!(
+                "  {} {}",
+                ui::dim("Used:"),
+                format_counts(&result.facts.used)
+            );
             if let Some(ops) = &result.delta_operations {
                 println!(
                     "  {} {} applied, {} skipped",
@@ -428,7 +445,10 @@ pub fn dry_run_refresh(
                 println!("{}", result.diff);
             }
             println!();
-            println!("{}", ui::dim("Nothing was saved. Use 'mental-model refresh' to apply."));
+            println!(
+                "{}",
+                ui::dim("Nothing was saved. Use 'mental-model refresh' to apply.")
+            );
             Ok(())
         }
         Err(e) => Err(e),
@@ -440,7 +460,10 @@ fn format_counts(counts: &std::collections::HashMap<String, i64>) -> String {
     if counts.is_empty() {
         return "none".to_string();
     }
-    let mut entries: Vec<String> = counts.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+    let mut entries: Vec<String> = counts
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v))
+        .collect();
     entries.sort();
     entries.join(", ")
 }
@@ -475,12 +498,23 @@ pub fn history(
                         println!("  {}", ui::dim("No history entries found."));
                     } else {
                         for entry in entries {
-                            let changed_at = entry.get("changed_at").and_then(|v| v.as_str()).unwrap_or("unknown");
-                            let previous = entry.get("previous_content").and_then(|v| v.as_str()).unwrap_or("(none)");
+                            let changed_at = entry
+                                .get("changed_at")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let previous = entry
+                                .get("previous_content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("(none)");
                             println!("  {} {}", ui::dim("Changed at:"), changed_at);
                             let preview: String = previous.chars().take(80).collect();
                             let ellipsis = if previous.len() > 80 { "..." } else { "" };
-                            println!("  {} {}{}", ui::dim("Previous:"), ui::dim(&preview), ellipsis);
+                            println!(
+                                "  {} {}{}",
+                                ui::dim("Previous:"),
+                                ui::dim(&preview),
+                                ellipsis
+                            );
                             println!();
                         }
                     }
@@ -498,7 +532,11 @@ pub fn history(
 fn print_mental_model_detail(mental_model: &types::MentalModelResponse) {
     ui::print_section_header(&mental_model.name);
 
-    println!("  {} {}", ui::dim("ID:"), ui::gradient_start(&mental_model.id));
+    println!(
+        "  {} {}",
+        ui::dim("ID:"),
+        ui::gradient_start(&mental_model.id)
+    );
     if let Some(ref source_query) = mental_model.source_query {
         println!("  {} {}", ui::dim("Source Query:"), source_query);
     }
@@ -520,8 +558,14 @@ mod tests {
     fn parse_tags_match_accepts_all_modes() {
         assert_eq!(parse_tags_match("any").unwrap(), types::TagsMatch::Any);
         assert_eq!(parse_tags_match("all").unwrap(), types::TagsMatch::All);
-        assert_eq!(parse_tags_match("any_strict").unwrap(), types::TagsMatch::AnyStrict);
-        assert_eq!(parse_tags_match("all_strict").unwrap(), types::TagsMatch::AllStrict);
+        assert_eq!(
+            parse_tags_match("any_strict").unwrap(),
+            types::TagsMatch::AnyStrict
+        );
+        assert_eq!(
+            parse_tags_match("all_strict").unwrap(),
+            types::TagsMatch::AllStrict
+        );
         assert_eq!(parse_tags_match("exact").unwrap(), types::TagsMatch::Exact);
     }
 
@@ -533,6 +577,9 @@ mod tests {
     #[test]
     fn parse_tags_match_rejects_unknown() {
         let err = parse_tags_match("most").unwrap_err().to_string();
-        assert!(err.contains("invalid --tags-match 'most'"), "unexpected error: {err}");
+        assert!(
+            err.contains("invalid --tags-match 'most'"),
+            "unexpected error: {err}"
+        );
     }
 }

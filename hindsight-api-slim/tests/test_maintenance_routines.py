@@ -9,10 +9,12 @@ table in a single round-trip. These tests drive them directly against pg0.
 import asyncio
 import importlib.util
 import uuid
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 from hindsight_api.engine.memory_engine import MemoryEngine
 
@@ -239,7 +241,12 @@ async def test_schemas_with_expired_rows(memory: MemoryEngine):
 
 
 def _load_schema_local_migration():
-    """Import the #2638 schema-local install migration by path."""
+    """Import the #2638 schema-local install migration by path.
+
+    Pinned on purpose: the tests below assert what THIS migration's install
+    gating emits. Anything that runs the routine bodies must use
+    ``_load_current_routines_migration`` instead — see there.
+    """
     path = (
         Path(__file__).resolve().parent.parent
         / "hindsight_api/alembic/versions/b6d2f8a4c1e7_maintenance_routines_schema_local.py"
@@ -249,6 +256,65 @@ def _load_schema_local_migration():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+_VERSIONS_DIR = Path(__file__).resolve().parent.parent / "hindsight_api/alembic/versions"
+
+
+def _load_migration(path: Path):
+    spec = importlib.util.spec_from_file_location(f"_maint_routines_{path.stem}", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _current_routines_migration_path() -> Path:
+    """The newest migration that (re)defines ``banks_needing_consolidation``.
+
+    Resolved from the revision chain rather than hard-coded, because a test that
+    *executes* the routine must execute the body a real deployment ends up with.
+    Pinning the superseded ``b6d2f8a4c1e7`` body is what made
+    ``test_routines_callable_from_non_public_schema`` a recurring
+    ``DeadlockDetectedError`` flake under xdist: that body waits indefinitely for
+    AccessShareLock on every schema it scans, so a peer worker's concurrent
+    DROP closes a lock cycle and PostgreSQL kills one side. ``c8b4e2a71f95``
+    fixed exactly that — with a per-schema ``lock_timeout`` and skip arms — but
+    the test never installed it, so the fix could not reach the test that
+    reported the bug.
+    """
+    # walk_revisions() yields head -> base in topological order, so the first
+    # match is the definition a fully migrated database ends up with. Asked of
+    # Alembic rather than parsed here because the DAG has merge revisions with
+    # tuple down_revisions, which a line-wise parse gets wrong.
+    cfg = Config()
+    cfg.set_main_option("script_location", str(_VERSIONS_DIR.parent))
+    for script in ScriptDirectory.from_config(cfg).walk_revisions():
+        path = Path(script.path)
+        text = path.read_text()
+        if "banks_needing_consolidation" in text and "CREATE OR REPLACE FUNCTION" in text:
+            return path
+    raise AssertionError("no migration defines banks_needing_consolidation")
+
+
+def _load_current_routines_migration():
+    return _load_migration(_current_routines_migration_path())
+
+
+def test_current_routine_bodies_keep_the_concurrent_ddl_guard():
+    """Whichever migration owns the routine bodies must still skip a locked schema.
+
+    The guard is what stops the cross-schema scan from waiting on a tenant that is
+    being dropped or migrated, which is one half of a lock cycle
+    (``c8b4e2a71f95``). ``test_banks_needing_consolidation_skips_schema_locked_by_ddl``
+    proves the installed ``public`` copy behaves; this asserts a future
+    ``CREATE OR REPLACE`` cannot quietly drop the guard from the source it is
+    installed from.
+    """
+    body = _current_routines_migration_path().read_text()
+    assert "lock_timeout" in body
+    assert "lock_not_available" in body
+    assert "deadlock_detected" in body
 
 
 class _FakeAlembicContext:
@@ -322,10 +388,19 @@ async def test_routines_callable_from_non_public_schema(memory: MemoryEngine, re
     """End-to-end #2638: with the deployment schema set to a non-``public`` schema,
     the migration installs the routines there and ``fq_routine()`` resolves to that
     copy, which returns the same cross-tenant results as the ``public`` one.
+
+    Installs the CURRENT routine bodies, not ``b6d2f8a4c1e7``'s. #2638's install
+    gating has been carried forward unchanged by every migration since, but the
+    bodies have not: this test executes the routine against a live database that
+    xdist peers are creating and dropping schemas in, and the pre-``c8b4e2a71f95``
+    body waits indefinitely for AccessShareLock on every schema it scans. A peer's
+    concurrent DROP closes the lock cycle and PostgreSQL kills one side — a
+    recurring ``DeadlockDetectedError`` here, on a body no deployment runs.
+    ``_current_routines_migration_path`` keeps it on the real one.
     """
     from hindsight_api.engine import schema as schema_mod
 
-    migration = _load_schema_local_migration()
+    migration = _load_current_routines_migration()
     schema = f"tenant_{uuid.uuid4().hex[:8]}"
 
     bank_id = await _make_bank(memory, request_context, "nonpublic")

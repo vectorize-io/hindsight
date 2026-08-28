@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "搜索时出错",
     "tooltipCrossEncoder": "交叉编码器分数(主要相关性信号)",
     "tooltipTemporal": "时间邻近度增强 (±10% — 仅对时间查询有效)",
-    "tooltipRecency": "新近度增强 (±10% — 基于记忆年龄)"
+    "tooltipRecency": "新近度增强 (±10% — 基于记忆年龄)",
+    "temporalWindowLabel": "时间范围",
+    "temporalWindowStart": "范围开始",
+    "temporalWindowEnd": "范围结束",
+    "temporalWindowTo": "至",
+    "temporalWindowClear": "清除",
+    "temporalWindowHint": "跳过从查询中提取日期，并优先展示该范围内的记忆。范围之外的记忆不会被隐藏。时间按 UTC 解析；两端都填写后才会生效。",
+    "temporalWindowReversed": "范围的结束时间早于开始时间。"
   },
   "webhooksView": {
     "title": "Webhooks",

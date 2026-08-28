@@ -23,7 +23,7 @@ from hindsight_api.config import (
 )
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.engine.memory_engine import Budget
-from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MinScores
+from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MinScores, TemporalWindow
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
@@ -905,6 +905,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
+            temporal_window: dict | None = None,
             bank_id: str | None = None,
         ) -> str | dict:
             """
@@ -930,6 +931,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
                     not calibrated across queries, so only threshold against scores you've calibrated for your
                     own data.
+                temporal_window: Window for the temporal arm as {"start": ISO, "end": ISO}, used instead of
+                    extracting dates from the query text — pass it when you already know the range you mean.
+                    It ranks memories dated inside the window higher; it does NOT drop memories dated outside
+                    it, so do not use it to restrict results to a period.
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -964,6 +969,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
                 if min_scores is not None:
                     recall_kwargs["min_scores"] = MinScores.model_validate(min_scores)
+                if temporal_window is not None:
+                    recall_kwargs["temporal_window"] = TemporalWindow.model_validate(temporal_window)
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 
@@ -991,6 +998,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
+            temporal_window: dict | None = None,
         ) -> dict:
             """
             Args:
@@ -1015,6 +1023,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
                     not calibrated across queries, so only threshold against scores you've calibrated for your
                     own data.
+                temporal_window: Window for the temporal arm as {"start": ISO, "end": ISO}, used instead of
+                    extracting dates from the query text — pass it when you already know the range you mean.
+                    It ranks memories dated inside the window higher; it does NOT drop memories dated outside
+                    it, so do not use it to restrict results to a period.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -1048,6 +1060,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
                 if min_scores is not None:
                     recall_kwargs["min_scores"] = MinScores.model_validate(min_scores)
+                if temporal_window is not None:
+                    recall_kwargs["temporal_window"] = TemporalWindow.model_validate(temporal_window)
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 

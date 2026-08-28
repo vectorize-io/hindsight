@@ -599,6 +599,7 @@ export type {
   TagGroupOrInput,
   TagGroupOrOutput,
   TagItem,
+  TemporalWindow,
   TestBankLlmData,
   TestBankLlmError,
   TestBankLlmErrors,

@@ -1031,7 +1031,14 @@
     "errorRunningSearch": "Erreur lors de l'exécution de la recherche",
     "tooltipCrossEncoder": "Score du cross-encoder (signal de pertinence principal)",
     "tooltipTemporal": "Boost de proximité temporelle (±10 % — actif uniquement pour les requêtes temporelles)",
-    "tooltipRecency": "Boost de récence (±10 % — basé sur l'âge de la mémoire)"
+    "tooltipRecency": "Boost de récence (±10 % — basé sur l'âge de la mémoire)",
+    "temporalWindowLabel": "Fenêtre temporelle",
+    "temporalWindowStart": "Début de la fenêtre",
+    "temporalWindowEnd": "Fin de la fenêtre",
+    "temporalWindowTo": "à",
+    "temporalWindowClear": "Effacer",
+    "temporalWindowHint": "Ignore l'extraction de dates dans la requête et privilégie les souvenirs datés de cette période. Ceux en dehors restent affichés. Les heures sont lues en UTC ; renseignez les deux bornes pour l'appliquer.",
+    "temporalWindowReversed": "La fin de la fenêtre précède son début."
   },
   "webhooksView": {
     "title": "Webhooks",

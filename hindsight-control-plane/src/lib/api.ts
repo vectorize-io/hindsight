@@ -485,6 +485,8 @@ export class ControlPlaneClient {
       reranker?: number | null;
       final?: number | null;
     };
+    /** Window for the temporal retrieval arm, used instead of extracting dates from the query text. Ranks memories dated inside it higher; does not drop memories dated outside it. */
+    temporal_window?: { start: string; end: string };
   }) {
     return this.fetchApi("/api/recall", {
       method: "POST",

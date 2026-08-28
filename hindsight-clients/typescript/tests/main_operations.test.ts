@@ -691,6 +691,42 @@ const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
     spy.mockRestore();
   });
 
+  test("recall threads temporalWindow into request body", async () => {
+    const bankId = randomBankId();
+    const spy = jest.spyOn(sdk, "recallMemories").mockResolvedValue({
+      data: { results: [] },
+    } as any);
+
+    await client.recall(bankId, "test", {
+      temporalWindow: { start: "2023-04-01T00:00:00Z", end: "2023-06-30T23:59:59Z" },
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          temporal_window: { start: "2023-04-01T00:00:00Z", end: "2023-06-30T23:59:59Z" },
+        }),
+      })
+    );
+    spy.mockRestore();
+  });
+
+  test("recall omits temporal_window when not provided", async () => {
+    const bankId = randomBankId();
+    const spy = jest.spyOn(sdk, "recallMemories").mockResolvedValue({
+      data: { results: [] },
+    } as any);
+
+    await client.recall(bankId, "test");
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ temporal_window: undefined }),
+      })
+    );
+    spy.mockRestore();
+  });
+
   test("getBankProfile passes abort signal to SDK", async () => {
     const bankId = randomBankId();
     const controller = new AbortController();

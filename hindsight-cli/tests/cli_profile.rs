@@ -31,7 +31,10 @@ fn unique_tempdir(tag: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("hindsight-profile-test-{}-{}-{}-{}", tag, pid, nanos, n));
+    let dir = std::env::temp_dir().join(format!(
+        "hindsight-profile-test-{}-{}-{}-{}",
+        tag, pid, nanos, n
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -108,7 +111,11 @@ fn profile_create_writes_toml_and_json_output() {
     assert_eq!(payload["api_key_set"], true);
 
     let path = home.join(".hindsight/cli-profiles/prod.toml");
-    assert!(path.exists(), "profile file was not created at {}", path.display());
+    assert!(
+        path.exists(),
+        "profile file was not created at {}",
+        path.display()
+    );
     let body = std::fs::read_to_string(&path).unwrap();
     assert!(body.contains("api_url = \"https://api.example.com\""));
     assert!(body.contains("api_key = \"hsk_abcdef1234\""));
@@ -315,9 +322,13 @@ fn hindsight_profile_env_var_is_honored() {
         .output()
         .unwrap();
     assert!(!out.status.success());
-    let err = String::from_utf8_lossy(&out.stderr).into_owned()
-        + &String::from_utf8_lossy(&out.stdout);
-    assert!(err.contains("from-env"), "expected profile URL in output:\n{}", err);
+    let err =
+        String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
+    assert!(
+        err.contains("from-env"),
+        "expected profile URL in output:\n{}",
+        err
+    );
 }
 
 #[test]

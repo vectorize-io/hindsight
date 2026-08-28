@@ -36,6 +36,7 @@ type RecallRequest struct {
 	TagsMatch *string `json:"tags_match,omitempty"`
 	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
 	MinScores NullableMinScores `json:"min_scores,omitempty"`
+	TemporalWindow NullableTemporalWindow `json:"temporal_window,omitempty"`
 }
 
 type _RecallRequest RecallRequest
@@ -473,6 +474,48 @@ func (o *RecallRequest) UnsetMinScores() {
 	o.MinScores.Unset()
 }
 
+// GetTemporalWindow returns the TemporalWindow field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallRequest) GetTemporalWindow() TemporalWindow {
+	if o == nil || IsNil(o.TemporalWindow.Get()) {
+		var ret TemporalWindow
+		return ret
+	}
+	return *o.TemporalWindow.Get()
+}
+
+// GetTemporalWindowOk returns a tuple with the TemporalWindow field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallRequest) GetTemporalWindowOk() (*TemporalWindow, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.TemporalWindow.Get(), o.TemporalWindow.IsSet()
+}
+
+// HasTemporalWindow returns a boolean if a field has been set.
+func (o *RecallRequest) HasTemporalWindow() bool {
+	if o != nil && o.TemporalWindow.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetTemporalWindow gets a reference to the given NullableTemporalWindow and assigns it to the TemporalWindow field.
+func (o *RecallRequest) SetTemporalWindow(v TemporalWindow) {
+	o.TemporalWindow.Set(&v)
+}
+// SetTemporalWindowNil sets the value for TemporalWindow to be an explicit nil
+func (o *RecallRequest) SetTemporalWindowNil() {
+	o.TemporalWindow.Set(nil)
+}
+
+// UnsetTemporalWindow ensures that no value is present for TemporalWindow, not even an explicit nil
+func (o *RecallRequest) UnsetTemporalWindow() {
+	o.TemporalWindow.Unset()
+}
+
 func (o RecallRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -516,6 +559,9 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.MinScores.IsSet() {
 		toSerialize["min_scores"] = o.MinScores.Get()
+	}
+	if o.TemporalWindow.IsSet() {
+		toSerialize["temporal_window"] = o.TemporalWindow.Get()
 	}
 	return toSerialize, nil
 }

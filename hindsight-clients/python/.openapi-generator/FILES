@@ -162,6 +162,7 @@ hindsight_client_api/models/tag_group_not_output.py
 hindsight_client_api/models/tag_group_or_input.py
 hindsight_client_api/models/tag_group_or_output.py
 hindsight_client_api/models/tag_item.py
+hindsight_client_api/models/temporal_window.py
 hindsight_client_api/models/timestamp.py
 hindsight_client_api/models/token_usage.py
 hindsight_client_api/models/tool_calls_include_options.py
