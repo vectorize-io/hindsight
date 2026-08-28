@@ -244,5 +244,4 @@ function collectQwenTurns(path: string, turns: TransportTurn[]): void {
       turns.push(turn);
     }
   }
-
 }

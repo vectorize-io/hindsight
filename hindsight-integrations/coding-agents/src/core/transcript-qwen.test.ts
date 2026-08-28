@@ -128,7 +128,7 @@ describe("readQwenTranscript", () => {
             {
               text:
                 "<task-notification>\n<task-id>general-purpose-call_f1b126b417f3491da3edc4c3</task-id>\n" +
-                "<status>completed</status>\n<summary>Agent \"Survey KV-cache prior art\" completed.</summary>\n" +
+                '<status>completed</status>\n<summary>Agent "Survey KV-cache prior art" completed.</summary>\n' +
                 "</task-notification>",
             },
           ],
@@ -301,7 +301,7 @@ describe("readQwenTranscript", () => {
     // provenance". An unanchored global regex over every part deletes real prose — and in a repo
     // whose subject IS this integration, quoting the tag is a prompt someone will really write.
     const quoting =
-      'why does <qwen:user-prompt-submit-context>foo</qwen:user-prompt-submit-context> show up twice?';
+      "why does <qwen:user-prompt-submit-context>foo</qwen:user-prompt-submit-context> show up twice?";
     writeFileSync(
       file,
       record({

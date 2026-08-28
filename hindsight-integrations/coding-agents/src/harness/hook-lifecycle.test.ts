@@ -99,9 +99,10 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       const raw = spec.install.prompt.timeout;
       if (raw === undefined) continue; // cursor-cli deliberately omits it — the host default applies
       const ms = spec.timeoutUnit === "milliseconds" ? raw : raw * 1000;
-      expect(ms, `${harness} prompt timeout (${raw} ${spec.timeoutUnit ?? "seconds"})`).toBeGreaterThan(
-        HOOK_REFLECT_CAP_MS
-      );
+      expect(
+        ms,
+        `${harness} prompt timeout (${raw} ${spec.timeoutUnit ?? "seconds"})`
+      ).toBeGreaterThan(HOOK_REFLECT_CAP_MS);
     }
   });
 
@@ -113,7 +114,9 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       const raw = spec.install.stop.timeout;
       if (raw === undefined) continue;
       const ms = spec.timeoutUnit === "milliseconds" ? raw : raw * 1000;
-      expect(ms, `${harness} stop timeout vs hostTimeoutSec`).toBe(spec.retain.hostTimeoutSec * 1000);
+      expect(ms, `${harness} stop timeout vs hostTimeoutSec`).toBe(
+        spec.retain.hostTimeoutSec * 1000
+      );
     }
   });
 });

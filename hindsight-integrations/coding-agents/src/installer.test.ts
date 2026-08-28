@@ -181,9 +181,7 @@ describe("qwen-code installer", () => {
     // Qwen kills only the direct child so the orphaned work still completes.
     const ctx = makeCtx();
     expect(run(["install", "qwen-code"], ctx)).toBe(0);
-    const hooks = JSON.parse(
-      readFileSync(join(ctx.home, ".qwen", "settings.json"), "utf8")
-    ).hooks;
+    const hooks = JSON.parse(readFileSync(join(ctx.home, ".qwen", "settings.json"), "utf8")).hooks;
     const entry = (ev: string) => hooks[ev][0].hooks[0];
     expect(entry("SessionStart").timeout).toBe(30_000);
     expect(entry("UserPromptSubmit").timeout).toBe(30_000);
