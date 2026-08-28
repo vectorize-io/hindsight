@@ -17,6 +17,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..config import get_config
@@ -1204,62 +1205,111 @@ class WorkerPoller:
         Only rows older than ``orphan_lease_seconds`` are touched (default 24 h —
         far beyond any real task, and the corpses above were 50 days old), and
         this worker's own rows are excluded because the caller above already
-        handled them with the retry/fail accounting. Set the lease to 0 to
-        disable the sweep. Batch API rows are excluded for the same reason as in
-        the own-rows path: they are long-lived by design.
+        handled them. Set the lease to 0 to disable the sweep. Batch API rows are
+        excluded for the same reason as in the own-rows path: they are long-lived
+        by design.
+
+        The same retry budget as ``_reclaim_own_processing_tasks`` applies here,
+        and it has to: that path caps the claim → grind → die → reclaim loop
+        (#2675/#2834), but it only matches ``worker_id = <own id>``, so in the
+        rotating-hostname deployments this sweep exists for it can never fire.
+        Resetting to 'pending' without spending a retry would hand a task that
+        OOM-kills its container back every lease period, for ever, with no
+        terminal 'failed' row — the lease would slow the loop down, not bound it.
+        Rows at/over the limit are failed and rolled up to their parent
+        aggregator exactly as the own-rows path does.
+
+        Deliberately written in the dialect subset the Oracle rewriter already
+        covers (``->>``, ``RETURNING``, ``now()`` — see ``engine/db/oracle.py``),
+        because this module is shared: "PostgreSQL via asyncpg, Oracle via
+        oracledb". The first version used ``make_interval(secs => …)``,
+        ``UPDATE … FROM`` and ``FOR UPDATE SKIP LOCKED`` inside a CTE, none of
+        which the rewriter handles; on Oracle it raised on every call, and
+        because the caller wraps the whole per-schema block in one ``try`` that
+        exception would have silently stopped ``_reconcile_orphaned_parents``
+        (#2985) from ever running. The lease cutoff is computed in Python and
+        bound as a parameter, so no interval syntax is needed at all.
 
         Returns:
-            Number of rows reset to pending.
+            Number of rows reset to pending (not including those failed).
         """
         if self._orphan_lease_seconds <= 0:
             return 0
 
         table = fq_table("async_operations", schema)
+        max_retries = self._max_retries
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._orphan_lease_seconds)
+
+        # Shared predicate: old AND silent AND owned by someone who is not us.
+        stale = """status = 'processing'
+                  AND worker_id IS NOT NULL
+                  AND worker_id <> $1
+                  AND claimed_at IS NOT NULL
+                  AND claimed_at < $2
+                  AND updated_at < $2
+                  AND result_metadata->>'batch_id' IS NULL"""
+
         async with self._backend.acquire() as conn:
-            # The departed owner is read in a CTE, BEFORE the update. A plain
-            # `UPDATE ... SET worker_id = NULL ... RETURNING worker_id` returns
-            # the POST-update tuple, so every returned owner would be NULL and
-            # the warning below — whose whole purpose is naming the ids to pin
-            # via HINDSIGHT_API_WORKER_ID — would print "owners: None".
-            # SKIP LOCKED so two workers starting together each reclaim a
-            # disjoint set instead of one blocking on the other's row locks.
-            rows = await conn.fetch(
+            # Owners are read BEFORE the updates, which null worker_id out. A
+            # plain `UPDATE ... SET worker_id = NULL ... RETURNING worker_id`
+            # returns the POST-update tuple, so the warning below — whose whole
+            # purpose is naming the ids to pin via HINDSIGHT_API_WORKER_ID —
+            # would print "owners: None".
+            owner_rows = await conn.fetch(
+                f"SELECT DISTINCT worker_id FROM {table} WHERE {stale}",
+                self._worker_id,
+                cutoff,
+            )
+            # Under the retry budget: spend a retry and hand it back.
+            result = await conn.execute(
                 f"""
-                WITH candidates AS (
-                    SELECT operation_id, worker_id
-                    FROM {table}
-                    WHERE status = 'processing'
-                      AND worker_id IS NOT NULL
-                      AND worker_id <> $1
-                      AND claimed_at IS NOT NULL
-                      AND claimed_at < now() - make_interval(secs => $2)
-                      AND updated_at < now() - make_interval(secs => $2)
-                      AND result_metadata->>'batch_id' IS NULL
-                    FOR UPDATE SKIP LOCKED
-                )
-                UPDATE {table} AS t
+                UPDATE {table}
                 SET status = 'pending', worker_id = NULL, claimed_at = NULL,
-                    updated_at = now()
-                FROM candidates c
-                WHERE t.operation_id = c.operation_id
-                RETURNING c.operation_id, c.worker_id AS previous_worker_id,
-                          t.operation_type
+                    retry_count = COALESCE(retry_count, 0) + 1, updated_at = now()
+                WHERE {stale}
+                  AND COALESCE(retry_count, 0) < $3
                 """,
                 self._worker_id,
-                float(self._orphan_lease_seconds),
+                cutoff,
+                max_retries,
+            )
+            # At/over the budget: fail it, so a task that kills every worker it
+            # touches stops being handed around. RETURNING drives the parent
+            # rollup below, same as the own-rows path.
+            failed_rows = await conn.fetch(
+                f"""
+                UPDATE {table}
+                SET status = 'failed', worker_id = NULL, claimed_at = NULL,
+                    error_message = 'exceeded max recovery attempts (retry_count >= {max_retries}) after its worker departed',
+                    completed_at = now(), updated_at = now()
+                WHERE {stale}
+                  AND COALESCE(retry_count, 0) >= $3
+                RETURNING operation_id
+                """,
+                self._worker_id,
+                cutoff,
+                max_retries,
             )
 
-        if rows:
-            owners = sorted({str(r["previous_worker_id"]) for r in rows})
+        # One transaction per child so a single problematic parent cannot undo
+        # the others — mirrors _reclaim_own_processing_tasks.
+        for failed_row in failed_rows:
+            async with self._backend.acquire() as conn:
+                async with conn.transaction():
+                    await self._maybe_update_parent_operation(str(failed_row["operation_id"]), schema, conn)
+
+        reclaimed = _updated_row_count(result)
+        if reclaimed or failed_rows:
+            owners = sorted({str(r["worker_id"]) for r in owner_rows if r["worker_id"] is not None})
             schema_display = f'"{schema}"' if schema else str(schema)
             logger.warning(
-                f"Worker {self._worker_id} reclaimed {len(rows)} operation(s) abandoned by "
-                f"{len(owners)} departed worker(s) in schema {schema_display} "
-                f"(lease {self._orphan_lease_seconds}s; owners: {', '.join(owners)}). "
+                f"Worker {self._worker_id} reclaimed {reclaimed} and failed {len(failed_rows)} "
+                f"operation(s) abandoned by {len(owners)} departed worker(s) in schema "
+                f"{schema_display} (lease {self._orphan_lease_seconds}s; owners: {', '.join(owners)}). "
                 "Set HINDSIGHT_API_WORKER_ID to a stable value so worker ids survive "
                 "container recreation and this is not needed."
             )
-        return len(rows)
+        return reclaimed
 
     async def recover_own_tasks(self) -> int:
         """
@@ -1290,17 +1340,25 @@ class WorkerPoller:
 
                 total_count += await self._reclaim_own_processing_tasks(schema)
 
-                # Reclaim rows abandoned by a worker id that will never return.
-                # _reclaim_own_processing_tasks only matches worker_id = own id,
-                # so it cannot see rows left by a PREVIOUS container. See #3709.
-                total_count += await self._reclaim_expired_processing_tasks(schema)
-
                 # Finalize batch_retain parents that the aggregation left behind
                 # (crash between a child's terminal commit and the parent update,
                 # or children that never committed). These sit 'pending' with a
                 # NULL payload — unclaimable and invisible to failed_operations —
                 # until reconciled. See issue #2985.
                 await self._reconcile_orphaned_parents(schema)
+
+                # Reclaim rows abandoned by a worker id that will never return.
+                # _reclaim_own_processing_tasks only matches worker_id = own id,
+                # so it cannot see rows left by a PREVIOUS container. See #3709.
+                #
+                # Runs LAST on purpose: every step in this block shares one
+                # `try`, so an exception here is swallowed as a warning and
+                # everything after it is skipped. Ordering it behind
+                # _reconcile_orphaned_parents means a failure in this newer,
+                # optional sweep can never take that established step down with
+                # it — which is exactly what would have happened on Oracle
+                # before the dialect fix below it.
+                total_count += await self._reclaim_expired_processing_tasks(schema)
             except Exception as e:
                 # Format schema for logging: custom schemas in quotes, None as-is
                 schema_display = f'"{schema}"' if schema else str(schema)
