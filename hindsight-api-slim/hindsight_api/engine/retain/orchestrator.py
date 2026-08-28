@@ -3469,14 +3469,18 @@ async def _try_delta_retain(
         doc_hash_at_load = (record or {}).get("content_hash")
         doc_watermark_at_load = (record or {}).get("watermark")
         original_text_at_load = (record or {}).get("original_text") if document_body_override is not None else None
-        _texts = await _delta_store.list_chunk_texts(bank_id=bank_id, document_id=effective_doc_id) or []
+        # The record's own chunk hashes, not a download of every chunk's text. Delta compares
+        # hashes; the record already stores them, computed with the same
+        # `sha256(chunk.encode()).hexdigest()` that `compute_chunk_hash` uses. Reading the texts
+        # back to recompute them cost a round trip AND the document's whole body, per document, to
+        # arrive at a value the first read already had.
         existing_chunks = [
             chunk_storage.ExistingChunk(
                 chunk_id=f"{bank_id}_{effective_doc_id}_{index}",
                 chunk_index=index,
-                content_hash=chunk_storage.compute_chunk_hash(text),
+                content_hash=chunk_hash,
             )
-            for index, text in enumerate(_texts)
+            for index, chunk_hash in enumerate((record or {}).get("chunk_hashes") or [])
         ]
     else:
         doc_watermark_at_load = None  # SQL serializes on the documents row instead
