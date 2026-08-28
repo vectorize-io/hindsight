@@ -1305,10 +1305,19 @@ async def retain_batch(
             if retain_session is not None and document_prefetch is None:
                 from ..memories import get_memories as _gm_prefetch
 
-                async with _timing.timed("delta.read"):
-                    document_prefetch = await _gm_prefetch().get_document_records(
-                        bank_id=bank_id, document_ids=sorted(groups.keys())
-                    )
+                # Started, not awaited. Delta needs the answer before it decides which chunks to
+                # extract, but chunking the new content does not -- and on a store whose cost is
+                # round trips, this read is a whole one on the critical path of every retain.
+                # Handing the TASK down lets the groups chunk while it is in flight; each awaits it
+                # where the answer is actually consumed. Awaiting a task more than once is fine,
+                # and the concurrent groups do exactly that.
+                async def _prefetch():
+                    async with _timing.timed("delta.read"):
+                        return await _gm_prefetch().get_document_records(
+                            bank_id=bank_id, document_ids=sorted(groups.keys())
+                        )
+
+                document_prefetch = asyncio.create_task(_prefetch())
 
             # Without sub-batching there is nothing else running these in parallel, so the groups
             # do it themselves. Hardcoded rather than a knob: it is not a capacity dial, it is how
@@ -3504,6 +3513,10 @@ async def _try_delta_retain(
         # the stored text, so that case still reads its own record. Absent from the prefetch means
         # the document does not exist — which is an answer, not a miss to retry.
         if document_prefetch is not None and document_body_override is None:
+            # May be the in-flight read rather than its result -- see where it is started. Resolved
+            # here, which is the first point that actually needs it.
+            if isinstance(document_prefetch, asyncio.Task):
+                document_prefetch = await document_prefetch
             record = document_prefetch.get(effective_doc_id)
         else:
             record = await _delta_store.get_document_record(
