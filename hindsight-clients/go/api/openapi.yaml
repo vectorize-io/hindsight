@@ -3419,8 +3419,9 @@ paths:
         \ operation's result_metadata carries download_url (fetch the ZIP from GET\
         \ /v1/default/files/download/{key}), storage_key, byte_size, and filename.\
         \ Pass document_id query params to export specific documents, or omit to export\
-        \ the whole bank; include_observations=true also carries consolidated observations\
-        \ (whole-bank export only)."
+        \ the whole bank; include_observations=true carries consolidated observations\
+        \ and include_knowledge_base=true carries Mental Models plus Knowledge Pages\
+        \ (all whole-bank export only)."
       operationId: export_documents
       parameters:
       - explode: false
@@ -3453,6 +3454,19 @@ paths:
           description: Also export consolidated observations (restored on import;
             whole-bank only)
           title: Include Observations
+          type: boolean
+        style: form
+      - description: Also export Mental Models and Knowledge Pages (restored on import;
+          whole-bank only)
+        explode: true
+        in: query
+        name: include_knowledge_base
+        required: false
+        schema:
+          default: false
+          description: Also export Mental Models and Knowledge Pages (restored on
+            import; whole-bank only)
+          title: Include Knowledge Base
           type: boolean
         style: form
       - explode: false

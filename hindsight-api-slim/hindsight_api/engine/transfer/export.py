@@ -208,6 +208,7 @@ async def export_documents(
     document_ids: list[str] | None = None,
     *,
     include_observations: bool = False,
+    include_knowledge_base: bool = False,
     memories: Any = None,
 ) -> bytes:
     """Export documents from ``bank_id`` into an in-memory ZIP archive.
@@ -224,14 +225,16 @@ async def export_documents(
         The ZIP archive as bytes.
 
     Raises:
-        ValueError: if ``include_observations`` is combined with ``document_ids``.
+        ValueError: if a bank-level section is combined with ``document_ids``.
     """
     # Observations are bank-level and can be derived from facts spanning several
     # documents, so they're only coherent when the whole bank is exported. For a
     # document subset we'd have to silently drop every cross-document observation
     # — reject the combination instead so the caller isn't surprised.
-    if include_observations and document_ids is not None:
-        raise ValueError("include_observations is only supported when exporting the whole bank (omit document_id)")
+    if (include_observations or include_knowledge_base) and document_ids is not None:
+        raise ValueError(
+            "include_observations and include_knowledge_base are only supported when exporting the whole bank (omit document_id)"
+        )
 
     memories = _resolve_memories(memories)
 
@@ -240,6 +243,8 @@ async def export_documents(
     # them, so imported facts keep their consolidated/failed state. Without
     # observations (the default document export) the target re-consolidates
     # from scratch, so lifecycle is deliberately dropped.
+    mental_models: list[dict] = []
+    knowledge_pages: list[TransferKnowledgePage] = []
     if _is_store_owned(memories, bank_id):
         # No connection is taken at all: for this bank every table the SQL loaders read is empty,
         # so holding one would only make the empty result look better-founded than it is.
@@ -250,11 +255,18 @@ async def export_documents(
         observations = (
             await _load_observations_from_store(memories, bank_id, loaded.unit_index) if include_observations else []
         )
+        if include_knowledge_base:
+            async with acquire_with_retry(backend) as conn:
+                mental_models = await _dump_bank_rows(conn, "mental_models", bank_id)
+                knowledge_pages = await _load_knowledge_pages(conn, bank_id)
     else:
         async with acquire_with_retry(backend) as conn:
             loaded = await _load_documents(conn, bank_id, document_ids, include_lifecycle=include_observations)
             documents = loaded.documents
             observations = await _load_observations(conn, bank_id, loaded.unit_index) if include_observations else []
+            if include_knowledge_base:
+                mental_models = await _dump_bank_rows(conn, "mental_models", bank_id)
+                knowledge_pages = await _load_knowledge_pages(conn, bank_id)
 
     fact_total = sum(len(document.facts) for document in documents)
     manifest = TransferManifest(
@@ -264,12 +276,15 @@ async def export_documents(
         document_count=len(documents),
         fact_count=fact_total,
         observation_count=len(observations),
+        knowledge_base_count=len(mental_models) + len(knowledge_pages),
     )
 
     # ZIP compression and per-document JSON serialisation are CPU-bound and, on a
     # large bank, would block the event loop for seconds (issue #3321). Run the
     # assembly in a worker thread so unrelated requests/tasks keep progressing.
-    archive_bytes = await anyio.to_thread.run_sync(_build_archive_bytes, documents, observations, manifest)
+    archive_bytes = await anyio.to_thread.run_sync(
+        _build_archive_bytes, documents, observations, mental_models, knowledge_pages, manifest
+    )
 
     logger.info(
         "[transfer] Exported %d document(s), %d fact(s), %d observation(s) from bank %s",
@@ -284,6 +299,8 @@ async def export_documents(
 def _build_archive_bytes(
     documents: list[TransferDocument],
     observations: list[TransferObservation],
+    mental_models: list[dict],
+    knowledge_pages: list[TransferKnowledgePage],
     manifest: TransferManifest,
 ) -> bytes:
     """Serialise the loaded documents/observations/manifest into a ZIP archive.
@@ -302,6 +319,12 @@ def _build_archive_bytes(
         if observations:
             payload = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
             zf.writestr("observations.json", payload)
+
+        if mental_models:
+            zf.writestr("mental_models.json", json.dumps(mental_models, indent=2, default=_row_json_default))
+        if knowledge_pages:
+            payload = "[\n" + ",\n".join(p.model_dump_json(indent=2) for p in knowledge_pages) + "\n]\n"
+            zf.writestr("knowledge_pages.json", payload)
 
         zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
 

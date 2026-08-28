@@ -176,11 +176,12 @@ class TransferManifest(BaseModel):
     document_count: int = 0
     fact_count: int = 0
     observation_count: int = 0
+    mental_model_count: int = 0
+    knowledge_page_count: int = 0
+    knowledge_base_count: int = 0
     # "documents" = doc/fact/observation subset; "bank" = whole-bank export
     # (also carries bank config, mental models, directives, webhooks).
     archive_type: Literal["documents", "bank"] = "documents"
-    mental_model_count: int = 0
-    knowledge_page_count: int = 0
     directive_count: int = 0
     webhook_count: int = 0
     # True when --include-history carried audit_log / llm_requests.

@@ -118,12 +118,14 @@ const checkForExistence = (
   return false;
 };
 
-export async function setAuthParams(
-  options: Pick<RequestOptions, "auth" | "query" | "security"> & {
+export const setAuthParams = async ({
+  security,
+  ...options
+}: Pick<Required<RequestOptions>, "security"> &
+  Pick<RequestOptions, "auth" | "query"> & {
     headers: Headers;
-  }
-): Promise<void> {
-  for (const auth of options.security ?? []) {
+  }) => {
+  for (const auth of security) {
     if (checkForExistence(options, auth.name)) {
       continue;
     }
@@ -152,7 +154,7 @@ export async function setAuthParams(
         break;
     }
   }
-}
+};
 
 export const buildUrl: Client["buildUrl"] = (options) =>
   getUrl({
@@ -202,7 +204,7 @@ export const mergeHeaders = (
           mergedHeaders.append(key, v as string);
         }
       } else if (value !== undefined) {
-        // assume object headers are meant to be JSON stringified, i.e., their
+        // assume object headers are meant to be JSON stringified, i.e. their
         // content value in OpenAPI specification is 'application/json'
         mergedHeaders.set(
           key,
@@ -216,10 +218,8 @@ export const mergeHeaders = (
 
 type ErrInterceptor<Err, Res, Req, Options> = (
   error: Err,
-  /** response may be undefined due to a network error where no response object is produced */
-  response: Res | undefined,
-  /** request may be undefined, because error may be from building the request object itself */
-  request: Req | undefined,
+  response: Res,
+  request: Req,
   options: Options
 ) => Err | Promise<Err>;
 

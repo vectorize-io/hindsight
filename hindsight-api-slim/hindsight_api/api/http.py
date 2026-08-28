@@ -7407,7 +7407,8 @@ def _register_routes(app: FastAPI):
         "GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata "
         "carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, "
         "and filename. Pass document_id query params to export specific documents, or omit to export the whole "
-        "bank; include_observations=true also carries consolidated observations (whole-bank export only).",
+        "bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries "
+        "Mental Models plus Knowledge Pages (all whole-bank export only).",
         operation_id="export_documents",
         tags=["Document Transfer"],
     )
@@ -7416,6 +7417,10 @@ def _register_routes(app: FastAPI):
         document_id: list[str] | None = Query(default=None, description="Document id(s) to export; omit for all"),
         include_observations: bool = Query(
             default=False, description="Also export consolidated observations (restored on import; whole-bank only)"
+        ),
+        include_knowledge_base: bool = Query(
+            default=False,
+            description="Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)",
         ),
         request_context: RequestContext = Depends(get_request_context),
     ):
@@ -7439,6 +7444,7 @@ def _register_routes(app: FastAPI):
                     request_context,
                     list(document_id) if document_id else None,
                     include_observations=include_observations,
+                    include_knowledge_base=include_knowledge_base,
                 )
             except ValueError as e:
                 # e.g. include_observations combined with a document_id subset.

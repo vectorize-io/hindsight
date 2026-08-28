@@ -207,4 +207,14 @@ describe("ControlPlaneClient direct fetch error formatting", () => {
       status: 404,
     });
   });
+
+  it("passes the knowledge-base export flag to the transfer route", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(new Blob(["zip"]), { status: 200 }));
+
+    await client.exportDocuments("bank-a", undefined, false, true);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("/api/documents/transfer?bank_id=bank-a&include_knowledge_base=true")
+    );
+  });
 });

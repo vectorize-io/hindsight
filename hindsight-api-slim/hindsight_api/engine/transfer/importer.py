@@ -75,6 +75,8 @@ class ImportResult:
     observations_imported: int = 0
     # Observations dropped because some source fact was not imported in this run.
     observations_skipped: int = 0
+    mental_models_imported: int = 0
+    knowledge_pages_imported: int = 0
     skipped_document_ids: list[str] = field(default_factory=list)
     # Original id -> freshly generated id, for documents imported under "new-id".
     remapped_document_ids: dict[str, str] = field(default_factory=dict)
@@ -110,6 +112,8 @@ class ParsedArchive:
     manifest: TransferManifest
     documents: list[TransferDocument]
     observations: list[TransferObservation] = field(default_factory=list)
+    mental_models: list[dict] = field(default_factory=list)
+    knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
 
 
 def _open_archive(archive_bytes: bytes, *, produced_by: str) -> zipfile.ZipFile:
@@ -153,7 +157,19 @@ def parse_archive(archive_bytes: bytes) -> ParsedArchive:
         observations: list[TransferObservation] = []
         if "observations.json" in names:
             observations = [TransferObservation.model_validate(o) for o in json.loads(zf.read("observations.json"))]
-    return ParsedArchive(manifest=manifest, documents=documents, observations=observations)
+        mental_models = json.loads(zf.read("mental_models.json")) if "mental_models.json" in names else []
+        knowledge_pages = (
+            [TransferKnowledgePage.model_validate(p) for p in json.loads(zf.read("knowledge_pages.json"))]
+            if "knowledge_pages.json" in names
+            else []
+        )
+    return ParsedArchive(
+        manifest=manifest,
+        documents=documents,
+        observations=observations,
+        mental_models=mental_models,
+        knowledge_pages=knowledge_pages,
+    )
 
 
 async def import_documents(
@@ -194,6 +210,14 @@ async def import_documents(
         ops = backend.ops
 
     parsed = parse_archive(archive_bytes)
+    if parsed.knowledge_pages and not parsed.mental_models:
+        raise ValueError("Knowledge Pages require their backing mental models in the transfer archive")
+    # Document transfer merges into an existing target bank. Reuse the logical
+    # mental-model ids, but always pin the carried rows to the destination bank;
+    # otherwise ON CONFLICT can silently match the source-bank row on same-schema
+    # transfers and leave the imported page without a backing model.
+    for row in parsed.mental_models:
+        row["bank_id"] = bank_id
     result = ImportResult()
 
     # (original document_id, fact ordinal) -> freshly inserted unit id. Used to
@@ -251,15 +275,24 @@ async def import_documents(
         result.observations_skipped = outcome.skipped
         result.remapped_unit_ids.update(outcome.remapped_unit_ids)
 
+    if parsed.mental_models or parsed.knowledge_pages:
+        mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
+        async with acquire_with_retry(backend) as conn:
+            result.mental_models_imported = await _restore_rows(conn, "mental_models", parsed.mental_models)
+            await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
+            result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
+
     logger.info(
         "[transfer] Imported %d document(s), %d fact(s), %d observation(s) into bank %s "
-        "(%d docs skipped, %d observations skipped)",
+        "(%d docs skipped, %d observations skipped, %d mental model(s), %d knowledge page(s))",
         result.documents_imported,
         result.facts_imported,
         result.observations_imported,
         bank_id,
         result.documents_skipped,
         result.observations_skipped,
+        result.mental_models_imported,
+        result.knowledge_pages_imported,
     )
     return result
 
@@ -473,6 +506,18 @@ async def _restore_knowledge_pages(conn: Any, bank_id: str, pages: list[Transfer
     if not pages:
         return 0
     inserted = 0
+    id_map: dict[str, str] = {}
+    for page in pages:
+        # Knowledge-page ids are globally unique within a schema, unlike the
+        # bank-scoped mental-model ids. A document transfer is a merge, so a
+        # source page can already exist in the target schema; remap only those
+        # collisions and rewrite parent links below.
+        page_id = page.id
+        if await conn.fetchval(
+            f"SELECT 1 FROM {fq_table('knowledge_pages')} WHERE id = $1 AND bank_id <> $2", page_id, bank_id
+        ):
+            page_id = str(uuid.uuid4())
+        id_map[page.id] = page_id
     for page in _topological_page_order(pages):
         await conn.execute(
             f"""
@@ -481,9 +526,9 @@ async def _restore_knowledge_pages(conn: Any, bank_id: str, pages: list[Transfer
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, now()), COALESCE($10, now()))
             ON CONFLICT DO NOTHING
             """,
-            page.id,
+            id_map[page.id],
             bank_id,
-            page.parent_id,
+            id_map.get(page.parent_id) if page.parent_id else None,
             page.kind,
             page.name,
             page.mental_model_id,

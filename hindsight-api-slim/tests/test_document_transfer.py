@@ -1305,6 +1305,48 @@ async def test_export_import_observations(memory, request_context):
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
+async def test_export_import_mental_models_and_knowledge_pages(memory, request_context):
+    """The document-transfer flags carry optional bank knowledge into a target bank."""
+    source = _unique_bank("transfer_knowledge_src")
+    target = _unique_bank("transfer_knowledge_dst")
+    try:
+        await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+        page = await memory.create_knowledge_page(
+            source,
+            name="Work policy",
+            source_query="what is the work policy",
+            content="People's workplaces are useful context.",
+            request_context=request_context,
+        )
+
+        archive = await memory.export_documents_async(
+            source,
+            request_context,
+            include_knowledge_base=True,
+        )
+        parsed = parse_archive(archive)
+        assert parsed.manifest.knowledge_base_count == 2
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            assert "mental_models.json" in zf.namelist()
+            assert "knowledge_pages.json" in zf.namelist()
+
+        result = await _import(memory, target, archive, request_context)
+        assert result["mental_models_imported"] == 1
+        assert result["knowledge_pages_imported"] == 1
+
+        nodes = await memory.list_knowledge_nodes(target, request_context=request_context)
+        assert [(node["name"], node["mental_model_id"]) for node in nodes] == [("Work policy", page["mental_model_id"])]
+        search_results = await memory.search_knowledge_pages(
+            target, "work policy", limit=5, request_context=request_context
+        )
+        assert any(result["name"] == "Work policy" for result in search_results)
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_import_triggers_consolidation(memory, request_context):
     """Importing (without observations) triggers consolidation in the target bank,
     so observations get generated there — same as a normal retain."""
@@ -1423,9 +1465,11 @@ async def test_include_observations_requires_whole_bank_export(memory, request_c
     src = _unique_bank("transfer_obs_subset")
     try:
         await _retain(memory, src, "Alice works at Google.", request_context, "doc-1")
-        # Subset export (document_ids set) + observations must be rejected.
+        # Bank-level knowledge cannot be combined with a document subset.
         with pytest.raises(ValueError, match="whole bank"):
             await memory.export_documents_async(src, request_context, ["doc-1"], include_observations=True)
+        with pytest.raises(ValueError, match="whole bank"):
+            await memory.export_documents_async(src, request_context, ["doc-1"], include_knowledge_base=True)
         # Whole-bank export with observations is fine; subset without observations is fine.
         await memory.export_documents_async(src, request_context, include_observations=True)
         await memory.export_documents_async(src, request_context, ["doc-1"])

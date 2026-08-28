@@ -1668,6 +1668,7 @@ class Hindsight:
         bank_id: str,
         document_ids: list[str] | None = None,
         include_observations: bool = False,
+        include_knowledge_base: bool = False,
         *,
         poll_interval: float = 2.0,
         timeout: float = 300.0,
@@ -1684,6 +1685,7 @@ class Hindsight:
             bank_id: Source bank.
             document_ids: Specific document ids to export; omit for the whole bank.
             include_observations: Also export consolidated observations (whole-bank only).
+            include_knowledge_base: Also export Mental Models and Knowledge Pages (whole-bank only).
             poll_interval: Seconds between operation-status polls.
             timeout: Maximum seconds to wait for the export to finish.
 
@@ -1699,6 +1701,7 @@ class Hindsight:
                 bank_id,
                 document_ids,
                 include_observations,
+                include_knowledge_base,
                 poll_interval=poll_interval,
                 timeout=timeout,
             )
@@ -1709,6 +1712,7 @@ class Hindsight:
         bank_id: str,
         document_ids: list[str] | None = None,
         include_observations: bool = False,
+        include_knowledge_base: bool = False,
         *,
         poll_interval: float = 2.0,
         timeout: float = 300.0,
@@ -1718,6 +1722,7 @@ class Hindsight:
             bank_id,
             document_id=document_ids,
             include_observations=include_observations,
+            include_knowledge_base=include_knowledge_base,
             _request_timeout=self._timeout,
         )
         operation_id = submission.operation_id

@@ -35,6 +35,9 @@ export async function GET(request: NextRequest) {
     if (searchParams.get("include_observations") === "true") {
       qs.set("include_observations", "true");
     }
+    if (searchParams.get("include_knowledge_base") === "true") {
+      qs.set("include_knowledge_base", "true");
+    }
 
     // 1. Submit the async export operation.
     const submitSuffix = `/document-transfer/export${qs.toString() ? `?${qs.toString()}` : ""}`;

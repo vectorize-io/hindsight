@@ -1417,6 +1417,7 @@ export class HindsightClient {
     options?: {
       documentIds?: string[];
       includeObservations?: boolean;
+      includeKnowledgeBase?: boolean;
       /** Milliseconds between operation-status polls (default 2000). */
       pollIntervalMs?: number;
       /** Maximum milliseconds to wait for the export to finish (default 300000). */
@@ -1431,6 +1432,9 @@ export class HindsightClient {
         ...(options?.documentIds !== undefined ? { document_id: options.documentIds } : {}),
         ...(options?.includeObservations !== undefined
           ? { include_observations: options.includeObservations }
+          : {}),
+        ...(options?.includeKnowledgeBase !== undefined
+          ? { include_knowledge_base: options.includeKnowledgeBase }
           : {}),
       },
       signal: options?.signal,

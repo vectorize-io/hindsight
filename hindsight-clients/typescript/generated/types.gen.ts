@@ -3007,7 +3007,7 @@ export type MemoryItem = {
    *
    * When the content occurred. Accepts an ISO 8601 datetime string (e.g. '2024-01-15T10:30:00Z'), null/omitted (defaults to now), or the special string 'unset' to explicitly store without any timestamp (use this for timeless content such as fictional documents or static reference material).
    */
-  timestamp?: string | string | null;
+  timestamp?: string | null;
   /**
    * Context
    */
@@ -8278,6 +8278,12 @@ export type ExportDocumentsData = {
      * Also export consolidated observations (restored on import; whole-bank only)
      */
     include_observations?: boolean;
+    /**
+     * Include Knowledge Base
+     *
+     * Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)
+     */
+    include_knowledge_base?: boolean;
   };
   url: "/v1/default/banks/{bank_id}/document-transfer/export";
 };

@@ -1756,17 +1756,20 @@ export class ControlPlaneClient {
   /**
    * Export documents from a bank as a transfer ZIP archive (no LLM re-extraction).
    * Pass documentIds to export specific documents, or omit to export the whole bank.
-   * Set includeObservations to also carry consolidated observations.
+   * Set includeObservations to also carry consolidated observations. Set
+   * includeKnowledgeBase to carry Mental Models and Knowledge Pages.
    * Returns the raw zip Blob so callers can trigger a download.
    */
   async exportDocuments(
     bankId: string,
     documentIds?: string[],
-    includeObservations = false
+    includeObservations = false,
+    includeKnowledgeBase = false
   ): Promise<Blob> {
     const params = new URLSearchParams({ bank_id: bankId });
     (documentIds || []).forEach((id) => params.append("document_id", id));
     if (includeObservations) params.set("include_observations", "true");
+    if (includeKnowledgeBase) params.set("include_knowledge_base", "true");
     // Direct fetch (not fetchApi) because the response is a binary zip, not JSON.
     const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`));
     if (!response.ok) {

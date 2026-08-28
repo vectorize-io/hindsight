@@ -2470,6 +2470,8 @@ class MemoryEngine(MemoryEngineInterface):
                 "facts_imported": result.facts_imported,
                 "observations_imported": result.observations_imported,
                 "observations_skipped": result.observations_skipped,
+                "mental_models_imported": result.mental_models_imported,
+                "knowledge_pages_imported": result.knowledge_pages_imported,
                 "skipped_document_ids": result.skipped_document_ids,
                 "remapped_document_ids": result.remapped_document_ids,
             }
@@ -2504,6 +2506,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id = task_dict.get("operation_id")
         document_ids = task_dict.get("document_ids")
         include_observations = task_dict.get("include_observations", False)
+        include_knowledge_base = task_dict.get("include_knowledge_base", False)
         if not bank_id:
             raise ValueError("bank_id is required for export_documents task")
 
@@ -2518,7 +2521,11 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         archive_bytes = await self.export_documents_async(
-            bank_id, context, document_ids, include_observations=include_observations
+            bank_id,
+            context,
+            document_ids,
+            include_observations=include_observations,
+            include_knowledge_base=include_knowledge_base,
         )
 
         # A fresh uuid per export keeps concurrent/repeat exports of the same bank
@@ -5788,6 +5795,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_ids: list[str] | None = None,
         include_observations: bool = False,
+        include_knowledge_base: bool = False,
     ) -> bytes:
         """Export documents from a bank into a transfer ZIP archive (no LLM, no embeddings).
 
@@ -5809,6 +5817,7 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id,
             document_ids,
             include_observations=include_observations,
+            include_knowledge_base=include_knowledge_base,
             memories=get_memories(),
         )
 
@@ -5818,6 +5827,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_ids: list[str] | None = None,
         include_observations: bool = False,
+        include_knowledge_base: bool = False,
     ) -> dict[str, Any]:
         """Submit an async document-export operation and return its ``operation_id``.
 
@@ -5831,8 +5841,10 @@ class MemoryEngine(MemoryEngineInterface):
         """
         # Reject the incoherent combination up front — same guard export_documents
         # raises — so the caller gets an immediate 400 rather than a failed task.
-        if include_observations and document_ids is not None:
-            raise ValueError("include_observations is only supported when exporting the whole bank (omit document_id)")
+        if (include_observations or include_knowledge_base) and document_ids is not None:
+            raise ValueError(
+                "include_observations and include_knowledge_base are only supported when exporting the whole bank (omit document_id)"
+            )
 
         await self._authenticate_tenant(request_context)
         await self._get_backend()
@@ -5840,6 +5852,7 @@ class MemoryEngine(MemoryEngineInterface):
         task_payload: dict[str, Any] = {
             "document_ids": list(document_ids) if document_ids else None,
             "include_observations": include_observations,
+            "include_knowledge_base": include_knowledge_base,
         }
         if request_context.tenant_id:
             task_payload["_tenant_id"] = request_context.tenant_id

@@ -749,6 +749,7 @@ export function DocumentsView() {
   const [importing, setImporting] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportIncludeObservations, setExportIncludeObservations] = useState(false);
+  const [exportIncludeKnowledgeBase, setExportIncludeKnowledgeBase] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importOnConflict, setImportOnConflict] = useState<"skip" | "replace" | "new-id">("skip");
@@ -1235,11 +1236,20 @@ export function DocumentsView() {
     URL.revokeObjectURL(url);
   };
 
-  const exportDocuments = async (documentIds?: string[], includeObservations = false) => {
+  const exportDocuments = async (
+    documentIds?: string[],
+    includeObservations = false,
+    includeKnowledgeBase = false
+  ) => {
     if (!currentBank || exporting) return;
     setExporting(true);
     try {
-      const blob = await client.exportDocuments(currentBank, documentIds, includeObservations);
+      const blob = await client.exportDocuments(
+        currentBank,
+        documentIds,
+        includeObservations,
+        includeKnowledgeBase
+      );
       const suffix = documentIds && documentIds.length === 1 ? `-${documentIds[0]}` : "-documents";
       triggerDownload(blob, `${currentBank}${suffix}.zip`);
       toast.success(t("exportSuccess"));
@@ -1342,7 +1352,7 @@ export function DocumentsView() {
         )}
       </div>
 
-      {/* Export dialog: explains the action and offers the observations choice. */}
+      {/* Export dialog: offers opt-in inclusion of derived/bank-level knowledge. */}
       <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -1362,6 +1372,19 @@ export function DocumentsView() {
               <p className="text-xs text-muted-foreground">{t("exportIncludeObservationsHint")}</p>
             </div>
           </div>
+          <div className="flex items-start gap-2 py-2">
+            <Checkbox
+              id="export-include-knowledge-base"
+              checked={exportIncludeKnowledgeBase}
+              onCheckedChange={(v) => setExportIncludeKnowledgeBase(v === true)}
+            />
+            <div className="grid gap-1 leading-none">
+              <Label htmlFor="export-include-knowledge-base">
+                {t("exportIncludeKnowledgeBaseLabel")}
+              </Label>
+              <p className="text-xs text-muted-foreground">{t("exportIncludeKnowledgeBaseHint")}</p>
+            </div>
+          </div>
           <DialogFooter>
             <Button
               variant="outline"
@@ -1373,7 +1396,9 @@ export function DocumentsView() {
             </Button>
             <Button
               size="sm"
-              onClick={() => exportDocuments(undefined, exportIncludeObservations)}
+              onClick={() =>
+                exportDocuments(undefined, exportIncludeObservations, exportIncludeKnowledgeBase)
+              }
               disabled={exporting}
             >
               <Download className="h-4 w-4 mr-2" />
