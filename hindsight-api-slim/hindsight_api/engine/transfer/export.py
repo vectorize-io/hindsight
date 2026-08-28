@@ -781,7 +781,7 @@ async def _load_observations(
     """
     rows = await conn.fetch(
         f"""
-            SELECT id, text, tags, created_at, event_date, occurred_start, occurred_end,
+        SELECT id, text, tags, created_at, event_date, occurred_start, occurred_end,
                mentioned_at, observation_scopes, proof_count, source_memory_ids
         FROM {fq_table("memory_units")}
         WHERE bank_id = $1 AND fact_type = 'observation'
