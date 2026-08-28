@@ -252,6 +252,95 @@ class ScanPage:
 
 
 @dataclass
+class RetainDocumentPart:
+    """One consumer batch's worth of a document: its chunk texts and the facts extracted from them.
+
+    The unit the engine already produces. It is deliberately NOT "a whole document": a document's
+    chunks arrive across sub-batches and across extraction completions, and requiring completeness
+    here would either serialise extraction behind it or force the engine to decide when a document
+    is done — a judgement the streaming pipeline is specifically built not to need.
+
+    A part may carry chunk texts, facts, or both, and the engine sends BOTH KINDS SEPARATELY for
+    the same document. That is not a convenience: the streaming producer frees each chunk string as
+    soon as it has been extracted (`all_pre_chunks[i] = ""`), so the texts are only live at the
+    point they are produced, while the facts do not exist until extraction completes. A contract
+    that demanded them together would either pin the whole document in memory for the retain or
+    read back blanked strings. The store merges them per document.
+
+    `chunk_texts` are the texts for `chunk_offset .. chunk_offset + len(chunk_texts)`. The OFFSET is
+    per document, not per call: it is what makes a document's chunk identity independent of which
+    other documents shared the retain, and a store that derives chunk ids from anything else will
+    give the same document different ids depending on its neighbours — silently breaking dedup and
+    delta. See `document_body` for the rest of that contract.
+    """
+
+    document_id: str
+    #: The whole document's text, for the stored body. Every part of one document carries the same
+    #: value, so whichever part is written first can supply it.
+    document_body: str | None
+    content_hash: str
+    chunk_offset: int
+    #: Empty on a facts-only part. A part never carries a PARTIAL chunk list for its offset.
+    chunk_texts: list[str] = field(default_factory=list)
+    facts: list["FactRecord"] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+    #: Entity NAMES per unit_id, unresolved. A store that owns an entity registry resolves them
+    #: itself; one that does not resolves them before calling.
+    entity_names: dict[str, list[str]] = field(default_factory=dict)
+    #: What this part replaces, if anything: `None` replaces nothing, an empty list replaces the
+    #: WHOLE document, and a non-empty list names the chunk ids whose facts go. Only the first part
+    #: of a document may carry it — a later one would tombstone its own siblings.
+    replace_chunk_ids: list[str] | None = None
+
+
+@dataclass
+class RetainResult:
+    """What a committed retain produced, per document."""
+
+    #: unit_id lists keyed by document_id, in the order the facts were added.
+    unit_ids: dict[str, list[str]] = field(default_factory=dict)
+    #: Entities minted (not resolved to existing ones) across the whole retain.
+    new_entities: int = 0
+
+
+class RetainSession:
+    """An in-flight retain. The engine streams parts in; the store decides when to write.
+
+    A session rather than one call because the engine's pipeline overlaps extraction with writes —
+    LLM extraction is the dominant cost when it runs, and a contract of "hand me everything, then I
+    persist" would serialise it away. `add` is called exactly where the engine writes today, so the
+    overlap is unchanged; what moves is WHEN the write happens, which becomes the store's choice.
+
+    That choice is the point. A bulk ingest that runs no LLM should commit ONCE — one WAL entry,
+    one bump of the namespace head, which is what a sustained ingest actually serialises on. A long
+    LLM extraction should not, because committing only at the end means a crash loses all of it.
+    Neither is right in general, so the engine must not decide it.
+
+    Two rules a flush policy has to honour, whatever it decides:
+
+    * **Never memories without their bodies.** A flush must not commit facts whose document record
+      has not landed, or an interrupted retain leaves memories citing chunks that do not exist.
+    * **Bound what an interruption loses.** "Only at the end" is unbounded for a long retain; some
+      progress has to become durable as it accumulates.
+    """
+
+    async def add(self, part: RetainDocumentPart) -> None:
+        """Take one part. May write, may buffer — the caller must not assume either."""
+        raise NotImplementedError
+
+    async def commit(self) -> RetainResult:
+        """Write whatever is still buffered and return what the retain produced."""
+        raise NotImplementedError
+
+    async def abort(self) -> None:
+        """Give up. Anything already flushed STAYS: the store has no cross-entry rollback, and
+        pretending otherwise would be a transaction it cannot honour. Callers get at-least-what-was-
+        flushed, which is the same guarantee an interrupted retain has always had."""
+        return None
+
+
+@dataclass
 class FactRecord:
     """One memory unit, as an implementation that owns the store needs to see it.
 
@@ -638,6 +727,56 @@ class MemoriesExtension(Extension, ABC):
         overrides this to answer PER BANK; every bank-scoped call site consults it rather than the
         attribute."""
         return self.store_owned
+
+    async def put_documents(self, *, bank_id: str, documents: list[dict], expect_watermark: int | None = None) -> None:
+        """Store (or replace) several documents in one call.
+
+        Default is a loop over :meth:`put_document`, so a store gains nothing by not implementing
+        it and no caller has to ask whether it exists. A store whose write is a network round trip
+        overrides this to send one, which is where the saving is.
+
+        Declared HERE rather than left on the provider: a public provider method the seam does not
+        declare is one the engine can never call, and that has shipped twice.
+        """
+        for d in documents:
+            await self.put_document(bank_id=bank_id, expect_watermark=expect_watermark, **d)
+
+    #: True when the store owns the whole persistence half of a retain, via :meth:`begin_retain`.
+    #:
+    #: The seam sits above persistence and below extraction: the engine still chunks, embeds and
+    #: extracts, and the store decides everything after — how many round trips it takes, how chunk
+    #: identity is derived, and what commits atomically with what. A store that sets this is opting
+    #: OUT of the engine's per-document orchestration entirely, not customising a step of it.
+    #:
+    #: Declared here rather than probed with `getattr`, because an attribute only the provider
+    #: knows about is one the engine silently never consults — which has shipped twice.
+    owns_retain_persistence: bool = False
+
+    def owns_retain_persistence_for(self, bank_id: str) -> bool:
+        """Per-bank form, for a router whose banks live in different backends."""
+        return self.owns_retain_persistence
+
+    async def begin_retain(self, *, bank_id: str, config: Any) -> "RetainSession":
+        """Open a retain session. Only a store advertising :attr:`owns_retain_persistence`
+        implements this; the orchestrator calls it instead of driving the writes itself."""
+        raise NotImplementedError
+
+    #: True when the store derives semantic links itself, so retain must not run the SQL pass.
+    #:
+    #: The end-of-retain ANN pass reads every committed unit's embedding out of `memory_units` and
+    #: writes links back. For a store that owns its memories those rows are not in SQL at all: the
+    #: read returns nothing, the pass derives nothing, and all it costs is a connection acquire and
+    #: a query per retain -- against an empty table, on the hot write path.
+    #:
+    #: Declared here rather than read off the provider with `getattr`, because an attribute only
+    #: the provider knows about is one the engine silently never consults -- which is exactly what
+    #: happened: a provider set this and nothing honoured it.
+    derives_semantic_links_internally: bool = False
+
+    def derives_semantic_links_internally_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`derives_semantic_links_internally`, for a router whose banks
+        live in different backends. Defaults to the class attribute."""
+        return self.derives_semantic_links_internally
 
     # -- the knowledge-page index -------------------------------------------
     #

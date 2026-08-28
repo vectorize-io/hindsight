@@ -572,6 +572,7 @@ from .task_backend import TaskBackend
 #                     arm's top hits a slot (used by consolidation dedup recall, where RRF
 #                     buried the near-identical twin below budget). See interleave_fusion.
 RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
+from .retain import timing as _retain_timing_mod
 from .token_encoding import count_tokens as _token_encoding_count
 from .token_encoding import get_token_encoding
 
@@ -4880,6 +4881,7 @@ class MemoryEngine(MemoryEngineInterface):
         return result[0] if result else []
 
     @_bind_bank_id()
+    @_retain_timing_mod.timed_retain
     async def retain_batch_async(
         self,
         bank_id: str,
@@ -5391,6 +5393,23 @@ class MemoryEngine(MemoryEngineInterface):
         config = get_config()
         tokens_per_batch = config.retain_batch_tokens
 
+        # ONE session for the whole retain, whichever path runs. Opened above the split for the
+        # same reason it is opened above the per-document grouping: it is the scope that owns the
+        # retain, and a session per sub-batch would be a commit per sub-batch — the thing this
+        # exists to collapse. `None` means the orchestrator drives the writes itself, which is the
+        # Postgres path and is unchanged.
+        #
+        # The RESOLVED bank config, not the global one: `store_document_text` is bank-configurable
+        # and the global config refuses the access rather than let a per-bank override be silently
+        # ignored.
+        from .memories import get_memories as _get_memories_session
+
+        _store = _get_memories_session()
+        retain_session = None
+        if _store.owns_retain_persistence_for(bank_id):
+            _session_config = await self._resolve_retain_config(bank_id, request_context, strategy)
+            retain_session = await _store.begin_retain(bank_id=bank_id, config=_session_config)
+
         if total_tokens > tokens_per_batch:
             # Split into smaller batches based on token count
             logger.info(
@@ -5525,6 +5544,7 @@ class MemoryEngine(MemoryEngineInterface):
                     document_body_hash=body_hash_,
                     chunk_index_offset=offset_,
                     body_accum=body_accum,
+                    retain_session=retain_session,
                 )
                 return _SubBatchOutcome(index=idx, origins=origins_, results=r, usage=u, processed=pr)
 
@@ -5640,6 +5660,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # chunk texts, which is worse than the per-sub-batch writes this replaces.
                 from .retain.orchestrator import flush_document_bodies
 
+                # The session commits whatever it still holds. In a `finally` for the same reason
+                # the body flush is: a retain that failed part-way must not discard what its
+                # earlier parts produced.
+                if retain_session is not None:
+                    await retain_session.commit()
                 await flush_document_bodies(body_accum)
 
             # Merge in sub-batch order, not completion order, so `per_input_results` is identical
@@ -5671,19 +5696,26 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             # Small batch - use internal method directly (single sub-batch).
             set_stage("batch_retain.sub_batch.1")
-            result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
-                bank_id=bank_id,
-                contents=contents,
-                request_context=request_context,
-                document_id=document_id,
-                is_first_batch=True,
-                fact_type_override=fact_type_override,
-                document_tags=document_tags,
-                operation_id=operation_id,
-                strategy=strategy,
-                outbox_callback=outbox_callback,
-                outbox_callback_factory=outbox_callback_factory,
-            )
+            # In a try/finally for the same reason the split path's commit is: a retain that fails
+            # part-way must not discard what its earlier parts already produced.
+            try:
+                result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
+                    bank_id=bank_id,
+                    contents=contents,
+                    request_context=request_context,
+                    document_id=document_id,
+                    is_first_batch=True,
+                    fact_type_override=fact_type_override,
+                    document_tags=document_tags,
+                    operation_id=operation_id,
+                    strategy=strategy,
+                    outbox_callback=outbox_callback,
+                    outbox_callback_factory=outbox_callback_factory,
+                    retain_session=retain_session,
+                )
+            finally:
+                if retain_session is not None:
+                    await retain_session.commit()
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
 
@@ -5731,6 +5763,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_body_hash: str | None = None,
         chunk_index_offset: int = 0,
         body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
+        retain_session=None,
     ) -> tuple[list[list[str]], "TokenUsage", int | None]:
         """
         Internal method for batch processing without chunking logic.
@@ -5796,6 +5829,7 @@ class MemoryEngine(MemoryEngineInterface):
                 document_body_hash=document_body_hash,
                 chunk_index_offset=chunk_index_offset,
                 body_accum=body_accum,
+                retain_session=retain_session,
                 # Stream chunk-level "storing N/total" progress to the operation row as
                 # the document's chunks commit (more useful than the coarse sub-batch tick).
                 progress_callback=self._write_operation_progress,
@@ -19322,6 +19356,21 @@ class MemoryEngine(MemoryEngineInterface):
             null operation_id) when both queues were already empty.
         """
         await self._authenticate_tenant(request_context)
+
+        # A store that owns its memories queues nothing into either table, so the pre-check below
+        # cannot find work -- it can only cost a pooled connection and a query per retain. Both
+        # `enqueue_relink_victims` and `enqueue_entity_prune_candidates` keep the base
+        # implementation for such a store, and the base returns 0 without writing: there are no
+        # `unit_entities` rows to strand, because the postings travel inside the memory.
+        #
+        # This is NOT the same thing as the entity orphan sweep. That is `prune_orphan_entities`,
+        # a separate admin path, and it is unaffected -- as is `force_sweep`, which is how an
+        # operator drives a pass regardless.
+        if not force_sweep:
+            from .memories import get_memories as _get_memories_maint
+
+            if _get_memories_maint().store_owned_for(bank_id):
+                return {"operation_id": None, "no_work": True}
 
         # Cheap pre-check on the two (bank_id, enqueued_at) indexes. Lets every
         # retain call this unconditionally without paying for an async_operations

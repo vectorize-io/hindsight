@@ -274,6 +274,7 @@ def parse_datetime_flexible(value: Any) -> datetime:
 
 import asyncpg
 
+from ... import config as config_module
 from ..response_models import TokenUsage
 from . import (
     chunk_storage,
@@ -283,6 +284,7 @@ from . import (
     fact_storage,
     link_creation,
 )
+from . import timing as _timing
 from .embedding_coalescer import CoalescingEmbedder
 from .memory_budget import RetainMemoryBudget, estimate_chunk_bytes
 from .types import (
@@ -341,6 +343,13 @@ async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: 
         get_metrics_collector().record_retain_document(bank_id=bank_id, memory_unit_count=total)
     except Exception:
         logger.debug("Failed to record retain document outcome metric", exc_info=True)
+
+
+#: "the narrator has not been resolved yet", which `None` cannot mean: `_resolve_narrator`
+#: returns None for a suppressed narrator, so None is a RESOLVED value. Using None as the
+#: sentinel made every recursive call re-resolve -- and re-read the bank row to do it -- for
+#: exactly the banks where the narrator is suppressed, which is the auto-created default.
+_NARRATOR_UNRESOLVED = object()
 
 
 def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
@@ -636,6 +645,94 @@ def attempts_delta_retain(provider, bank_id: str, is_first_batch: bool) -> bool:
     delta is one `retain` whose replace names the chunks that moved.
     """
     return is_first_batch
+
+
+async def _streaming_session_retain(
+    *,
+    session,
+    bank_id: str,
+    batch_contents: list,
+    batch_extracted: list,
+    batch_processed: list,
+    batch_chunk_meta: list,
+    chunk_index_offset: int,
+    effective_doc_id: str,
+    combined_content: str,
+    content_hash: str | None,
+    merged_tags: list[str] | None,
+    retain_params: dict | None,
+    is_first_batch: bool,
+    doc_tracking_done: list[bool],
+    doc_replace_done: list[bool],
+    entity_resolver,
+    log_buffer: list[str],
+) -> list[list[str]]:
+    """Hand one consumer batch to the store's retain session.
+
+    This is the whole of the engine's persistence work for a store that owns it: mint the unit ids,
+    label the facts, and pass the part along. What used to follow — a document write, a retain
+    write, and the round trips each costs — is the store's business now.
+
+    The unit ids are minted WITHOUT writing (`defer_index`), exactly as the previous path did, so
+    the caller still gets ids to map back to its inputs whether or not the session has committed
+    yet. That is deliberate: the ids are the engine's, and a retain that is still buffering has to
+    be able to answer with them.
+    """
+    from ..memories.base import RetainDocumentPart, build_fact_records
+    from . import fact_storage
+
+    chunk_id_by_index = {}
+    if batch_chunk_meta:
+        chunk_id_by_index = {
+            cm.chunk_index: f"{bank_id}_{effective_doc_id}_{cm.chunk_index}" for cm in batch_chunk_meta
+        }
+    for fact, processed_fact in zip(batch_extracted, batch_processed, strict=True):
+        processed_fact.document_id = effective_doc_id
+        if batch_chunk_meta and fact.chunk_index is not None:
+            cid = chunk_id_by_index.get(fact.chunk_index)
+            if cid:
+                processed_fact.chunk_id = cid
+
+    unit_ids = await fact_storage.insert_facts_batch(None, bank_id, batch_processed, ops=None, defer_index=True)
+    batch_result_ids = _map_results_to_contents(batch_contents, batch_processed, unit_ids or [])
+
+    records = list(build_fact_records(unit_ids or [], batch_processed, effective_doc_id))
+    names = entity_resolver.pending_names_by_unit() if hasattr(entity_resolver, "pending_names_by_unit") else {}
+
+    # Only the FIRST batch of a document may replace: a later one would tombstone the siblings this
+    # same retain just wrote. Latched here, where the replace is actually handed over.
+    replace_chunk_ids = None
+    if is_first_batch and not doc_replace_done[0]:
+        replace_chunk_ids = []  # empty list == replace the whole document
+        doc_replace_done[0] = True
+
+    await session.add(
+        RetainDocumentPart(
+            document_id=effective_doc_id,
+            document_body=combined_content,
+            content_hash=content_hash or "",
+            chunk_offset=chunk_index_offset,
+            # Facts only: the texts were handed over where they were still resident.
+            chunk_texts=[],
+            facts=records,
+            tags=list(merged_tags or []),
+            metadata=({"retain_params": json.dumps(retain_params)} if retain_params else {}),
+            entity_names=names,
+            replace_chunk_ids=replace_chunk_ids,
+        )
+    )
+    # Tracking is complete once the part is handed over, and NOT latching it is data loss rather
+    # than waste: the post-loop finalizer runs `store.delete_document`, which tombstones by
+    # document_id at a LATER seq than the session's entry — the same-entry sparing protects only a
+    # replace INSIDE the atomic write, not a separate tombstone after it. So the finalizer would
+    # delete the very memories this retain just wrote. Set even when a batch produced 0 units: the
+    # document is tracked regardless of what extraction found.
+    doc_tracking_done[0] = True
+
+    log_buffer.append(
+        f"[streaming] session facts doc={effective_doc_id} offset={chunk_index_offset} facts={len(records)}"
+    )
+    return batch_result_ids
 
 
 async def _streaming_store_owned_retain(
@@ -963,7 +1060,8 @@ async def _extract_and_embed(
 
     step_start = time.time()
     augmented_texts = embedding_processing.augment_texts_with_dates(extracted_facts, format_date_fn)
-    embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented_texts)
+    async with _timing.timed("embed"):
+        embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented_texts)
     log_buffer.append(f"  Generate embeddings: {len(embeddings)} embeddings in {time.time() - step_start:.3f}s")
 
     fact_batch = _process_extracted_facts(extracted_facts, embeddings)
@@ -1074,6 +1172,8 @@ async def retain_batch(
     document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
     body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
+    agent_name: "str | None | object" = _NARRATOR_UNRESOLVED,
+    retain_session=None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     webhook_manager: Any = None,
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
@@ -1120,11 +1220,19 @@ async def retain_batch(
     log_buffer.append(f"Batch size: {len(contents_dicts)} content items, {total_chars:,} chars")
     log_buffer.append(f"{'=' * 60}")
 
-    # Get bank profile
-    profile = await bank_utils.get_bank_profile(pool, bank_id)
-    # Suppress the narrator when name == bank_id (auto-create default) — see
-    # _resolve_narrator for why a routing-key narrator pollutes extraction (#1680).
-    agent_name = _resolve_narrator(profile["name"], bank_id)
+    # The bank profile is read for ONE value: the narrator name. A multi-document retain groups
+    # by document and re-enters this function per group (below), so reading it here made it one
+    # read -- and one pooled connection -- PER DOCUMENT rather than per retain. Resolved once by
+    # the outermost call and handed down.
+    #
+    # The sentinel is NOT None: `_resolve_narrator` returns None for a suppressed narrator, so
+    # None is a resolved value and testing for it would re-read on every recursion for precisely
+    # the auto-created banks where suppression applies.
+    if agent_name is _NARRATOR_UNRESOLVED:
+        profile = await bank_utils.get_bank_profile(pool, bank_id)
+        # Suppress the narrator when name == bank_id (auto-create default) — see
+        # _resolve_narrator for why a routing-key narrator pollutes extraction (#1680).
+        agent_name = _resolve_narrator(profile["name"], bank_id)
 
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)
@@ -1181,6 +1289,15 @@ async def retain_batch(
                     webhook_manager=webhook_manager,
                     memory_defense_extension=memory_defense_extension,
                     audit_logger=audit_logger,
+                    # Forward the accumulator. Without it every document in a multi-document
+                    # retain took the non-accumulating branch and wrote its body immediately and
+                    # individually -- so the accumulator only ever applied to the single-oversized-
+                    # document case, and a bulk ingest (the case it matters most for) issued one
+                    # record write per document. Each of those is an append to the namespace's one
+                    # WAL head, which concurrent appends contend for.
+                    body_accum=body_accum,
+                    agent_name=agent_name,
+                    retain_session=retain_session,
                 )
                 for group_idx, orig_idx in enumerate(original_indices[doc_key]):
                     if group_idx < len(group_ids):
@@ -1429,12 +1546,21 @@ async def retain_batch(
     # (e.g. a longer conversation) with older data. This is an optimization — the
     # real correctness guarantee comes from the FOR UPDATE + content_hash check
     # inside each batch TXN (see _run_mini_batch_db_work).
-    async with acquire_with_retry(pool) as conn:
-        doc_row = await conn.fetchrow(
-            f"SELECT updated_at FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-            effective_doc_id,
-            bank_id,
-        )
+    # Skipped for a store that owns its documents: there is no SQL `documents` row to read, so
+    # this always came back None and the check below never fired -- one pool acquire and one query
+    # per document to learn nothing. What actually serializes writers for such a bank is the
+    # store's own compare-and-set (`put_document(expect_watermark=...)`), which is the same thing
+    # the comment above defers to when it calls this best-effort.
+    from ..memories import get_memories as _get_memories_stale
+
+    doc_row = None
+    if not _get_memories_stale().store_owned_for(bank_id):
+        async with acquire_with_retry(pool) as conn:
+            doc_row = await conn.fetchrow(
+                f"SELECT updated_at FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                effective_doc_id,
+                bank_id,
+            )
     if doc_row and doc_row["updated_at"]:
         doc_updated = doc_row["updated_at"].timestamp()
         if doc_updated > start_time:
@@ -1604,6 +1730,7 @@ async def retain_batch(
         document_body_hash=document_body_hash,
         chunk_index_offset=chunk_index_offset,
         body_accum=body_accum,
+        retain_session=retain_session,
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
@@ -1859,21 +1986,40 @@ def _contiguous_prefix(slices: dict[int, list[str]]) -> list[str]:
     return out
 
 
-async def _flush_document_body(acc: DocumentBodyAccumulator, document_id: str, *, force: bool) -> None:
-    """Write the accumulated body if enough has accumulated (or the retain is finishing)."""
+async def _document_body_write_args(acc: DocumentBodyAccumulator, document_id: str, *, force: bool) -> dict | None:
+    """The arguments for this document's next body write, or None if it does not need one.
+
+    Split out from the write itself so the end-of-retain flush can collect several documents'
+    writes and issue them as ONE store call, while the incremental (doubling) flush during the
+    retain still writes as it goes. Both compute the write here, so they cannot diverge.
+
+    Advances `flushed_bytes` and collapses the slice map exactly as writing would: the caller is
+    expected to perform the returned write.
+    """
     meta = acc.meta
     if not meta:
-        return
+        return None
     async with acc.lock:
         chunks = _contiguous_prefix(acc.slices)
         if not chunks:
-            return
+            return None
         pending = sum(len(c) for c in chunks)
-        if pending <= acc.flushed_bytes and not force:
-            return  # nothing new since the last write
+        # Batching mode: hold every write for the end-of-retain flush, which issues them as ONE
+        # store call. Without this the first slice of each document writes immediately and the
+        # final flush has nothing left to batch. See `retain_batch_document_writes` for when this
+        # is the right trade and what it gives up.
+        if not force and config_module.get_config().retain_batch_document_writes:
+            return None
+        # "Nothing new" holds regardless of `force`. force means "write the remainder even though
+        # it has not doubled", not "write again what is already durable" -- and the end-of-retain
+        # flush passes force=True for every document, so without this it re-issued a record write
+        # per document whose body was already fully written. The bodies dedup on hash, but the
+        # RECORD write is still an append to the namespace's WAL head.
+        if pending <= acc.flushed_bytes:
+            return None
         if not force and pending < max(1, 2 * acc.flushed_bytes):
-            return
-        await _store_document_bodies(
+            return None
+        args = dict(
             bank_id=meta.bank_id,
             document_id=document_id,
             content_hash=meta.content_hash,
@@ -1896,13 +2042,76 @@ async def _flush_document_body(acc: DocumentBodyAccumulator, document_id: str, *
         # growing for the rest of the retain. Slices past the write stay keyed where they are.
         rest = {off: sl for off, sl in acc.slices.items() if off >= len(chunks)}
         acc.slices = {0: chunks, **rest}
+        return args
+
+
+async def _flush_document_body(acc: DocumentBodyAccumulator, document_id: str, *, force: bool) -> None:
+    """Write the accumulated body if enough has accumulated (or the retain is finishing)."""
+    args = await _document_body_write_args(acc, document_id, force=force)
+    if args is not None:
+        async with _timing.timed("store.document"):
+            await _store_document_bodies(**args)
 
 
 async def flush_document_bodies(body_accum: dict[str, DocumentBodyAccumulator]) -> None:
-    """Write out every accumulated document body. Call once a retain's sub-batches have all run."""
-    for document_id, acc in list(body_accum.items()):
-        await _flush_document_body(acc, document_id, force=True)
+    """Write out every accumulated document body. Call once a retain's sub-batches have all run.
+
+    Documents whose body is already fully written are skipped, so for a multi-document retain --
+    where each document's chunks arrive in one slice and are written as they arrive -- this is
+    usually a no-op. It matters for a document split across sub-batches whose last slice did not
+    trigger the doubling rule.
+
+    Deliberately one write per document rather than one batched write for all of them: batching
+    them into a single store call was measured SLOWER (892 KB/s against 1,348 KB/s on a 64-document
+    retain). One large call serialises what independent writes overlap, and that overlap is worth
+    more than the WAL-head contention the batch would avoid.
+    """
+    from ..memories import get_memories
+
+    pending = list(body_accum.items())
     body_accum.clear()
+    if not pending:
+        return
+
+    store = get_memories()
+    batch: list[dict] = []
+    for document_id, acc in pending:
+        args = await _document_body_write_args(acc, document_id, force=True)
+        if args is None:
+            continue
+        # A guarded write cannot share a batch's single precondition (the guard is on the
+        # namespace's WAL head, and a batch carries one), and a bank whose documents live in SQL
+        # has no batch call to make. Both go the single-document route.
+        if args["expect_watermark"] is not None or not store.store_owned_for(args["bank_id"]):
+            await _store_document_bodies(**args)
+            continue
+        batch.append(args)
+
+    if not batch:
+        return
+    if len(batch) == 1:
+        await _store_document_bodies(**batch[0])
+        return
+
+    # Assert rather than assume: a batch is one namespace's write, and silently splitting
+    # documents across banks here would write them to whichever bank sorted first.
+    bank_id = batch[0]["bank_id"]
+    assert all(a["bank_id"] == bank_id for a in batch), "flush spans banks"
+    async with _timing.timed("store.document"):
+        await store.put_documents(
+            bank_id=bank_id,
+            documents=[
+                {
+                    "document_id": a["document_id"],
+                    "content_hash": a["content_hash"] or "",
+                    "original_text": (a["combined_content"] if a["config"].store_document_text else None),
+                    "chunk_texts": a["chunk_texts"],
+                    "tags": list(a["merged_tags"] or []),
+                    "metadata": ({"retain_params": json.dumps(a["retain_params"])} if a["retain_params"] else {}),
+                }
+                for a in batch
+            ],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1938,6 +2147,7 @@ async def _streaming_retain_batch(
     document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
     body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
+    retain_session=None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
@@ -2007,22 +2217,29 @@ async def _streaming_retain_batch(
         sanitized_content = ""
     is_recovery = False
 
+    # Same reason as the stale-request check above: the recovery probe reads the SQL `documents`
+    # row and the SQL chunk rows, and a store that owns its documents has neither -- so this found
+    # nothing, `is_recovery` stayed False, and it cost a pool acquire and a query per document.
+    from ..memories import get_memories as _get_memories_recov
+
+    _sql_recovery_possible = not _get_memories_recov().store_owned_for(bank_id)
     try:
-        async with acquire_with_retry(pool) as conn:
-            doc_row = await conn.fetchrow(
-                f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                effective_doc_id,
-                bank_id,
-            )
-            if doc_row and doc_row["content_hash"] == new_content_hash:
-                existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
-                existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
-                if existing_chunk_hashes:
-                    is_recovery = True
-                    log_buffer.append(
-                        f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
-                        f"will skip matching and preserve existing data"
-                    )
+        if _sql_recovery_possible:
+            async with acquire_with_retry(pool) as conn:
+                doc_row = await conn.fetchrow(
+                    f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                    effective_doc_id,
+                    bank_id,
+                )
+                if doc_row and doc_row["content_hash"] == new_content_hash:
+                    existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
+                    existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
+                    if existing_chunk_hashes:
+                        is_recovery = True
+                        log_buffer.append(
+                            f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
+                            f"will skip matching and preserve existing data"
+                        )
     except Exception:
         pass  # If we can't load, just process all chunks
 
@@ -2052,8 +2269,27 @@ async def _streaming_retain_batch(
     # document's chunk texts for the retain and then flush them into a no-op — and worse, it would
     # pin exactly the strings the streaming producer frees as it goes (`all_pre_chunks[i] = ""`).
     from ..memories import get_memories
+    from ..memories.base import RetainDocumentPart
 
-    if body_accum is not None and effective_doc_id and get_memories().store_owned_for(bank_id):
+    # A session owns the document body: it carries the chunk texts in the same entry as the facts,
+    # so accumulating them here as well would write them twice.
+    if retain_session is not None and effective_doc_id:
+        # The chunk texts go to the session HERE, not at the consumer batch: the streaming producer
+        # frees each one as it is extracted (`all_pre_chunks[i] = ""`), so this is the last point
+        # they are live. The facts follow from the consumer batch, and the session merges the two.
+        await retain_session.add(
+            RetainDocumentPart(
+                document_id=effective_doc_id,
+                document_body=combined_content,
+                content_hash=new_content_hash or "",
+                chunk_offset=chunk_index_offset,
+                chunk_texts=list(all_pre_chunks),
+                facts=[],
+                tags=list(merged_tags or []),
+                metadata=({"retain_params": json.dumps(retain_params)} if retain_params else {}),
+            )
+        )
+    elif body_accum is not None and effective_doc_id and get_memories().store_owned_for(bank_id):
         # Accumulating path — see below. Written as the positive branch so `body_accum` and
         # `effective_doc_id` are both narrowed inside it.
         acc = body_accum.get(effective_doc_id)
@@ -2566,24 +2802,61 @@ async def _streaming_retain_batch(
             from ..memories import get_memories
 
             _ext_provider = get_memories()
+            if retain_session is not None:
+                # The store owns persistence: hand it this batch and let it decide when to write.
+                # The session was opened for the WHOLE retain, above the per-document grouping, so
+                # parts from every document accumulate into one commit — the grouping stays and
+                # chunk identity stays document-local, which is what makes this safe.
+                async with _timing.timed("store.retain"):
+                    ext_result_ids = await _streaming_session_retain(
+                        session=retain_session,
+                        bank_id=bank_id,
+                        batch_contents=batch_contents,
+                        batch_extracted=batch_extracted,
+                        batch_processed=batch_processed,
+                        batch_chunk_meta=batch_chunk_meta,
+                        chunk_index_offset=chunk_index_offset,
+                        effective_doc_id=effective_doc_id,
+                        combined_content=combined_content,
+                        content_hash=new_content_hash,
+                        merged_tags=merged_tags,
+                        retain_params=retain_params,
+                        is_first_batch=is_first_batch,
+                        doc_tracking_done=doc_tracking_done,
+                        doc_replace_done=doc_replace_done,
+                        entity_resolver=entity_resolver,
+                        log_buffer=log_buffer,
+                    )
+                combined_content = ""
+                try:
+                    await entity_resolver.flush_pending_stats()
+                except Exception:
+                    logger.warning(
+                        f"Entity stats flush (consumer batch {consumer_batch_idx + 1}) failed", exc_info=True
+                    )
+                for content_ids in ext_result_ids:
+                    all_unit_ids.extend(content_ids)
+                return
+
             if _ext_provider.store_owned_for(bank_id):
-                ext_result_ids = await _streaming_store_owned_retain(
-                    provider=_ext_provider,
-                    pool=pool,
-                    bank_id=bank_id,
-                    batch_contents=batch_contents,
-                    batch_extracted=batch_extracted,
-                    batch_processed=batch_processed,
-                    batch_chunk_meta=batch_chunk_meta,
-                    effective_doc_id=effective_doc_id,
-                    config=config,
-                    log_buffer=log_buffer,
-                    is_first_batch=is_first_batch,
-                    append_base_hash=append_base_hash,
-                    doc_tracking_done=doc_tracking_done,
-                    doc_replace_done=doc_replace_done,
-                    p2_start=p2_start,
-                )
+                async with _timing.timed("store.retain"):
+                    ext_result_ids = await _streaming_store_owned_retain(
+                        provider=_ext_provider,
+                        pool=pool,
+                        bank_id=bank_id,
+                        batch_contents=batch_contents,
+                        batch_extracted=batch_extracted,
+                        batch_processed=batch_processed,
+                        batch_chunk_meta=batch_chunk_meta,
+                        effective_doc_id=effective_doc_id,
+                        config=config,
+                        log_buffer=log_buffer,
+                        is_first_batch=is_first_batch,
+                        append_base_hash=append_base_hash,
+                        doc_tracking_done=doc_tracking_done,
+                        doc_replace_done=doc_replace_done,
+                        p2_start=p2_start,
+                    )
                 # Doc-tracking consumed combined_content on the first batch; release it (mirrors
                 # the Postgres path's first-batch reset).
                 combined_content = ""
@@ -2981,7 +3254,13 @@ async def _streaming_retain_batch(
     # This replaces per-batch within-batch + fire-and-forget ANN with a single
     # efficient pass after all facts are in the database.
     # ---------------------------------------------------------------------------
-    if all_unit_ids and not pipeline_aborted[0]:
+    # A store that derives its own semantic links makes this pass pure waste: the units it would
+    # read are not in `memory_units` at all, so it acquires a connection and queries an empty table
+    # once per retain and derives nothing.
+    from ..memories import get_memories as _get_memories_ann
+
+    _derives_links_itself = _get_memories_ann().derives_semantic_links_internally_for(bank_id)
+    if all_unit_ids and not pipeline_aborted[0] and not _derives_links_itself:
         ann_start = time.time()
         try:
             await _run_final_semantic_ann(
