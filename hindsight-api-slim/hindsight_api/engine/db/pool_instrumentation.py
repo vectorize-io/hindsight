@@ -116,6 +116,18 @@ def _record_acquire_wait(
     except Exception:
         pass
 
+    # Also attribute it to the retain in scope, if there is one, so the pool wait appears in that
+    # retain's own breakdown next to the store and embed phases rather than only as a fleet-wide
+    # histogram. A no-op outside a retain. The CALL COUNT is the load-bearing half here: a retain
+    # that acquires a connection several times per document pays this wait once per acquire, and
+    # that multiplier is invisible in a latency histogram.
+    try:
+        from ..retain.timing import record as _record_retain_phase
+
+        _record_retain_phase("pg.acquire", wait_s)
+    except Exception:
+        pass
+
     if wait_s < warn_threshold_s:
         return
 

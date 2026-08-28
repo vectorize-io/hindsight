@@ -300,6 +300,10 @@ class MetricsCollectorBase:
         """Record how long a caller waited to acquire a pooled DB connection."""
         raise NotImplementedError
 
+    def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a retain."""
+        raise NotImplementedError
+
     def record_loop_stall(self, stall_seconds: float):
         """Record a detected event-loop stall (blocked longer than the watchdog threshold)."""
         raise NotImplementedError
@@ -363,6 +367,9 @@ class NoOpMetricsCollector(MetricsCollectorBase):
 
     def record_db_acquire_wait(self, wait_seconds: float):
         """No-op DB acquire-wait recording."""
+        pass
+
+    def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
         pass
 
     def record_loop_stall(self, stall_seconds: float):
@@ -469,6 +476,22 @@ class MetricsCollector(MetricsCollectorBase):
             name="hindsight.db.pool.acquire_wait",
             description="Time spent waiting to acquire a pooled database connection",
             unit="s",
+        )
+        # Where a retain's wall time goes, per phase. Retain crosses four subsystems -- chunking,
+        # the embedder, the memories store and Postgres -- and until this existed a slow retain in
+        # production could only be attributed by reasoning about which of them was likely, which
+        # got it wrong: the store's share was assumed to be Postgres. Phases overlap when
+        # sub-batches run concurrently, so the sum exceeds the retain's duration by design; read a
+        # phase against `hindsight.retain.duration`, not against the others.
+        self.retain_phase_duration = self.meter.create_histogram(
+            name="hindsight.retain.phase.duration",
+            description="Time attributed to one phase of a retain (phases overlap under concurrency)",
+            unit="s",
+        )
+        self.retain_phase_calls = self.meter.create_counter(
+            name="hindsight.retain.phase.calls",
+            description="Number of times a retain phase ran -- the round-trip count per phase",
+            unit="calls",
         )
         self.event_loop_stalls = self.meter.create_counter(
             name="hindsight.event_loop.stalls",
@@ -720,6 +743,15 @@ class MetricsCollector(MetricsCollectorBase):
     def record_db_acquire_wait(self, wait_seconds: float):
         """Record how long a caller waited to acquire a pooled DB connection."""
         self.db_acquire_wait.record(wait_seconds)
+
+    def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a retain. `store` labels which memories backend served it, so a
+        store-owned bank's profile is separable from a Postgres one on the same deployment."""
+        attrs = {"phase": phase, "tenant": _get_tenant()}
+        if store:
+            attrs["store"] = store
+        self.retain_phase_duration.record(seconds, attrs)
+        self.retain_phase_calls.add(calls, attrs)
 
     def record_loop_stall(self, stall_seconds: float):
         """Record a detected event-loop stall. Called from the watchdog thread."""

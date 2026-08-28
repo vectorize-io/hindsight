@@ -574,6 +574,9 @@ ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
 ENV_LINK_EXPANSION_PER_ENTITY_LIMIT = "HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT"
 ENV_LINK_EXPANSION_TIMEOUT = "HINDSIGHT_API_LINK_EXPANSION_TIMEOUT"
+ENV_RETAIN_BATCH_DOCUMENT_WRITES = "HINDSIGHT_API_RETAIN_BATCH_DOCUMENT_WRITES"
+ENV_BANK_INFO_CACHE_TTL_SECONDS = "HINDSIGHT_API_BANK_INFO_CACHE_TTL_SECONDS"
+ENV_BANK_INFO_CACHE_MAX_ENTRIES = "HINDSIGHT_API_BANK_INFO_CACHE_MAX_ENTRIES"
 ENV_BANK_STATS_CACHE_TTL_SECONDS = "HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS"
 ENV_BANK_STATS_CACHE_MAX_ENTRIES = "HINDSIGHT_API_BANK_STATS_CACHE_MAX_ENTRIES"
 # Request headers copied into RequestContext.extra_headers for extensions to read.
@@ -1269,6 +1272,25 @@ DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
 DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT = 200  # Max target units per entity in graph expansion
 DEFAULT_LINK_EXPANSION_TIMEOUT = 10.0  # Timeout (seconds) for entity expansion query
+# The bank's own row (name/disposition/mission) and its config, cached per process so a
+# store-owned retain -- which writes nothing to Postgres -- need not hold a pooled connection
+# just to re-read them. 30s, not 60: this is read on the WRITE path, so a stale bank config is
+# felt sooner than stale stats, and the reads it saves recur per sub-batch rather than per poll.
+# 0 disables. See engine/bank_info_cache.py for what staleness this does and does not permit.
+# Hold a retain's document-body writes and issue them as ONE store call at the end, instead of
+# writing each document as its slices arrive.
+#
+# Whether this wins depends entirely on what a store round trip costs, so it is a deployment
+# setting and not a constant. Against a local store (~8 ms per RPC) writing as we go is FASTER --
+# one large call serialises what independent writes overlap. Against a deployed store whose
+# objects are in S3 (~466 ms per write RPC) the round trips dominate and the batch wins.
+#
+# It is off by default because it weakens what the incremental write guarantees: a retain
+# interrupted after its memories commit but before the batch lands leaves those memories with no
+# body. Writing as we go bounds that loss to half of what had accumulated.
+DEFAULT_RETAIN_BATCH_DOCUMENT_WRITES = False
+DEFAULT_BANK_INFO_CACHE_TTL_SECONDS = 30.0
+DEFAULT_BANK_INFO_CACHE_MAX_ENTRIES = 2048  # LRU bound across (schema, bank) keys
 DEFAULT_BANK_STATS_CACHE_TTL_SECONDS = 60.0  # TTL for get_bank_stats result cache; 0 disables
 DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) keys
 
@@ -2638,6 +2660,9 @@ class HindsightConfig:
     mental_model_refresh_concurrency: int
     link_expansion_per_entity_limit: int
     link_expansion_timeout: float
+    retain_batch_document_writes: bool
+    bank_info_cache_ttl_seconds: float
+    bank_info_cache_max_entries: int
     bank_stats_cache_ttl_seconds: float
     bank_stats_cache_max_entries: int
 
@@ -3931,6 +3956,16 @@ class HindsightConfig:
                 os.getenv(ENV_LINK_EXPANSION_PER_ENTITY_LIMIT, str(DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT))
             ),
             link_expansion_timeout=float(os.getenv(ENV_LINK_EXPANSION_TIMEOUT, str(DEFAULT_LINK_EXPANSION_TIMEOUT))),
+            retain_batch_document_writes=os.getenv(
+                ENV_RETAIN_BATCH_DOCUMENT_WRITES, str(DEFAULT_RETAIN_BATCH_DOCUMENT_WRITES)
+            ).lower()
+            in ("1", "true", "yes"),
+            bank_info_cache_ttl_seconds=float(
+                os.getenv(ENV_BANK_INFO_CACHE_TTL_SECONDS, str(DEFAULT_BANK_INFO_CACHE_TTL_SECONDS))
+            ),
+            bank_info_cache_max_entries=int(
+                os.getenv(ENV_BANK_INFO_CACHE_MAX_ENTRIES, str(DEFAULT_BANK_INFO_CACHE_MAX_ENTRIES))
+            ),
             bank_stats_cache_ttl_seconds=float(
                 os.getenv(ENV_BANK_STATS_CACHE_TTL_SECONDS, str(DEFAULT_BANK_STATS_CACHE_TTL_SECONDS))
             ),

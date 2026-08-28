@@ -226,8 +226,28 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
     Returns:
         BankProfile if the bank exists, otherwise None.
     """
-    async with acquire_with_retry(pool) as conn:
-        return await get_bank_profile_if_exists_on_conn(conn, bank_id)
+    # Cached per process (see engine/bank_info_cache): on a hit this takes no pooled connection at
+    # all, which is what lets a store-owned retain -- one that writes nothing to Postgres -- run
+    # without touching the pool. A miss reads exactly as before.
+    from .. import bank_info_cache
+
+    async def _load() -> dict:
+        async with acquire_with_retry(pool) as conn:
+            profile = await get_bank_profile_if_exists_on_conn(conn, bank_id)
+        # A dict either way: the cache stores dicts, and "the bank does not exist" has to be
+        # representable or every miss re-reads it.
+        if profile is None:
+            return {}
+        return {"name": profile.name, "disposition": profile.disposition.__dict__, "mission": profile.mission}
+
+    row = await bank_info_cache.get_or_load(bank_id, "profile", _load)
+    if not row:
+        return None
+    return BankProfile(
+        name=row["name"],
+        disposition=DispositionTraits(**row["disposition"]),
+        mission=row["mission"] or "",
+    )
 
 
 async def create_bank_row_on_conn(conn: "DatabaseConnection", bank_id: str, *, ops: "DataAccessOps") -> bool:

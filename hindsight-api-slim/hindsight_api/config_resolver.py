@@ -344,19 +344,38 @@ class ConfigResolver:
         Returns:
             Dict of config overrides (only configurable fields, normalized keys)
         """
-        try:
-            async with self._backend.acquire() as conn:
-                row = await conn.fetchrow(
-                    f"""
-                    SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
-                    """,
-                    bank_id,
-                )
+        # Cached per process (see engine/bank_info_cache). This is read on the WRITE path -- once
+        # per sub-batch of every retain -- and each read takes a pooled connection, whose checkout
+        # and release cost more statements than the query itself. Caching it is what lets a retain
+        # into a store-owned bank, which writes nothing to Postgres, avoid the pool entirely.
+        #
+        # The RAW column is cached, not the resolved overrides: `_active_bank_overrides` filters
+        # by what is configurable and permitted, and that answer can differ between callers of the
+        # same bank. Caching the resolved form would serve one caller's permissions to another.
+        from .engine import bank_info_cache
 
-                if row and row["config"]:
-                    return self._active_bank_overrides(bank_id, row["config"])
-        except Exception as e:
-            logger.error(f"Failed to load bank config for {bank_id}: {e}")
+        async def _read_config_row() -> dict:
+            try:
+                async with self._backend.acquire() as conn:
+                    row = await conn.fetchrow(
+                        f"""
+                        SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
+                        """,
+                        bank_id,
+                    )
+                # Wrapped in a dict because the cache stores dicts; `{}` means "no row, or no
+                # config", which is also what this function returns for that case anyway.
+                return {"config": row["config"]} if row and row["config"] else {}
+            except Exception as e:
+                logger.error(f"Failed to load bank config for {bank_id}: {e}")
+                # Re-raise nothing: the original swallowed this and returned {}. Returning the
+                # empty dict keeps that behaviour, but it must NOT be cached as if it were an
+                # answer -- bank_info_cache drops empty values for exactly this reason.
+                return {}
+
+        cached = await bank_info_cache.get_or_load(bank_id, "config", _read_config_row)
+        if cached.get("config"):
+            return self._active_bank_overrides(bank_id, cached["config"])
 
         return {}
 
