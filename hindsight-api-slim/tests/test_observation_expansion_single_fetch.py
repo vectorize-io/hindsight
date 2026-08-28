@@ -82,9 +82,12 @@ async def _insert_entity(conn, table: str, bank_id: str, name: str) -> uuid.UUID
     return entity_id
 
 
-async def _insert_link(conn, table: str, from_unit: uuid.UUID, to_unit: uuid.UUID, link_type: str, weight: float):
+async def _insert_link(
+    conn, table: str, bank_id: str, from_unit: uuid.UUID, to_unit: uuid.UUID, link_type: str, weight: float
+):
     await conn.execute(
-        f"INSERT INTO {table} (from_unit_id, to_unit_id, link_type, weight) VALUES ($1, $2, $3, $4)",
+        f"INSERT INTO {table} (bank_id, from_unit_id, to_unit_id, link_type, weight) VALUES ($1, $2, $3, $4, $5)",
+        bank_id,
         from_unit,
         to_unit,
         link_type,
@@ -126,13 +129,13 @@ async def _build_overlap_bank(conn, mu, ue, ml, bank_id: str, entities_table: st
 
     sem = await _insert_unit(conn, mu, bank_id, "semantic neighbour", "observation")
     caus = await _insert_unit(conn, mu, bank_id, "causal neighbour", "observation")
-    await _insert_link(conn, ml, s1, sem, "semantic", 0.5)
-    await _insert_link(conn, ml, s2, sem, "semantic", 0.8)
-    await _insert_link(conn, ml, s1, caus, "causes", 0.9)
-    await _insert_link(conn, ml, s1, caus, "enables", 0.6)
-    await _insert_link(conn, ml, s2, caus, "causes", 0.7)
+    await _insert_link(conn, ml, bank_id, s1, sem, "semantic", 0.5)
+    await _insert_link(conn, ml, bank_id, s2, sem, "semantic", 0.8)
+    await _insert_link(conn, ml, bank_id, s1, caus, "causes", 0.9)
+    await _insert_link(conn, ml, bank_id, s1, caus, "enables", 0.6)
+    await _insert_link(conn, ml, bank_id, s2, caus, "causes", 0.7)
     # A world fact must never come back, however strongly it is linked.
-    await _insert_link(conn, ml, s1, f2, "semantic", 0.95)
+    await _insert_link(conn, ml, bank_id, s1, f2, "semantic", 0.95)
 
     return {
         "s1": s1,
@@ -293,13 +296,15 @@ async def test_time_window_binds_every_fused_arm(memory, request_context):
                 stale,
                 datetime.now(timezone.utc) - timedelta(days=30),
             )
-            await _insert_link(conn, ml, seed, fresh, "semantic", 0.7)
-            await _insert_link(conn, ml, seed, stale, "semantic", 0.7)
-            await _insert_link(conn, ml, seed, fresh, "causes", 0.6)
-            await _insert_link(conn, ml, seed, stale, "causes", 0.9)
+            await _insert_link(conn, ml, bank_id, seed, fresh, "semantic", 0.7)
+            await _insert_link(conn, ml, bank_id, seed, stale, "semantic", 0.7)
+            await _insert_link(conn, ml, bank_id, seed, fresh, "causes", 0.6)
+            await _insert_link(conn, ml, bank_id, seed, stale, "causes", 0.9)
 
             now = datetime.now(timezone.utc)
-            window = UpdatedWindow(after=now - timedelta(minutes=5), before=now + timedelta(minutes=5), first_param_index=3)
+            window = UpdatedWindow(
+                after=now - timedelta(minutes=5), before=now + timedelta(minutes=5), first_param_index=3
+            )
             rows = await backend.ops.expand_observations(conn, mu, ue, ml, [seed], 100, 200, window)
 
             assert {r["id"] for r in rows.entity} == {fresh}, "stale observations must not re-enter via shared sources"
@@ -346,8 +351,8 @@ async def test_seed_without_sources_keeps_semantic_and_causal_arms(memory, reque
             seed = await _insert_unit(conn, mu, bank_id, "source-less seed", "observation", None)
             sem = await _insert_unit(conn, mu, bank_id, "semantic neighbour", "observation")
             caus = await _insert_unit(conn, mu, bank_id, "causal neighbour", "observation")
-            await _insert_link(conn, ml, seed, sem, "semantic", 0.8)
-            await _insert_link(conn, ml, seed, caus, "causes", 0.6)
+            await _insert_link(conn, ml, bank_id, seed, sem, "semantic", 0.8)
+            await _insert_link(conn, ml, bank_id, seed, caus, "causes", 0.6)
 
             rows = await backend.ops.expand_observations(
                 conn,
@@ -395,10 +400,14 @@ async def test_postgresql_fused_query_is_one_statement():
     assert conn.fetch.await_count == 1, "the fused observation expansion must be one fetch"
     sql = conn.fetch.await_args.args[0]
     params = conn.fetch.await_args.args[1:]
+    normalized_sql = " ".join(sql.split())
 
     # One statement, ending in the three-arm union behind source discriminators.
     assert ";" not in sql, "the fused query must be a single statement"
-    assert "SELECT * FROM observation_entity_expanded UNION ALL SELECT * FROM semantic_expanded UNION ALL SELECT * FROM causal_expanded" in sql
+    assert (
+        "SELECT * FROM observation_entity_expanded UNION ALL SELECT * FROM semantic_expanded UNION ALL SELECT * FROM causal_expanded"
+        in normalized_sql
+    )
     for discriminator in ("'entity'::text AS source", "'semantic'::text AS source", "'causal'::text AS source"):
         assert discriminator in sql
     # The entity arm is a CTE of the same statement, not a separate fetch.
@@ -437,10 +446,14 @@ async def test_oracle_fused_query_is_one_statement():
     assert conn.fetch.await_count == 1, "the fused observation expansion must be one fetch"
     sql = conn.fetch.await_args.args[0]
     params = conn.fetch.await_args.args[1:]
+    normalized_sql = " ".join(sql.split())
 
     # One statement, ending in the three-arm union behind source discriminators.
     assert ";" not in sql, "the fused query must be a single statement"
-    assert "SELECT * FROM observation_entity_expanded UNION ALL SELECT * FROM semantic_expanded UNION ALL SELECT * FROM causal_expanded" in sql
+    assert (
+        "SELECT * FROM observation_entity_expanded UNION ALL SELECT * FROM semantic_expanded UNION ALL SELECT * FROM causal_expanded"
+        in normalized_sql
+    )
     for discriminator in ("'entity' AS source", "'semantic' AS source", "'causal' AS source"):
         assert discriminator in sql
     # The entity arm is a CTE of the same statement, not a separate fetch.
