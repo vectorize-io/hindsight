@@ -756,6 +756,20 @@ class MemoriesExtension(Extension, ABC):
         """Per-bank form, for a router whose banks live in different backends."""
         return self.owns_retain_persistence
 
+    async def get_document_records(self, *, bank_id: str, document_ids: list[str]) -> dict[str, dict]:
+        """Several documents' metadata in one read, keyed by document_id; absent ones omitted.
+
+        Default is a loop over :meth:`get_document_record`, so a store gains nothing by not
+        implementing it and no caller has to ask whether it exists. A store whose read is a network
+        round trip overrides this to send one.
+        """
+        out: dict[str, dict] = {}
+        for did in document_ids:
+            rec = await self.get_document_record(bank_id=bank_id, document_id=did)
+            if rec is not None:
+                out[did] = rec
+        return out
+
     async def begin_retain(self, *, bank_id: str, config: Any) -> "RetainSession":
         """Open a retain session. Only a store advertising :attr:`owns_retain_persistence`
         implements this; the orchestrator calls it instead of driving the writes itself."""

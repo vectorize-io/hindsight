@@ -1192,6 +1192,7 @@ async def retain_batch(
     body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
     agent_name: "str | None | object" = _NARRATOR_UNRESOLVED,
     retain_session=None,
+    document_prefetch: "dict[str, dict] | None" = None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     webhook_manager: Any = None,
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
@@ -1278,6 +1279,20 @@ async def retain_batch(
             result_unit_ids: list[list[str]] = [[] for _ in contents_dicts]
             total_usage = TokenUsage()
             total_processed_tokens: int | None = 0
+            # One read for every document this retain touches, before the groups fan out. The
+            # delta check needs each document's stored hashes, and it needs them BEFORE extraction
+            # — so it cannot ride the write. What it can do is happen once: asking per document
+            # was a round trip per document on a path whose cost is round trips.
+            #
+            # A miss is as meaningful as a hit here (the document is new), so the prefetch records
+            # BOTH: the dict is what was found, and `prefetched` is the fact that we asked.
+            if retain_session is not None and document_prefetch is None:
+                from ..memories import get_memories as _gm_prefetch
+
+                document_prefetch = await _gm_prefetch().get_document_records(
+                    bank_id=bank_id, document_ids=sorted(groups.keys())
+                )
+
             # Without sub-batching there is nothing else running these in parallel, so the groups
             # do it themselves. Hardcoded rather than a knob: it is not a capacity dial, it is how
             # many documents of ONE retain may be in flight, and the retain is already bounded by
@@ -1329,6 +1344,7 @@ async def retain_batch(
                     body_accum=body_accum,
                     agent_name=agent_name,
                     retain_session=retain_session,
+                    document_prefetch=document_prefetch,
                 )
                 # Returned rather than merged in place: the groups may run concurrently, and the
                 # usage totals are not safe to accumulate from several tasks at once. The driver
@@ -1692,6 +1708,7 @@ async def retain_batch(
             schema,
             outbox_callback,
             db_semaphore,
+            document_prefetch=document_prefetch,
             document_body_override=document_body_override,
             delta_full_body=_delta_full_body,
             append_base_hash=append_base_hash,
@@ -1770,6 +1787,7 @@ async def retain_batch(
         chunk_index_offset=chunk_index_offset,
         body_accum=body_accum,
         retain_session=retain_session,
+        document_prefetch=document_prefetch,
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
@@ -2187,6 +2205,7 @@ async def _streaming_retain_batch(
     chunk_index_offset: int = 0,
     body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
     retain_session=None,
+    document_prefetch: "dict[str, dict] | None" = None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
@@ -3400,6 +3419,7 @@ async def _try_delta_retain(
     schema,
     outbox_callback,
     db_semaphore: "asyncio.Semaphore | None" = None,
+    document_prefetch: "dict[str, dict] | None" = None,
     *,
     document_body_override: str | None = None,
     # The complete body to diff against, when the caller could establish one. Distinct from
@@ -3461,11 +3481,18 @@ async def _try_delta_retain(
         # asked for it, and the watermark the write below compare-and-sets against. All three come
         # from THIS record: un-pairing the watermark from the hash is what the CAS exists to
         # prevent.
-        record = await _delta_store.get_document_record(
-            bank_id=bank_id,
-            document_id=effective_doc_id,
-            include_text=document_body_override is not None,
-        )
+        # The prefetch answered this for every document of the retain in one read. It is used ONLY
+        # when no text is wanted: the prefetch deliberately carries no bodies, and an append needs
+        # the stored text, so that case still reads its own record. Absent from the prefetch means
+        # the document does not exist — which is an answer, not a miss to retry.
+        if document_prefetch is not None and document_body_override is None:
+            record = document_prefetch.get(effective_doc_id)
+        else:
+            record = await _delta_store.get_document_record(
+                bank_id=bank_id,
+                document_id=effective_doc_id,
+                include_text=document_body_override is not None,
+            )
         doc_hash_at_load = (record or {}).get("content_hash")
         doc_watermark_at_load = (record or {}).get("watermark")
         original_text_at_load = (record or {}).get("original_text") if document_body_override is not None else None
