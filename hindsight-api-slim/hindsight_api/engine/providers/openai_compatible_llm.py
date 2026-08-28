@@ -496,10 +496,12 @@ def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
     retry_candidates: list[datetime] = []
     response = getattr(e, "response", None)
     headers = getattr(response, "headers", None)
+    has_future_retry_after = False
     if headers is not None:
         retry_at = _parse_retry_after_header(headers.get("retry-after") or headers.get("Retry-After"), now)
         if retry_at is not None and retry_at > now:
             retry_candidates.append(retry_at)
+            has_future_retry_after = True
 
         # Requests, tokens, and longer body-reported quotas are independent
         # budgets. Collect every future reset so a full/near-full header budget
@@ -538,7 +540,10 @@ def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
             if retry_at > now:
                 body_retry_at = retry_at
 
-    if body_retry_at is not None:
+    # Retry-After is an explicit server instruction and must not be extended
+    # by a less reliable, free-text error message. Body hints remain useful
+    # alongside reset headers when Retry-After is absent.
+    if body_retry_at is not None and not has_future_retry_after:
         retry_candidates.append(body_retry_at)
     return max(retry_candidates, default=None)
 
