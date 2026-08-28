@@ -24,10 +24,19 @@ import uuid
 
 import pytest
 
+# These seed `graph_maintenance_queue` / `entity_maintenance_queue` with raw SQL and assert the
+# dedup behaviour of the rows they put there. A store that owns its memories has no such rows --
+# the entity postings travel inside the memory, so `submit_async_graph_maintenance` short-circuits
+# with `no_work` before any queue is consulted (see the store_owned_for branch in the engine). The
+# dedup they pin is Postgres-queue behaviour, not engine behaviour.
+
 from hindsight_api.engine.memories.base import RelinkPassResult
 from hindsight_api.engine.memory_engine import MemoryEngine
 
-pytestmark = pytest.mark.xdist_group("graph_maintenance_submit_dedup_tests")
+pytestmark = [
+    pytest.mark.memory_backend_incompatible,
+    pytest.mark.xdist_group("graph_maintenance_submit_dedup_tests"),
+]
 
 
 async def _progress_relink():

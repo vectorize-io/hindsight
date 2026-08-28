@@ -19,6 +19,13 @@ from hindsight_api.engine import memory_engine as engine_mod
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain import embedding_utils
 
+# Every assertion here reads the SQL this search emitted (`search.conn.queries`). A store that owns
+# the knowledge index answers the search itself and emits none, so these assert a Postgres-internal
+# detail rather than the behaviour -- which is exactly what this marker is for. The behaviour they
+# guard (which arms run for each enable_text_search/embedding combination) is covered against a
+# store-owned index by the extension's own suite.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 class _CapturingConn:
     """Records the SQL the search emitted; returns no rows."""
@@ -74,6 +81,9 @@ def search(monkeypatch):
             lambda: SimpleNamespace(
                 text_search_extension="native",
                 text_search_extension_pg_search_function_schema="paradedb",
+                # A store that namespaces by schema reads this on the way to its namespace, so the
+                # stub has to carry it or the call fails before reaching what is under test.
+                database_schema="public",
             ),
         )
         resolved.clear()

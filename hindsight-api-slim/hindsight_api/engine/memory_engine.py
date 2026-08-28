@@ -3502,13 +3502,21 @@ class MemoryEngine(MemoryEngineInterface):
                     # by the transaction this callback is queued in are already
                     # visible. A zero here is the signal that the document
                     # extracted no facts and needs a reprocess to be found (#3040).
-                    data = data.model_copy(
-                        update={
-                            "memory_unit_count": await fact_storage.count_document_memory_units(
-                                conn, bank_id, data.document_id
-                            )
-                        }
-                    )
+                    # A store that owns its memories keeps no `memory_units` rows, so counting
+                    # them on this connection reports 0 for every document and the webhook
+                    # tells every consumer the document extracted nothing. Ask the store,
+                    # which is where the memories actually are; the SQL path is unchanged.
+                    from .memories import get_memories as _gm_count
+
+                    _mem = _gm_count()
+                    if _mem.store_owned_for(bank_id):
+                        _counts = await _mem.document_memory_counts(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=[data.document_id]
+                        )
+                        _count = int(_counts.get(data.document_id, 0))
+                    else:
+                        _count = await fact_storage.count_document_memory_units(conn, bank_id, data.document_id)
+                    data = data.model_copy(update={"memory_unit_count": _count})
                 event = WebhookEvent(
                     event=WebhookEventType.RETAIN_COMPLETED,
                     bank_id=bank_id,
