@@ -493,45 +493,54 @@ def _parse_reset_at_datetime(value: str) -> datetime | None:
 
 def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
     now = datetime.now(UTC)
+    retry_candidates: list[datetime] = []
     response = getattr(e, "response", None)
     headers = getattr(response, "headers", None)
     if headers is not None:
         retry_at = _parse_retry_after_header(headers.get("retry-after") or headers.get("Retry-After"), now)
         if retry_at is not None and retry_at > now:
-            return retry_at
+            retry_candidates.append(retry_at)
 
-        # Requests and tokens are independent budgets that can reset at
-        # different times; wait for whichever one clears later.
-        reset_seconds = []
+        # Requests, tokens, and longer body-reported quotas are independent
+        # budgets. Collect every future reset so a full/near-full header budget
+        # cannot hide a longer daily or usage-cap window reported in the body.
+        reset_seconds: list[float] = []
         for key in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
             if key in headers:
                 seconds = _parse_go_duration_seconds(headers[key])
-                if seconds is not None:
+                if seconds is not None and seconds > 0:
                     reset_seconds.append(seconds)
         if reset_seconds:
-            return now + timedelta(seconds=max(reset_seconds))
+            retry_candidates.append(now + timedelta(seconds=max(reset_seconds)))
 
     body_text = _status_error_body_text(e)
+    body_retry_at: datetime | None = None
     reset_match = _RATE_LIMIT_RESET_AT_RE.search(body_text)
     if reset_match:
         retry_at = _parse_reset_at_datetime(reset_match.group("reset_at"))
         if retry_at is not None and retry_at > now:
-            return retry_at
+            body_retry_at = retry_at
 
-    window_match = _RATE_LIMIT_WINDOW_RE.search(body_text)
-    if not window_match:
-        return None
-    amount = int(window_match.group("amount"))
-    unit = window_match.group("unit").lower()
-    if unit == "second":
-        seconds = amount
-    elif unit == "minute":
-        seconds = amount * 60
-    elif unit == "hour":
-        seconds = amount * 3600
-    else:
-        seconds = amount * 86400
-    return now + timedelta(seconds=seconds)
+    if body_retry_at is None:
+        window_match = _RATE_LIMIT_WINDOW_RE.search(body_text)
+        if window_match:
+            amount = int(window_match.group("amount"))
+            unit = window_match.group("unit").lower()
+            if unit == "second":
+                seconds = amount
+            elif unit == "minute":
+                seconds = amount * 60
+            elif unit == "hour":
+                seconds = amount * 3600
+            else:
+                seconds = amount * 86400
+            retry_at = now + timedelta(seconds=seconds)
+            if retry_at > now:
+                body_retry_at = retry_at
+
+    if body_retry_at is not None:
+        retry_candidates.append(body_retry_at)
+    return max(retry_candidates, default=None)
 
 
 def _raise_provider_quota_defer(
