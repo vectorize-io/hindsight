@@ -12,9 +12,16 @@ assert on the generated SQL, the way ``test_multilingual_bm25`` does.
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from hindsight_api._text_search import mental_models_text_document
 from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
 from hindsight_api.engine.sql.postgresql import KnowledgeBm25Arm, knowledge_bm25_arm
+
+# Asserts the SQL text this dispatch emits -- the `$3::text` bind and the absence of
+# `search_vector`. A store that owns the knowledge index emits no SQL at all, so there is nothing
+# here for the assertions to read.
+pytestmark = pytest.mark.memory_backend_incompatible
 
 
 def _cfg(ext: str) -> SimpleNamespace:

@@ -6,6 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+# The mental-model tool cases assert the SQL predicate the tool builds
+# (`(tags IS NULL OR tags = '{}')`) off a mocked connection. A store that owns those rows is never
+# handed that connection and builds no such query, so the assertion has no subject.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 from hindsight_api.engine.reflect.agent import _execute_tool, _summarize_input
 from hindsight_api.engine.reflect.tools import (
     _document_metadata_from_retain_params,
