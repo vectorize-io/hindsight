@@ -1053,6 +1053,23 @@ class OpenAICompatibleLLM(LLMInterface):
                                 f"  Content preview: {content_preview!r}\n"
                                 f"  Finish reason: {_finish_reason_for_choice(first_choice)}"
                             )
+                            # A token cap is not a malformed response, and
+                            # repair is the wrong answer to it.
+                            # chat.completions.create returns truncated content
+                            # with finish_reason "length" rather than raising, so
+                            # without this the body reaches json_repair, the open
+                            # braces get closed, and a SHORTER list validates and
+                            # returns as a success with the missing entries
+                            # unrecorded. Raised before the retry ladder because
+                            # the cap is deterministic: a re-roll truncates in the
+                            # same place, and the caller can only split the input
+                            # once it hears about the cap. Same guard, same
+                            # reason, as litellm_llm.py.
+                            if _finish_reason_for_choice(first_choice) == "length":
+                                raise OutputTooLongError(
+                                    "LLM output was truncated by the token limit. Input may "
+                                    "need to be split into smaller chunks."
+                                ) from json_err
                             # Retry on JSON parse errors, but only while a fresh
                             # generation could still produce something different.
                             # Every attempt re-sends a byte-identical request, so
@@ -1676,6 +1693,15 @@ class OpenAICompatibleLLM(LLMInterface):
                                     f"  Content length: {len(content) if content else 0} chars\n"
                                     f"  Content preview: {content_preview!r}"
                                 )
+                                # Same reasoning as the compatible path: Ollama
+                                # reports a cap-truncated body as done_reason
+                                # "length", read below for the trace span, and a
+                                # re-roll against the same cap truncates alike.
+                                if result.get("done_reason") == "length":
+                                    raise OutputTooLongError(
+                                        "LLM output was truncated by the token limit. Input may "
+                                        "need to be split into smaller chunks."
+                                    ) from json_err
                                 repeated = content == last_parse_content
                                 last_parse_content = content
                                 if attempt < max_retries and not repeated:
@@ -1686,7 +1712,11 @@ class OpenAICompatibleLLM(LLMInterface):
                                 # Same last-resort repair as the OpenAI-compatible
                                 # path above; this parses identically and had the
                                 # identical gap.
-                                json_data = parse_llm_json(content)
+                                try:
+                                    json_data = parse_llm_json(content)
+                                except json.JSONDecodeError:
+                                    logger.error(f"Ollama JSON parse error after {attempt + 1} attempts, giving up")
+                                    raise
 
                     # Extract token usage from Ollama response
                     duration = time.time() - start_time
