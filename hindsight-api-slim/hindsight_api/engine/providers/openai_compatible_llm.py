@@ -1796,6 +1796,11 @@ class OpenAICompatibleLLM(LLMInterface):
                         logger.error(f"Ollama connection error after {max_retries + 1} attempts: {e}")
                         raise
 
+                except OutputTooLongError:
+                    # Expected and handled upstream by splitting the input, so it
+                    # does not belong in the unexpected-error log below.
+                    raise
+
                 except Exception as e:
                     logger.error(f"Unexpected error during Ollama call: {type(e).__name__}: {e}")
                     raise
