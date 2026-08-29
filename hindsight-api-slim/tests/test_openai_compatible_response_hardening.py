@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -9,6 +10,11 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
+from hindsight_api.engine.llm_trace import (
+    current_response_usage,
+    reset_response_usage,
+    set_response_usage,
+)
 from hindsight_api.engine.providers.openai_compatible_llm import (
     OpenAICompatibleLLM,
     OutputTooLongError,
@@ -315,10 +321,14 @@ async def test_a_changed_response_still_earns_a_fresh_generation():
 
 @pytest.mark.asyncio
 async def test_ollama_native_repairs_malformed_json_instead_of_dropping_it():
-    """The native /api/chat path parses the same way and had the same gap (#3683)."""
+    """The native /api/chat path parses the same way and had the same gap (#3683).
+
+    ``done_reason="stop"`` is what real Ollama sends on a completed generation,
+    and repair is gated on it.
+    """
     llm = _ollama_llm()
     mock_client = AsyncMock()
-    mock_client.post.return_value = _ollama_response('{"ok": true,}')
+    mock_client.post.return_value = _ollama_response('{"ok": true,}', done_reason="stop")
     mock_client.__aenter__.return_value = mock_client
 
     with (
@@ -517,3 +527,111 @@ def test_rate_limit_retry_at_uses_latest_header_or_body_reset(
     assert retry_at is not None
     wait = (retry_at - datetime.now(UTC)).total_seconds()
     assert expected_seconds - 1 < wait <= expected_seconds + 1
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_list_is_not_repaired_when_the_provider_omits_finish_reason():
+    """Repair needs positive evidence the generation finished (#3683).
+
+    ``json_repair`` closes an unterminated string and list by inventing the
+    terminators, so ``{"facts": ["alpha", "beta", "gam`` becomes a valid
+    two-and-a-bit-entry answer. A proxy that omits finish_reason gives no
+    evidence either way, and guessing there would turn a truncation into a
+    short result reported as complete.
+    """
+    llm = _llm()
+    truncated = '{"facts": ["alpha", "beta", "gam'
+    create = AsyncMock(return_value=_response(content=truncated, finish_reason=None))
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        with pytest.raises(json.JSONDecodeError):
+            await llm.call(
+                messages=[{"role": "user", "content": "List the facts."}],
+                response_format=FactListResponse,
+                max_retries=0,
+                initial_backoff=0,
+            )
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_finish_reason_does_not_earn_a_repair():
+    """An unrecognised reason is not a completion signal either."""
+    llm = _llm()
+    create = AsyncMock(return_value=_response(content='{"facts": ["alpha", "gam', finish_reason="incomplete"))
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        with pytest.raises(json.JSONDecodeError):
+            await llm.call(
+                messages=[{"role": "user", "content": "List the facts."}],
+                response_format=FactListResponse,
+                max_retries=0,
+                initial_backoff=0,
+            )
+
+
+@pytest.mark.asyncio
+async def test_ollama_does_not_repair_a_truncated_list_without_done_reason():
+    """The native path is gated the same way."""
+    llm = _ollama_llm()
+    mock_client = AsyncMock()
+    mock_client.post.return_value = _ollama_response('{"facts": ["alpha", "beta", "gam')
+    mock_client.__aenter__.return_value = mock_client
+
+    with (
+        patch(
+            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
+            return_value=mock_client,
+        ),
+        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
+    ):
+        with pytest.raises(json.JSONDecodeError):
+            await llm.call(
+                messages=[{"role": "user", "content": "List the facts."}],
+                response_format=FactListResponse,
+                max_retries=0,
+                initial_backoff=0,
+            )
+
+
+@pytest.mark.asyncio
+async def test_ollama_records_usage_for_a_capped_response_before_raising():
+    """A capped call still cost tokens, and those are the expensive calls.
+
+    The done_reason guard raises before the usage extraction further down, so
+    without stashing here the most expensive responses would be the ones missing
+    from accounting.
+    """
+    llm = _ollama_llm()
+    mock_client = AsyncMock()
+    body = _ollama_response('{"facts": ["alpha", "beta", "gam', done_reason="length")
+    payload = json.loads(body.content)
+    payload["prompt_eval_count"] = 1234
+    payload["eval_count"] = 567
+    request = httpx.Request("POST", "http://localhost:11434/api/chat")
+    mock_client.post.return_value = httpx.Response(200, json=payload, request=request)
+    mock_client.__aenter__.return_value = mock_client
+
+    token = set_response_usage(None)
+    try:
+        with (
+            patch(
+                "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+            patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
+        ):
+            with pytest.raises(OutputTooLongError):
+                await llm.call(
+                    messages=[{"role": "user", "content": "List the facts."}],
+                    response_format=FactListResponse,
+                    max_retries=0,
+                    initial_backoff=0,
+                )
+        usage = current_response_usage()
+        assert usage is not None
+        assert usage.input_tokens == 1234
+        assert usage.output_tokens == 567
+    finally:
+        reset_response_usage(token)

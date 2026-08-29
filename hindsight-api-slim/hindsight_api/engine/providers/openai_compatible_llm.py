@@ -276,6 +276,14 @@ def _summarize_provider_error_payload(error: Any, max_len: int = 400) -> str:
     return summary
 
 
+# Finish reasons that positively say a generation ran to its own end. Repair is
+# gated on one of these because json_repair closes an unterminated string or list
+# by inventing the terminator, so repairing a body that may have been cut turns a
+# loud failure into a short answer reported as a complete one. A missing or
+# unrecognised reason is not evidence of completion.
+_COMPLETED_FINISH_REASONS = frozenset({"stop", "tool_calls", "function_call", "end_turn"})
+
+
 def _finish_reason_for_choice(choice: Any) -> Any:
     return _response_get(choice, "finish_reason")
 
@@ -1123,9 +1131,19 @@ class OpenAICompatibleLLM(LLMInterface):
                                 continue
                             # Retry budget spent. Repair structurally as a
                             # last resort, the way litellm_llm.py has since
-                            # #2547/#2544. json_repair is already a dependency
-                            # and raises again when the content is genuinely
-                            # unrecoverable.
+                            # #2547/#2544, but only for a generation that
+                            # reported reaching its own end. Without that,
+                            # a provider that omits finish_reason would have a
+                            # truncated body repaired into schema-valid partial
+                            # data.
+                            if _finish_reason_for_choice(first_choice) not in _COMPLETED_FINISH_REASONS:
+                                logger.error(
+                                    f"JSON parse error after {attempt + 1} attempts and no "
+                                    f"completion signal (finish_reason="
+                                    f"{_finish_reason_for_choice(first_choice)!r}); "
+                                    "not repairing, the body may be truncated"
+                                )
+                                raise
                             try:
                                 json_data = parse_llm_json(content)
                             except json.JSONDecodeError:
@@ -1691,6 +1709,16 @@ class OpenAICompatibleLLM(LLMInterface):
                     response.raise_for_status()
 
                     result = response.json()
+                    # Stash usage before the guards below, which can raise on a
+                    # capped response. Ollama charges for those tokens and the
+                    # capped calls are the expensive ones, so raising first would
+                    # drop exactly the calls worth accounting for.
+                    stash_response_usage(
+                        LLMResponseUsage(
+                            input_tokens=result.get("prompt_eval_count", 0) or 0,
+                            output_tokens=result.get("eval_count", 0) or 0,
+                        )
+                    )
                     content = result.get("message", {}).get("content", "")
 
                     if response_format is None:
@@ -1741,8 +1769,16 @@ class OpenAICompatibleLLM(LLMInterface):
                                     last_exception = json_err
                                     continue
                                 # Same last-resort repair as the
-                                # OpenAI-compatible path above; this parses
-                                # identically and had the identical gap.
+                                # OpenAI-compatible path above, gated the same
+                                # way: only a generation that reported reaching
+                                # its own end gets structurally repaired.
+                                if result.get("done_reason") not in _COMPLETED_FINISH_REASONS:
+                                    logger.error(
+                                        f"Ollama JSON parse error after {attempt + 1} attempts and no "
+                                        f"completion signal (done_reason={result.get('done_reason')!r}); "
+                                        "not repairing, the body may be truncated"
+                                    )
+                                    raise
                                 try:
                                     json_data = parse_llm_json(content)
                                 except json.JSONDecodeError:
