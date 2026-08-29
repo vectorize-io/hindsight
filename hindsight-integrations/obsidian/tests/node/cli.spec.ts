@@ -87,9 +87,9 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs([...base, "--observation-scopes", "shared"]).observationScopes).toBe(
       "shared"
     );
-    expect(parseCliArgs([...base, "--observation-scopes", "all_combinations"]).observationScopes).toBe(
-      "all_combinations"
-    );
+    expect(
+      parseCliArgs([...base, "--observation-scopes", "all_combinations"]).observationScopes
+    ).toBe("all_combinations");
     expect(() => parseCliArgs([...base, "--observation-scopes", "custom"])).toThrow(
       /observation-scopes/
     );

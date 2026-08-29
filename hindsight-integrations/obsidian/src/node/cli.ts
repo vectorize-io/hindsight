@@ -80,9 +80,7 @@ const OBSERVATION_SCOPES = ["combined", "shared", "per_tag", "all_combinations"]
 function parseObservationScopes(value: string | undefined): ObservationScopes | undefined {
   if (value === undefined) return undefined;
   if (OBSERVATION_SCOPES.includes(value as ObservationScopes)) return value as ObservationScopes;
-  throw new UsageError(
-    `--observation-scopes must be one of: ${OBSERVATION_SCOPES.join(", ")}`
-  );
+  throw new UsageError(`--observation-scopes must be one of: ${OBSERVATION_SCOPES.join(", ")}`);
 }
 
 /** Parse argv into fully-resolved options (applying env fallbacks + defaults). */

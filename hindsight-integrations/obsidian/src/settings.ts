@@ -146,9 +146,7 @@ export class HindsightSettingTab extends PluginSettingTab {
           })
           .setValue(this.plugin.settings.observationScopes ?? "")
           .onChange(async (v) => {
-            this.plugin.settings.observationScopes = v
-              ? (v as ObservationScopes)
-              : undefined;
+            this.plugin.settings.observationScopes = v ? (v as ObservationScopes) : undefined;
             await this.plugin.saveSettings();
           })
       );

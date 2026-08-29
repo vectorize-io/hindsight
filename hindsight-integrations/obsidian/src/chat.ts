@@ -9,13 +9,15 @@
 
 import type { HindsightClient } from "./client";
 import { retrievedNotes } from "./reflect-util";
-import type { Budget, ReflectResponse, TagGroup } from "./types";
+import type { Budget, ObservationScopes, ReflectResponse, TagGroup } from "./types";
 
 export interface ChatTurnDeps {
   client: HindsightClient;
   bankId: string;
   budget: Budget;
   rememberConversations: boolean;
+  /** Observation grouping applied to retained chat turns; undefined preserves the server default. */
+  observationScopes?: ObservationScopes;
   /** Scope filter (vault/folder) applied to reflect; undefined = whole bank. */
   tagGroups?: TagGroup[];
   /** When true, log the reflect request/response to the console for debugging. */
@@ -40,6 +42,7 @@ export async function runChatTurn(deps: ChatTurnDeps, message: string): Promise<
     await deps.client.retain(deps.bankId, genId("user"), message, {
       tags: ["conversation", "user"],
       context: "obsidian-chat",
+      observationScopes: deps.observationScopes,
     });
   }
 
@@ -71,6 +74,7 @@ export async function runChatTurn(deps: ChatTurnDeps, message: string): Promise<
     await deps.client.retain(deps.bankId, genId("assistant"), response.text, {
       tags: ["conversation", "assistant"],
       context: "obsidian-chat",
+      observationScopes: deps.observationScopes,
     });
   }
 

@@ -59,7 +59,7 @@ describe("runChatTurn", () => {
     );
   });
 
-  it("retains user + assistant turns only when explicitly enabled", async () => {
+  it("applies observation scopes to retained user and assistant turns", async () => {
     const client = fakeClient(ANSWER);
     let n = 0;
     await runChatTurn(
@@ -68,25 +68,28 @@ describe("runChatTurn", () => {
         bankId: "bank",
         budget: "low",
         rememberConversations: true,
+        observationScopes: "shared",
         newConversationDocId: (role) => `conversation/${(n += 1)}-${role}`,
       },
       "hello"
     );
 
     expect(client.retain).toHaveBeenCalledTimes(2);
-    expect(client.retain).toHaveBeenNthCalledWith(
-      1,
-      "bank",
-      "conversation/1-user",
-      "hello",
-      expect.objectContaining({ tags: ["conversation", "user"] })
-    );
+    expect(client.retain).toHaveBeenNthCalledWith(1, "bank", "conversation/1-user", "hello", {
+      tags: ["conversation", "user"],
+      context: "obsidian-chat",
+      observationScopes: "shared",
+    });
     expect(client.retain).toHaveBeenNthCalledWith(
       2,
       "bank",
       "conversation/2-assistant",
       "grounded answer",
-      expect.objectContaining({ tags: ["conversation", "assistant"] })
+      {
+        tags: ["conversation", "assistant"],
+        context: "obsidian-chat",
+        observationScopes: "shared",
+      }
     );
   });
 });
