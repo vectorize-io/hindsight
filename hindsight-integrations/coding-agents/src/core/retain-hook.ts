@@ -26,6 +26,7 @@ import type { RetainCursorStore } from "./retain-cursor";
 import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
 import { fileCursorStore, sessionRootDir } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
+import { stripInjectedMemory } from "./transcript-util";
 
 /** Headroom left before the host's kill: the response still has to come back after the last wait. */
 const HOST_DEADLINE_MARGIN_MS = 2000;
@@ -35,6 +36,8 @@ export interface RetainHookEventFields {
   sessionId?: string;
   transcriptPath?: string;
   cwd?: string;
+  /** Dcode's materialized transcript may lag the just-finished assistant response. */
+  lastAssistantMessage?: string;
 }
 
 /** Read a harness's transcript file into normalized turns. Claude and Codex use different JSONL
@@ -74,6 +77,7 @@ export async function buildRetain(args: {
   transcriptPath: string;
   client: RetainClient;
   readTranscript?: TranscriptReader;
+  lastAssistantMessage?: string;
   /** Configured retainTags/retainMetadata, already resolved for this session (core/retain-stamp.ts). */
   stamp?: RetainStamp;
   /** Injectable for tests; defaults to the per-session temp file (a Stop hook has no memory). */
@@ -85,6 +89,19 @@ export async function buildRetain(args: {
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
 
   const turns = readTranscript(transcriptPath);
+  const lastAssistantMessage = args.lastAssistantMessage
+    ? stripInjectedMemory(args.lastAssistantMessage).trim()
+    : "";
+  // Dcode materializes before Stop handlers run, so its final response can be absent from the
+  // file. Dedupe by adjacent content because the same response is present after a flush on some
+  // runs; this keeps repeated Stop delivery idempotent without dropping a legitimate later reply.
+  if (lastAssistantMessage && turns.at(-1)?.content !== lastAssistantMessage) {
+    turns.push({
+      role: "assistant",
+      content: lastAssistantMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
   if (turns.length === 0) return;
 
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
@@ -126,7 +143,7 @@ export async function runRetainHook(
   } catch {
     return; // no/invalid event: stay silent
   }
-  const { sessionId, transcriptPath, cwd: rawCwd } = spec.parse(ev);
+  const { sessionId, transcriptPath, cwd: rawCwd, lastAssistantMessage } = spec.parse(ev);
   const cwd = rawCwd || process.cwd();
 
   let cfg = loadConfig({ harness: spec.harness });
@@ -167,6 +184,7 @@ export async function runRetainHook(
     transcriptPath,
     client,
     readTranscript: spec.readTranscript,
+    lastAssistantMessage,
     retryUntil: hostDeadline,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,

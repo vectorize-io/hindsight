@@ -23,6 +23,9 @@
     "hindsight-grok-sessionstart-hook": "dist/grok-sessionstart-hook.js",
     "hindsight-grok-stop-hook": "dist/grok-stop-hook.js",
     "hindsight-codex-hook": "dist/codex-hook.js",
+    "hindsight-dcode-hook": "dist/dcode-hook.js",
+    "hindsight-dcode-sessionstart-hook": "dist/dcode-sessionstart-hook.js",
+    "hindsight-dcode-stop-hook": "dist/dcode-stop-hook.js",
     "hindsight-antigravity-hook": "dist/antigravity-hook.js",
     "hindsight-antigravity-statusline": "dist/antigravity-statusline.js",
     "hindsight-devin-hook": "dist/devin-hook.js"
@@ -40,7 +43,9 @@
   "files": [
     "skill",
     "dist",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "plugin.json",
+    "hooks"
   ],
   "dsh": {
     "bundle": {
@@ -70,6 +75,7 @@
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run skill:build && npm run build",
     "test": "vitest run --exclude '**/*.e2e.test.ts'",
+    "test:dcode-e2e": "npm run build && HINDSIGHT_DCODE_E2E=1 vitest run src/dcode-plugin.e2e.test.ts",
     "test:harness-e2e": "npm run build && HINDSIGHT_HARNESS_E2E=1 vitest run src/harness.e2e.test.ts"
   },
   "dependencies": {

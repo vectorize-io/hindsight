@@ -13,6 +13,7 @@ import { readAntigravityTranscript } from "../core/transcript-antigravity";
 import { readCopilotTranscript } from "../core/transcript-copilot";
 import { grokTranscriptPath, readGrokTranscript } from "../core/transcript-grok";
 import { readDevinTranscript } from "../core/transcript-devin";
+import { readDcodeTranscript } from "../core/transcript-dcode";
 
 export type HookHarnessName =
   | "claude-code"
@@ -21,7 +22,8 @@ export type HookHarnessName =
   | "cursor-cli"
   | "copilot-cli"
   | "devin-cli"
-  | "grok-build";
+  | "grok-build"
+  | "dcode";
 export type HookLifecycle = "sessionStart" | "prompt" | "stop";
 export type HookConfigStyle = "nested" | "flat";
 
@@ -65,6 +67,11 @@ const codexPrompt: HookSpec = {
     cwd: ev.cwd as string | undefined,
     sessionId: ev.session_id as string | undefined,
   }),
+};
+
+const dcodePrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "dcode",
 };
 
 const antigravityCwd = (ev: Record<string, unknown>): string | undefined =>
@@ -177,6 +184,27 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
       }),
       readTranscript: readCodexTranscript,
+    },
+  },
+  dcode: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "dcode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "dcode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "dcode-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: standardSessionStart("dcode"),
+    prompt: dcodePrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "dcode",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+        lastAssistantMessage: ev.last_assistant_message as string | undefined,
+      }),
+      readTranscript: readDcodeTranscript,
     },
   },
   "antigravity-cli": {
