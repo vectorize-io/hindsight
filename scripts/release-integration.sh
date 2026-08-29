@@ -162,6 +162,13 @@ elif [ -f "$INTEGRATION_DIR/package.json" ]; then
         print_info "Syncing $INTEGRATION_DIR/package-lock.json"
         (cd "$INTEGRATION_DIR" && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null)
     fi
+    # coding-agents also ships a root Agent Plugin manifest. Keep its Dcode-visible version in
+    # lockstep with package.json so Dcode's versioned cache cannot retain an older runtime.
+    if [ -f "$INTEGRATION_DIR/plugin.json" ]; then
+        print_info "Updating version in $INTEGRATION_DIR/plugin.json"
+        sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/plugin.json"
+        rm "$INTEGRATION_DIR/plugin.json.bak"
+    fi
 elif [ -f "$INTEGRATION_DIR/.claude-plugin/plugin.json" ]; then
     print_info "Updating version in $INTEGRATION_DIR/.claude-plugin/plugin.json"
     sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/.claude-plugin/plugin.json"

@@ -22,6 +22,7 @@ const homes: string[] = [];
 function makeCtx(): InstallCtx & {
   claudeMcp: ReturnType<typeof vi.fn>;
   clinePlugin: ReturnType<typeof vi.fn>;
+  dcodePlugin: ReturnType<typeof vi.fn>;
   nodeSqlite: ReturnType<typeof vi.fn>;
 } {
   const home = mkdtempSync(join(tmpdir(), "hindsight-installer-test-"));
@@ -33,6 +34,7 @@ function makeCtx(): InstallCtx & {
     dist: join(pkgRoot, "dist"),
     claudeMcp: vi.fn(() => true),
     clinePlugin: vi.fn(() => true),
+    dcodePlugin: vi.fn(() => true),
     // Stubbed like the CLI seams above, so the suite never depends on the Node running it.
     nodeSqlite: vi.fn(() => true),
     // Never let a developer's real ~/.hindsight/claude-code.json steer the tests.
@@ -635,6 +637,106 @@ describe("grok-build installer", () => {
   });
 });
 
+describe("dcode installer", () => {
+  it("uses Dcode's native marketplace and plugin commands", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "dcode"], ctx)).toBe(0);
+    const marketplacePath = join(ctx.home, ".hindsight", ".agents", "plugins", "marketplace.json");
+    expect(readJson(marketplacePath)).toMatchObject({
+      name: "hindsight-coding-agents",
+      plugins: [
+        {
+          name: "hindsight-coding-agents",
+          source: { source: "local", path: "./coding-agents" },
+        },
+      ],
+    });
+    expect(ctx.dcodePlugin.mock.calls.map(([args]) => args)).toEqual([
+      ["plugin", "marketplace", "add", join(ctx.home, ".hindsight")],
+      ["plugin", "install", "hindsight-coding-agents@hindsight-coding-agents"],
+    ]);
+    expect(ctx.claudeMcp).not.toHaveBeenCalled();
+    expect(existsSync(join(ctx.home, ".deepagents"))).toBe(false);
+  });
+
+  it("merges the marketplace without dropping foreign entries", () => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ".hindsight", ".agents", "plugins", "marketplace.json");
+    const foreign = { name: "other-plugin", source: { source: "github", repo: "acme/other" } };
+    writeJsonAt(path, { name: "hindsight-coding-agents", plugins: [foreign] });
+    expect(run(["install", "dcode"], ctx)).toBe(0);
+    expect(readJson(path).plugins).toEqual([
+      foreign,
+      { name: "hindsight-coding-agents", source: { source: "local", path: "./coding-agents" } },
+    ]);
+  });
+
+  it("isolates from a foreign marketplace name instead of rewriting it", () => {
+    const ctx = makeCtx();
+    const conventionalPath = join(ctx.home, ".hindsight", ".agents", "plugins", "marketplace.json");
+    const foreignMarketplace = {
+      name: "team-marketplace",
+      plugins: [{ name: "other-plugin", source: { source: "github", repo: "acme/other" } }],
+    };
+    writeJsonAt(conventionalPath, foreignMarketplace);
+
+    expect(run(["install", "dcode"], ctx)).toBe(0);
+    expect(readJson(conventionalPath)).toEqual(foreignMarketplace);
+    const fallbackPath = join(ctx.home, ".hindsight", "hindsight-coding-agents-marketplace.json");
+    expect(readJson(fallbackPath)).toMatchObject({
+      name: "hindsight-coding-agents",
+      plugins: [
+        {
+          name: "hindsight-coding-agents",
+          source: { source: "local", path: "./coding-agents" },
+        },
+      ],
+    });
+    expect(ctx.dcodePlugin).toHaveBeenCalledWith(["plugin", "marketplace", "add", fallbackPath]);
+  });
+
+  it("returns failure when native Dcode installation fails", () => {
+    const ctx = makeCtx();
+    ctx.dcodePlugin.mockReturnValue(false);
+    const logs: string[] = [];
+    ctx.log = (message) => logs.push(message);
+
+    expect(run(["install", "dcode"], ctx)).toBe(1);
+    expect(logs.join("\n")).toContain("could not install the native plugin");
+  });
+
+  it("continues installing other named targets when Dcode fails", () => {
+    const ctx = makeCtx();
+    ctx.dcodePlugin.mockReturnValue(false);
+
+    expect(run(["install", "dcode", "claude-code"], ctx)).toBe(1);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(true);
+  });
+
+  it("continues a literal install all when Dcode fails", () => {
+    const ctx = makeCtx();
+    const binDir = mkdtempSync(join(tmpdir(), "hindsight-installer-bin-"));
+    homes.push(binDir);
+    writeFileSync(join(binDir, "dcode"), "", { mode: 0o755 });
+    writeFileSync(join(binDir, "claude"), "", { mode: 0o755 });
+    vi.stubEnv("PATH", `${binDir}:/usr/bin:/bin`);
+    ctx.dcodePlugin.mockReturnValue(false);
+
+    expect(run(["install", "all"], ctx)).toBe(1);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(true);
+  });
+
+  it("uninstalls only the native plugin id and leaves Dcode state to Dcode", () => {
+    const ctx = makeCtx();
+    expect(run(["uninstall", "dcode"], ctx)).toBe(0);
+    expect(ctx.dcodePlugin).toHaveBeenCalledWith([
+      "plugin",
+      "uninstall",
+      "hindsight-coding-agents@hindsight-coding-agents",
+    ]);
+  });
+});
+
 describe("run() CLI behavior", () => {
   it("returns 1 for an unknown harness name and touches nothing", () => {
     const ctx = makeCtx();
@@ -712,6 +814,7 @@ describe("run() CLI behavior", () => {
       "copilot-cli",
       "grok-build",
       "cline-cli",
+      "dcode",
       "dsh",
     ]);
   });
@@ -738,7 +841,7 @@ describe("MCP registrations name the calling harness", () => {
   // These hosts have no MCP registration at all: they load our plugin/extension in-process
   // (src/kilo.ts, src/dsh.ts, src/prime-agent.ts, dist/index.js for opencode), and that entry
   // hands its own harness name straight to RuntimeCore.
-  const IN_PROCESS = new Set(["opencode", "kilo", "prime-agent", "dsh"]);
+  const IN_PROCESS = new Set(["opencode", "kilo", "prime-agent", "dsh", "dcode"]);
   const MCP_HOSTS = INSTALLERS.map((i) => i.name).filter((n) => !IN_PROCESS.has(n));
 
   it.each(MCP_HOSTS)("%s", (harness) => {

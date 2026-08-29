@@ -4,7 +4,7 @@
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**opencode**, **Kilo CLI**, **Cline CLI**, **Prime Agent**, **DeepSeek Harness**, **Claude Code**, **Codex CLI**, **Antigravity CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Devin CLI**, **Grok Build**). Ingestion is fully
+(**opencode**, **Kilo CLI**, **Cline CLI**, **Prime Agent**, **DeepSeek Harness**, **Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **Antigravity CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Devin CLI**, **Grok Build**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -50,6 +50,18 @@ npx @vectorize-io/hindsight-coding-agents install codex
 ```
 
 3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
+
+#### DeepAgents Dcode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install dcode
+```
+
+The installer registers this package as a local marketplace with Dcode, then invokes Dcode's own
+`plugin install` command. The package is a native Agent Plugin: its root `plugin.json` contributes the shared skill, the
+Hooks V2 `SessionStart`, `UserPromptSubmit`, and `Stop` lifecycle, and the namespaced
+`hindsight_*` MCP server. Enable the plugin through Dcode's normal plugin manager; no Dcode config
+patcher or compatibility bridge is required.
 
 ####  opencode
 

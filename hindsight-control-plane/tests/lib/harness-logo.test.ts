@@ -43,6 +43,7 @@ describe("resolveHarnessLogo", () => {
     "claude-code",
     "cline-cli",
     "codex",
+    "dcode",
     "copilot-cli",
     "cursor-cli",
     "devin-cli",

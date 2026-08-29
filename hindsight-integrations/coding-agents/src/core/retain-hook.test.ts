@@ -41,6 +41,25 @@ afterEach(() => {
 });
 
 describe("buildRetain", () => {
+  it("recovers Dcode's final assistant message when the materialized transcript lags", async () => {
+    writeFileSync(file, JSON.stringify({ role: "user", content: "make the change" }));
+    const retainSpy = vi.fn().mockResolvedValue(undefined);
+    const client = { retain: retainSpy } as unknown as HindsightClient;
+
+    await buildRetain({
+      harness: "dcode",
+      sessionId: "sess-dcode",
+      transcriptPath: file,
+      client,
+      readTranscript: () => [{ role: "user", content: "make the change" }],
+      lastAssistantMessage: "done <hindsight_memories>injected</hindsight_memories>",
+    });
+
+    const [content] = retainSpy.mock.calls[0];
+    const parsed = (content as string).split("\n").map((line) => JSON.parse(line));
+    expect(parsed.at(-1)).toMatchObject({ role: "assistant", content: "done" });
+  });
+
   it("retains parsed turns", async () => {
     const lines = [
       JSON.stringify({

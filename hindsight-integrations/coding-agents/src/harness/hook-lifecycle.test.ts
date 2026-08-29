@@ -8,6 +8,7 @@ const HOOK_HARNESS_NAMES: HookHarnessName[] = [
   "cursor-cli",
   "copilot-cli",
   "grok-build",
+  "dcode",
 ];
 
 describe("HOOK_HARNESSES lifecycle contract", () => {
@@ -82,6 +83,37 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
         hookEventName: "UserPromptSubmit",
         additionalContext: "context",
       },
+    });
+
+    const dcode = HOOK_HARNESSES.dcode;
+    expect(dcode.install).toMatchObject({
+      sessionStart: { event: "SessionStart", entry: "dcode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "dcode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "dcode-stop-hook.js", timeout: 60 },
+    });
+    expect(dcode.prompt.parse({ prompt: "hello", cwd: "/repo", session_id: "s1" })).toEqual({
+      prompt: "hello",
+      cwd: "/repo",
+      sessionId: "s1",
+    });
+    expect(dcode.prompt.emit("context")).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: "context",
+      },
+    });
+    expect(
+      dcode.retain.parse({
+        session_id: "s1",
+        transcript_path: "/tmp/s1.jsonl",
+        cwd: "/repo",
+        last_assistant_message: "done",
+      })
+    ).toEqual({
+      sessionId: "s1",
+      transcriptPath: "/tmp/s1.jsonl",
+      cwd: "/repo",
+      lastAssistantMessage: "done",
     });
   });
 });

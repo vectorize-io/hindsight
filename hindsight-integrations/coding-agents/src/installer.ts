@@ -14,6 +14,7 @@
  *   cursor-cli   sessionStart + beforeSubmitPrompt + stop hooks in ~/.cursor/hooks.json + ~/.cursor/mcp.json
  *   copilot-cli  sessionStart + userPromptTransformed + agentStop hooks in ~/.copilot/hooks/ + MCP
  *   cline-cli    native in-process plugin + MCP
+ *   dcode        native Agent Plugin via `dcode plugin marketplace/install`
  *   dsh          native Cordis plugin row in $DSH_HOME/cordis.patch.yml (DeepSeek Harness)
  *
  * IDEMPOTENT: our entries are recognized by the package path in their command ("hindsight-coding-
@@ -64,6 +65,8 @@ export interface InstallCtx {
   claudeMcp?: (args: string[]) => boolean;
   /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
   clinePlugin?: (args: string[]) => boolean;
+  /** Runs native Dcode plugin commands; injectable for tests. Returns false when unusable. */
+  dcodePlugin?: (args: string[]) => boolean;
   /** Reports whether `node:sqlite` works in the node that runs hooks; injectable for tests. */
   nodeSqlite?: () => boolean;
   /** Whether stdin can be prompted. Defaults to the real TTY check at the CLI entry; tests set it
@@ -221,8 +224,8 @@ export interface HarnessInstaller {
    * reporting success and then never retaining anything.
    */
   preflight?(ctx: InstallCtx): string | undefined;
-  install(ctx: InstallCtx): void;
-  uninstall(ctx: InstallCtx): void;
+  install(ctx: InstallCtx): void | boolean;
+  uninstall(ctx: InstallCtx): void | boolean;
 }
 
 function onPath(bin: string): boolean {
@@ -237,6 +240,15 @@ function onPath(bin: string): boolean {
 function runClinePlugin(args: string[]): boolean {
   try {
     execFileSync("cline", args, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runDcodePlugin(args: string[]): boolean {
+  try {
+    execFileSync("dcode", args, { stdio: "pipe" });
     return true;
   } catch {
     return false;
@@ -676,6 +688,10 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
     const pkgJson = join(c.pkgRoot, "package.json");
     if (existsSync(pkgJson)) copyFileSync(pkgJson, join(target, "package.json"));
+    for (const resource of ["plugin.json", "hooks", ".agents"]) {
+      const source = join(c.pkgRoot, resource);
+      if (existsSync(source)) cpSync(source, join(target, resource), { recursive: true });
+    }
     c.log?.(`runtime staged at ${target}`);
     return { ...c, pkgRoot: target, dist: join(target, "dist") };
   } catch (error) {
@@ -1154,6 +1170,116 @@ const cline: HarnessInstaller = {
   },
 };
 
+/** Dcode's plugin manager owns its cache and enablement state. Keep this installer as a thin
+ * native CLI invocation: the package's bundled marketplace points back at the staged package,
+ * while Dcode performs the copy, validation, enablement, and foreign-state preservation. */
+const DCODE_MARKETPLACE = "hindsight-coding-agents";
+const DCODE_PLUGIN_ID = "hindsight-coding-agents@hindsight-coding-agents";
+const DCODE_MARKETPLACE_RELATIVE_PATH = join(".agents", "plugins", "marketplace.json");
+const DCODE_FALLBACK_MARKETPLACE = "hindsight-coding-agents-marketplace.json";
+
+/**
+ * Prepare a local marketplace without taking ownership of a foreign manifest at the conventional
+ * path. A custom JSON file still has the same ~/.hindsight root, so ./coding-agents remains valid,
+ * while Dcode records it as its own marketplace and the foreign top-level name is untouched.
+ */
+function prepareDcodeMarketplace(c: InstallCtx): string | false {
+  const root = join(c.home, ".hindsight");
+  const conventionalPath = join(root, DCODE_MARKETPLACE_RELATIVE_PATH);
+  let path = conventionalPath;
+  let registrationSource = root;
+  let marketplace: Record<string, any> = { plugins: [] };
+  if (existsSync(conventionalPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(conventionalPath, "utf8"));
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.plugins)) {
+        path = join(root, DCODE_FALLBACK_MARKETPLACE);
+      } else if (
+        typeof (parsed as Record<string, unknown>).name === "string" &&
+        parsed.name !== DCODE_MARKETPLACE
+      ) {
+        // Do not mutate the identity of a marketplace that another Dcode plugin may already use.
+        path = join(root, DCODE_FALLBACK_MARKETPLACE);
+      } else {
+        marketplace = parsed;
+      }
+    } catch {
+      path = join(root, DCODE_FALLBACK_MARKETPLACE);
+    }
+  }
+  if (path !== conventionalPath && existsSync(path)) {
+    registrationSource = path;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8"));
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        !Array.isArray(parsed.plugins) ||
+        parsed.name !== DCODE_MARKETPLACE
+      ) {
+        c.log?.(`dcode: refusing to replace malformed marketplace file ${path}`);
+        return false;
+      }
+      marketplace = parsed;
+    } catch {
+      c.log?.(`dcode: refusing to replace unreadable marketplace file ${path}`);
+      return false;
+    }
+  }
+  if (path !== conventionalPath) registrationSource = path;
+  const foreign = marketplace.plugins.filter(
+    (entry: unknown) =>
+      !entry ||
+      typeof entry !== "object" ||
+      (entry as Record<string, unknown>).name !== "hindsight-coding-agents"
+  );
+  marketplace.name = DCODE_MARKETPLACE;
+  marketplace.plugins = [
+    ...foreign,
+    {
+      name: "hindsight-coding-agents",
+      source: { source: "local", path: "./coding-agents" },
+    },
+  ];
+  writeJson(path, marketplace);
+  return registrationSource;
+}
+
+const dcode: HarnessInstaller = {
+  name: "dcode",
+  detect: (c) => onPath("dcode") || existsSync(join(c.home, ".deepagents")),
+  preflight: (c) =>
+    c.dcodePlugin || onPath("dcode") ? undefined : "the `dcode` CLI is not on PATH",
+  install(c) {
+    const plugin = c.dcodePlugin ?? runDcodePlugin;
+    const marketplacePath = prepareDcodeMarketplace(c);
+    const installed =
+      marketplacePath !== false &&
+      plugin(["plugin", "marketplace", "add", marketplacePath]) &&
+      plugin(["plugin", "install", DCODE_PLUGIN_ID]);
+    if (installed) {
+      c.log?.(`dcode: native Agent Plugin installed (${DCODE_PLUGIN_ID})`);
+    } else {
+      const source = marketplacePath === false ? join(c.home, ".hindsight") : marketplacePath;
+      c.log?.(
+        `dcode: could not install the native plugin — run \
+` + `  dcode plugin marketplace add "${source}" && dcode plugin install ${DCODE_PLUGIN_ID}`
+      );
+    }
+    return installed;
+  },
+  uninstall(c) {
+    const plugin = c.dcodePlugin ?? runDcodePlugin;
+    const removed = plugin(["plugin", "uninstall", DCODE_PLUGIN_ID]);
+    if (removed) {
+      c.log?.("dcode: native Agent Plugin removed (foreign ~/.deepagents state preserved)");
+    } else {
+      c.log?.(`dcode: could not run native uninstall for ${DCODE_PLUGIN_ID}`);
+    }
+    return removed;
+  },
+};
+
 const DSH_MARKER_START = "# HINDSIGHT_CODING_AGENTS_DSH_START";
 const DSH_MARKER_END = "# HINDSIGHT_CODING_AGENTS_DSH_END";
 const DSH_BLOCK_RE = new RegExp(`\\n?${DSH_MARKER_START}[\\s\\S]*?${DSH_MARKER_END}\\n?`);
@@ -1227,6 +1353,7 @@ export const INSTALLERS: HarnessInstaller[] = [
   copilot,
   grok,
   cline,
+  dcode,
   dsh,
 ];
 
@@ -1365,14 +1492,16 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     }
   }
   const runnable = targets.filter((t) => !blocked.has(t.name));
-  for (const t of runnable) t[command](ctx);
+  const failed: string[] = [];
+  for (const t of runnable) {
+    if (t[command](ctx) === false) failed.push(t.name);
+  }
   if (command === "install" && importHistory) {
     for (const t of runnable) importConversations(t.name, ctx);
   }
-  if (blocked.size) {
-    ctx.log?.(
-      `\n❌ not installed: ${[...blocked].join(", ")} — this machine can't run ${blocked.size > 1 ? "them" : "it"} (see above).`
-    );
+  if (blocked.size || failed.length) {
+    const notInstalled = [...blocked, ...failed];
+    ctx.log?.(`\n❌ not installed: ${notInstalled.join(", ")} — see the messages above.`);
     return 1;
   }
   // No completion message here: the CLI entry's InstallerUi outro reports success (and where the
