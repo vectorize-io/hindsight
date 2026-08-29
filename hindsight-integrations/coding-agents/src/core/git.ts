@@ -254,3 +254,33 @@ export async function ingestGitLog(
     return 1;
   }
 }
+
+/**
+ * Ensure this repository's canonical aggregated git-log document is current.
+ *
+ * Older deepen versions enumerated every `source:git-log` document in the bank and deleted every
+ * non-canonical id. A bank can be shared by unrelated repositories, so that name comparison was
+ * not an ownership check and could cascade-delete foreign memories (#3877). The canonical retain is
+ * already an idempotent upsert; ambiguous legacy documents are deliberately left untouched.
+ */
+export async function syncGitLog(
+  client: HindsightClient,
+  repo: string,
+  opts: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp }
+): Promise<number> {
+  const log = opts.log ?? (() => {});
+  const head = gitHeadSha(repo);
+  const canonical = `gitlog:${repoNameOf(repo)}`;
+  const current =
+    head !== null &&
+    (
+      await client
+        .listDocumentIds(`gitlog-head:${head}`, "all_strict")
+        .catch(() => new Set<string>())
+    ).has(canonical);
+  if (current) {
+    log("[gitlog] current with HEAD — skipping");
+    return 0;
+  }
+  return ingestGitLog(client, repo, opts);
+}

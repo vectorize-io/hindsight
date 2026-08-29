@@ -319,11 +319,14 @@ export class HindsightClient {
    * Set. Powers the incremental git-sync's "what's already ingested?" check — since git commits are stored
    * with document_id `git:<sha>`, the returned Set lets a caller diff a ref's commits against memory.
    */
-  async listDocumentIds(tag: string): Promise<Set<string>> {
+  async listDocumentIds(
+    tag: string,
+    tagsMatch: "all" | "all_strict" = "all"
+  ): Promise<Set<string>> {
     const ids = new Set<string>();
     const limit = 500;
     for (let offset = 0; ; offset += limit) {
-      const q = `?tags=${encodeURIComponent(tag)}&tags_match=all&limit=${limit}&offset=${offset}`;
+      const q = `?tags=${encodeURIComponent(tag)}&tags_match=${tagsMatch}&limit=${limit}&offset=${offset}`;
       const r = await this.req("GET", this.bankUrl(`/documents${q}`));
       let items: { id?: string }[] = [];
       let total = 0;
@@ -389,7 +392,8 @@ export class HindsightClient {
     }
   }
 
-  /** Delete one document (cascades its memory units/links). Used by deepen's self-cleanup. */
+  /** Explicitly delete one document (and its cascaded memory units/links). Background sync must
+   *  never use this as a cleanup primitive: a document id alone does not prove repository ownership. */
   async deleteDocument(documentId: string): Promise<void> {
     await this.req("DELETE", this.bankUrl(`/documents/${encodeURIComponent(documentId)}`));
   }

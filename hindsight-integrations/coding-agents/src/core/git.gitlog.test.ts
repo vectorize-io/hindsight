@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "./hindsight";
-import { gitLogNewestAuthorDate, gitLogText, ingestGitLog, repoNameOf, retainCommit } from "./git";
+import {
+  gitLogNewestAuthorDate,
+  gitLogText,
+  ingestGitLog,
+  repoNameOf,
+  retainCommit,
+  syncGitLog,
+} from "./git";
 
 let dir: string;
 
@@ -130,5 +137,54 @@ describe("ingestGitLog", () => {
       source: "git",
       commit: sha,
     });
+  });
+});
+
+describe("syncGitLog", () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "hs-gitlog-sync-"));
+    initRepo(dir);
+  });
+
+  it("never enumerates or deletes foreign git-log documents from a shared bank", async () => {
+    execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "feat: current repo"]);
+    const listDocumentIds = vi.fn(
+      async (_tag: string, _tagsMatch?: "all" | "all_strict") => new Set(["gitlog:foreign-repo"])
+    );
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const deleteDocument = vi.fn().mockResolvedValue(undefined);
+    const client = {
+      listDocumentIds,
+      retain,
+      deleteDocument,
+      opIds: [],
+    } as unknown as HindsightClient;
+
+    const failures = await syncGitLog(client, dir, { limit: 10 });
+
+    expect(failures).toBe(0);
+    expect(retain).toHaveBeenCalledTimes(1);
+    expect(listDocumentIds).toHaveBeenCalledTimes(1);
+    expect(listDocumentIds.mock.calls[0][0]).toMatch(/^gitlog-head:/);
+    expect(listDocumentIds.mock.calls[0][1]).toBe("all_strict");
+    expect(listDocumentIds).not.toHaveBeenCalledWith("source:git-log");
+    expect(deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it("skips the upsert only when this repository's canonical document has the current HEAD tag", async () => {
+    execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "feat: current repo"]);
+    const listDocumentIds = vi.fn(
+      async (_tag: string, _tagsMatch?: "all" | "all_strict") =>
+        new Set([`gitlog:${repoNameOf(dir)}`])
+    );
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { listDocumentIds, retain, opIds: [] } as unknown as HindsightClient;
+
+    const failures = await syncGitLog(client, dir, { limit: 10 });
+
+    expect(failures).toBe(0);
+    expect(listDocumentIds.mock.calls[0][0]).toMatch(/^gitlog-head:/);
+    expect(listDocumentIds.mock.calls[0][1]).toBe("all_strict");
+    expect(retain).not.toHaveBeenCalled();
   });
 });

@@ -19,7 +19,7 @@
  *   - empty set (cold)                 -> start the background seed, seededAt written, note added
  */
 import { readFileSync } from "node:fs";
-import { gitHeadSha, hasGitHistory, commitsSince } from "./git";
+import { gitHeadSha, hasGitHistory, commitsSince, repoNameOf } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
 import { syncCompanionSkill } from "./skill-sync";
@@ -39,7 +39,7 @@ import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-c
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
-  listDocumentIds(tag: string): Promise<Set<string>>;
+  listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
@@ -87,8 +87,8 @@ async function gitSyncNote(args: {
   const head = gitHeadSha(cwd);
   if (!head) return undefined;
   const gitlogCurrent = await client
-    .listDocumentIds(`gitlog-head:${head}`)
-    .then((s) => s.size > 0)
+    .listDocumentIds(`gitlog-head:${head}`, "all_strict")
+    .then((s) => s.has(`gitlog:${repoNameOf(cwd)}`))
     .catch(() => undefined);
   if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
   if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
@@ -210,7 +210,7 @@ export async function buildSessionStartContext(args: {
       {
         let docIds: Set<string> | undefined;
         try {
-          docIds = await client.listDocumentIds("source:git");
+          docIds = await client.listDocumentIds("source:git", "all_strict");
         } catch {
           docIds = undefined; // server unreachable: transient — do nothing, try again next session
         }
@@ -250,7 +250,7 @@ export async function buildSessionStartContext(args: {
             const sha = resolveHeadSha(cwd);
             if (sha) {
               const markers = await client
-                .listDocumentIds(SURVEY_BASELINE_TAG)
+                .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
                 .catch(() => new Set<string>());
               const counts: number[] = [];
               for (const id of markers) {
@@ -262,7 +262,7 @@ export async function buildSessionStartContext(args: {
               // A baseline without FINDINGS means the surveyed agent died before ingesting (no
               // CLI on PATH, budget kill) — the marker alone must not suppress retries forever.
               const uploads = await client
-                .listDocumentIds("source:upload")
+                .listDocumentIds("source:upload", "all_strict")
                 .catch(() => new Set<string>());
               const findingsAbsent =
                 counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
