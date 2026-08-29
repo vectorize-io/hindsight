@@ -1048,7 +1048,6 @@ class OpenAICompatibleLLM(LLMInterface):
         apply_cache_affinity(call_params, self._cache_affinity)
 
         last_exception = None
-        last_parse_content: str | None = None
 
         for attempt in range(max_retries + 1):
             # Surface attempt count in worker stage so JSON-schema retry loops
@@ -1069,6 +1068,18 @@ class OpenAICompatibleLLM(LLMInterface):
                         model=self.model,
                         scope=scope,
                     )
+
+                    # A token cap does not have to break the JSON. Cut on a
+                    # closing brace and the body still parses and still
+                    # validates, so a short answer would be returned as a
+                    # complete one. Checked here rather than in the decode
+                    # failure handler, because the parse succeeding is the case
+                    # that hides it.
+                    if _finish_reason_for_choice(first_choice) == "length":
+                        raise OutputTooLongError(
+                            "LLM output was truncated by the token limit. Input may "
+                            "need to be split into smaller chunks."
+                        )
 
                     # Strip reasoning model thinking tags (closed and unclosed).
                     # Supports: <think>, <thinking>, <thought>, <reasoning>, |startthink|/|endthink|
@@ -1099,38 +1110,22 @@ class OpenAICompatibleLLM(LLMInterface):
                                 f"  Content preview: {content_preview!r}\n"
                                 f"  Finish reason: {_finish_reason_for_choice(first_choice)}"
                             )
-                            # create() returns a token-capped body with
-                            # finish_reason "length" instead of raising, so repair
-                            # would close the braces and return a shorter list as
-                            # a success. Raised before the ladder because a cap is
-                            # deterministic and the caller splits on this error.
-                            if _finish_reason_for_choice(first_choice) == "length":
-                                raise OutputTooLongError(
-                                    "LLM output was truncated by the token limit. Input may "
-                                    "need to be split into smaller chunks."
-                                ) from json_err
-                            # Retry on JSON parse errors, but only while a fresh
-                            # generation could still produce something different.
-                            # Every attempt re-sends a byte-identical request, so
-                            # the same content coming back twice means the model
-                            # is deterministic here and more generations cannot
-                            # help. Compare the content and not the decode
-                            # position: two different malformed outputs can fail
-                            # at the same line and column, and that one is worth
-                            # another roll.
-                            repeated = content == last_parse_content
-                            last_parse_content = content
-                            if attempt < max_retries and not repeated:
+                            # Retry on JSON parse errors for the whole
+                            # configured budget. Two identical bodies are not
+                            # proof the next one repeats: temperature is set by
+                            # the caller and not read here, so there is nothing
+                            # on this path that establishes a deterministic
+                            # generation.
+                            if attempt < max_retries:
                                 backoff = min(initial_backoff * (2**attempt), max_backoff)
                                 await asyncio.sleep(backoff)
                                 last_exception = json_err
                                 continue
-                            # Retry budget spent, or the same content twice on a
-                            # byte-identical request: another generation cannot
-                            # help. Repair structurally as a last resort, the way
-                            # litellm_llm.py has since #2547/#2544. json_repair is
-                            # already a dependency and raises again when the
-                            # content is genuinely unrecoverable.
+                            # Retry budget spent. Repair structurally as a
+                            # last resort, the way litellm_llm.py has since
+                            # #2547/#2544. json_repair is already a dependency
+                            # and raises again when the content is genuinely
+                            # unrecoverable.
                             try:
                                 json_data = parse_llm_json(content)
                             except json.JSONDecodeError:
@@ -1681,7 +1676,6 @@ class OpenAICompatibleLLM(LLMInterface):
         payload["options"] = options
 
         last_exception = None
-        last_parse_content: str | None = None
 
         # Pass API key as Bearer token for cloud Ollama endpoints
         headers: dict[str, str] = {}
@@ -1712,6 +1706,15 @@ class OpenAICompatibleLLM(LLMInterface):
                                 retryable=True,
                             )
                     else:
+                        # Same case, different key: Ollama reports a cap as
+                        # done_reason "length", and a cap that lands on a closing
+                        # brace still parses and still validates.
+                        if result.get("done_reason") == "length":
+                            raise OutputTooLongError(
+                                "LLM output was truncated by the token limit. Input may "
+                                "need to be split into smaller chunks."
+                            )
+
                         # Strip markdown code fences if present (safety net —
                         # Ollama with schema enforcement usually returns bare JSON,
                         # but some models may still wrap in fences)
@@ -1732,23 +1735,14 @@ class OpenAICompatibleLLM(LLMInterface):
                                     f"  Content length: {len(content) if content else 0} chars\n"
                                     f"  Content preview: {content_preview!r}"
                                 )
-                                # Same case, different key: Ollama reports a cap
-                                # as done_reason "length".
-                                if result.get("done_reason") == "length":
-                                    raise OutputTooLongError(
-                                        "LLM output was truncated by the token limit. Input may "
-                                        "need to be split into smaller chunks."
-                                    ) from json_err
-                                repeated = content == last_parse_content
-                                last_parse_content = content
-                                if attempt < max_retries and not repeated:
+                                if attempt < max_retries:
                                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                                     await asyncio.sleep(backoff)
                                     last_exception = json_err
                                     continue
-                                # Same last-resort repair as the OpenAI-compatible
-                                # path above; this parses identically and had the
-                                # identical gap.
+                                # Same last-resort repair as the
+                                # OpenAI-compatible path above; this parses
+                                # identically and had the identical gap.
                                 try:
                                     json_data = parse_llm_json(content)
                                 except json.JSONDecodeError:

@@ -254,42 +254,19 @@ async def test_repairable_json_is_recovered_instead_of_being_dropped():
 
 
 @pytest.mark.asyncio
-async def test_an_identical_response_stops_re_rolling_the_same_request():
-    """A deterministic parse failure must not burn the whole retry budget (#3683).
+async def test_repeated_output_does_not_cut_the_retry_budget_short():
+    """Two identical bodies do not establish a deterministic generation (#3683).
 
-    Every attempt re-sends a byte-identical request, so a response that comes back
-    unchanged will keep coming back unchanged. Two attempts are enough to establish
-    that; the remaining budget is spent on repair instead of on more generations.
-    """
-    llm = _llm()
-    create = AsyncMock(return_value=_response(content='{"ok": true,}'))
-    llm._client.chat.completions.create = create
-
-    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=3,
-            initial_backoff=0,
-        )
-
-    assert result.ok is True
-    assert create.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_a_changed_response_still_earns_a_fresh_generation():
-    """Flaky malformed output keeps the clean re-roll it had before (#3683).
-
-    Only an unchanged response is treated as deterministic. Output that differs
-    each time is the case a fresh generation can actually fix, so the retry ladder
-    must still run.
+    Temperature is set by the caller and never read on this path, so nothing here
+    can tell a deterministic model from a stochastic one that repeated twice. The
+    configured budget is what the caller asked for, and the third attempt is the
+    one that succeeds.
     """
     llm = _llm()
     create = AsyncMock(
         side_effect=[
             _response(content='{"ok": true,}'),
-            _response(content='{"ok": '),
+            _response(content='{"ok": true,}'),
             _response(content='{"ok": true}'),
         ]
     )
@@ -308,19 +285,17 @@ async def test_a_changed_response_still_earns_a_fresh_generation():
 
 
 @pytest.mark.asyncio
-async def test_two_responses_failing_alike_are_not_treated_as_one():
-    """Different output that decodes to the same error still earns a re-roll (#3683).
+async def test_a_changed_response_still_earns_a_fresh_generation():
+    """Flaky malformed output keeps its re-rolls (#3683).
 
-    ``{"aa": 1,}`` and ``{"bb": 2,}`` both raise at line 1 column 10 with the same
-    message, so a check on the decode position alone would call the second one a
-    deterministic repeat and stop generating. They are different responses, and the
-    third attempt here is the one that succeeds.
+    Output that differs each time is the case a fresh generation can actually
+    fix, so the retry ladder must run to the end of the budget.
     """
     llm = _llm()
     create = AsyncMock(
         side_effect=[
-            _response(content='{"aa": 1,}'),
-            _response(content='{"bb": 2,}'),
+            _response(content='{"ok": true,}'),
+            _response(content='{"ok": '),
             _response(content='{"ok": true}'),
         ]
     )
@@ -434,6 +409,57 @@ async def test_a_truncation_is_reported_on_the_first_attempt_not_after_the_budge
             )
 
     assert create.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_body_that_still_parses_is_reported_not_accepted():
+    """A cap does not have to break the JSON, and that is the quiet case.
+
+    Here the cut lands on a closing brace, so the body decodes cleanly and
+    validates against the schema. Two of three facts come back as a complete
+    answer with nothing marking the loss. A guard living in the decode failure
+    handler never sees this response at all.
+    """
+    llm = _llm()
+    create = AsyncMock(return_value=_response(content='{"facts": ["alpha", "beta"]}', finish_reason="length"))
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        with pytest.raises(OutputTooLongError):
+            await llm.call(
+                messages=[{"role": "user", "content": "List the facts."}],
+                response_format=FactListResponse,
+                max_retries=3,
+                initial_backoff=0,
+            )
+
+    assert create.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ollama_native_reports_a_truncated_body_that_still_parses():
+    """The native path has the same quiet case under done_reason."""
+    llm = _ollama_llm()
+    mock_client = AsyncMock()
+    mock_client.post.return_value = _ollama_response('{"facts": ["alpha", "beta"]}', done_reason="length")
+    mock_client.__aenter__.return_value = mock_client
+
+    with (
+        patch(
+            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
+            return_value=mock_client,
+        ),
+        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
+    ):
+        with pytest.raises(OutputTooLongError):
+            await llm.call(
+                messages=[{"role": "user", "content": "List the facts."}],
+                response_format=FactListResponse,
+                max_retries=3,
+                initial_backoff=0,
+            )
+
+    assert mock_client.post.await_count == 1
 
 
 @pytest.mark.asyncio
