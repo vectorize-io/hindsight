@@ -689,6 +689,7 @@ class OracleOps(DataAccessOps):
         per_entity_limit: int,
         window: UpdatedWindow,
     ) -> LinkExpansionRows:
+        import asyncio
         import logging
 
         logger = logging.getLogger(__name__)
@@ -711,11 +712,21 @@ class OracleOps(DataAccessOps):
         #     no Oracle instance was available to measure it.
         # If observation recall is reported slow on Oracle, start by capturing the
         # plan for connected_sources and checking its estimated vs actual rows.
+        #
+        # Mirrors the PostgreSQL backend's timeout/fallback guard (same rationale:
+        # unlike _expand_combined()'s entity CTE, this query has no caller-side
+        # wait_for, so a slow run on a large/dense bank would otherwise propagate
+        # a raw TimeoutError and fail the entire recall() call instead of
+        # degrading to semantic+causal results).
+        from ...config import get_config
         from ..schema import fq_table
 
         obs_sources_table = fq_table("observation_sources")
-        entity_rows = await conn.fetch(
-            f"""
+        config = get_config()
+        try:
+            entity_rows = await asyncio.wait_for(
+                conn.fetch(
+                    f"""
             WITH seed_sources AS (
                 SELECT DISTINCT os.source_id
                 FROM {obs_sources_table} os
@@ -761,10 +772,18 @@ class OracleOps(DataAccessOps):
             ORDER BY score DESC
             FETCH FIRST $2 ROWS ONLY
             """,
-            seed_ids,
-            budget,
-            *window.params,
-        )
+                    seed_ids,
+                    budget,
+                    *window.params,
+                ),
+                timeout=config.link_expansion_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[ExpandObservations] Entity expansion timed out after "
+                f"{config.link_expansion_timeout}s, falling back to semantic+causal only"
+            )
+            entity_rows = []
         logger.debug(f"[LinkExpansion] observation graph (Oracle): found {len(entity_rows)} connected observations")
 
         # Semantic + causal for observations (Oracle path)

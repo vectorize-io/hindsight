@@ -28,6 +28,7 @@ exceed `link_expansion_timeout` — the same technique already established in
 the sibling path — and asserts recall now degrades instead of raising.
 """
 
+import logging
 import uuid
 
 import pytest
@@ -86,10 +87,19 @@ async def _seed_world_fact_and_observation(memory, bank_id: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_expand_observations_falls_back_gracefully_on_timeout(memory, request_context):
+async def test_expand_observations_falls_back_gracefully_on_timeout(memory, request_context, caplog):
     """FIX: forcing link_expansion_timeout low enough that the real entity
     CTE inside expand_observations() is guaranteed to exceed it should
-    degrade to semantic+causal results, not fail the whole recall call."""
+    degrade to semantic+causal results, not fail the whole recall call.
+
+    The recall-succeeds assertion alone doesn't discriminate this fix from
+    its absence: the seed observation is already found via direct semantic
+    search regardless of whether entity expansion ran, times out, or is
+    never guarded at all. The caplog assertion below is what actually pins
+    the fix -- the warning is only emitted from the `except
+    asyncio.TimeoutError` branch this PR adds around the entity CTE, so it
+    can only fire when that branch exists and was taken.
+    """
     bank_id = f"test-expand-obs-timeout-fallback-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id, request_context=request_context)
 
@@ -104,20 +114,26 @@ async def test_expand_observations_falls_back_gracefully_on_timeout(memory, requ
         try:
             config.link_expansion_timeout = 0.0001  # guaranteed to be exceeded
 
-            result = await memory.recall_async(
-                bank_id=bank_id,
-                query="Alice billing service migration",
-                fact_type=["observation"],
-                budget=Budget.MID,
-                max_tokens=2048,
-                request_context=request_context,
-                _quiet=True,
-            )
+            with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.db.ops_postgresql"):
+                result = await memory.recall_async(
+                    bank_id=bank_id,
+                    query="Alice billing service migration",
+                    fact_type=["observation"],
+                    budget=Budget.MID,
+                    max_tokens=2048,
+                    request_context=request_context,
+                    _quiet=True,
+                )
 
             # Recall succeeds even though entity expansion timed out; the
             # seed observation itself is still found via semantic search.
             assert result.results is not None
             assert len(result.results) > 0
+
+            # Pin the actual fix: the timeout/fallback guard must have fired.
+            assert any("[ExpandObservations] Entity expansion timed out" in r.message for r in caplog.records), (
+                f"expected the entity-expansion timeout warning, got: {[r.message for r in caplog.records]}"
+            )
         finally:
             config.link_expansion_timeout = original_timeout
     finally:
