@@ -77,7 +77,7 @@ Run everything in one container with embedded PostgreSQL:
 ```bash
 export OPENAI_API_KEY=sk-xxx
 
-docker run -it --pull always --name hindsight --restart unless-stopped -p 8888:8888 -p 9999:9999 \
+docker run -it --pull always --name hindsight --restart unless-stopped --shm-size=1g -p 8888:8888 -p 9999:9999 \
   -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
   -v hindsight-data:/home/hindsight/.pg0 \
   ghcr.io/vectorize-io/hindsight:latest
@@ -85,6 +85,10 @@ docker run -it --pull always --name hindsight --restart unless-stopped -p 8888:8
 
 - **API Server**: http://localhost:8888
 - **Control Plane** (Web UI): http://localhost:9999
+
+:::note Shared memory for embedded PostgreSQL
+Docker allocates 64 MiB to `/dev/shm` by default. Hindsight's embedded PostgreSQL can exceed that limit while creating vector indexes, causing `could not resize shared memory segment ... No space left on device`. The quick start reserves 1 GiB as a safe baseline; actual requirements depend on the workload, index type, PostgreSQL settings, and parallelism. In Docker Compose, use `shm_size: 1gb` on the Hindsight service.
+:::
 
 :::note Persisting data: named volume vs. host bind mount
 The container runs as a non-root user (UID 1000). The `hindsight-data` **named volume** above is recommended — Docker creates it owned by the container user, so it works with no extra setup.
