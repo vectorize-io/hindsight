@@ -27,6 +27,7 @@ import json
 import re
 import uuid
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
@@ -154,6 +155,133 @@ async def test_create_failure_does_not_execute_requested_delete():
             )
 
     execute_delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_delete_failure_rolls_back_the_entire_delete_set(memory: MemoryEngine, request_context):
+    """The final delete transaction must not commit only a prefix."""
+    bank_id = f"test-delete-rollback-{uuid.uuid4().hex[:8]}"
+    source_id = uuid.uuid4()
+    first_observation_id = uuid.uuid4()
+    second_observation_id = uuid.uuid4()
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    try:
+        # Seed history directly because the public API only creates history through an
+        # observation update; this test needs a pre-existing snapshot before deletion.
+        async with memory._pool.acquire() as conn:
+            await conn.executemany(
+                """
+                INSERT INTO memory_units (id, bank_id, text, fact_type, tags, observation_scopes, created_at)
+                VALUES ($1, $2, $3, 'observation', $4, $5::jsonb, now())
+                """,
+                [
+                    (first_observation_id, bank_id, "First durable observation", [], json.dumps(None)),
+                    (second_observation_id, bank_id, "Second durable observation", [], json.dumps(None)),
+                ],
+            )
+            await conn.executemany(
+                """
+                INSERT INTO observation_history (observation_id, bank_id, content, changed_at)
+                VALUES ($1, $2, $3::jsonb, now())
+                """,
+                [
+                    (
+                        first_observation_id,
+                        bank_id,
+                        json.dumps({"previous_text": "First observation before update"}),
+                    ),
+                    (
+                        second_observation_id,
+                        bank_id,
+                        json.dumps({"previous_text": "Second observation before update"}),
+                    ),
+                ],
+            )
+
+        recall = RecallResult(
+            results=[
+                MemoryFact(id=str(first_observation_id), text="First durable observation", fact_type="observation"),
+                MemoryFact(id=str(second_observation_id), text="Second durable observation", fact_type="observation"),
+            ]
+        )
+        llm_result = _BatchLLMResult(
+            deletes=[
+                _DeleteAction(observation_id=str(first_observation_id)),
+                _DeleteAction(observation_id=str(second_observation_id)),
+            ]
+        )
+        config = SimpleNamespace(
+            consolidation_dedup_threshold=1.0,
+            max_observations_per_scope=-1,
+            observation_scope_limits=[],
+        )
+        original_execute_delete = consolidator_module._execute_delete_action
+        successful_delete_count = 0
+
+        async def fail_on_second_delete(*, conn: Any, bank_id: str, observation_id: str, txn: Any = None) -> None:
+            nonlocal successful_delete_count
+            if successful_delete_count == 1:
+                raise RuntimeError("simulated second delete failure")
+            await original_execute_delete(
+                conn=conn,
+                bank_id=bank_id,
+                observation_id=observation_id,
+                txn=txn,
+            )
+            # The engine API uses another pooled connection and cannot observe this
+            # transaction's uncommitted state. Verify on the supplied connection that
+            # the first delete really happened before the second delete raises.
+            assert not await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM memory_units WHERE id = $1 AND bank_id = $2)",
+                uuid.UUID(observation_id),
+                bank_id,
+            )
+            assert not await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM observation_history WHERE observation_id = $1 AND bank_id = $2)",
+                uuid.UUID(observation_id),
+                bank_id,
+            )
+            successful_delete_count += 1
+
+        with (
+            patch.object(consolidator_module, "_find_related_observations", AsyncMock(return_value=recall)),
+            patch.object(consolidator_module, "_consolidate_batch_with_llm", AsyncMock(return_value=llm_result)),
+            patch.object(consolidator_module, "_execute_delete_action", fail_on_second_delete),
+        ):
+            with pytest.raises(RuntimeError, match="simulated second delete failure"):
+                await _process_memory_batch(
+                    pool=memory._pool,
+                    memory_engine=memory,
+                    llm_config=MagicMock(),
+                    bank_id=bank_id,
+                    memories=[{"id": source_id, "text": "New evidence", "tags": []}],
+                    request_context=request_context,
+                    config=config,
+                )
+
+        assert successful_delete_count == 1
+        observations = await memory.list_memory_units(
+            bank_id,
+            fact_type="observation",
+            limit=1000,
+            request_context=request_context,
+        )
+        assert {item["id"] for item in observations["items"]} == {
+            str(first_observation_id),
+            str(second_observation_id),
+        }
+        for observation_id in (first_observation_id, second_observation_id):
+            history = await memory.get_observation_history(
+                bank_id,
+                str(observation_id),
+                request_context=request_context,
+            )
+            assert history is not None
+            assert len(history) == 1
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 # ---------------------------------------------------------------------------
