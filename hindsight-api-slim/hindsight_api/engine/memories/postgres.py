@@ -561,6 +561,8 @@ class PostgresMemories(MemoriesExtension):
         event_date,
         mentioned_at,
         entity_ids: list[str] | None,
+        metadata: dict[str, Any],
+        text_signals: str | None,
         entity_names: list[str] | None = None,  # noqa: ARG002 — this store's registry is SQL; the host already minted+linked, so entity_ids is authoritative.
         txn=None,
     ) -> None:
@@ -577,6 +579,8 @@ class PostgresMemories(MemoriesExtension):
             event_date=event_date,
             mentioned_at=mentioned_at,
             entity_ids=entity_ids,
+            metadata=metadata,
+            text_signals=text_signals,
         )
 
     async def list_entities(

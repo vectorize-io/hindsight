@@ -24,6 +24,7 @@ from .base import (
     StoredMemory,
     build_fact_records,
     build_text_signals,
+    build_text_signals_from_parts,
     source_key,
 )
 
@@ -83,6 +84,7 @@ __all__ = [
     "StoredMemory",
     "build_fact_records",
     "build_text_signals",
+    "build_text_signals_from_parts",
     "create_memories",
     "get_memories",
     "set_memories",

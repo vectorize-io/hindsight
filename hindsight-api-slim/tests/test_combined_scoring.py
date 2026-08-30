@@ -6,6 +6,7 @@ score so that the relative influence of these signals is proportional to the bas
 relevance score, independent of the cross-encoder model's score calibration.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -381,6 +382,30 @@ class TestCoarseOccurrenceRecency:
 
         apply_combined_scoring([result], now=self.ISSUE_NOW)
 
+        assert result.recency == 0.5
+
+    def test_postgres_json_metadata_is_normalized_before_coarse_scoring(self):
+        occurred = datetime(2026, 1, 1, tzinfo=UTC)
+        retrieval = RetrievalResult.from_db_row(
+            {
+                "id": "postgres-jsonb",
+                "text": "Verbatim source without a canonical temporal segment",
+                "fact_type": "world",
+                "occurred_start": occurred,
+                "occurred_end": occurred,
+                "metadata": json.dumps(self._precision_metadata("year")),
+            }
+        )
+        result = ScoredResult(
+            candidate=MergedCandidate(retrieval=retrieval, rrf_score=0.05),
+            cross_encoder_score=1.0,
+            cross_encoder_score_normalized=0.5,
+            weight=0.5,
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        assert retrieval.metadata == self._precision_metadata("year")
         assert result.recency == 0.5
 
     def test_arbitrary_year_prose_is_not_legacy_precision_evidence(self):

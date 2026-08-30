@@ -1800,6 +1800,8 @@ class _MemoryEditPlan:
     new_occ_end: datetime | None
     new_event_date: datetime | None
     mentioned_at: datetime | None
+    metadata: dict[str, Any]
+    occurrence_precision: str
     # Entity resolution carried from Phase 1 when ``entities`` is being changed (None otherwise).
     # Its ``resolved_entities`` are reasserted on the Phase-2 connection before linking so a
     # concurrent graph-maintenance prune blocks until the edit commits (the retain #2662 race).
@@ -1825,6 +1827,7 @@ class _MemoryRevertPlan:
     occurred_start: datetime | None
     occurred_end: datetime | None
     mentioned_at: datetime | None
+    metadata: dict[str, Any]
     names: list[str]
     embedding: str | None = None
 
@@ -9364,6 +9367,7 @@ class MemoryEngine(MemoryEngineInterface):
         occurred_start: datetime | None,
         occurred_end: datetime | None,
         mentioned_at: datetime | None,
+        metadata: dict[str, Any] | None,
         entities: list[str],
     ) -> str | None:
         """Recompute a memory unit's embedding string the same way retain does.
@@ -9372,6 +9376,7 @@ class MemoryEngine(MemoryEngineInterface):
         reverted memory embeds identically to a freshly-retained one. Returns the
         pgvector string form (or None if the embedder produced nothing).
         """
+        from .metadata_utils import as_string_metadata
         from .retain import embedding_processing
         from .retain.types import ExtractedFact
 
@@ -9382,6 +9387,7 @@ class MemoryEngine(MemoryEngineInterface):
             occurred_start=occurred_start,
             occurred_end=occurred_end,
             mentioned_at=mentioned_at,
+            metadata=as_string_metadata(metadata),
         )
         augmented = embedding_processing.augment_texts_with_dates([shim], self._format_readable_date)
         embeddings = await embedding_processing.generate_embeddings_batch(self.embeddings, augmented)
@@ -9507,7 +9513,12 @@ class MemoryEngine(MemoryEngineInterface):
         need_consolidation = False
         need_graph = False
 
-        from .memories import get_memories
+        from .memories import build_text_signals_from_parts, get_memories
+        from .temporal_precision import (
+            resolve_edited_occurrence_precision,
+            resolve_stored_occurrence_precision,
+            with_occurrence_precision,
+        )
 
         store = get_memories()
 
@@ -9567,6 +9578,22 @@ class MemoryEngine(MemoryEngineInterface):
                 # event_date (NOT NULL, legacy single date + used by temporal links) tracks the
                 # occurred start when it's set.
                 new_event_date = new_occ_start or live.event_date
+                current_precision = resolve_stored_occurrence_precision(
+                    metadata=live.metadata,
+                    fact_text=live.text,
+                    occurred_start=live.occurred_start,
+                    occurred_end=live.occurred_end,
+                    allow_legacy_recovery=live.fact_type != "observation",
+                )
+                new_precision = resolve_edited_occurrence_precision(
+                    stored_precision=current_precision,
+                    occurred_start_supplied=occurred_start is not None,
+                    occurred_start_value=occurred_start,
+                    occurred_end_supplied=occurred_end is not None,
+                    final_start=new_occ_start,
+                    final_end=new_occ_end,
+                )
+                new_metadata = with_occurrence_precision(live.metadata, new_precision)
 
                 entity_resolution = None
                 resolved_for_unit = None
@@ -9636,6 +9663,8 @@ class MemoryEngine(MemoryEngineInterface):
                     new_occ_end=new_occ_end,
                     new_event_date=new_event_date,
                     mentioned_at=live.mentioned_at,
+                    metadata=new_metadata,
+                    occurrence_precision=new_precision,
                     entity_resolution=entity_resolution,
                     resolved_for_unit=resolved_for_unit,
                     edit_entity_ids=edit_entity_ids,
@@ -9670,6 +9699,7 @@ class MemoryEngine(MemoryEngineInterface):
                     occurred_start=record.occurred_start,
                     occurred_end=record.occurred_end,
                     mentioned_at=record.mentioned_at,
+                    metadata=dict(record.metadata or {}),
                     names=[r["canonical_name"] for r in rev_name_rows],
                 )
 
@@ -9680,6 +9710,7 @@ class MemoryEngine(MemoryEngineInterface):
                 occurred_start=edit_plan.new_occ_start,
                 occurred_end=edit_plan.new_occ_end,
                 mentioned_at=edit_plan.mentioned_at,
+                metadata=edit_plan.metadata,
                 entities=edit_plan.names,
             )
         if revert_plan is not None:
@@ -9688,6 +9719,7 @@ class MemoryEngine(MemoryEngineInterface):
                 occurred_start=revert_plan.occurred_start,
                 occurred_end=revert_plan.occurred_end,
                 mentioned_at=revert_plan.mentioned_at,
+                metadata=revert_plan.metadata,
                 entities=revert_plan.names,
             )
 
@@ -9734,12 +9766,40 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # --- Apply edit (live rows only) ---
                     if edit_plan is not None and live2:
+                        # A field omitted by this edit belongs to the Phase-2
+                        # snapshot, not the older Phase-1 plan. This preserves a
+                        # concurrent date edit and lets the precision metadata,
+                        # embedding, and BM25 signals describe the exact window
+                        # this mutation commits.
+                        locked_occ_start = (
+                            edit_plan.new_occ_start if occurred_start is not None else live2.occurred_start
+                        )
+                        locked_occ_end = edit_plan.new_occ_end if occurred_end is not None else live2.occurred_end
+                        locked_event_date = edit_plan.new_event_date if occurred_start is not None else live2.event_date
+                        locked_mentioned_at = live2.mentioned_at
+                        locked_current_precision = resolve_stored_occurrence_precision(
+                            metadata=live2.metadata,
+                            fact_text=live2.text,
+                            occurred_start=live2.occurred_start,
+                            occurred_end=live2.occurred_end,
+                            allow_legacy_recovery=live2.fact_type != "observation",
+                        )
+                        locked_precision = resolve_edited_occurrence_precision(
+                            stored_precision=locked_current_precision,
+                            occurred_start_supplied=occurred_start is not None,
+                            occurred_start_value=occurred_start,
+                            occurred_end_supplied=occurred_end is not None,
+                            final_start=locked_occ_start,
+                            final_end=locked_occ_end,
+                        )
+                        locked_metadata = with_occurrence_precision(live2.metadata, locked_precision)
+
                         if edit_plan.entity_names_for_store is not None:
                             # The store owns its entity registry: apply_edit below resolves + mints
                             # these names and rewrites the memory's entity ids. There are no SQL
                             # postings to clear/relink and no prune queue — the store keeps entity
                             # ids on the memory itself, so the edit's rewrite replaces the whole set.
-                            edit_embedding = edit_plan.embedding
+                            locked_names = edit_plan.names
                         elif edit_plan.resolved_for_unit is not None:
                             # Entities are being changed: rebuild unit_entities to the resolved set.
                             # The entities this unit is about to stop referencing may have been
@@ -9764,7 +9824,7 @@ class MemoryEngine(MemoryEngineInterface):
                                     conn=conn,
                                     bank_id=bank_id,
                                 )
-                            edit_embedding = edit_plan.embedding
+                            locked_names = edit_plan.names
                         else:
                             # Entities NOT changing: the precomputed embedding used the Phase-1
                             # names. Re-read them under the write lock — a concurrent entity-only
@@ -9775,16 +9835,31 @@ class MemoryEngine(MemoryEngineInterface):
                                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                             )
                             locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
-                            if locked_names != edit_plan.names:
-                                edit_embedding = await self._reembed_memory_text(
-                                    text=edit_plan.new_text,
-                                    occurred_start=edit_plan.new_occ_start,
-                                    occurred_end=edit_plan.new_occ_end,
-                                    mentioned_at=edit_plan.mentioned_at,
-                                    entities=locked_names,
-                                )
-                            else:
-                                edit_embedding = edit_plan.embedding
+                        if (
+                            locked_names != edit_plan.names
+                            or locked_precision != edit_plan.occurrence_precision
+                            or locked_occ_start != edit_plan.new_occ_start
+                            or locked_occ_end != edit_plan.new_occ_end
+                            or locked_mentioned_at != edit_plan.mentioned_at
+                        ):
+                            edit_embedding = await self._reembed_memory_text(
+                                text=edit_plan.new_text,
+                                occurred_start=locked_occ_start,
+                                occurred_end=locked_occ_end,
+                                mentioned_at=locked_mentioned_at,
+                                metadata=locked_metadata,
+                                entities=locked_names,
+                            )
+                        else:
+                            edit_embedding = edit_plan.embedding
+                        text_signals = build_text_signals_from_parts(
+                            entity_names=locked_names,
+                            fact_text=edit_plan.new_text,
+                            fact_type=edit_plan.new_fact,
+                            metadata=locked_metadata,
+                            occurred_start=locked_occ_start,
+                            occurred_end=locked_occ_end,
+                        )
                         # Capture relink victims before this memory's links change, then apply the
                         # field edit through the store: it resets consolidation, stamps the edit, and
                         # drops the derived links (rebuilt with victims — the edit leaves the unit
@@ -9798,11 +9873,13 @@ class MemoryEngine(MemoryEngineInterface):
                             text=edit_plan.new_text,
                             context=edit_plan.new_context,
                             fact_type=edit_plan.new_fact,
-                            occurred_start=edit_plan.new_occ_start,
-                            occurred_end=edit_plan.new_occ_end,
-                            event_date=edit_plan.new_event_date,
-                            mentioned_at=edit_plan.mentioned_at,
+                            occurred_start=locked_occ_start,
+                            occurred_end=locked_occ_end,
+                            event_date=locked_event_date,
+                            mentioned_at=locked_mentioned_at,
                             entity_ids=edit_plan.edit_entity_ids,
+                            metadata=locked_metadata,
+                            text_signals=text_signals,
                             entity_names=edit_plan.entity_names_for_store,
                             txn=_curation_txn,
                         )
@@ -9858,12 +9935,27 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
                             revert_embedding = revert_plan.embedding
-                            if locked_names != revert_plan.names:
+                            planned_precision = resolve_stored_occurrence_precision(
+                                metadata=revert_plan.metadata,
+                                fact_text=revert_plan.text,
+                                occurred_start=revert_plan.occurred_start,
+                                occurred_end=revert_plan.occurred_end,
+                                allow_legacy_recovery=True,
+                            )
+                            restored_precision = resolve_stored_occurrence_precision(
+                                metadata=restored.metadata,
+                                fact_text=restored.text,
+                                occurred_start=restored.occurred_start,
+                                occurred_end=restored.occurred_end,
+                                allow_legacy_recovery=restored.fact_type != "observation",
+                            )
+                            if locked_names != revert_plan.names or restored_precision != planned_precision:
                                 revert_embedding = await self._reembed_memory_text(
                                     text=restored.text,
                                     occurred_start=restored.occurred_start,
                                     occurred_end=restored.occurred_end,
                                     mentioned_at=restored.mentioned_at,
+                                    metadata=dict(restored.metadata or {}),
                                     entities=locked_names,
                                 )
                             if revert_embedding is not None:

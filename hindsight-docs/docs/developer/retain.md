@@ -160,10 +160,12 @@ Hindsight also tracks when you told it each fact.
 
 Imagine in January 2025, someone tells you "Alice got married in June 2024":
 - **Historical queries** work: "What did Alice do in 2024?" → finds the marriage
-- **Recency ranking** works: Recent mentions get priority in search
+- **Recency ranking** uses June 2024 for the marriage; mention time is only a fallback for facts with no occurrence time
 - **Temporal reasoning** works: "What happened before her marriage?" → finds earlier events
 
 Without this distinction, old information would either be unsearchable by date or treated as irrelevant.
+
+Year- and month-only dates keep that granularity through storage and indexing. Hindsight may materialize a period start in timestamp columns for database compatibility, but it does not treat the missing month or day as supplied fact data.
 
 ---
 

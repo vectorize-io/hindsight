@@ -6,6 +6,7 @@ Handles augmenting fact texts with temporal information and generating embedding
 
 import logging
 
+from ..temporal_precision import format_embedding_occurrence_date, resolve_stored_occurrence_precision
 from . import embedding_utils
 from .types import ExtractedFact
 
@@ -27,17 +28,27 @@ def augment_texts_with_dates(facts: list[ExtractedFact], format_date_fn) -> list
     """
     augmented_texts = []
     for fact in facts:
-        # Use occurred_start as the representative date, fall back to mentioned_at
-        fact_date = fact.occurred_start or fact.mentioned_at
         # Augment text with date and entity names for embedding (but store original text in DB)
         # Entity names (including key:value labels) improve retrieval without polluting stored content
-        if fact_date is not None:
-            readable_date = format_date_fn(fact_date)
+        if fact.occurred_start is not None:
+            precision = resolve_stored_occurrence_precision(
+                metadata=fact.metadata,
+                fact_text=fact.fact_text,
+                occurred_start=fact.occurred_start,
+                occurred_end=fact.occurred_end,
+                allow_legacy_recovery=fact.fact_type != "observation",
+            )
+            readable_date = format_embedding_occurrence_date(fact.occurred_start, precision, format_date_fn)
             if fact.occurred_end and fact.occurred_end != fact.occurred_start:
-                readable_end = format_date_fn(fact.occurred_end)
+                readable_end = format_embedding_occurrence_date(fact.occurred_end, precision, format_date_fn)
                 augmented_text = f"{fact.fact_text} (happened from {readable_date} to {readable_end})"
             else:
                 augmented_text = f"{fact.fact_text} (happened in {readable_date})"
+        elif fact.mentioned_at is not None:
+            # Mention time is a different clock.  Occurrence precision must not
+            # reinterpret it when an otherwise-undated fact falls back here.
+            readable_date = format_date_fn(fact.mentioned_at)
+            augmented_text = f"{fact.fact_text} (happened in {readable_date})"
         else:
             augmented_text = fact.fact_text
         if fact.entities:

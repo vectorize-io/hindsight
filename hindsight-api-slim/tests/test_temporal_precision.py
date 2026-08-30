@@ -8,9 +8,12 @@ from hindsight_api.engine.temporal_precision import (
     OCCURRENCE_PRECISION_METADATA_KEY,
     calendar_bounds,
     coarse_occurrence_start,
+    format_embedding_occurrence_date,
+    format_text_signal_occurrence_date,
     infer_occurrence_precision,
     parse_coarse_occurrence,
     recover_legacy_occurrence_precision,
+    resolve_edited_occurrence_precision,
     resolve_stored_occurrence_precision,
     with_occurrence_precision,
 )
@@ -223,3 +226,91 @@ def test_legacy_precision_recovery_can_be_disabled_for_derived_observations():
     )
 
     assert precision == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        (
+            {
+                "stored_precision": "year",
+                "occurred_start_supplied": False,
+                "occurred_start_value": None,
+                "occurred_end_supplied": False,
+                "final_start": datetime(2026, 1, 1, tzinfo=UTC),
+                "final_end": datetime(2026, 1, 1, tzinfo=UTC),
+            },
+            "year",
+        ),
+        (
+            {
+                "stored_precision": "year",
+                "occurred_start_supplied": True,
+                "occurred_start_value": "2026-08-30",
+                "occurred_end_supplied": True,
+                "final_start": datetime(2026, 8, 30, tzinfo=UTC),
+                "final_end": datetime(2026, 8, 30, tzinfo=UTC),
+            },
+            "day",
+        ),
+        (
+            {
+                "stored_precision": "day",
+                "occurred_start_supplied": True,
+                "occurred_start_value": "2026-08-30T12:15:00+00:00",
+                "occurred_end_supplied": True,
+                "final_start": datetime(2026, 8, 30, 12, 15, tzinfo=UTC),
+                "final_end": datetime(2026, 8, 30, 12, 15, tzinfo=UTC),
+            },
+            "instant",
+        ),
+        (
+            {
+                "stored_precision": "day",
+                "occurred_start_supplied": False,
+                "occurred_start_value": None,
+                "occurred_end_supplied": True,
+                "final_start": datetime(2026, 8, 1, tzinfo=UTC),
+                "final_end": datetime(2026, 8, 30, tzinfo=UTC),
+            },
+            "range",
+        ),
+        (
+            {
+                "stored_precision": "range",
+                "occurred_start_supplied": False,
+                "occurred_start_value": None,
+                "occurred_end_supplied": True,
+                "final_start": datetime(2026, 8, 1, tzinfo=UTC),
+                "final_end": None,
+            },
+            "unknown",
+        ),
+        (
+            {
+                "stored_precision": "year",
+                "occurred_start_supplied": True,
+                "occurred_start_value": "",
+                "occurred_end_supplied": False,
+                "final_start": None,
+                "final_end": datetime(2026, 1, 1, tzinfo=UTC),
+            },
+            "unknown",
+        ),
+    ],
+)
+def test_resolve_edited_occurrence_precision(kwargs, expected):
+    assert resolve_edited_occurrence_precision(**kwargs) == expected
+
+
+def test_precision_aware_embedding_and_text_signal_formats_do_not_invent_calendar_parts():
+    year = datetime(2026, 1, 1, tzinfo=UTC)
+    month = datetime(2026, 8, 1, tzinfo=UTC)
+    day = datetime(2026, 8, 30, tzinfo=UTC)
+
+    assert format_embedding_occurrence_date(year, "year", lambda _value: "January 2026") == "2026"
+    assert format_embedding_occurrence_date(month, "month", lambda _value: "August 2026") == "August 2026"
+    assert format_embedding_occurrence_date(day, "day", lambda _value: "August 2026") == "August 2026"
+    assert format_text_signal_occurrence_date(year, "year") == "2026"
+    assert format_text_signal_occurrence_date(month, "month") == "August 2026"
+    assert format_text_signal_occurrence_date(day, "day") == "August 30 2026"

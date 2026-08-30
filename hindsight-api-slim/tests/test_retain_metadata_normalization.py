@@ -120,6 +120,7 @@ async def test_delta_sql_metadata_replacement_preserves_engine_precision_and_str
         OCCURRENCE_PRECISION_METADATA_KEY: "instant",
     }
     assert "WHERE bank_id = $1 AND document_id = $2" in conn.fetch.await_args.args[0]
+    assert "ORDER BY id" in conn.fetch.await_args.args[0]
     assert "WHERE bank_id = $3 AND id = $4" in conn.executemany.await_args.args[0]
     updates = conn.executemany.await_args.args[1]
     metadata_by_id = {unit_id: json.loads(stored_metadata) for _tags, stored_metadata, _bank, unit_id in updates}

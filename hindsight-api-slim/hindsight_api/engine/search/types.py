@@ -5,9 +5,30 @@ These dataclasses replace Dict[str, Any] types throughout the recall pipeline,
 providing type safety and making data flow explicit.
 """
 
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+from ..metadata_utils import as_string_metadata
+
+
+def _normalize_retrieval_metadata(value: object) -> dict[str, str] | None:
+    """Normalize JSON/JSONB metadata at the retrieval boundary.
+
+    PostgreSQL may return JSONB as a JSON string while Oracle and extension
+    stores return an already-decoded mapping. Recall scoring must see one shape
+    in every backend so reserved engine metadata is not silently ignored.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(value, Mapping):
+        return as_string_metadata(value)
+    return None
 
 
 @dataclass
@@ -88,7 +109,7 @@ class RetrievalResult:
             document_id=row.get("document_id"),
             chunk_id=row.get("chunk_id"),
             tags=row.get("tags"),
-            metadata=row.get("metadata"),
+            metadata=_normalize_retrieval_metadata(row.get("metadata")),
             proof_count=row.get("proof_count"),
             similarity=row.get("similarity"),
             bm25_score=row.get("bm25_score"),

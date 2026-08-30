@@ -793,7 +793,7 @@ class PostgreSQLOps(DataAccessOps):
             entity_expanded AS (
                 SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                        COUNT(DISTINCT se.entity_id)::float AS score,
                        'entity'::text AS source
                 FROM seed_entities se
@@ -834,14 +834,14 @@ class PostgreSQLOps(DataAccessOps):
                 SELECT
                     id, text, context, event_date, occurred_start,
                     occurred_end, mentioned_at,
-                    fact_type, document_id, chunk_id, tags, proof_count,
+                    fact_type, document_id, chunk_id, tags, metadata, proof_count,
                     MAX(weight) AS score,
                     'semantic'::text AS source
                 FROM (
                     SELECT
                         mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                         mu.occurred_end, mu.mentioned_at,
-                        mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                        mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                         ml.weight
                     FROM {ml_table} ml
                     JOIN {mu_table} mu ON mu.id = ml.to_unit_id
@@ -854,7 +854,7 @@ class PostgreSQLOps(DataAccessOps):
                     SELECT
                         mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                         mu.occurred_end, mu.mentioned_at,
-                        mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                        mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                         ml.weight
                     FROM {ml_table} ml
                     JOIN {mu_table} mu ON mu.id = ml.from_unit_id
@@ -866,7 +866,7 @@ class PostgreSQLOps(DataAccessOps):
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start,
                          occurred_end, mentioned_at,
-                         fact_type, document_id, chunk_id, tags, proof_count
+                         fact_type, document_id, chunk_id, tags, metadata, proof_count
                 ORDER BY score DESC
                 LIMIT $3
             ),
@@ -874,7 +874,7 @@ class PostgreSQLOps(DataAccessOps):
                 SELECT DISTINCT ON (mu.id)
                     mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                     mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                     ml.weight AS score,
                     'causal'::text AS source
                 FROM {ml_table} ml
@@ -973,7 +973,7 @@ class PostgreSQLOps(DataAccessOps):
                 SELECT
                     mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                     mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                     mu.source_memory_ids
                 FROM {mu_table} mu, connected_array ca
                 WHERE mu.fact_type = 'observation'
@@ -992,7 +992,7 @@ class PostgreSQLOps(DataAccessOps):
             SELECT
                 c.id, c.text, c.context, c.event_date, c.occurred_start,
                 c.occurred_end, c.mentioned_at,
-                c.fact_type, c.document_id, c.chunk_id, c.tags, c.proof_count,
+                c.fact_type, c.document_id, c.chunk_id, c.tags, c.metadata, c.proof_count,
                 sc.score
             FROM candidates c
             JOIN scored sc ON sc.id = c.id
@@ -1012,13 +1012,13 @@ class PostgreSQLOps(DataAccessOps):
                 SELECT
                     id, text, context, event_date, occurred_start,
                     occurred_end, mentioned_at,
-                    fact_type, document_id, chunk_id, tags, proof_count,
+                    fact_type, document_id, chunk_id, tags, metadata, proof_count,
                     MAX(weight) AS score,
                     'semantic'::text AS source
                 FROM (
                     SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                            mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
-                           mu.chunk_id, mu.tags, mu.proof_count, ml.weight
+                           mu.chunk_id, mu.tags, mu.metadata, mu.proof_count, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
@@ -1027,7 +1027,7 @@ class PostgreSQLOps(DataAccessOps):
                     UNION ALL
                     SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                            mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
-                           mu.chunk_id, mu.tags, mu.proof_count, ml.weight
+                           mu.chunk_id, mu.tags, mu.metadata, mu.proof_count, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
@@ -1035,14 +1035,15 @@ class PostgreSQLOps(DataAccessOps):
                       {window.clause("mu")}
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start, occurred_end,
-                         mentioned_at, fact_type, document_id, chunk_id, tags, proof_count
+                         mentioned_at, fact_type, document_id, chunk_id, tags, metadata, proof_count
                 ORDER BY score DESC LIMIT $2
             ),
             causal_expanded AS (
                 SELECT DISTINCT ON (mu.id)
                     mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                     mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
-                    mu.chunk_id, mu.tags, mu.proof_count, ml.weight AS score, 'causal'::text AS source
+                    mu.chunk_id, mu.tags, mu.metadata, mu.proof_count, ml.weight AS score,
+                    'causal'::text AS source
                 FROM {ml_table} ml JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')

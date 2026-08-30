@@ -70,6 +70,7 @@ class InMemoryMemories(MemoriesExtension):
         self.archive: dict[str, StoredMemory] = {}
         self.invalidation_reason: dict[str, str | None] = {}
         self.embeddings: dict[str, object] = {}
+        self.text_signals: dict[str, str | None] = {}
         # The document store: one record per document, each carrying its extracted text and the
         # ordered chunk texts — the bodies a store that owns them keeps out of Postgres.
         self.documents: dict[str, dict] = {}
@@ -457,20 +458,20 @@ class InMemoryMemories(MemoriesExtension):
 
     async def update_memories(self, bank_id, patches, txn=None):
         self.calls.append("update_memories")
-        for patch in patches:
-            row = self.rows.get(str(patch.unit_id))
+        for memory_patch in patches:
+            row = self.rows.get(str(memory_patch.unit_id))
             if row is None:
                 continue
-            if patch.text is not None:
-                row.text = patch.text
-            if patch.tags is not None:
-                row.tags = list(patch.tags)
-            if patch.event_date is not None:
-                row.event_date = patch.event_date
-            if patch.proof_count_delta:
-                row.proof_count += patch.proof_count_delta
-            if patch.metadata:
-                row.metadata = {**(row.metadata or {}), **patch.metadata}
+            if memory_patch.text is not None:
+                row.text = memory_patch.text
+            if memory_patch.tags is not None:
+                row.tags = list(memory_patch.tags)
+            if memory_patch.event_date is not None:
+                row.event_date = memory_patch.event_date
+            if memory_patch.proof_count_delta:
+                row.proof_count += memory_patch.proof_count_delta
+            if memory_patch.metadata:
+                row.metadata = {**(row.metadata or {}), **memory_patch.metadata}
 
     async def apply_edit(
         self,
@@ -487,6 +488,8 @@ class InMemoryMemories(MemoriesExtension):
         event_date,
         mentioned_at,
         entity_ids,
+        metadata,
+        text_signals,
         entity_names=None,
         txn=None,
     ):
@@ -501,6 +504,8 @@ class InMemoryMemories(MemoriesExtension):
         row.occurred_end = occurred_end
         row.event_date = event_date
         row.mentioned_at = mentioned_at
+        row.metadata = dict(metadata)
+        self.text_signals[str(unit_id)] = text_signals
         if entity_ids is not None:
             row.entity_ids = list(entity_ids)
 

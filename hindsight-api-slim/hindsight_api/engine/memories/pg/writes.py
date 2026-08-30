@@ -20,7 +20,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ....config import get_config
-from ..base import StoredMemory
+from ..base import StoredMemory, build_text_signals
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...retain.types import ProcessedFact
@@ -95,21 +95,7 @@ async def insert_facts(
         observation_scopes_list.append(
             json.dumps(fact.observation_scopes) if fact.observation_scopes is not None else None
         )
-        # Build text_signals: entity names + date tokens for enriched BM25 indexing
-        signal_parts = []
-        if fact.entities:
-            signal_parts.extend(e.name for e in fact.entities)
-        if fact.occurred_start:
-            try:
-                signal_parts.append(fact.occurred_start.strftime("%B %d %Y").lstrip("0").replace(" 0", " "))
-            except (ValueError, AttributeError):
-                pass
-        if fact.occurred_end and fact.occurred_end != fact.occurred_start:
-            try:
-                signal_parts.append(fact.occurred_end.strftime("%B %d %Y").lstrip("0").replace(" 0", " "))
-            except (ValueError, AttributeError):
-                pass
-        text_signals_list.append(" ".join(signal_parts) if signal_parts else None)
+        text_signals_list.append(build_text_signals(fact))
 
     # Batch insert all facts — delegates to DataAccessOps which handles
     # unnest (PG) vs row-by-row (Oracle) transparently.
@@ -359,6 +345,12 @@ _ARCHIVE_SELECT = (
 
 def _archived_stored(row: Any) -> StoredMemory:
     """Map an `invalidated_memory_units` row onto :class:`StoredMemory`."""
+    metadata = row["metadata"]
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = None
     return StoredMemory(
         unit_id=str(row["id"]),
         text=row["text"],
@@ -367,7 +359,7 @@ def _archived_stored(row: Any) -> StoredMemory:
         document_id=row["document_id"],
         chunk_id=str(row["chunk_id"]) if row["chunk_id"] else None,
         tags=list(row["tags"] or []),
-        metadata=row["metadata"] if isinstance(row["metadata"], dict) else None,
+        metadata=metadata if isinstance(metadata, dict) else None,
         proof_count=row["proof_count"] or 1,
         event_date=row["event_date"],
         occurred_start=row["occurred_start"],
@@ -529,6 +521,8 @@ async def apply_edit(
     event_date,
     mentioned_at,
     entity_ids: list[str] | None,
+    metadata: dict[str, Any],
+    text_signals: str | None,
 ) -> None:
     # `entity_ids` and `mentioned_at` are unused here: the entity postings are
     # re-linked into `unit_entities` by the caller, and an edit does not move the
@@ -546,13 +540,14 @@ async def apply_edit(
     # Reference the bind parameters, not the columns: PostgreSQL evaluates the
     # UPDATE's RHS before the sibling SET assignments land, so a column reference
     # would see the pre-edit values.
-    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
+    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4", signals_col="$10")
     sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
     await conn.execute(
         f"""
         UPDATE {mu}
         SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
-            event_date = $8, consolidated_at = NULL, consolidation_failed_at = NULL,
+            event_date = $8, metadata = $9::jsonb, text_signals = $10,
+            consolidated_at = NULL, consolidation_failed_at = NULL,
             edited_at = now(), updated_at = now(){sv_clause}
         WHERE id = $1 AND bank_id = $2
         """,
@@ -564,6 +559,8 @@ async def apply_edit(
         occurred_start,
         occurred_end,
         event_date,
+        json.dumps(metadata),
+        text_signals,
     )
     # Drop only the DERIVED links — graph maintenance recomputes temporal/semantic. Causal edges
     # are retain-time extraction output that nothing recreates, so an edit preserves them (#2864).

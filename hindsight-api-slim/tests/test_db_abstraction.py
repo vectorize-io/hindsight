@@ -12,8 +12,8 @@ import asyncpg
 import pytest
 
 from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
-from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db import postgresql as pg_backend
+from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db.postgresql import PostgreSQLBackend, apply_session_settings
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
@@ -873,6 +873,71 @@ def test_expansion_ctes_omit_window_when_unbounded(ops_module: str, ops_class: s
     assert "updated_at" not in entity_cte
     assert "updated_at" not in sem_causal_cte
     assert "$4" not in entity_cte + sem_causal_cte
+
+
+@pytest.mark.parametrize(
+    "ops_module,ops_class,graph_metadata_mentions",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps", 5),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps", 3),
+    ],
+)
+def test_expansion_ctes_carry_memory_metadata(
+    ops_module: str,
+    ops_class: str,
+    graph_metadata_mentions: int,
+) -> None:
+    """Graph-only candidates must retain reserved precision metadata through reranking."""
+    from importlib import import_module
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    entity_cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7, _UNBOUNDED_WINDOW)
+    sem_causal_cte = ops.build_semantic_causal_cte("memory_links", "memory_units", _UNBOUNDED_WINDOW)
+
+    assert "mu.tags, mu.metadata, mu.proof_count" in entity_cte
+    assert sem_causal_cte.count("metadata") == graph_metadata_mentions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ops_module,ops_class,query_metadata_mentions",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps", [2, 5]),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps", [1, 3]),
+    ],
+)
+async def test_observation_expansion_carries_memory_metadata(
+    ops_module: str,
+    ops_class: str,
+    query_metadata_mentions: list[int],
+) -> None:
+    """Both observation graph queries must return metadata for precision-aware scoring."""
+    from importlib import import_module
+
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        async def fetch(self, query: str, *_args):
+            self.queries.append(query)
+            return []
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    conn = RecordingConnection()
+
+    await ops.expand_observations(
+        conn,
+        "memory_units",
+        "unit_entities",
+        "memory_links",
+        ["seed"],
+        10,
+        7,
+        _UNBOUNDED_WINDOW,
+    )
+
+    assert len(conn.queries) == 2
+    assert [query.count("metadata") for query in conn.queries] == query_metadata_mentions
 
 
 # ---------------------------------------------------------------------------

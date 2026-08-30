@@ -500,6 +500,7 @@ async def update_memory_units_metadata_and_tags(
         SELECT id, metadata
         FROM {fq_table("memory_units")}
         WHERE bank_id = $1 AND document_id = $2
+        ORDER BY id
         FOR UPDATE
         """,
         bank_id,

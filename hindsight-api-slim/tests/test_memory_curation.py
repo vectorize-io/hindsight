@@ -8,6 +8,7 @@ associations), edit, the guards, listing, and recall exclusion.
 
 import json
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from hindsight_api import RequestContext
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain import embedding_processing
+from hindsight_api.engine.temporal_precision import OCCURRENCE_PRECISION_METADATA_KEY
 
 # This module seeds every case with `_insert_memory`, an INSERT into `memory_units` (plus `memory_links` / `unit_entities`). A MEMORIES extension owns those rows in its own store and leaves the Postgres
 # table empty, so the seed lands nowhere the code under test can see it: the failing cases find
@@ -445,6 +447,101 @@ class TestEdit:
             assert row["context"] == "from a chat"
             assert row["occurred_start"].date().isoformat() == "2023-06-01"
             assert row["event_date"].date().isoformat() == "2023-06-01", "event_date tracks occurred_start"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_edit_atomically_refreshes_occurrence_precision_and_text_signals(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+    ):
+        bank_id = f"test-curation-precision-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(
+                conn,
+                memory,
+                bank_id,
+                "Summit talk | When: 2026 | Involving: user",
+                fact_type="world",
+                metadata={"source": "fixture", OCCURRENCE_PRECISION_METADATA_KEY: "year"},
+            )
+            await conn.execute(
+                "UPDATE memory_units SET occurred_start = $2, occurred_end = $2, event_date = $2, "
+                "text_signals = 'January 01 2026' WHERE id = $1",
+                m1,
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+
+        async def stored_state() -> dict:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT metadata, text_signals, occurred_start, occurred_end FROM memory_units WHERE id = $1",
+                    m1,
+                )
+                metadata = row["metadata"]
+                if isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                return {**dict(row), "metadata": metadata}
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                text="The user gave a summit talk | When: 2026 | Involving: user",
+                request_context=request_context,
+            )
+            year_state = await stored_state()
+
+            await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                occurred_start="2026-08-30",
+                occurred_end="2026-08-30",
+                request_context=request_context,
+            )
+            day_state = await stored_state()
+
+            await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                occurred_end="2026-09-02",
+                request_context=request_context,
+            )
+            range_state = await stored_state()
+
+            await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                occurred_start="",
+                occurred_end="",
+                request_context=request_context,
+            )
+            cleared_state = await stored_state()
+
+        assert year_state["metadata"] == {
+            "source": "fixture",
+            OCCURRENCE_PRECISION_METADATA_KEY: "year",
+        }
+        assert year_state["text_signals"] == "2026"
+        assert "January" not in year_state["text_signals"]
+
+        assert day_state["metadata"][OCCURRENCE_PRECISION_METADATA_KEY] == "day"
+        assert day_state["text_signals"] == "August 30 2026"
+
+        assert range_state["metadata"][OCCURRENCE_PRECISION_METADATA_KEY] == "range"
+        assert range_state["text_signals"] == "August 30 2026 September 2 2026"
+
+        assert cleared_state["metadata"] == {"source": "fixture"}
+        assert cleared_state["occurred_start"] is None
+        assert cleared_state["occurred_end"] is None
+        assert cleared_state["text_signals"] is None
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

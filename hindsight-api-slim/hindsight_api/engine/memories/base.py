@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ...extensions.base import Extension
+from ..temporal_precision import format_text_signal_occurrence_date, resolve_stored_occurrence_precision
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..search.retrieval import GraphRetriever
@@ -339,6 +340,33 @@ class FactRecord:
         return bag
 
 
+def build_text_signals_from_parts(
+    *,
+    entity_names: list[str],
+    fact_text: str,
+    fact_type: str,
+    metadata: dict | None,
+    occurred_start: datetime | None,
+    occurred_end: datetime | None,
+) -> str | None:
+    """Build the complete precision-aware BM25 enrichment string."""
+    parts = list(entity_names)
+    if occurred_start is None:
+        return " ".join(parts) if parts else None
+
+    precision = resolve_stored_occurrence_precision(
+        metadata=metadata,
+        fact_text=fact_text,
+        occurred_start=occurred_start,
+        occurred_end=occurred_end,
+        allow_legacy_recovery=fact_type != "observation",
+    )
+    parts.append(format_text_signal_occurrence_date(occurred_start, precision))
+    if occurred_end is not None and occurred_end != occurred_start:
+        parts.append(format_text_signal_occurrence_date(occurred_end, precision))
+    return " ".join(parts) if parts else None
+
+
 def build_text_signals(fact) -> str | None:
     """Entity names + spelled-out dates — the enrichment Hindsight folds into BM25.
 
@@ -346,20 +374,14 @@ def build_text_signals(fact) -> str | None:
     implementation that owns the store produces the same searchable document the
     SQL path does.
     """
-    parts: list[str] = []
-    if fact.entities:
-        parts.extend(e.name for e in fact.entities)
-    stamps = [fact.occurred_start]
-    if fact.occurred_end and fact.occurred_end != fact.occurred_start:
-        stamps.append(fact.occurred_end)
-    for stamp in stamps:
-        if stamp is None:
-            continue
-        try:
-            parts.append(stamp.strftime("%B %d %Y").lstrip("0").replace(" 0", " "))
-        except (ValueError, AttributeError):
-            pass
-    return " ".join(parts) if parts else None
+    return build_text_signals_from_parts(
+        entity_names=[entity.name for entity in (fact.entities or [])],
+        fact_text=fact.fact_text,
+        fact_type=fact.fact_type,
+        metadata=fact.metadata,
+        occurred_start=fact.occurred_start,
+        occurred_end=fact.occurred_end,
+    )
 
 
 def build_fact_records(
@@ -1418,16 +1440,19 @@ class MemoriesExtension(Extension, ABC):
         event_date,
         mentioned_at,
         entity_ids: list[str] | None,
+        metadata: dict[str, Any],
+        text_signals: str | None,
         entity_names: list[str] | None = None,
         txn=None,
     ) -> None:
         """Apply a curation field edit to a live memory.
 
-        Writes the new text / context / fact_type / occurred window, resets the
-        consolidation markers (the memory re-consolidates) and stamps the edit
-        time, and drops the memory's derived links (they are recomputed). The
-        embedding is *not* written here — the caller re-embeds from the new fields
-        and calls :meth:`set_memory_embedding` after.
+        Writes the new text / context / fact_type / occurred window, complete
+        metadata bag, and complete BM25 ``text_signals`` value atomically. It
+        resets the consolidation markers (the memory re-consolidates), stamps
+        the edit time, and drops the memory's derived links (they are recomputed).
+        The embedding is *not* written here — the caller re-embeds from the new
+        fields and calls :meth:`set_memory_embedding` after.
 
         The new entity set for the memory is supplied one of two ways, and a store
         uses whichever fits how it keeps its registry:
@@ -1614,5 +1639,6 @@ __all__ = [
     "StoredMemory",
     "build_fact_records",
     "build_text_signals",
+    "build_text_signals_from_parts",
     "source_key",
 ]

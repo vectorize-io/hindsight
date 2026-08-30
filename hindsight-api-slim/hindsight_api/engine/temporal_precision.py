@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -254,6 +254,47 @@ def _same_point(start: datetime, end: datetime) -> bool:
     return start_normalized == end_normalized
 
 
+def resolve_edited_occurrence_precision(
+    *,
+    stored_precision: object,
+    occurred_start_supplied: bool,
+    occurred_start_value: object,
+    occurred_end_supplied: bool,
+    final_start: datetime | None,
+    final_end: datetime | None,
+) -> OccurrencePrecision:
+    """Resolve the precision of a curation edit from its final window.
+
+    Curation receives lexical evidence only for fields supplied by the caller.
+    An untouched point therefore preserves its stored precision, while a newly
+    supplied full date/datetime can safely become ``day``/``instant``.  Clearing
+    the occurrence never falls back to mention time, and collapsing an old range
+    without new start evidence becomes ``unknown`` rather than inventing a
+    granularity for the retained timestamp.
+    """
+    current = coerce_occurrence_precision(stored_precision) or "unknown"
+    if not occurred_start_supplied and not occurred_end_supplied:
+        return current
+    if final_start is None:
+        return "unknown"
+    if final_end is not None and not _same_point(final_start, final_end):
+        return "range"
+
+    if occurred_start_supplied:
+        coarse = parse_coarse_occurrence(occurred_start_value)
+        if coarse is not None:
+            return coarse.precision
+        if isinstance(occurred_start_value, str):
+            normalized = occurred_start_value.strip()
+            if _ISO_DAY_RE.fullmatch(normalized):
+                return "day"
+            if _ISO_INSTANT_RE.match(normalized):
+                return "instant"
+        return "unknown"
+
+    return current if current != "range" else "unknown"
+
+
 def recover_legacy_occurrence_precision(
     fact_text: str,
     occurred_start: datetime | None,
@@ -311,3 +352,33 @@ def format_occurrence_date(reference: datetime, precision: object) -> str:
     if normalized_precision == "month":
         return f"{reference.strftime('%B %Y')} ({reference.strftime('%Y-%m')})"
     return f"{reference.strftime('%B %d, %Y')} ({reference.strftime('%Y-%m-%d')})"
+
+
+def format_embedding_occurrence_date(
+    reference: datetime,
+    precision: object,
+    format_exact_date: Callable[[datetime], str],
+) -> str:
+    """Format retain embedding context without fabricating a calendar part.
+
+    Exact dates retain the historical caller-provided representation so this
+    changes only coarse occurrences.  The embedding path intentionally differs
+    from :func:`format_occurrence_date`, whose richer ISO suffix is for reranker
+    context rather than stored-vector compatibility.
+    """
+    normalized_precision = coerce_occurrence_precision(precision)
+    if normalized_precision == "year":
+        return f"{reference.year:04d}"
+    if normalized_precision == "month":
+        return reference.strftime("%B %Y")
+    return format_exact_date(reference)
+
+
+def format_text_signal_occurrence_date(reference: datetime, precision: object) -> str:
+    """Format one BM25 date token while preserving occurrence granularity."""
+    normalized_precision = coerce_occurrence_precision(precision)
+    if normalized_precision == "year":
+        return f"{reference.year:04d}"
+    if normalized_precision == "month":
+        return reference.strftime("%B %Y")
+    return reference.strftime("%B %d %Y").replace(" 0", " ")

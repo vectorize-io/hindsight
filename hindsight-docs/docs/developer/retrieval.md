@@ -323,6 +323,8 @@ The occurrence clock is separate from ingestion and mention time. When `occurred
 
 Year- and month-only event dates retain their original precision instead of being treated as exact January 1 or first-of-month events. Hindsight evaluates the configured decay at the earliest and latest possible dates in that calendar period, then chooses the value closest to neutral `0.5` that the entire period supports. A period spanning the neutral point gets no recency boost or penalty; a wholly recent or wholly old period receives only the conservative adjustment justified for every possible date. Exact days, timestamps, and genuine start/end ranges keep their existing behavior.
 
+The same precision is used when building embedding and BM25 date enrichment for newly retained, transferred, or curated memories: a year contributes `2026`, a month contributes `August 2026`, and only an exact date contributes a day. Existing rows are not bulk re-embedded or reindexed by this change; their recall scoring and reranker context remain precision-aware, while operators who need refreshed candidate-generation signals can re-retain or transfer those memories.
+
 Memories without any usable occurrence or mention date get 0.5 (neutral — no boost or penalty).
 
 #### Temporal proximity signal

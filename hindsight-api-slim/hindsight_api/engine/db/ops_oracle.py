@@ -605,7 +605,7 @@ class OracleOps(DataAccessOps):
             entity_expanded AS (
                 SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                        es.score, 'entity' AS source
                 FROM entity_scores es
                 JOIN {mu_table} mu ON mu.id = es.unit_id
@@ -648,7 +648,7 @@ class OracleOps(DataAccessOps):
             semantic_expanded AS (
                 SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                        ss.score, 'semantic' AS source
                 FROM sem_scores ss
                 JOIN {mu_table} mu ON mu.id = ss.id
@@ -659,7 +659,7 @@ class OracleOps(DataAccessOps):
                 SELECT
                     mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                     mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                     ml.weight AS score,
                     'causal' AS source,
                     ROW_NUMBER() OVER (PARTITION BY mu.id ORDER BY ml.weight DESC) AS rn_
@@ -672,7 +672,7 @@ class OracleOps(DataAccessOps):
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
-                       fact_type, document_id, chunk_id, tags, proof_count, score, source
+                       fact_type, document_id, chunk_id, tags, metadata, proof_count, score, source
                 FROM causal_ranked WHERE rn_ = 1
                 ORDER BY score DESC
                 FETCH FIRST $3 ROWS ONLY
@@ -743,7 +743,7 @@ class OracleOps(DataAccessOps):
             SELECT
                 mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                 mu.occurred_end, mu.mentioned_at,
-                mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                 (SELECT COUNT(*)
                  FROM {obs_sources_table} os2
                  WHERE os2.observation_id = mu.id
@@ -793,7 +793,7 @@ class OracleOps(DataAccessOps):
             semantic_expanded AS (
                 SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                        ss.score, 'semantic' AS source
                 FROM sem_scores ss
                 JOIN {mu_table} mu ON mu.id = ss.id
@@ -804,7 +804,7 @@ class OracleOps(DataAccessOps):
                 SELECT
                     mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                     mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
-                    mu.chunk_id, mu.tags, mu.proof_count, ml.weight AS score,
+                    mu.chunk_id, mu.tags, mu.metadata, mu.proof_count, ml.weight AS score,
                     'causal' AS source,
                     ROW_NUMBER() OVER (PARTITION BY mu.id ORDER BY ml.weight DESC) AS rn_
                 FROM {ml_table} ml
@@ -816,7 +816,7 @@ class OracleOps(DataAccessOps):
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
-                       fact_type, document_id, chunk_id, tags, proof_count, score, source
+                       fact_type, document_id, chunk_id, tags, metadata, proof_count, score, source
                 FROM causal_ranked WHERE rn_ = 1
                 ORDER BY score DESC
                 FETCH FIRST $2 ROWS ONLY
