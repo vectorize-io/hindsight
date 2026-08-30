@@ -8,13 +8,17 @@ relevance score, independent of the cross-encoder model's score calibration.
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from hindsight_api.engine.search.reranking import (
     _RECENCY_ALPHA,
     _TEMPORAL_ALPHA,
     apply_combined_scoring,
+    compute_occurrence_recency,
     compute_recency_decay,
 )
 from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult, ScoredResult
+from hindsight_api.engine.temporal_precision import OCCURRENCE_PRECISION_METADATA_KEY
 
 UTC = timezone.utc
 NOW = datetime(2024, 6, 1, tzinfo=UTC)
@@ -26,20 +30,28 @@ def _make_result(
     temporal_proximity: float | None = None,
     mentioned_at: datetime | None = None,
     occurred_end: datetime | None = None,
+    metadata: dict[str, str] | None = None,
+    text: str = "test",
+    result_id: str = "test",
+    fact_type: str = "world",
+    proof_count: int | None = None,
+    rrf_score: float = 0.05,
 ) -> ScoredResult:
     retrieval = RetrievalResult(
-        id="test",
-        text="test",
-        fact_type="world",
+        id=result_id,
+        text=text,
+        fact_type=fact_type,
         occurred_start=occurred_start,
         occurred_end=occurred_end,
         mentioned_at=mentioned_at,
+        metadata=metadata,
+        proof_count=proof_count,
         temporal_proximity=temporal_proximity,
     )
 
     candidate = MergedCandidate(
         retrieval=retrieval,
-        rrf_score=0.05,
+        rrf_score=rrf_score,
     )
 
     return ScoredResult(
@@ -252,3 +264,391 @@ class TestRecencyDecayFunction:
         apply_combined_scoring([sr], now=NOW, recency_decay_function="none")
         assert sr.recency == 0.5
         assert abs(sr.weight - 0.5) < 1e-9  # neutral → no recency boost
+
+
+class TestCoarseOccurrenceRecency:
+    # The issue trace was captured shortly after 01:34 UTC on 2026-08-30,
+    # making the exact 2026-08-24 candidate about 6.066 days old.
+    ISSUE_NOW = datetime(2026, 8, 30, 1, 34, 50, 950707, tzinfo=UTC)
+
+    @staticmethod
+    def _precision_metadata(precision: str) -> dict[str, str]:
+        return {OCCURRENCE_PRECISION_METADATA_KEY: precision}
+
+    def test_issue_3893_stronger_summit_match_remains_top_one(self):
+        summit = _make_result(
+            ce_norm=0.999924,
+            occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+            occurred_end=datetime(2026, 1, 1, tzinfo=UTC),
+            metadata=self._precision_metadata("year"),
+            text="用户在杭州开源峰会分享了时间感知记忆 | When: 2026 | Involving: 用户",
+        )
+        theme = _make_result(
+            ce_norm=0.900004,
+            occurred_start=datetime(2026, 8, 24, tzinfo=UTC),
+            occurred_end=datetime(2026, 8, 24, tzinfo=UTC),
+            metadata=self._precision_metadata("day"),
+            text="用户切换了浅色主题 | When: August 24, 2026",
+        )
+
+        apply_combined_scoring([summit, theme], now=self.ISSUE_NOW)
+
+        assert summit.recency == 0.5
+        assert theme.recency == pytest.approx(0.9833811849725)
+        assert summit.weight == pytest.approx(0.999924)
+        assert theme.weight == pytest.approx(0.987013, abs=1e-6)
+        assert summit.weight > theme.weight
+
+    @pytest.mark.parametrize(
+        ("precision", "occurred_start", "function", "expected_relation"),
+        [
+            ("year", datetime(2026, 1, 1, tzinfo=UTC), "linear", "neutral"),
+            ("year", datetime(2020, 1, 1, tzinfo=UTC), "linear", "old"),
+            ("month", datetime(2026, 8, 1, tzinfo=UTC), "linear", "recent"),
+            ("year", datetime(2026, 1, 1, tzinfo=UTC), "exponential", "neutral"),
+            ("year", datetime(2020, 1, 1, tzinfo=UTC), "exponential", "old"),
+            ("month", datetime(2026, 8, 1, tzinfo=UTC), "exponential", "recent"),
+            ("month", datetime(2026, 8, 1, tzinfo=UTC), "none", "neutral"),
+        ],
+    )
+    def test_uncertainty_envelope_is_conservative(self, precision, occurred_start, function, expected_relation):
+        recency = compute_occurrence_recency(
+            occurred_start,
+            self.ISSUE_NOW,
+            precision,
+            function=function,
+            halflife_days=90,
+        )
+
+        if expected_relation == "neutral":
+            assert recency == 0.5
+        elif expected_relation == "old":
+            assert recency < 0.5
+        else:
+            assert 0.5 < recency < 1.0
+
+    def test_recent_mention_does_not_refresh_an_old_coarse_occurrence(self):
+        result = _make_result(
+            ce_norm=0.5,
+            occurred_start=datetime(2020, 1, 1, tzinfo=UTC),
+            occurred_end=datetime(2020, 1, 1, tzinfo=UTC),
+            mentioned_at=self.ISSUE_NOW,
+            metadata=self._precision_metadata("year"),
+            text="Historical event | When: 2020",
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        assert result.recency == 0.1
+        assert result.weight < 0.5
+
+    @pytest.mark.parametrize("metadata", [None, {OCCURRENCE_PRECISION_METADATA_KEY: "day"}])
+    def test_genuine_january_first_preserves_exact_date_behavior(self, metadata):
+        result = _make_result(
+            ce_norm=0.5,
+            occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+            occurred_end=datetime(2026, 1, 1, tzinfo=UTC),
+            metadata=metadata,
+            text="New year event | When: January 1, 2026",
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        exact_age_days = (self.ISSUE_NOW - datetime(2026, 1, 1, tzinfo=UTC)).total_seconds() / 86400
+        assert result.recency == pytest.approx(compute_recency_decay(exact_age_days))
+        assert result.recency < 0.5
+
+    def test_metadata_day_prevents_legacy_when_from_reclassifying_exact_event(self):
+        result = _make_result(
+            ce_norm=0.5,
+            occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+            occurred_end=datetime(2026, 1, 1, tzinfo=UTC),
+            metadata=self._precision_metadata("day"),
+            text="New year event | When: 2026",
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        assert result.recency < 0.5
+
+    def test_legacy_canonical_when_gets_coarse_scoring_without_metadata(self):
+        result = _make_result(
+            ce_norm=0.5,
+            occurred_start=datetime(2026, 1, 1, 0, 0, 0, 10_000, tzinfo=UTC),
+            occurred_end=datetime(2026, 1, 1, 0, 0, 0, 10_000, tzinfo=UTC),
+            text="Summit talk | When: 2026 | Involving: user",
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        assert result.recency == 0.5
+
+    def test_arbitrary_year_prose_is_not_legacy_precision_evidence(self):
+        result = _make_result(
+            ce_norm=0.5,
+            occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+            occurred_end=datetime(2026, 1, 1, tzinfo=UTC),
+            text="The summit happened in 2026",
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        assert result.recency < 0.5
+
+    def test_derived_observation_does_not_use_legacy_when_recovery(self):
+        result = _make_result(
+            ce_norm=0.5,
+            occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+            occurred_end=datetime(2026, 1, 1, tzinfo=UTC),
+            text="Derived observation | When: 2026",
+            fact_type="observation",
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        exact_age_days = (self.ISSUE_NOW - datetime(2026, 1, 1, tzinfo=UTC)).total_seconds() / 86400
+        assert result.recency == pytest.approx(compute_recency_decay(exact_age_days))
+
+    def test_genuine_range_keeps_existing_start_based_recency(self):
+        result = _make_result(
+            ce_norm=0.5,
+            occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+            occurred_end=datetime(2026, 12, 31, tzinfo=UTC),
+            metadata=self._precision_metadata("range"),
+            text="Project ran throughout 2026 | When: 2026",
+        )
+
+        apply_combined_scoring([result], now=self.ISSUE_NOW)
+
+        exact_age_days = (self.ISSUE_NOW - datetime(2026, 1, 1, tzinfo=UTC)).total_seconds() / 86400
+        assert result.recency == pytest.approx(compute_recency_decay(exact_age_days))
+
+    @pytest.mark.parametrize("precision", ["day", "instant", "range", "unknown"])
+    @pytest.mark.parametrize("function", ["linear", "exponential", "none"])
+    def test_exact_precision_modes_keep_historical_decay(self, precision, function):
+        occurred = datetime(2026, 1, 1, 12, 30, tzinfo=UTC)
+        age_days = (self.ISSUE_NOW - occurred).total_seconds() / 86400
+
+        actual = compute_occurrence_recency(
+            occurred,
+            self.ISSUE_NOW,
+            precision,
+            function=function,
+            linear_window_days=730,
+            halflife_days=45,
+        )
+        expected = compute_recency_decay(
+            age_days,
+            function=function,
+            linear_window_days=730,
+            halflife_days=45,
+        )
+
+        assert actual == pytest.approx(expected)
+
+    def test_naive_and_aware_exact_datetimes_match_for_the_same_instant(self):
+        naive_utc = datetime(2026, 8, 20, 12, 0)
+        aware_local = datetime(2026, 8, 20, 20, 0, tzinfo=timezone(timedelta(hours=8)))
+
+        naive_recency = compute_occurrence_recency(naive_utc, self.ISSUE_NOW, "instant")
+        aware_recency = compute_occurrence_recency(aware_local, self.ISSUE_NOW, "instant")
+
+        assert naive_recency == pytest.approx(aware_recency)
+
+    @pytest.mark.parametrize("function", ["linear", "exponential", "none"])
+    def test_old_current_and_future_coarse_periods_across_calendar_boundaries(self, function):
+        recencies = {
+            "old_year": compute_occurrence_recency(
+                datetime(2020, 1, 1, tzinfo=UTC),
+                self.ISSUE_NOW,
+                "year",
+                function=function,
+                halflife_days=90,
+            ),
+            "current_year": compute_occurrence_recency(
+                datetime(2026, 1, 1, tzinfo=UTC),
+                self.ISSUE_NOW,
+                "year",
+                function=function,
+                halflife_days=90,
+            ),
+            "future_year": compute_occurrence_recency(
+                datetime(2027, 1, 1, tzinfo=UTC),
+                self.ISSUE_NOW,
+                "year",
+                function=function,
+                halflife_days=90,
+            ),
+            "previous_december": compute_occurrence_recency(
+                datetime(2025, 12, 1, tzinfo=UTC),
+                self.ISSUE_NOW,
+                "month",
+                function=function,
+                halflife_days=90,
+            ),
+            "leap_february": compute_occurrence_recency(
+                datetime(2024, 2, 1, tzinfo=UTC),
+                self.ISSUE_NOW,
+                "month",
+                function=function,
+                halflife_days=90,
+            ),
+            "current_month": compute_occurrence_recency(
+                datetime(2026, 8, 1, tzinfo=UTC),
+                self.ISSUE_NOW,
+                "month",
+                function=function,
+                halflife_days=90,
+            ),
+            "future_month": compute_occurrence_recency(
+                datetime(2026, 9, 1, tzinfo=UTC),
+                self.ISSUE_NOW,
+                "month",
+                function=function,
+                halflife_days=90,
+            ),
+        }
+
+        if function == "none":
+            assert set(recencies.values()) == {0.5}
+            return
+
+        assert recencies["old_year"] < 0.5
+        assert recencies["previous_december"] < 0.5
+        assert recencies["leap_february"] < 0.5
+        assert recencies["current_year"] == 0.5
+        assert 0.5 < recencies["current_month"] < 1.0
+        assert recencies["future_year"] == 1.0
+        assert recencies["future_month"] == 1.0
+
+    def test_mixed_precision_candidates_rank_together_with_near_tie(self):
+        candidates = [
+            _make_result(
+                ce_norm=0.99,
+                occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+                occurred_end=datetime(2026, 1, 1, tzinfo=UTC),
+                mentioned_at=self.ISSUE_NOW,
+                metadata=self._precision_metadata("year"),
+                result_id="year",
+            ),
+            _make_result(
+                ce_norm=0.95,
+                occurred_start=datetime(2026, 8, 1, tzinfo=UTC),
+                occurred_end=datetime(2026, 8, 1, tzinfo=UTC),
+                metadata=self._precision_metadata("month"),
+                result_id="month",
+            ),
+            _make_result(
+                ce_norm=0.94,
+                occurred_start=datetime(2026, 8, 29, tzinfo=UTC),
+                occurred_end=datetime(2026, 8, 29, tzinfo=UTC),
+                metadata=self._precision_metadata("day"),
+                result_id="day",
+            ),
+            _make_result(
+                ce_norm=0.939,
+                occurred_start=datetime(2026, 8, 29, 12, 0, tzinfo=UTC),
+                occurred_end=datetime(2026, 8, 29, 12, 0, tzinfo=UTC),
+                metadata=self._precision_metadata("instant"),
+                result_id="instant",
+            ),
+            _make_result(
+                ce_norm=0.98,
+                occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+                occurred_end=datetime(2026, 6, 30, tzinfo=UTC),
+                metadata=self._precision_metadata("range"),
+                result_id="range",
+            ),
+            _make_result(
+                ce_norm=0.9,
+                mentioned_at=self.ISSUE_NOW,
+                result_id="undated",
+            ),
+        ]
+
+        apply_combined_scoring(candidates, now=self.ISSUE_NOW)
+        by_id = {candidate.id: candidate for candidate in candidates}
+        ranked_ids = [candidate.id for candidate in sorted(candidates, key=lambda item: item.weight, reverse=True)]
+
+        assert ranked_ids == ["day", "instant", "month", "undated", "year", "range"]
+        assert by_id["year"].recency == 0.5
+        assert by_id["month"].recency > 0.5
+        assert by_id["day"].recency < by_id["instant"].recency
+        assert by_id["range"].recency == pytest.approx(
+            compute_recency_decay((self.ISSUE_NOW - datetime(2026, 1, 1, tzinfo=UTC)).total_seconds() / 86400)
+        )
+        assert by_id["undated"].recency == 1.0
+        assert by_id["undated"].weight == pytest.approx(by_id["year"].weight)
+        assert all(candidate.combined_score == candidate.weight for candidate in candidates)
+
+    def test_none_decay_keeps_mixed_precision_weights_equal_to_ce_scores(self):
+        candidates = [
+            _make_result(
+                ce_norm=0.91,
+                occurred_start=datetime(2020, 1, 1, tzinfo=UTC),
+                metadata=self._precision_metadata("year"),
+                result_id="year",
+            ),
+            _make_result(
+                ce_norm=0.87,
+                occurred_start=datetime(2026, 9, 1, tzinfo=UTC),
+                metadata=self._precision_metadata("month"),
+                result_id="month",
+            ),
+            _make_result(
+                ce_norm=0.83,
+                occurred_start=datetime(2026, 1, 1, tzinfo=UTC),
+                metadata=self._precision_metadata("day"),
+                result_id="day",
+            ),
+            _make_result(
+                ce_norm=0.79,
+                occurred_start=datetime(2026, 8, 30, 1, tzinfo=UTC),
+                metadata=self._precision_metadata("instant"),
+                result_id="instant",
+            ),
+            _make_result(
+                ce_norm=0.75,
+                occurred_start=datetime(2024, 1, 1, tzinfo=UTC),
+                occurred_end=datetime(2024, 12, 31, tzinfo=UTC),
+                metadata=self._precision_metadata("range"),
+                result_id="range",
+            ),
+            _make_result(ce_norm=0.71, mentioned_at=self.ISSUE_NOW, result_id="undated"),
+        ]
+
+        apply_combined_scoring(candidates, now=self.ISSUE_NOW, recency_decay_function="none")
+
+        assert [candidate.recency for candidate in candidates] == [0.5] * len(candidates)
+        assert [candidate.weight for candidate in candidates] == pytest.approx(
+            [candidate.cross_encoder_score_normalized for candidate in candidates]
+        )
+
+    def test_passthrough_reranker_keeps_rrf_order_with_mixed_dates(self):
+        candidates = [
+            _make_result(
+                ce_norm=0.5,
+                occurred_start=datetime(2027, 1, 1, tzinfo=UTC),
+                metadata=self._precision_metadata("year"),
+                result_id="rrf-low",
+                rrf_score=0.1,
+            ),
+            _make_result(
+                ce_norm=0.5,
+                mentioned_at=self.ISSUE_NOW,
+                result_id="rrf-mid",
+                rrf_score=0.5,
+            ),
+            _make_result(
+                ce_norm=0.5,
+                occurred_start=datetime(2020, 1, 1, tzinfo=UTC),
+                metadata=self._precision_metadata("year"),
+                result_id="rrf-high",
+                rrf_score=0.9,
+            ),
+        ]
+
+        apply_combined_scoring(candidates, now=self.ISSUE_NOW, is_passthrough_reranker=True)
+        ranked_ids = [candidate.id for candidate in sorted(candidates, key=lambda item: item.weight, reverse=True)]
+
+        assert ranked_ids == ["rrf-high", "rrf-mid", "rrf-low"]

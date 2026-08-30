@@ -453,7 +453,7 @@ The context label provided when the fact was retained (e.g., `"team meeting"`, `
 
 #### metadata
 
-The key-value string pairs attached when the fact was retained. `null` if none were set.
+The key-value string pairs attached when the fact was retained. `null` if none were set. Hindsight may also add reserved engine metadata. In particular, `hindsight:occurred_precision` records a known event-time precision (`year`, `month`, `day`, `instant`, or `range`) so recency scoring and reranker context do not mistake an imputed period start for an exact date. Applications should treat `hindsight:*` keys as engine-owned.
 
 #### tags
 
@@ -467,9 +467,11 @@ A list of canonical entity name strings linked to this fact. Only populated when
 
 ISO 8601 datetimes representing when the described event started and ended. Extracted by the LLM from the content during retain. `null` if the content had no temporal information.
 
+For a year- or month-only source date, the timestamp columns contain the period start required by storage while `metadata["hindsight:occurred_precision"]` preserves that the exact day was not known. These fields describe event time, not when the memory was added.
+
 #### mentioned_at
 
-ISO 8601 datetime of when this fact was retained into the bank.
+ISO 8601 datetime of when the source conversation or document was stated, derived from the retain item's event timestamp. When the caller does not provide that source timestamp, retain may default it to ingestion time. It is distinct from the event's actual `occurred_start` / `occurred_end` and is only a recency fallback for facts without an occurrence start.
 
 #### document_id
 

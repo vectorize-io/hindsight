@@ -317,7 +317,13 @@ Linear decay over 365 days from the memory's occurrence date:
 recency = clamp(1.0 - days_ago / 365, 0.1, 1.0)
 ```
 
-A memory from the query timestamp has recency 1.0 (+10% boost). A memory from 6 months before the query timestamp has recency ~0.5 (neutral). A memory more than a year before the query timestamp has recency 0.1 (-8% penalty). If no `query_timestamp` is provided, the server's current time is used. Memories without dates get 0.5 (neutral — no boost or penalty).
+A memory from the query timestamp has recency 1.0 (+10% boost). A memory from 6 months before the query timestamp has recency ~0.5 (neutral). A memory more than a year before the query timestamp has recency 0.1 (-8% penalty). If no `query_timestamp` is provided, the server's current time is used.
+
+The occurrence clock is separate from ingestion and mention time. When `occurred_start` is present, recency is based on when the described event happened; a recent retain or `mentioned_at` value does not make an older event fresh. `mentioned_at` remains the fallback only for memories with no occurrence start.
+
+Year- and month-only event dates retain their original precision instead of being treated as exact January 1 or first-of-month events. Hindsight evaluates the configured decay at the earliest and latest possible dates in that calendar period, then chooses the value closest to neutral `0.5` that the entire period supports. A period spanning the neutral point gets no recency boost or penalty; a wholly recent or wholly old period receives only the conservative adjustment justified for every possible date. Exact days, timestamps, and genuine start/end ranges keep their existing behavior.
+
+Memories without any usable occurrence or mention date get 0.5 (neutral — no boost or penalty).
 
 #### Temporal proximity signal
 

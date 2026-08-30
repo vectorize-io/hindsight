@@ -22,6 +22,7 @@ from hindsight_api.engine.retain.fact_extraction import (
     extract_facts_from_contents,
     extract_facts_from_contents_batch_api,
 )
+from hindsight_api.engine.temporal_precision import OCCURRENCE_PRECISION_METADATA_KEY
 from hindsight_api.worker.poller import WorkerPoller
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,142 @@ async def test_batch_api_normal_flow(mock_llm_config, test_contents, hindsight_c
             await memory.delete_bank(bank_id, request_context=request_context)
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+async def test_batch_api_normalizes_multilingual_temporal_matrix_without_mutating_metadata(
+    mock_llm_config, hindsight_config
+):
+    """Batch results use the same temporal matrix and spoof rules as streaming extraction."""
+    caller_metadata = {"source": "test", OCCURRENCE_PRECISION_METADATA_KEY: "day"}
+    content = RetainContent(
+        content="用户在2026年杭州开源峰会分享了时间感知记忆。",
+        event_date=datetime(2026, 8, 30, tzinfo=timezone.utc),
+        metadata=caller_metadata,
+    )
+    batch_id = "batch_coarse_precision"
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value={
+            "batch_id": batch_id,
+            "status": "validating",
+            "request_counts": {"total": 1, "completed": 0, "failed": 0},
+        }
+    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    raw_facts = [
+        {
+            "what": "English numeric year",
+            "when": "2026",
+            "fact_kind": "event",
+            "fact_type": "world",
+            "occurred_start": "2026-01-01",
+            "occurred_end": "2026-01-01",
+        },
+        {
+            "what": "中文年份",
+            "when": "2025年",
+            "fact_kind": "event",
+            "fact_type": "world",
+            "occurred_start": "2025年",
+        },
+        {
+            "what": "English month",
+            "when": "February 2024",
+            "fact_kind": "event",
+            "fact_type": "world",
+            "occurred_start": "February 2024",
+        },
+        {
+            "what": "中文月份",
+            "when": "2024年2月",
+            "fact_kind": "event",
+            "fact_type": "world",
+            "occurred_start": "2024年2月",
+        },
+        {
+            "what": "Exact day",
+            "when": "August 30, 2026",
+            "fact_kind": "event",
+            "fact_type": "world",
+            "occurred_start": "2026-08-30",
+        },
+        {
+            "what": "Exact instant",
+            "when": "August 30, 2026 at 12:34",
+            "fact_kind": "event",
+            "fact_type": "world",
+            "occurred_start": "2026-08-30T12:34:00+08:00",
+        },
+        {
+            "what": "Genuine range",
+            "when": "December 31, 2025 through January 2, 2026",
+            "fact_kind": "event",
+            "fact_type": "world",
+            "occurred_start": "2025-12-31",
+            "occurred_end": "2026-01-02",
+        },
+        {
+            "what": "Conversation state",
+            "when": "2026",
+            "fact_kind": "conversation",
+            "fact_type": "world",
+            "occurred_start": "2026",
+            "occurred_precision": "year",
+        },
+    ]
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [{"message": {"content": json.dumps({"facts": raw_facts})}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+                    }
+                },
+            }
+        ]
+    )
+
+    with patch("hindsight_api.engine.retain.fact_extraction._add_temporal_offsets"):
+        facts, _chunks, _usage = await extract_facts_from_contents_batch_api(
+            contents=[content],
+            llm_config=mock_llm_config,
+            agent_name="test-agent",
+            config=hindsight_config,
+            pool=None,
+            operation_id=None,
+            schema=None,
+        )
+
+    assert len(facts) == len(raw_facts)
+    assert [(fact.metadata or {}).get(OCCURRENCE_PRECISION_METADATA_KEY) for fact in facts] == [
+        "year",
+        "year",
+        "month",
+        "month",
+        "day",
+        "instant",
+        "range",
+        None,
+    ]
+    assert facts[0].occurred_start == datetime(2026, 1, 1)
+    assert facts[1].occurred_start == datetime(2025, 1, 1)
+    assert facts[2].occurred_start == datetime(2024, 2, 1)
+    assert facts[3].occurred_start == datetime(2024, 2, 1)
+    assert facts[4].occurred_start == datetime(2026, 8, 30)
+    assert facts[5].occurred_start == datetime.fromisoformat("2026-08-30T12:34:00+08:00")
+    assert facts[6].occurred_start == datetime(2025, 12, 31)
+    assert facts[6].occurred_end == datetime(2026, 1, 2)
+    assert facts[7].occurred_start is None
+    assert facts[7].occurred_end is None
+    assert all(fact.metadata is not content.metadata for fact in facts)
+    assert all((fact.metadata or {}).get("source") == "test" for fact in facts)
+    assert content.metadata == caller_metadata
+    assert caller_metadata == {"source": "test", OCCURRENCE_PRECISION_METADATA_KEY: "day"}
 
 
 @pytest.mark.asyncio

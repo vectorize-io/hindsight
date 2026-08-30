@@ -5,6 +5,12 @@ Cross-encoder neural reranking for search results.
 import math
 from datetime import datetime, timezone
 
+from ..temporal_precision import (
+    OccurrencePrecision,
+    calendar_bounds,
+    format_occurrence_date,
+    resolve_stored_occurrence_precision,
+)
 from .types import MergedCandidate, ScoredResult
 
 UTC = timezone.utc
@@ -53,6 +59,38 @@ def compute_recency_decay(
     # "linear" (default): straight decay to a 0.1 floor over the window.
     window = linear_window_days if linear_window_days > 0 else _RECENCY_DECAY_LINEAR_WINDOW_DAYS
     return max(0.1, min(1.0, 1.0 - (days_ago / window)))
+
+
+def compute_occurrence_recency(
+    occurred_start: datetime,
+    now: datetime,
+    precision: OccurrencePrecision = "unknown",
+    function: str = _RECENCY_DECAY_FUNCTION,
+    linear_window_days: float = _RECENCY_DECAY_LINEAR_WINDOW_DAYS,
+    halflife_days: float = _RECENCY_DECAY_HALFLIFE_DAYS,
+) -> float:
+    """Compute recency without inventing an exact day for coarse occurrences.
+
+    Year/month precision describes an instantaneous event whose exact date is
+    unknown, not an event lasting the full period.  Evaluate the configured
+    curve at both possible calendar bounds and choose the value closest to the
+    neutral signal (0.5) that the whole interval supports.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    if occurred_start.tzinfo is None:
+        occurred_start = occurred_start.replace(tzinfo=UTC)
+
+    def decay_at(value: datetime) -> float:
+        days_ago = (now - value).total_seconds() / 86400
+        return compute_recency_decay(days_ago, function, linear_window_days, halflife_days)
+
+    bounds = calendar_bounds(occurred_start, precision)
+    if bounds is None:
+        return decay_at(occurred_start)
+
+    lower, upper = sorted((decay_at(bounds.earliest), decay_at(bounds.latest)))
+    return max(lower, min(0.5, upper))
 
 
 def apply_combined_scoring(
@@ -153,18 +191,37 @@ def apply_combined_scoring(
         # facts or ongoing states that intentionally lack occurred_start) still gets
         # correct recency ordering instead of a flat neutral 0.5.
         sr.recency = 0.5
-        effective = sr.retrieval.occurred_start or sr.retrieval.mentioned_at or sr.retrieval.occurred_end
-        if effective:
-            occurred = effective
-            if occurred.tzinfo is None:
-                occurred = occurred.replace(tzinfo=UTC)
-            days_ago = (now - occurred).total_seconds() / 86400
-            sr.recency = compute_recency_decay(
-                days_ago,
+        occurred_start = sr.retrieval.occurred_start
+        if occurred_start is not None:
+            precision = resolve_stored_occurrence_precision(
+                metadata=sr.retrieval.metadata,
+                fact_text=sr.retrieval.text,
+                occurred_start=occurred_start,
+                occurred_end=sr.retrieval.occurred_end,
+                allow_legacy_recovery=sr.retrieval.fact_type != "observation",
+            )
+            sr.recency = compute_occurrence_recency(
+                occurred_start,
+                now,
+                precision,
                 recency_decay_function,
                 recency_decay_linear_window_days,
                 recency_decay_halflife_days,
             )
+        else:
+            # Preserve the existing missing-start fallback order. Mention time
+            # must never make a known coarse occurrence look fresh because this
+            # branch is unreachable whenever occurred_start is present.
+            effective = sr.retrieval.mentioned_at or sr.retrieval.occurred_end
+            if effective is not None:
+                sr.recency = compute_occurrence_recency(
+                    effective,
+                    now,
+                    "unknown",
+                    recency_decay_function,
+                    recency_decay_linear_window_days,
+                    recency_decay_halflife_days,
+                )
 
         # Temporal proximity: meaningful only for temporal queries; neutral otherwise.
         sr.temporal = sr.retrieval.temporal_proximity if sr.retrieval.temporal_proximity is not None else 0.5
@@ -276,16 +333,17 @@ class CrossEncoderReranker:
             # Add formatted date information for temporal awareness
             if retrieval.occurred_start:
                 occurred_start = retrieval.occurred_start
-
-                # Format in two styles for better model understanding
-                # 1. ISO format: YYYY-MM-DD
-                date_iso = occurred_start.strftime("%Y-%m-%d")
-
-                # 2. Human-readable: "June 5, 2022"
-                date_readable = occurred_start.strftime("%B %d, %Y")
+                precision = resolve_stored_occurrence_precision(
+                    metadata=retrieval.metadata,
+                    fact_text=retrieval.text,
+                    occurred_start=occurred_start,
+                    occurred_end=retrieval.occurred_end,
+                    allow_legacy_recovery=retrieval.fact_type != "observation",
+                )
+                formatted_date = format_occurrence_date(occurred_start, precision)
 
                 # Prepend date to document text
-                doc_text = f"[Date: {date_readable} ({date_iso})] {doc_text}"
+                doc_text = f"[Date: {formatted_date}] {doc_text}"
 
             pairs.append([query, doc_text])
 

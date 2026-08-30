@@ -10,6 +10,7 @@ import json
 import logging
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 
@@ -20,6 +21,13 @@ from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitiz
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from ..structured_output import strict_json_schema
+from ..temporal_precision import (
+    OccurrencePrecision,
+    coarse_occurrence_start,
+    coerce_occurrence_precision,
+    infer_occurrence_precision,
+    with_occurrence_precision,
+)
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -112,6 +120,59 @@ def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | N
     return None
 
 
+@dataclass(frozen=True)
+class _ResolvedTemporalFactFields:
+    """Normalized event fields shared by streaming and Batch API extraction."""
+
+    occurred_start: str | None = None
+    occurred_end: str | None = None
+    occurred_precision: OccurrencePrecision | None = None
+
+
+def _resolve_temporal_fact_fields(
+    *,
+    fact_kind: str,
+    occurred_start: object,
+    occurred_end: object,
+    occurred_precision: object,
+    when: object,
+    combined_text: str,
+    event_date: datetime | None,
+) -> _ResolvedTemporalFactFields:
+    """Normalize temporal fields identically for streaming and Batch API extraction."""
+    if fact_kind != "event":
+        return _ResolvedTemporalFactFields()
+
+    normalized_start = occurred_start if isinstance(occurred_start, str) else None
+    normalized_end = occurred_end if isinstance(occurred_end, str) else None
+    inferred_relative_day = False
+    if not normalized_start:
+        normalized_start = _infer_temporal_date(combined_text, event_date)
+        inferred_relative_day = normalized_start is not None
+    if normalized_start and not normalized_end:
+        normalized_end = normalized_start
+
+    explicit_precision = occurred_precision
+    if inferred_relative_day and coerce_occurrence_precision(explicit_precision) in (None, "unknown"):
+        # The fallback resolves expressions such as "yesterday" to midnight,
+        # but midnight is a storage representation, not an explicitly stated
+        # time. Preserve the calendar-day precision instead of calling it an
+        # instant merely because the ISO string contains ``T00:00:00``.
+        explicit_precision = "day"
+
+    resolved_precision = infer_occurrence_precision(
+        explicit=explicit_precision,
+        occurred_start=normalized_start,
+        occurred_end=normalized_end,
+        when=when,
+    )
+    return _ResolvedTemporalFactFields(
+        occurred_start=normalized_start,
+        occurred_end=normalized_end,
+        occurred_precision=resolved_precision,
+    )
+
+
 def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
 
@@ -160,6 +221,7 @@ class Fact(BaseModel):
     # Optional temporal fields
     occurred_start: str | None = None
     occurred_end: str | None = None
+    occurred_precision: OccurrencePrecision = "unknown"
 
     # Optional location field
     where: str | None = Field(
@@ -215,6 +277,10 @@ class ExtractedFact(BaseModel):
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
     occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
+    occurred_precision: OccurrencePrecision | None = Field(
+        default=None,
+        description="Precision of the event occurrence: instant, day, month, year, range, or unknown.",
+    )
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts, including user preferences, rules, corrections, and constraints even when stated during a conversation. 'assistant' = actions, experiences, or observations the assistant/agent actually performed."
     )
@@ -358,6 +424,10 @@ class ExtractedFactVerbose(BaseModel):
         default=None,
         description="WHEN the event ended (ISO timestamp). Only for events with duration. Leave null for conversations.",
     )
+    occurred_precision: OccurrencePrecision | None = Field(
+        default=None,
+        description="Precision of the event occurrence: instant, day, month, year, range, or unknown.",
+    )
 
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts about the user, other people, events, general knowledge, preferences, rules, corrections, or constraints. 'assistant' = actions, experiences, or observations the assistant/agent actually performed (e.g., 'I changed X', 'I discovered Y')."
@@ -407,6 +477,10 @@ class ExtractedFactNoCausal(BaseModel):
     )
     occurred_start: str | None = Field(default=None, description="WHEN the event happened (ISO timestamp).")
     occurred_end: str | None = Field(default=None, description="WHEN the event ended (ISO timestamp).")
+    occurred_precision: OccurrencePrecision | None = Field(
+        default=None,
+        description="Precision of the event occurrence: instant, day, month, year, range, or unknown.",
+    )
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = about the user/others, including user preferences, rules, corrections, and constraints. 'assistant' = actions or experiences the assistant/agent actually performed."
     )
@@ -447,6 +521,10 @@ class VerbatimExtractedFact(BaseModel):
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
     occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
+    occurred_precision: OccurrencePrecision | None = Field(
+        default=None,
+        description="Precision of the event occurrence: instant, day, month, year, range, or unknown.",
+    )
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker."
     )
@@ -828,7 +906,7 @@ FACT FORMAT - BE CONCISE
 ══════════════════════════════════════════════════════════════════════════
 
 1. "what": Core fact - concise but complete (1-2 sentences max)
-2. "when": Temporal info if mentioned. "N/A" if none. Use day name when known.
+2. "when": Temporal info if mentioned. "N/A" if none. Include a day name only when an exact day is known.
 3. "where": Location if relevant. "N/A" if none.
 4. "who": People involved with relationships. "N/A" if just general info.
 5. "why": Context/significance ONLY if important. "N/A" if obvious.
@@ -848,7 +926,7 @@ CLASSIFICATION
 ══════════════════════════════════════════════════════════════════════════
 
 fact_kind:
-- "event": Specific datable occurrence (set occurred_start/end)
+- "event": Specific datable occurrence (set occurred_start/end and occurred_precision)
 - "conversation": Ongoing state, preference, trait (no dates)
 
 fact_type:
@@ -863,7 +941,11 @@ Use "Event Date" from input as reference for relative dates.
 - CRITICAL: Convert ALL relative temporal expressions to absolute dates in the fact text itself.
   "yesterday" → write the resolved date (e.g. "on November 12, 2024"), NOT the word "yesterday"
   "last night", "this morning", "today", "tonight" → convert to the resolved absolute date
-- For events: set occurred_start AND occurred_end (same for point events)
+- For events: set occurred_start, occurred_end, AND occurred_precision (same start/end for point events)
+- Preserve the precision actually stated. NEVER invent a missing month, day, or day of week.
+- Year only: occurred_start="2026", occurred_end="2026", occurred_precision="year".
+- Month only: occurred_start="2026-08", occurred_end="2026-08", occurred_precision="month".
+- Exact calendar day: occurred_precision="day". Explicit time: "instant". Genuine duration: "range".
 - For conversation facts: NO occurred dates
 
 ══════════════════════════════════════════════════════════════════════════
@@ -913,7 +995,7 @@ Input: "Hey! How's it going? Good morning! So I'm planning my wedding - want a s
 
 Output: ONLY 2 facts (skip greetings, weather, coffee):
 1. what="User planning wedding, wants small outdoor ceremony", who="user", why="N/A", entities=["user", "wedding"]
-2. what="Emily married Sarah at rooftop garden", who="Emily (user's friend), Sarah", occurred_start="2024-06-09", entities=["Emily", "Sarah", "wedding"]
+2. what="Emily married Sarah at rooftop garden", who="Emily (user's friend), Sarah", occurred_start="2024-06-09", occurred_end="2024-06-09", occurred_precision="day", entities=["Emily", "Sarah", "wedding"]
 
 Example 2 - Professional context:
 Input: "Alice has 5 years of Kubernetes experience and holds CKA certification. She's been leading the infrastructure team since March. By the way, she prefers dark roast coffee."
@@ -958,7 +1040,7 @@ RULES:
 - Produce EXACTLY ONE entry per input chunk.
 - DO NOT include a "what" field — it is not part of the output schema.
 - Extract all entities (people, places, organizations, objects, concepts).
-- Extract temporal information (occurred_start, occurred_end, fact_kind, when).
+- Extract temporal information (occurred_start, occurred_end, occurred_precision, fact_kind, when).
 - Extract location (where) and people (who).
 - fact_type: use "world" for user preferences, rules, corrections, constraints, traits, and other objective facts, even when stated during an assistant interaction. Use "assistant" only for actions or experiences the assistant/agent actually performed."""
 
@@ -981,15 +1063,16 @@ FACT FORMAT - ALL FIVE DIMENSIONS REQUIRED - MAXIMUM VERBOSITY
 For EACH fact, CAPTURE ALL DETAILS - NEVER SUMMARIZE OR OMIT:
 
 1. **what**: WHAT happened - COMPLETE description with ALL specifics (objects, actions, quantities, details)
-2. **when**: WHEN it happened - ALWAYS include temporal info with DAY OF WEEK (e.g., "Monday, June 10, 2024")
-   - Always include the day name: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
-   - Format: "day_name, month day, year" (e.g., "Saturday, June 9, 2024")
+2. **when**: WHEN it happened - include all temporal detail actually stated
+   - Include a day name only when an exact calendar day is known
+   - Never invent a day, month, or day of week for year/month-only dates
+   - Exact-day format: "day_name, month day, year" (e.g., "Saturday, June 9, 2024")
 3. **where**: WHERE it happened or is about - SPECIFIC locations, places, areas, regions (if applicable)
 4. **who**: WHO is involved - ALL people/entities with FULL relationships and background
 5. **why**: WHY it matters - ALL emotions, preferences, motivations, significance, nuance
    - For assistant facts: MUST include what the user asked/requested that triggered this!
 
-Plus: fact_type, fact_kind, entities, occurred_start/end (for structured dates), where (structured location)
+Plus: fact_type, fact_kind, entities, occurred_start/end/precision (for structured dates), where (structured location)
 
 VERBOSITY REQUIREMENT: Include EVERY detail mentioned. More detail is ALWAYS better than less.
 
@@ -1018,7 +1101,7 @@ WRONG output:
 FACT_KIND CLASSIFICATION (CRITICAL FOR TEMPORAL HANDLING)
 ══════════════════════════════════════════════════════════════════════════
 
-⚠️ MUST set fact_kind correctly - this determines whether occurred_start/end are set!
+⚠️ MUST set fact_kind correctly - this determines whether occurred_start/end/precision are set!
 
 fact_kind="event" - USE FOR:
 - Actions that happened at a specific time: "went to", "attended", "visited", "bought", "made"
@@ -1044,12 +1127,17 @@ TEMPORAL HANDLING (CRITICAL - USE EVENT DATE AS REFERENCE)
 ⚠️ IMPORTANT: Use the "Event Date" provided in the input as your reference point!
 All relative dates ("yesterday", "last week", "recently") must be resolved relative to the Event Date, NOT today's date.
 
-For EVENTS (fact_kind="event") - MUST SET BOTH occurred_start AND occurred_end:
+For EVENTS (fact_kind="event") - MUST SET occurred_start, occurred_end, AND occurred_precision:
 - Convert relative dates → absolute using Event Date as reference
 - If Event Date is "Saturday, March 15, 2020", then "yesterday" = Friday, March 14, 2020
 - Dates mentioned in text (e.g., "in March 2020") should use THAT year, not current year
-- CRITICAL: If the content mentions an absolute date (e.g., "March 15, 2024", "2024-03-15"), you MUST extract it and set occurred_start in ISO format
-- Always include the day name (Monday, Tuesday, etc.) in the 'when' field
+- CRITICAL: Preserve the precision actually stated. NEVER invent a missing month or day.
+- For a year-only date such as "2026", use occurred_start="2026", occurred_end="2026", occurred_precision="year".
+- For a month-only date such as "March 2020", use occurred_start="2020-03", occurred_end="2020-03", occurred_precision="month".
+- For an exact calendar date, use occurred_precision="day"; for an explicit time, use "instant".
+- Use occurred_precision="range" only when the event genuinely spans distinct start/end values, not merely because a year/month is imprecise.
+- If the content mentions an absolute exact date (e.g., "March 15, 2024", "2024-03-15"), you MUST extract it and set occurred_start in ISO format.
+- Include the day name in the 'when' field only when an exact calendar day is known; never invent one for year/month precision
 - Set occurred_start AND occurred_end to WHEN IT HAPPENED (not when mentioned)
 - For single-day/point events: set occurred_end = occurred_start (same timestamp)
 
@@ -1460,9 +1548,9 @@ async def _extract_facts_from_chunk(
     context: str,
     llm_config: "LLMConfig",
     config,
-    agent_name: str = None,
+    agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
-) -> tuple[list[dict[str, str]], TokenUsage]:
+) -> tuple[list[Fact], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
 
@@ -1670,23 +1758,24 @@ async def _extract_facts_from_chunk(
 
                     combined_text = " | ".join(combined_parts)
 
-                # Add temporal fields
-                # For events: occurred_start/occurred_end (when the event happened)
-                if fact_kind == "event":
-                    occurred_start = get_value("occurred_start")
-                    occurred_end = get_value("occurred_end")
-
-                    # If LLM didn't set temporal fields, try to extract them from the fact text
-                    if not occurred_start:
-                        fact_data["occurred_start"] = _infer_temporal_date(combined_text, event_date)
-                    else:
-                        fact_data["occurred_start"] = occurred_start
-
-                    # For point events: if occurred_end not set, default to occurred_start
-                    if occurred_end:
-                        fact_data["occurred_end"] = occurred_end
-                    elif fact_data.get("occurred_start"):
-                        fact_data["occurred_end"] = fact_data["occurred_start"]
+                # Add temporal fields. Streaming and Batch API responses share
+                # the same precision resolver so provider mode cannot change the
+                # stored temporal contract.
+                temporal_fields = _resolve_temporal_fact_fields(
+                    fact_kind=fact_kind,
+                    occurred_start=get_value("occurred_start"),
+                    occurred_end=get_value("occurred_end"),
+                    occurred_precision=get_value("occurred_precision"),
+                    when=when,
+                    combined_text=combined_text,
+                    event_date=event_date,
+                )
+                if temporal_fields.occurred_start is not None:
+                    fact_data["occurred_start"] = temporal_fields.occurred_start
+                if temporal_fields.occurred_end is not None:
+                    fact_data["occurred_end"] = temporal_fields.occurred_end
+                if temporal_fields.occurred_precision is not None:
+                    fact_data["occurred_precision"] = temporal_fields.occurred_precision
 
                 # Entities are plain strings. Older prompts taught a {"text": ...}
                 # object form, so keep unwrapping it for models that still emit it.
@@ -1864,9 +1953,9 @@ async def _extract_facts_with_auto_split(
     context: str,
     llm_config: LLMConfig,
     config,
-    agent_name: str = None,
+    agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
-) -> tuple[list[dict[str, str]], TokenUsage]:
+) -> tuple[list[Fact], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
 
@@ -2514,20 +2603,21 @@ async def extract_facts_from_contents_batch_api(
             fact_kind = llm_fact.get("fact_kind", "conversation")
             if fact_kind not in ["conversation", "event", "other"]:
                 fact_kind = "conversation"
-
-            if fact_kind == "event":
-                occurred_start = get_value("occurred_start")
-                occurred_end = get_value("occurred_end")
-
-                if not occurred_start:
-                    fact_data["occurred_start"] = _infer_temporal_date(combined_text, event_date)
-                else:
-                    fact_data["occurred_start"] = occurred_start
-
-                if occurred_end:
-                    fact_data["occurred_end"] = occurred_end
-                elif fact_data.get("occurred_start"):
-                    fact_data["occurred_end"] = fact_data["occurred_start"]
+            temporal_fields = _resolve_temporal_fact_fields(
+                fact_kind=fact_kind,
+                occurred_start=get_value("occurred_start"),
+                occurred_end=get_value("occurred_end"),
+                occurred_precision=get_value("occurred_precision"),
+                when=when,
+                combined_text=combined_text,
+                event_date=event_date,
+            )
+            if temporal_fields.occurred_start is not None:
+                fact_data["occurred_start"] = temporal_fields.occurred_start
+            if temporal_fields.occurred_end is not None:
+                fact_data["occurred_end"] = temporal_fields.occurred_end
+            if temporal_fields.occurred_precision is not None:
+                fact_data["occurred_precision"] = temporal_fields.occurred_precision
 
             # Entities are plain strings. Older prompts taught a {"text": ...}
             # object form, so keep unwrapping it for models that still emit it.
@@ -2675,7 +2765,7 @@ async def extract_facts_from_contents_batch_api(
                 chunk_index=chunk_meta.chunk_index,
                 context=content.context,
                 mentioned_at=content.event_date,
-                metadata=content.metadata,
+                metadata=with_occurrence_precision(content.metadata, fact_from_llm.occurred_precision),
                 tags=content.tags,
                 observation_scopes=content.observation_scopes,
             )
@@ -2735,7 +2825,7 @@ def _extract_facts_chunks(
                     chunk_index=global_chunk_idx,
                     context=content.context,
                     mentioned_at=content.event_date,
-                    metadata=content.metadata,
+                    metadata=with_occurrence_precision(content.metadata, "unknown"),
                     tags=content.tags,
                     observation_scopes=content.observation_scopes,
                 )
@@ -2876,7 +2966,7 @@ async def extract_facts_from_contents(
                     context=content.context,
                     # mentioned_at: always the event_date (when the conversation/document occurred)
                     mentioned_at=content.event_date,
-                    metadata=content.metadata,
+                    metadata=with_occurrence_precision(content.metadata, fact_from_llm.occurred_precision),
                     tags=content.tags,
                     observation_scopes=content.observation_scopes,
                 )
@@ -2932,7 +3022,7 @@ def _parse_datetime(date_str: str):
     try:
         return date_parser.isoparse(date_str)
     except Exception:
-        return None
+        return coarse_occurrence_start(date_str)
 
 
 def _convert_causal_relations(

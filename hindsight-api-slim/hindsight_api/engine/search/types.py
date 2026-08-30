@@ -47,7 +47,7 @@ class RetrievalResult:
     document_id: str | None = None
     chunk_id: str | None = None
     tags: list[str] | None = None  # Visibility scope tags
-    metadata: dict[str, str] | None = None  # User-provided metadata
+    metadata: dict[str, str] | None = None  # User metadata plus reserved engine-owned keys
     proof_count: int | None = None  # Number of supporting memories (observations only)
 
     # Entity postings the backend already resolved for this unit, if any.

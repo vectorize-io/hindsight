@@ -13,6 +13,7 @@ from typing import Any
 from ...config import _get_raw_config
 from ..memory_engine import fq_table
 from ..metadata_utils import drop_null_values
+from ..temporal_precision import OCCURRENCE_PRECISION_METADATA_KEY, with_occurrence_precision
 from .bank_utils import DEFAULT_DISPOSITION, create_bank_vector_indexes
 from .fact_extraction import _sanitize_text
 from .types import ProcessedFact
@@ -442,6 +443,10 @@ async def update_memory_units_metadata_and_tags(
     (issue #3209). Without it a re-retain would leave surviving units carrying
     nulls while the units around them do not.
 
+    The caller's reserved occurrence-precision key is ignored. Each surviving
+    fact keeps its existing engine-owned value so metadata-only and partial-delta
+    retains cannot erase or spoof the event-time contract.
+
     Returns:
         Number of memory units updated.
     """
@@ -449,6 +454,7 @@ async def update_memory_units_metadata_and_tags(
     from ..memories.base import META_METADATA_JSON
 
     store = get_memories()
+    replacement_metadata = drop_null_values(metadata or {})
     if not store.writes_memory_rows_in_sql_for(bank_id):
         # A store that keeps memories outside SQL: page the document's memories and patch each
         # one's tags and metadata through the store — the UPDATE below is a no-op on its empty
@@ -468,13 +474,20 @@ async def update_memory_units_metadata_and_tags(
         # chunk_id, consolidation_failed_at, …) and a patch that carried user keys loose among them
         # could not be told apart from one setting an internal field.
         #
-        # Set unconditionally, mirroring `SET metadata = $4`: a document whose metadata was cleared
+        # Set unconditionally, mirroring the SQL metadata replacement: a document whose metadata was cleared
         # must clear on its survivors too, which an absent key would not do.
         patches = [
             MemoryPatch(
                 unit_id=m.unit_id,
                 tags=list(tags or []),
-                metadata={META_METADATA_JSON: json.dumps(drop_null_values(metadata or {}))},
+                metadata={
+                    META_METADATA_JSON: json.dumps(
+                        with_occurrence_precision(
+                            replacement_metadata,
+                            (m.metadata or {}).get(OCCURRENCE_PRECISION_METADATA_KEY),
+                        )
+                    )
+                },
             )
             for m in page.memories
         ]
@@ -482,19 +495,44 @@ async def update_memory_units_metadata_and_tags(
             await store.update_memories(bank_id, patches)
         return len(patches)
 
-    result = await conn.execute(
+    rows = await conn.fetch(
         f"""
-        UPDATE {fq_table("memory_units")}
-        SET tags = $3, metadata = $4, updated_at = NOW()
+        SELECT id, metadata
+        FROM {fq_table("memory_units")}
         WHERE bank_id = $1 AND document_id = $2
+        FOR UPDATE
         """,
         bank_id,
         document_id,
-        tags or [],
-        json.dumps(drop_null_values(metadata)),
     )
-    # result is a status string like "UPDATE 5"
-    try:
-        return int(result.split()[-1])
-    except (ValueError, IndexError):
+    if not rows:
         return 0
+
+    updates = []
+    for row in rows:
+        existing_metadata = conn.parse_json(row["metadata"])
+        precision = (
+            existing_metadata.get(OCCURRENCE_PRECISION_METADATA_KEY) if isinstance(existing_metadata, dict) else None
+        )
+        updates.append(
+            (
+                tags or [],
+                json.dumps(with_occurrence_precision(replacement_metadata, precision)),
+                bank_id,
+                row["id"],
+            )
+        )
+
+    # Precision is engine-owned and differs per fact, so a metadata-only retain
+    # must replace user metadata row-by-row while carrying forward only that
+    # reserved value. A single document-wide UPDATE previously erased it, while
+    # accepting the caller's replacement bag verbatim allowed spoofing it.
+    await conn.executemany(
+        f"""
+        UPDATE {fq_table("memory_units")}
+        SET tags = $1, metadata = $2, updated_at = NOW()
+        WHERE bank_id = $3 AND id = $4
+        """,
+        updates,
+    )
+    return len(updates)
