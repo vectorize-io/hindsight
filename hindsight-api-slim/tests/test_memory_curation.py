@@ -644,6 +644,103 @@ class TestEdit:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_disjoint_edit_replans_when_phase2_sees_newer_memory(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+    ):
+        """A Phase-1 plan must not overwrite fields already visible to its Phase-2 read."""
+        bank_id = f"test-curation-replan-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        old_day = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        new_day = datetime(2023, 7, 4, tzinfo=timezone.utc)
+        async with pool.acquire() as conn:
+            memory_id = await _insert_memory(
+                conn,
+                memory,
+                bank_id,
+                "Original Helios fact",
+                fact_type="world",
+                metadata={OCCURRENCE_PRECISION_METADATA_KEY: "day"},
+            )
+            await conn.execute(
+                "UPDATE memory_units SET context = $2, occurred_start = $3, occurred_end = $3, "
+                "event_date = $3 WHERE id = $1",
+                memory_id,
+                "original context",
+                old_day,
+            )
+
+        store = get_memories()
+        real_get_memories = store.get_memories
+        date_phase1_read = asyncio.Event()
+        allow_date_phase2_read = asyncio.Event()
+        calls_by_task: dict[asyncio.Task, int] = {}
+
+        async def hold_date_edit_between_phases(**kwargs):
+            task = asyncio.current_task()
+            assert task is not None
+            calls_by_task[task] = calls_by_task.get(task, 0) + 1
+            call_number = calls_by_task[task]
+            if task.get_name() == "date-edit" and call_number == 2:
+                await allow_date_phase2_read.wait()
+            rows = await real_get_memories(**kwargs)
+            if task.get_name() == "date-edit" and call_number == 1:
+                date_phase1_read.set()
+            return rows
+
+        text_value = "Helios fact with the committed text correction"
+        context_value = "committed context correction"
+        with (
+            patch.object(store, "get_memories", new=hold_date_edit_between_phases),
+            patch.object(memory, "_reembed_memory_text", new=AsyncMock(return_value=None)),
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            date_task = asyncio.create_task(
+                memory.update_memory_unit(
+                    bank_id,
+                    str(memory_id),
+                    occurred_start="2023-07-04",
+                    occurred_end="2023-07-04",
+                    request_context=request_context,
+                ),
+                name="date-edit",
+            )
+            await asyncio.wait_for(date_phase1_read.wait(), timeout=10)
+            await memory.update_memory_unit(
+                bank_id,
+                str(memory_id),
+                text=text_value,
+                context=context_value,
+                new_fact_type="experience",
+                request_context=request_context,
+            )
+            allow_date_phase2_read.set()
+            await asyncio.wait_for(date_task, timeout=30)
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT text, context, fact_type, occurred_start, occurred_end, metadata "
+                "FROM memory_units WHERE id = $1",
+                memory_id,
+            )
+        metadata = row["metadata"]
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+
+        assert row["text"] == text_value
+        assert row["context"] == context_value
+        assert row["fact_type"] == "experience"
+        assert row["occurred_start"] == new_day
+        assert row["occurred_end"] == new_day
+        assert metadata[OCCURRENCE_PRECISION_METADATA_KEY] == "day"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_edit_replaces_entities(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-editent-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)

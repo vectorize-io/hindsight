@@ -1800,6 +1800,10 @@ class _MemoryEditPlan:
     new_occ_end: datetime | None
     new_event_date: datetime | None
     mentioned_at: datetime | None
+    # Version of the live memory whose fields and derived edit inputs were used in
+    # Phase 1. SQL-backed stores compare this with the Phase-2 addressed read and
+    # retry the whole plan if another edit committed between the two phases.
+    snapshot_updated_at: datetime | None
     metadata: dict[str, Any]
     occurrence_precision: str
     # Entity resolution carried from Phase 1 when ``entities`` is being changed (None otherwise).
@@ -9720,6 +9724,7 @@ class MemoryEngine(MemoryEngineInterface):
                     new_occ_end=new_occ_end,
                     new_event_date=new_event_date,
                     mentioned_at=live.mentioned_at,
+                    snapshot_updated_at=live.updated_at,
                     metadata=new_metadata,
                     occurrence_precision=new_precision,
                     entity_resolution=entity_resolution,
@@ -9804,6 +9809,16 @@ class MemoryEngine(MemoryEngineInterface):
                     if live2 is None and archived2 is None:
                         return None
 
+                    if edit_plan is not None and live2 and store.writes_memory_rows_in_sql_for(bank_id):
+                        if edit_plan.snapshot_updated_at is None or live2.updated_at is None:
+                            raise RuntimeError(
+                                "SQL curation addressed reads did not return updated_at for optimistic concurrency"
+                            )
+                        if live2.updated_at != edit_plan.snapshot_updated_at:
+                            raise StoreWriteConflict(
+                                f"Memory {memory_id} changed between curation planning and the Phase-2 snapshot"
+                            )
+
                     # One cross-store write-group for this curation edit/invalidate/revert: the
                     # store's writes below are tagged so they commit together with this Postgres
                     # transaction; decided (published) after it commits.
@@ -9824,10 +9839,14 @@ class MemoryEngine(MemoryEngineInterface):
                     # --- Apply edit (live rows only) ---
                     if edit_plan is not None and live2:
                         # A field omitted by this edit belongs to the Phase-2
-                        # snapshot, not the older Phase-1 plan. This preserves a
-                        # concurrent date edit and lets the precision metadata,
-                        # embedding, and BM25 signals describe the exact window
-                        # this mutation commits.
+                        # snapshot, not the older Phase-1 plan. SQL stores retry
+                        # above when that snapshot changed, keeping entity
+                        # resolution and every derived value on one version; the
+                        # explicit merge remains the safe contract for stores
+                        # that serialize edits themselves.
+                        locked_text = edit_plan.new_text if text is not None else live2.text
+                        locked_context = edit_plan.new_context if context is not None else live2.context
+                        locked_fact = edit_plan.new_fact if new_fact_type is not None else live2.fact_type
                         locked_occ_start = (
                             edit_plan.new_occ_start if occurred_start is not None else live2.occurred_start
                         )
@@ -9893,14 +9912,15 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
                         if (
-                            locked_names != edit_plan.names
+                            locked_text != edit_plan.new_text
+                            or locked_names != edit_plan.names
                             or locked_precision != edit_plan.occurrence_precision
                             or locked_occ_start != edit_plan.new_occ_start
                             or locked_occ_end != edit_plan.new_occ_end
                             or locked_mentioned_at != edit_plan.mentioned_at
                         ):
                             edit_embedding = await self._reembed_memory_text(
-                                text=edit_plan.new_text,
+                                text=locked_text,
                                 occurred_start=locked_occ_start,
                                 occurred_end=locked_occ_end,
                                 mentioned_at=locked_mentioned_at,
@@ -9911,8 +9931,8 @@ class MemoryEngine(MemoryEngineInterface):
                             edit_embedding = edit_plan.embedding
                         text_signals = build_text_signals_from_parts(
                             entity_names=locked_names,
-                            fact_text=edit_plan.new_text,
-                            fact_type=edit_plan.new_fact,
+                            fact_text=locked_text,
+                            fact_type=locked_fact,
                             metadata=locked_metadata,
                             occurred_start=locked_occ_start,
                             occurred_end=locked_occ_end,
@@ -9932,9 +9952,9 @@ class MemoryEngine(MemoryEngineInterface):
                             bank_id=bank_id,
                             unit_id=str(memory_uuid),
                             expected_updated_at=live2.updated_at,
-                            text=edit_plan.new_text,
-                            context=edit_plan.new_context,
-                            fact_type=edit_plan.new_fact,
+                            text=locked_text,
+                            context=locked_context,
+                            fact_type=locked_fact,
                             occurred_start=locked_occ_start,
                             occurred_end=locked_occ_end,
                             event_date=locked_event_date,
