@@ -26,7 +26,8 @@ import asyncio
 import json
 import re
 import uuid
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import pytest
@@ -34,14 +35,17 @@ import pytest
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation import consolidator as consolidator_module
 from hindsight_api.engine.consolidation.consolidator import (
+    _BatchLLMResult,
     _ConsolidationBatchResponse,
     _CreateAction,
+    _DeleteAction,
     _gather_or_cancel,
+    _process_memory_batch,
     run_consolidation_job,
 )
 from hindsight_api.engine.memory_engine import MemoryEngine, _is_non_retryable_task_error
 from hindsight_api.engine.providers.mock_llm import MockLLM
-from hindsight_api.engine.response_models import RecallResult
+from hindsight_api.engine.response_models import MemoryFact, RecallResult
 
 
 class _RecallTimeout(Exception):
@@ -111,6 +115,45 @@ async def test_gather_or_cancel_reraises_original_exception_unwrapped():
 
     assert not isinstance(exc_info.value, BaseExceptionGroup)
     assert _is_non_retryable_task_error(exc_info.value) is True
+
+
+@pytest.mark.asyncio
+async def test_create_failure_does_not_execute_requested_delete():
+    """A replacement CREATE must succeed before its destructive DELETE runs."""
+    source_id = uuid.uuid4()
+    observation_id = uuid.uuid4()
+    recall = RecallResult(
+        results=[MemoryFact(id=str(observation_id), text="Old durable observation", fact_type="observation")]
+    )
+    llm_result = _BatchLLMResult(
+        creates=[_CreateAction(text="Replacement observation", source_fact_ids=[str(source_id)])],
+        deletes=[_DeleteAction(observation_id=str(observation_id))],
+    )
+    config = SimpleNamespace(
+        consolidation_dedup_threshold=1.0,
+        max_observations_per_scope=-1,
+        observation_scope_limits=[],
+    )
+    create_error = RuntimeError("simulated embedding failure")
+
+    with (
+        patch.object(consolidator_module, "_find_related_observations", AsyncMock(return_value=recall)),
+        patch.object(consolidator_module, "_consolidate_batch_with_llm", AsyncMock(return_value=llm_result)),
+        patch.object(consolidator_module, "_execute_create_action", AsyncMock(side_effect=create_error)),
+        patch.object(consolidator_module, "_execute_delete_action", AsyncMock()) as execute_delete,
+    ):
+        with pytest.raises(RuntimeError, match="simulated embedding failure"):
+            await _process_memory_batch(
+                pool=MagicMock(),
+                memory_engine=MagicMock(),
+                llm_config=MagicMock(),
+                bank_id="bank",
+                memories=[{"id": source_id, "text": "New evidence", "tags": []}],
+                request_context=MagicMock(),
+                config=config,
+            )
+
+    execute_delete.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

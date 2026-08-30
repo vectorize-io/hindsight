@@ -2189,8 +2189,7 @@ async def _process_memory_batch(
         perf.record_timing("llm", time.time() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
 
-    # 4. Sequential execution of deletes / updates / creates
-    # Deletes run first to free observation slots before creates consume them.
+    # 4. Sequential execution of updates / creates / deletes
     # Track which memory indices participated so we can build per-memory results for stats
     per_memory_created: set[str] = set()
     per_memory_updated: set[str] = set()
@@ -2211,21 +2210,21 @@ async def _process_memory_batch(
         else None
     )
 
-    # Execute deletes first to free observation slots before creates consume them. Each delete
-    # is a single fast statement, so the whole loop shares one short-lived connection.
-    deleted_count = 0
-    if llm_result.deletes:
-        async with acquire_with_retry(pool) as conn:
-            for delete in llm_result.deletes:
-                # Security: the observation must be present in the unioned recall
-                if not any(str(obs.id) == delete.observation_id for obs in union_observations):
-                    logger.debug(
-                        f"Batch consolidation: rejected delete — observation {delete.observation_id} "
-                        f"not in unioned recall"
-                    )
-                    continue
-                await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=delete.observation_id, txn=txn)
-                deleted_count += 1
+    # Authorize deletes against the immutable recall snapshot now, but execute them only after
+    # every fallible update/create has succeeded.  In particular, embedding generation happens
+    # before a create's write transaction; deleting first turned an embedding failure into a
+    # durable half-commit that removed the old observation while leaving the replacement absent.
+    # Capacity is computed before this point and already caps CREATEs against the current count,
+    # so deferring deletes cannot exceed the configured observation limit.
+    authorized_delete_ids: list[str] = []
+    recalled_observation_ids = {str(obs.id) for obs in union_observations}
+    for delete in llm_result.deletes:
+        if delete.observation_id not in recalled_observation_ids:
+            logger.debug(
+                f"Batch consolidation: rejected delete — observation {delete.observation_id} not in unioned recall"
+            )
+            continue
+        authorized_delete_ids.append(delete.observation_id)
 
     for update in llm_result.updates:
         source_mems = [mem_by_id[fid] for fid in update.source_fact_ids if fid in mem_by_id]
@@ -2348,6 +2347,23 @@ async def _process_memory_batch(
         if action == "created":
             for m in source_mems:
                 per_memory_created.add(str(m["id"]))
+
+    # Destructive work is the final phase. Keep all requested deletes in one short SQL
+    # transaction so a failure cannot commit only a prefix of the delete set. For an external
+    # memories store, ``txn`` is the batch write-group handle; its deletes remain invisible until
+    # the outer witness commits, preserving the existing cross-store visibility contract.
+    deleted_count = 0
+    if authorized_delete_ids:
+        async with acquire_with_retry(pool) as conn:
+            async with conn.transaction():
+                for observation_id in authorized_delete_ids:
+                    await _execute_delete_action(
+                        conn=conn,
+                        bank_id=bank_id,
+                        observation_id=observation_id,
+                        txn=txn,
+                    )
+                    deleted_count += 1
 
     # Build per-memory result dicts for the stats tracker in the outer loop
     results: list[dict[str, Any]] = []
