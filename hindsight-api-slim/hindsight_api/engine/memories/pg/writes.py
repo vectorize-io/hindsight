@@ -523,7 +523,8 @@ async def apply_edit(
     entity_ids: list[str] | None,
     metadata: dict[str, Any],
     text_signals: str | None,
-) -> None:
+    expected_updated_at=None,
+) -> bool:
     # `entity_ids` and `mentioned_at` are unused here: the entity postings are
     # re-linked into `unit_entities` by the caller, and an edit does not move the
     # mention time. Both are on the signature for a store that carries entities on
@@ -542,15 +543,8 @@ async def apply_edit(
     # would see the pre-edit values.
     sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4", signals_col="$10")
     sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
-    await conn.execute(
-        f"""
-        UPDATE {mu}
-        SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
-            event_date = $8, metadata = $9::jsonb, text_signals = $10,
-            consolidated_at = NULL, consolidation_failed_at = NULL,
-            edited_at = now(), updated_at = now(){sv_clause}
-        WHERE id = $1 AND bank_id = $2
-        """,
+    version_clause = " AND updated_at = $11" if expected_updated_at is not None else ""
+    args = [
         str(unit_id),
         bank_id,
         text,
@@ -561,7 +555,22 @@ async def apply_edit(
         event_date,
         json.dumps(metadata),
         text_signals,
+    ]
+    if expected_updated_at is not None:
+        args.append(expected_updated_at)
+    updated = await conn.execute_rows_affected(
+        f"""
+        UPDATE {mu}
+        SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
+            event_date = $8, metadata = $9::jsonb, text_signals = $10,
+            consolidated_at = NULL, consolidation_failed_at = NULL,
+            edited_at = now(), updated_at = now(){sv_clause}
+        WHERE id = $1 AND bank_id = $2{version_clause}
+        """,
+        *args,
     )
+    if updated == 0:
+        return False
     # Drop only the DERIVED links — graph maintenance recomputes temporal/semantic. Causal edges
     # are retain-time extraction output that nothing recreates, so an edit preserves them (#2864).
     await conn.execute(
@@ -569,6 +578,7 @@ async def apply_edit(
         str(unit_id),
         list(CAUSAL_LINK_TYPES),
     )
+    return True
 
 
 __all__ = [

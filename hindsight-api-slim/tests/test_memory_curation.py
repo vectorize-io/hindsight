@@ -6,6 +6,7 @@ These tests cover the move semantics, lossless revert (incl. entity
 associations), edit, the guards, listing, and recall exclusion.
 """
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -14,6 +15,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from hindsight_api import RequestContext
+from hindsight_api.engine.memories import get_memories
+from hindsight_api.engine.memories.pg import writes
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain import embedding_processing
 from hindsight_api.engine.temporal_precision import OCCURRENCE_PRECISION_METADATA_KEY
@@ -542,6 +545,101 @@ class TestEdit:
         assert cleared_state["occurred_start"] is None
         assert cleared_state["occurred_end"] is None
         assert cleared_state["text_signals"] is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_disjoint_edits_retry_and_merge(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+    ):
+        """Two Phase-2 snapshots may race, but the stale writer must retry instead of overwriting."""
+        bank_id = f"test-curation-cas-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        old_day = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        new_day = datetime(2023, 7, 4, tzinfo=timezone.utc)
+        async with pool.acquire() as conn:
+            memory_id = await _insert_memory(
+                conn,
+                memory,
+                bank_id,
+                "Original Helios fact",
+                fact_type="world",
+                metadata={OCCURRENCE_PRECISION_METADATA_KEY: "day"},
+            )
+            await conn.execute(
+                "UPDATE memory_units SET occurred_start = $2, occurred_end = $2, event_date = $2 WHERE id = $1",
+                memory_id,
+                old_day,
+            )
+
+        store = get_memories()
+        real_get_memories = store.get_memories
+        phase2_reads = asyncio.Barrier(2)
+        calls_by_task: dict[asyncio.Task, int] = {}
+
+        async def synchronize_second_addressed_read(**kwargs):
+            rows = await real_get_memories(**kwargs)
+            task = asyncio.current_task()
+            assert task is not None
+            calls_by_task[task] = calls_by_task.get(task, 0) + 1
+            if calls_by_task[task] == 2:
+                await phase2_reads.wait()
+            return rows
+
+        real_apply_edit = writes.apply_edit
+        apply_results: list[bool] = []
+
+        async def track_conditional_edit(**kwargs):
+            result = await real_apply_edit(**kwargs)
+            apply_results.append(result)
+            return result
+
+        text_value = "Helios fact with the concurrent text correction"
+        with (
+            patch.object(store, "get_memories", new=synchronize_second_addressed_read),
+            patch.object(writes, "apply_edit", new=track_conditional_edit),
+            patch.object(memory, "_reembed_memory_text", new=AsyncMock(return_value=None)),
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await asyncio.wait_for(
+                asyncio.gather(
+                    memory.update_memory_unit(
+                        bank_id,
+                        str(memory_id),
+                        text=text_value,
+                        request_context=request_context,
+                    ),
+                    memory.update_memory_unit(
+                        bank_id,
+                        str(memory_id),
+                        occurred_start="2023-07-04",
+                        occurred_end="2023-07-04",
+                        request_context=request_context,
+                    ),
+                ),
+                timeout=30,
+            )
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT text, occurred_start, occurred_end, metadata FROM memory_units WHERE id = $1",
+                memory_id,
+            )
+        metadata = row["metadata"]
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+
+        assert False in apply_results, "the deterministic interleaving did not exercise the stale CAS path"
+        assert apply_results.count(True) == 2, "both disjoint edits should eventually commit exactly once"
+        assert row["text"] == text_value
+        assert row["occurred_start"] == new_day
+        assert row["occurred_end"] == new_day
+        assert metadata[OCCURRENCE_PRECISION_METADATA_KEY] == "day"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

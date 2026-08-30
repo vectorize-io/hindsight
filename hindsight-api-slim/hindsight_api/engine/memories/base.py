@@ -351,7 +351,8 @@ def build_text_signals_from_parts(
 ) -> str | None:
     """Build the complete precision-aware BM25 enrichment string."""
     parts = list(entity_names)
-    if occurred_start is None:
+    occurrence_reference = occurred_start or occurred_end
+    if occurrence_reference is None:
         return " ".join(parts) if parts else None
 
     precision = resolve_stored_occurrence_precision(
@@ -361,7 +362,8 @@ def build_text_signals_from_parts(
         occurred_end=occurred_end,
         allow_legacy_recovery=fact_type != "observation",
     )
-    parts.append(format_text_signal_occurrence_date(occurred_start, precision))
+    if occurred_start is not None:
+        parts.append(format_text_signal_occurrence_date(occurred_start, precision))
     if occurred_end is not None and occurred_end != occurred_start:
         parts.append(format_text_signal_occurrence_date(occurred_end, precision))
     return " ".join(parts) if parts else None
@@ -1470,6 +1472,54 @@ class MemoriesExtension(Extension, ABC):
         Both ``None`` means the entity set was not part of this edit.
         """
         raise NotImplementedError
+
+    async def apply_edit_if_unchanged(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        unit_id: str,
+        expected_updated_at: datetime | None,
+        text: str,
+        context: str | None,
+        fact_type: str,
+        occurred_start,
+        occurred_end,
+        event_date,
+        mentioned_at,
+        entity_ids: list[str] | None,
+        metadata: dict[str, Any],
+        text_signals: str | None,
+        entity_names: list[str] | None = None,
+        txn=None,
+    ) -> bool:
+        """Apply a curation edit only while its addressed-read snapshot is current.
+
+        The default delegates to :meth:`apply_edit` for compatibility with existing
+        memories extensions, which must already serialize their own read-modify-write
+        operations. SQL-backed stores override this with a version predicate and
+        return ``False`` without writing when another mutation committed first.
+        """
+        await self.apply_edit(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            unit_id=unit_id,
+            text=text,
+            context=context,
+            fact_type=fact_type,
+            occurred_start=occurred_start,
+            occurred_end=occurred_end,
+            event_date=event_date,
+            mentioned_at=mentioned_at,
+            entity_ids=entity_ids,
+            metadata=metadata,
+            text_signals=text_signals,
+            entity_names=entity_names,
+            txn=txn,
+        )
+        return True
 
     @abstractmethod
     async def list_entities(

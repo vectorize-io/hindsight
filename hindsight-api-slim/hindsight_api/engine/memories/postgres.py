@@ -583,6 +583,45 @@ class PostgresMemories(MemoriesExtension):
             text_signals=text_signals,
         )
 
+    async def apply_edit_if_unchanged(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        unit_id: str,
+        expected_updated_at: datetime | None,
+        text: str,
+        context: str | None,
+        fact_type: str,
+        occurred_start,
+        occurred_end,
+        event_date,
+        mentioned_at,
+        entity_ids: list[str] | None,
+        metadata: dict[str, Any],
+        text_signals: str | None,
+        entity_names: list[str] | None = None,  # noqa: ARG002 — SQL registry is already resolved by the host.
+        txn=None,
+    ) -> bool:
+        return await writes.apply_edit(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            unit_id=unit_id,
+            text=text,
+            context=context,
+            fact_type=fact_type,
+            occurred_start=occurred_start,
+            occurred_end=occurred_end,
+            event_date=event_date,
+            mentioned_at=mentioned_at,
+            entity_ids=entity_ids,
+            metadata=metadata,
+            text_signals=text_signals,
+            expected_updated_at=expected_updated_at,
+        )
+
     async def list_entities(
         self,
         *,

@@ -9393,8 +9393,64 @@ class MemoryEngine(MemoryEngineInterface):
         embeddings = await embedding_processing.generate_embeddings_batch(self.embeddings, augmented)
         return str(embeddings[0]) if embeddings else None
 
+    _CURATION_CONFLICT_ATTEMPTS = 3
+
     @_bind_bank_id()
     async def update_memory_unit(
+        self,
+        bank_id: str,
+        memory_id: str,
+        *,
+        text: str | None = None,
+        context: str | None = None,
+        occurred_start: str | None = None,
+        occurred_end: str | None = None,
+        new_fact_type: str | None = None,
+        entities: list[str] | None = None,
+        resolve_entities: bool = True,
+        state: str | None = None,
+        reason: str | None = None,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """Curate one memory, retrying a SQL compare-and-set conflict from a newer edit."""
+        from .memories.base import StoreWriteConflict
+
+        for attempt in range(1, self._CURATION_CONFLICT_ATTEMPTS + 1):
+            try:
+                return await self._update_memory_unit_once(
+                    bank_id,
+                    memory_id,
+                    text=text,
+                    context=context,
+                    occurred_start=occurred_start,
+                    occurred_end=occurred_end,
+                    new_fact_type=new_fact_type,
+                    entities=entities,
+                    resolve_entities=resolve_entities,
+                    state=state,
+                    reason=reason,
+                    request_context=request_context,
+                )
+            except StoreWriteConflict:
+                if attempt == self._CURATION_CONFLICT_ATTEMPTS:
+                    logger.warning(
+                        "Curation for memory %s in bank %s lost its compare-and-set race %d times",
+                        memory_id,
+                        bank_id,
+                        attempt,
+                    )
+                    raise
+                logger.info(
+                    "Curation for memory %s in bank %s observed a newer write; retrying on attempt %d",
+                    memory_id,
+                    bank_id,
+                    attempt + 1,
+                )
+                await asyncio.sleep(random.uniform(0.01, 0.05) * attempt)
+
+        raise AssertionError("unreachable: curation conflict loop always returns or raises")
+
+    async def _update_memory_unit_once(
         self,
         bank_id: str,
         memory_id: str,
@@ -9514,6 +9570,7 @@ class MemoryEngine(MemoryEngineInterface):
         need_graph = False
 
         from .memories import build_text_signals_from_parts, get_memories
+        from .memories.base import StoreWriteConflict
         from .temporal_precision import (
             resolve_edited_occurrence_precision,
             resolve_stored_occurrence_precision,
@@ -9865,11 +9922,16 @@ class MemoryEngine(MemoryEngineInterface):
                         # drops the derived links (rebuilt with victims — the edit leaves the unit
                         # live, so its own outgoing adjacency is rebuilt too, #2864).
                         await enqueue_relink_victims(conn, bank_id, [memory_id], include_affected_units=True)
-                        await store.apply_edit(
+                        if store.writes_memory_rows_in_sql_for(bank_id) and live2.updated_at is None:
+                            raise RuntimeError(
+                                "SQL curation addressed read did not return updated_at for optimistic concurrency"
+                            )
+                        applied = await store.apply_edit_if_unchanged(
                             conn=conn,
                             fq_table=fq_table,
                             bank_id=bank_id,
                             unit_id=str(memory_uuid),
+                            expected_updated_at=live2.updated_at,
                             text=edit_plan.new_text,
                             context=edit_plan.new_context,
                             fact_type=edit_plan.new_fact,
@@ -9883,6 +9945,8 @@ class MemoryEngine(MemoryEngineInterface):
                             entity_names=edit_plan.entity_names_for_store,
                             txn=_curation_txn,
                         )
+                        if not applied:
+                            raise StoreWriteConflict(f"Memory {memory_id} changed after the Phase-2 curation snapshot")
                         if edit_embedding is not None:
                             await store.set_memory_embedding(
                                 conn=conn,

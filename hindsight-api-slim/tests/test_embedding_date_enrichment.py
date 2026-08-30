@@ -128,6 +128,19 @@ def test_bm25_text_signals_do_not_use_mention_time_for_undated_facts():
     assert signals == "user"
 
 
+def test_bm25_text_signals_preserve_end_only_occurrence_fallback():
+    signals = build_text_signals_from_parts(
+        entity_names=["user"],
+        fact_text="The project ended",
+        fact_type="world",
+        metadata=None,
+        occurred_start=None,
+        occurred_end=datetime(2026, 9, 2, tzinfo=UTC),
+    )
+
+    assert signals == "user September 2 2026"
+
+
 def test_transfer_round_trip_reuses_precision_for_regenerated_embedding_and_signals():
     occurred = datetime(2026, 1, 1, tzinfo=UTC)
     transferred = TransferFact(
