@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 
 from hindsight_api.engine.reflect.delta_ops import (
+    AddSectionOp,
     AppendBlockOp,
     DeltaAllOpsInvalidError,
     DeltaOperationList,
+    ReplaceSectionBlocksOp,
     parse_delta_operation_list,
 )
 
@@ -70,6 +72,42 @@ def test_parse_delta_operation_list_skips_invalid_op_keeps_valid():
     op_list = parse_delta_operation_list(raw)
     assert len(op_list.operations) == 2
     assert all(isinstance(o, AppendBlockOp) for o in op_list.operations)
+
+
+def test_parse_delta_operation_list_coerces_add_section_block_objects():
+    """Models may echo the id-bearing document shape for newly-created blocks (#3901)."""
+    raw = (
+        '{"operations": [{"op": "add_section", "heading": "Example Heading", "blocks": ['
+        '{"id": "b12a001", "text": "First paragraph of the new section."}, '
+        '{"id": "b12a002", "text": "Second paragraph of the new section."}'
+        "]}]}"
+    )
+    op = parse_delta_operation_list(raw).operations[0]
+    assert isinstance(op, AddSectionOp)
+    assert op.blocks == ["First paragraph of the new section.", "Second paragraph of the new section."]
+
+
+def test_parse_delta_operation_list_coerces_replace_section_block_objects():
+    """Every operation field typed as list[str] accepts the same provider variation."""
+    raw = {
+        "operations": [
+            {
+                "op": "replace_section_blocks",
+                "section_id": "example",
+                "blocks": ["Unchanged string shape.", {"id": "b12a003", "text": "Object shape."}],
+            }
+        ]
+    }
+    op = parse_delta_operation_list(raw).operations[0]
+    assert isinstance(op, ReplaceSectionBlocksOp)
+    assert op.blocks == ["Unchanged string shape.", "Object shape."]
+
+
+def test_parse_delta_operation_list_rejects_block_object_without_text():
+    """Compatibility coercion must not turn malformed blocks into silent data loss."""
+    raw = {"operations": [{"op": "add_section", "heading": "Broken", "blocks": [{"id": "b12a004"}]}]}
+    with pytest.raises(DeltaAllOpsInvalidError):
+        parse_delta_operation_list(raw)
 
 
 def test_parse_delta_operation_list_rejects_v1_block_payloads():

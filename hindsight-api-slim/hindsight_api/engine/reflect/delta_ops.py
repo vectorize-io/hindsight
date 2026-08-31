@@ -38,9 +38,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 
@@ -62,6 +63,20 @@ logger = logging.getLogger(__name__)
 
 class _OpBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def _coerce_block_texts(value: Any) -> Any:
+    """Accept id-bearing block objects where an operation expects markdown strings.
+
+    The current document is shown to the model with block ids alongside their
+    text, so some providers echo that shape for newly-created blocks.  Operation
+    payloads only persist the markdown text; discard the display-only id before
+    normal Pydantic validation.  Values without a string ``text`` stay untouched
+    so malformed blocks are still rejected rather than silently dropped.
+    """
+    if not isinstance(value, list):
+        return value
+    return [item["text"] if isinstance(item, Mapping) and isinstance(item.get("text"), str) else item for item in value]
 
 
 class AppendBlockOp(_OpBase):
@@ -117,6 +132,11 @@ class AddSectionOp(_OpBase):
     after_section_id: str | None = None
     new_id: str | None = None
 
+    @field_validator("blocks", mode="before")
+    @classmethod
+    def coerce_block_objects(cls, value: Any) -> Any:
+        return _coerce_block_texts(value)
+
 
 class RemoveSectionOp(_OpBase):
     """Remove an entire section by id."""
@@ -136,6 +156,11 @@ class ReplaceSectionBlocksOp(_OpBase):
     op: Literal["replace_section_blocks"] = "replace_section_blocks"
     section_id: str
     blocks: list[str] = Field(default_factory=list)
+
+    @field_validator("blocks", mode="before")
+    @classmethod
+    def coerce_block_objects(cls, value: Any) -> Any:
+        return _coerce_block_texts(value)
 
 
 class RenameSectionOp(_OpBase):
