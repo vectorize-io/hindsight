@@ -718,6 +718,12 @@ class MemoriesExtension(Extension, ABC):
     #: entire retain — resolution, upserts and the document replace — as ONE atomic server-side call
     #: (``retain``). The orchestrator then needs no Postgres connection phase for it.
     #:
+    #: It also selects the KNOWLEDGE-PAGE index: a store that owns its memories serves
+    #: `search_knowledge_pages` and the reflect tool from its own index, and the page write paths
+    #: call :meth:`index_knowledge_pages` / :meth:`delete_knowledge_pages`. The Postgres row is
+    #: still written first and is still what a hit is hydrated from — the store holds a DERIVED
+    #: copy, so a divergence is repaired by indexing again rather than restored from a backup.
+    #:
     #: This is also what selects the retain SESSION (:meth:`begin_retain`): a store that owns its
     #: memories owns the persistence half of a retain, and the engine hands it the whole of it —
     #: how many round trips it takes, how chunk identity is derived, and what commits atomically
@@ -797,23 +803,6 @@ class MemoriesExtension(Extension, ABC):
     # combination: the ownership split runs the opposite way (Postgres keeps the row, the store
     # keeps the index), and a store can own every memory in a bank while its pages are still
     # searched in SQL. The rollout needs exactly that state.
-
-    #: Whether this store indexes knowledge pages for search.
-    #:
-    #: False (the default) leaves `search_knowledge_pages` and the reflect tool on their SQL
-    #: queries against `mental_models` — the ANN index over `mental_models.embedding` and the BM25
-    #: index over its name + content. Nothing changes.
-    #:
-    #: True moves BOTH of those reads to this store, and the page write paths additionally call
-    #: :meth:`index_knowledge_pages` / :meth:`delete_knowledge_pages`. The Postgres row is still
-    #: written first and is still what a hit is hydrated from.
-    owns_knowledge_index: bool = False
-
-    def owns_knowledge_index_for(self, bank_id: str) -> bool:
-        """Per-bank form of :attr:`owns_knowledge_index`. Defaults to the class attribute; a router
-        whose banks live in different backends overrides it. Every bank-scoped call site consults
-        this rather than the attribute."""
-        return self.owns_knowledge_index
 
     async def index_knowledge_pages(self, bank_id: str, entries: list["KnowledgePageEntry"]) -> None:
         """Upsert pages into the store's index. A ``page_id`` already present is replaced.

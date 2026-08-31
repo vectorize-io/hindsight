@@ -14068,7 +14068,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         store = get_memories()
-        return store if store.owns_knowledge_index_for(bank_id) else None
+        return store if store.store_owned_for(bank_id) else None
 
     def _pg_carries_page_search(self, bank_id: str) -> bool:
         """Whether POSTGRES carries this bank's page search columns (``embedding``,
@@ -14101,7 +14101,7 @@ class MemoryEngine(MemoryEngineInterface):
         """
         from .memories import get_memories
 
-        return not get_memories().owns_knowledge_index_for(bank_id)
+        return not get_memories().store_owned_for(bank_id)
 
     async def _index_knowledge_page(
         self,
@@ -16390,7 +16390,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         store = get_memories()
-        if store.owns_knowledge_index_for(bank_id):
+        if store.store_owned_for(bank_id):
             matches = await store.search_knowledge_pages(
                 bank_id,
                 embedding=list(emb[0]) if emb and emb[0] else None,

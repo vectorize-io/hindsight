@@ -538,7 +538,7 @@ async def _index_restored_pages(
     from ..memories import KnowledgePageEntry, get_memories
 
     store = get_memories()
-    if not store.owns_knowledge_index_for(bank_id):
+    if not store.store_owned_for(bank_id):
         return 0
     mm_ids = [p.mental_model_id for p in pages if p.kind == "page" and p.mental_model_id]
     if not mm_ids:
