@@ -2077,9 +2077,6 @@ export default function (api: MoltbotPluginAPI) {
             debug("[Hindsight] API token configured");
           }
         } else {
-          debug(
-            `[Hindsight] Daemon idle timeout: ${pluginConfig.daemonIdleTimeout}s (0 = never timeout)`
-          );
           debug(`[Hindsight] API Port: ${apiPort}`);
         }
 

@@ -12,15 +12,12 @@ is still accepted so existing launchers keep working, but it does nothing.
 
 from __future__ import annotations
 
-import logging
 import os
 import platform
 import subprocess
 import sys
 from pathlib import Path
 from typing import IO
-
-logger = logging.getLogger(__name__)
 
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 8888

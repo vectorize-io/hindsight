@@ -265,8 +265,8 @@ export class RuntimeCore {
   ): void {
     const t0 = Date.now();
     // Daemon mode: the write path is the last chance to get a daemon up — the Stop-hook role, for
-    // hosts that have no Stop hook. A daemon that idled out mid-session (daemonIdleTimeout) would
-    // otherwise take the whole exchange with it. The wait sits INSIDE the fire-and-forget chain, so
+    // hosts that have no Stop hook. A daemon that died mid-session would otherwise take the whole
+    // exchange with it. The wait sits INSIDE the fire-and-forget chain, so
     // unlike the Stop hook it costs the host nothing: this call already returns before the retain
     // does. Deliberately not gated on the result — retain proceeds either way, so an unreachable
     // daemon produces the same `retain_failed` diagnostic as an unreachable Cloud server.
