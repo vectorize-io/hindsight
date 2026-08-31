@@ -32,6 +32,7 @@ from hindsight_api.engine.llm_wrapper import LLMConfig
 from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.response_models import ReflectResult
 from hindsight_api.engine.retain import embedding_utils
+from tests.conftest import stub_refresh_has_sources
 
 
 def _canned_reflect_result(text: str, facts: list[dict] | None = None) -> ReflectResult:
@@ -71,6 +72,7 @@ def patch_reflect(monkeypatch):
             return result
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        stub_refresh_has_sources(monkeypatch, memory)
         return calls
 
     return _install

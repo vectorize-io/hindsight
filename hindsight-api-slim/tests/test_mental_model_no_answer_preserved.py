@@ -19,6 +19,7 @@ import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.reflect import ReflectNoAnswerError
+from tests.conftest import stub_refresh_has_sources
 
 EXISTING = "# Team\n\nAlice leads platform. Bob owns ingest.\n"
 
@@ -46,6 +47,7 @@ async def test_refresh_preserves_content_when_reflect_has_no_answer(memory, requ
             raise ReflectNoAnswerError("Reflect's done tool returned no answer (iteration 3, 5 tool call(s) made).")
 
         monkeypatch.setattr(memory, "reflect_async", no_answer)
+        stub_refresh_has_sources(monkeypatch, memory)
 
         with pytest.raises(ReflectNoAnswerError):
             await memory.refresh_mental_model(
@@ -80,6 +82,7 @@ async def test_refresh_does_not_advance_the_watermark_on_no_answer(memory, reque
             raise ReflectNoAnswerError("Reflect's final synthesis returned no text after 4 iteration(s).")
 
         monkeypatch.setattr(memory, "reflect_async", no_answer)
+        stub_refresh_has_sources(monkeypatch, memory)
 
         with pytest.raises(ReflectNoAnswerError):
             await memory.refresh_mental_model(

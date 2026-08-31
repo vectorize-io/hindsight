@@ -670,6 +670,23 @@ async def api_client(memory):
         yield client
 
 
+def stub_refresh_has_sources(monkeypatch, memory) -> None:
+    """Tell a mental-model refresh that its scope holds something to read.
+
+    A refresh whose scope is empty skips the reflect loop outright (#3875): running
+    the agent over nothing is its worst case, not a cheap one. Tests that stub
+    ``reflect_async`` almost always do so on a bank with no memories, where that
+    short-circuit would pre-empt the stub instead of the test exercising it — so any
+    test that fakes retrieval has to say the bank is not empty. Tests that are about
+    the short-circuit itself let the real check run (``TestRefreshSkipsEmptyScope``).
+    """
+
+    async def _has_sources(*args, **kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(memory, "_mental_model_refresh_has_sources", _has_sources)
+
+
 def enable_audit_default(memory, enabled: bool) -> None:
     """Set the deployment-wide default for the hierarchical ``audit_log_enabled``.
 

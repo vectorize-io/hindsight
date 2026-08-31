@@ -201,6 +201,9 @@ class TestRefreshTriggerWiring:
         # pool (matches the other collaborator stubs above).
         engine._mental_model_refresh_cutoff = AsyncMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))
         engine._mental_model_processed_watermark = AsyncMock(return_value=None)
+        # This bank has memories to reflect over; the empty-scope short-circuit
+        # (#3875) is exercised in test_mental_models.py.
+        engine._mental_model_refresh_has_sources = AsyncMock(return_value=True)
 
         await engine.refresh_mental_model(
             bank_id="bank-1",
@@ -243,6 +246,9 @@ class TestRefreshTriggerWiring:
         # pool (matches the other collaborator stubs above).
         engine._mental_model_refresh_cutoff = AsyncMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))
         engine._mental_model_processed_watermark = AsyncMock(return_value=None)
+        # This bank has memories to reflect over; the empty-scope short-circuit
+        # (#3875) is exercised in test_mental_models.py.
+        engine._mental_model_refresh_has_sources = AsyncMock(return_value=True)
 
         await engine.refresh_mental_model(
             bank_id="bank-1",

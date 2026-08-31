@@ -17,6 +17,7 @@ import pytest
 from hindsight_api.api.http import OperationResponse, OperationStatusResponse
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.worker.exceptions import RetryTaskAt
+from tests.conftest import stub_refresh_has_sources
 
 
 @pytest.fixture
@@ -131,6 +132,7 @@ def _patch_reflect(monkeypatch, memory: MemoryEngine, *, text: str, facts: list[
         )
 
     monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+    stub_refresh_has_sources(monkeypatch, memory)
 
 
 def _patch_delta_llm(monkeypatch, memory: MemoryEngine, *, returns) -> None:
