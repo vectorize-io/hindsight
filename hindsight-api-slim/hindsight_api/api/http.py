@@ -7314,9 +7314,14 @@ def _register_routes(app: FastAPI):
             bank_config = BankTemplateConfig(**filtered_overrides) if filtered_overrides else None
 
             # Get mental models (limit=None — an export that stopped at the
-            # default page size would silently drop the rest of the bank)
+            # default page size would silently drop the rest of the bank).
+            # detail="config" because a template carries how a model is built,
+            # never what it currently says: the loop below reads source_query,
+            # tags, max_tokens and trigger and nothing else. Asking for content
+            # would pull every model's synthesized body across the wire, and
+            # report a read of it, for a field this endpoint discards.
             mental_models_raw = await app.state.memory.list_mental_models(
-                bank_id=bank_id, limit=None, request_context=request_context
+                bank_id=bank_id, limit=None, detail="config", request_context=request_context
             )
             template_mental_models: list[BankTemplateMentalModel] = []
             for mm in mental_models_raw.items:

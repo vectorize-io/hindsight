@@ -18,7 +18,11 @@ import pytest_asyncio
 
 import hindsight_api.engine.memory_engine as memory_engine_module
 from hindsight_api.engine.db import DatabaseConnection
-from hindsight_api.engine.memory_engine import MemoryEngine, _may_need_refresh
+from hindsight_api.engine.memory_engine import (
+    MENTAL_MODEL_PENDING_CONTENT,
+    MemoryEngine,
+    _may_need_refresh,
+)
 from hindsight_api.extensions import (
     BankReadContext,
     BankReadOperation,
@@ -140,7 +144,7 @@ class _RecordingValidator(OperationValidatorExtension):
         return ValidationResult.accept()
 
     async def on_mental_model_get_complete(self, result) -> None:
-        # Recorded separately from : the gate and the completion
+        # Recorded separately from `model_gets`: the gate and the completion
         # hook do not always both fire. A single read runs both; a list reports
         # completion for each model it delivered without gating each one.
         self.model_reads.append(result.mental_model_id)
@@ -1156,6 +1160,66 @@ class TestListReportsTheContentItDelivers:
 
         expected = sorted(len(m["content"]) // 4 for m in page.items if m.get("content"))
         assert sorted(validator.model_get_tokens) == expected
+
+    async def test_config_detail_carries_the_definition_without_the_body(
+        self, memory, kb_bank, request_context, monkeypatch
+    ):
+        # The level the bank-template export asks for: it copies how a model is
+        # built and never reads what it says, so it must not pull — or be
+        # reported for — content it discards.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="config", request_context=request_context)
+
+        assert page.items, "config listing should still return the models"
+        assert all("content" not in m for m in page.items)
+        # The fields a template manifest is built from survive the trim.
+        assert all(m["source_query"] and "trigger" in m and "max_tokens" in m for m in page.items)
+        assert validator.model_reads == []
+
+    async def test_a_model_still_generating_is_not_reported(self, memory, kb_bank, request_context, monkeypatch):
+        # The placeholder is not synthesized knowledge; nothing was delivered.
+        bank_id, ids = kb_bank
+        pending = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Pending",
+            source_query="Not answered yet.",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            request_context=request_context,
+        )
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        assert any(m["id"] == pending["id"] for m in page.items), "the pending model should still be listed"
+        assert pending["id"] not in validator.model_reads
+
+
+class TestExportReportsOnceNotPerPage:
+    """An export is a single named operation, not N model reads.
+
+    export_knowledge_base runs its per-page reads under
+    _authorize_nested_operations, so the whole bundle costs exactly one
+    EXPORT_KNOWLEDGE_BASE hook. Pinned here because it is the widest read of
+    model content in the engine, and the suppression that keeps it to one hook
+    is invisible at the call site.
+    """
+
+    async def test_export_reports_one_hook_for_the_whole_bundle(self, memory, kb_bank, request_context, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        export = await memory.export_knowledge_base(bank_id=bank_id, request_context=request_context)
+
+        assert len(export.pages) >= 3, "fixture seeds three pages"
+        assert _read_ops(validator) == [BankReadOperation.EXPORT_KNOWLEDGE_BASE]
+        # The nested page and list reads inside it report nothing of their own.
+        assert validator.model_gets == []
+        assert validator.model_reads == []
 
 
 class TestPageReadIsAModelRead:

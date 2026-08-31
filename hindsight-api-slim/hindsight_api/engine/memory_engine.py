@@ -11953,12 +11953,15 @@ class MemoryEngine(MemoryEngineInterface):
         or asked for them in one page — the unit is a model's content, and the
         route it arrived by is not something pricing should have to know about.
 
-        Items carrying no content (a model that has never been refreshed) are
-        skipped: nothing was delivered, so there is nothing to report.
+        Items carrying no content are skipped: nothing was delivered, so there
+        is nothing to report. That covers a model that has never been refreshed,
+        one still generating its first content, and every detail level that
+        drops the column — so "report what was delivered" is read off the items
+        themselves rather than inferred from the caller's ``detail`` argument.
         """
         for item in items:
             content = item.get("content")
-            if not content:
+            if not content or content.strip() == MENTAL_MODEL_PENDING_CONTENT:
                 continue
             await self._record_mental_model_read(bank_id, str(item["id"]), content, request_context=request_context)
 
@@ -13665,7 +13668,8 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: Bank identifier
             tags: Optional tags to filter by
             tags_match: How to match tags - 'any', 'all', or 'exact'
-            detail: Detail level - 'metadata', 'content', or 'full'
+            detail: Detail level - 'metadata', 'config', 'content', or 'full'.
+                See ``_row_to_mental_model``; 'config' is internal.
             limit: Maximum number of results, or None for every match. The HTTP
                 endpoint always caps it; None is for internal callers that must
                 see the whole set (bank-template export/import), which used to
@@ -13750,20 +13754,25 @@ class MemoryEngine(MemoryEngineInterface):
                 for item in items:
                     item["is_stale"] = stale[item["id"]]
 
-            # A list that carries content delivers the same synthesized text a
-            # per-model read delivers, in bulk. Report it the same way, so what
-            # a caller pays tracks the content it receives rather than which
-            # endpoint it happened to call.  returns no
-            # content and so reports nothing.
-            #
-            # This matters most for knowledge pages: a page is a mental_models
-            # row and is not excluded from this query, so an unreported list
-            # hands back every page in a bank while a single-page read is
-            # reported. The narrow door should not be the only one watched.
-            if detail != "metadata" and not _nested_operation_authorized.get():
-                await self._record_mental_model_list_read(bank_id, items, request_context=request_context)
+        # A list that carries content delivers the same synthesized text a
+        # per-model read delivers, in bulk. Report it the same way, so what a
+        # caller pays tracks the content it receives rather than which endpoint
+        # it happened to call. A detail level that drops ``content`` (``metadata``,
+        # ``config``) leaves nothing to report, and the per-item check below sees
+        # that directly rather than re-deriving it from the detail string.
+        #
+        # This matters most for knowledge pages: a page is a mental_models
+        # row and is not excluded from this query, so an unreported list
+        # hands back every page in a bank while a single-page read is
+        # reported. The narrow door should not be the only one watched.
+        #
+        # Outside the connection block on purpose: the hook is an extension
+        # seam that may go over the network, once per model, and a pooled
+        # connection must not be held across it.
+        if not _nested_operation_authorized.get():
+            await self._record_mental_model_list_read(bank_id, items, request_context=request_context)
 
-            return MentalModelPage(items=items, total=int(total or 0))
+        return MentalModelPage(items=items, total=int(total or 0))
 
     async def get_mental_model(
         self,
@@ -13778,7 +13787,8 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: Bank identifier
             mental_model_id: Pinned mental model UUID
-            detail: Detail level - 'metadata', 'content', or 'full'
+            detail: Detail level - 'metadata', 'config', 'content', or 'full'.
+                See ``_row_to_mental_model``; 'config' is internal.
             request_context: Request context for authentication
 
         Returns:
@@ -16357,6 +16367,14 @@ class MemoryEngine(MemoryEngineInterface):
         it performs run under that authorization so the whole export costs exactly
         one validator hook and leaks no content when the caller is denied. The API
         layer renders the returned data into a markdown bundle.
+
+        Note that this is the widest read of model content in the engine — every
+        page in the bank — and it deliberately reports as one export rather than
+        as one model read per page: an export is a single named operation a
+        deployment can price on its own terms, and re-reporting its pages would
+        double-count against the ``EXPORT_KNOWLEDGE_BASE`` hook that already fired.
+        Changing that means changing what the export hook means, which is a
+        decision for the extension contract rather than a detail of this method.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator and not _nested_operation_authorized.get():
@@ -16633,7 +16651,12 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             row: Database row
-            detail: Detail level - 'metadata', 'content', or 'full'
+            detail: Detail level - 'metadata', 'config', 'content', or 'full'.
+                ``config`` is internal (not offered by the HTTP or MCP surface):
+                it carries the fields that describe how a model is built —
+                ``source_query``, ``max_tokens``, ``trigger`` — without its
+                synthesized content, for callers that copy a model's definition
+                and never read its body.
         """
         result: dict[str, Any] = {
             "id": str(row["id"]),
@@ -16654,9 +16677,12 @@ class MemoryEngine(MemoryEngineInterface):
             except json.JSONDecodeError:
                 trigger = None
         result["source_query"] = row["source_query"]
-        result["content"] = row["content"]
         result["max_tokens"] = row.get("max_tokens")
         result["trigger"] = trigger
+        if detail == "config":
+            return result
+
+        result["content"] = row["content"]
 
         if detail == "full":
             reflect_response = row.get("reflect_response")
