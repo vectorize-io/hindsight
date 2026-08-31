@@ -17,7 +17,7 @@ from hindsight_api.engine.llm_wrapper import (
     LLMProvider,
     parse_llm_json,
     sanitize_llm_output,
-    sanitize_llm_value,
+    sanitize_value,
     sanitize_text,
 )
 from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
@@ -29,6 +29,9 @@ from hindsight_api.engine.token_encoding import count_tokens, get_token_encoding
 # tokenizers behind the local embedder / cross-encoder and uncodable to UTF-8.
 HIGH_SURROGATE = "\ud83d"
 LONE_SURROGATE = f"deploy the {HIGH_SURROGATE} service"
+# U+0000. Legal in JSON, storable in neither a PostgreSQL ``text`` nor a ``jsonb``
+# column, so it aborts an INSERT rather than merely crashing a tokenizer.
+NUL = "\u0000"
 SPECIAL_TOKEN_TEXT = "The fix was to sanitize the <|endoftext|> token before sending."
 
 
@@ -140,17 +143,17 @@ async def test_fact_extraction_sanitizes_surrogates_generated_by_llm():
 # --- Prong C: every LLM response is scrubbed at one boundary (#3729) ------------
 
 
-def test_sanitize_llm_value_returns_clean_input_unchanged():
+def test_sanitize_value_returns_clean_input_unchanged():
     """The common case must not copy: identity is preserved all the way down."""
     payload = {"facts": [{"what": "café 🎉", "n": 3}], "ok": None, "flag": True, "score": 1.5}
-    assert sanitize_llm_value(payload) is payload
+    assert sanitize_value(payload) is payload
     text = "plain text"
-    assert sanitize_llm_value(text) is text
+    assert sanitize_value(text) is text
 
 
-def test_sanitize_llm_value_scrubs_nested_strings_only():
+def test_sanitize_value_scrubs_nested_strings_only():
     payload = {"facts": [{"what": f"a{HIGH_SURROGATE}b", "count": 3, "ratio": 0.5, "missing": None}]}
-    cleaned = sanitize_llm_value(payload)
+    cleaned = sanitize_value(payload)
     assert cleaned["facts"][0]["what"] == "ab"
     # Non-text fields keep their type and value.
     assert cleaned["facts"][0]["count"] == 3
@@ -158,18 +161,18 @@ def test_sanitize_llm_value_scrubs_nested_strings_only():
     assert cleaned["facts"][0]["missing"] is None
 
 
-def test_sanitize_llm_value_scrubs_dict_keys():
-    cleaned = sanitize_llm_value({f"na{HIGH_SURROGATE}me": "Alex"})
+def test_sanitize_value_scrubs_dict_keys():
+    cleaned = sanitize_value({f"na{HIGH_SURROGATE}me": "Alex"})
     assert cleaned == {"name": "Alex"}
 
 
-def test_sanitize_llm_value_scrubs_pydantic_models():
+def test_sanitize_value_scrubs_pydantic_models():
     result = LLMToolCallResult(
         content=f"answer{HIGH_SURROGATE}",
         tool_calls=[LLMToolCall(id="call_1", name="recall", arguments={"query": f"q{HIGH_SURROGATE}"})],
         output_tokens=42,
     )
-    cleaned = sanitize_llm_value(result)
+    cleaned = sanitize_value(result)
     assert isinstance(cleaned, LLMToolCallResult)
     assert cleaned.content == "answer"
     assert cleaned.tool_calls[0].arguments == {"query": "q"}
@@ -177,10 +180,10 @@ def test_sanitize_llm_value_scrubs_pydantic_models():
     assert cleaned.output_tokens == 42
 
 
-def test_sanitize_llm_value_preserves_return_usage_tuple_shape():
+def test_sanitize_value_preserves_return_usage_tuple_shape():
     """``return_usage=True`` hands back ``(result, TokenUsage)`` — both must survive."""
     usage = TokenUsage()
-    cleaned = sanitize_llm_value(({"text": f"x{HIGH_SURROGATE}"}, usage))
+    cleaned = sanitize_value(({"text": f"x{HIGH_SURROGATE}"}, usage))
     assert isinstance(cleaned, tuple) and len(cleaned) == 2
     assert cleaned[0] == {"text": "x"}
     assert cleaned[1] is usage
@@ -344,6 +347,67 @@ async def test_retain_with_lone_surrogate_entity_name(memory, request_context):
             {
                 "content": "The deploy service ships releases.",
                 "entities": [{"text": f"depl{HIGH_SURROGATE}oy"}, {"text": HIGH_SURROGATE}],
+            }
+        ],
+        request_context=request_context,
+    )
+    assert isinstance(unit_ids, list)
+
+
+# --- Prong D: a retain item is scrubbed as a whole, not field by field ----------
+#
+# U+0000 is the second character PostgreSQL refuses, and unlike a surrogate it is
+# rejected by ``jsonb`` as well as by ``text``. An async retain writes the entire
+# item into ``async_operations.task_payload::jsonb``, so a NUL in *any* field aborts
+# that INSERT — the request 500s and the memory is never queued. The failure is
+# deterministic for that payload, so a retrying client re-sends it forever. JSON
+# permits ``\u0000``, and text scraped from PDFs, log captures and chat exports
+# carries it (see PR #3908).
+
+
+def test_sanitize_value_strips_nul_from_a_whole_retain_item():
+    """Every string in the item, metadata keys and nested values included."""
+    item = {
+        "content": f"Alice{NUL} joined.",
+        "context": f"team{NUL} meeting",
+        "document_id": f"doc{NUL}1",
+        "metadata": {f"so{NUL}urce": f"sl{NUL}ack", "nested": [f"a{NUL}b", {f"k{NUL}": f"v{NUL}"}]},
+        "tags": [f"te{NUL}am"],
+    }
+    cleaned = sanitize_value(item)
+    assert cleaned == {
+        "content": "Alice joined.",
+        "context": "team meeting",
+        "document_id": "doc1",
+        "metadata": {"source": "slack", "nested": ["ab", {"k": "v"}]},
+        "tags": ["team"],
+    }
+    # Nothing may survive anywhere: the whole item is what reaches jsonb.
+    assert NUL not in json.dumps(cleaned)
+
+
+def test_sanitize_value_preserves_non_hostile_text():
+    """Only the uncodable characters go — ordinary unicode is content."""
+    item = {"content": "Über — naïve 🙂 \t newline\n kept", "metadata": {"emoji": "🎉"}}
+    assert sanitize_value(item) is item
+
+
+@pytest.mark.asyncio
+async def test_sync_retain_with_nul_in_metadata(memory, request_context):
+    """The synchronous path is not exempt: metadata lands in a ``jsonb`` column.
+
+    Only ``content``, ``context`` and ``entities`` used to be scrubbed here, so a
+    NUL in ``metadata`` — the field most likely to carry one, since it is copied
+    from whatever produced the document — still aborted the document INSERT.
+    """
+    bank_id = f"test_nul_metadata_{datetime.now(timezone.utc).timestamp()}"
+    unit_ids = await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": f"Alice{NUL} joined the team.",
+                "metadata": {f"so{NUL}urce": f"sl{NUL}ack"},
+                "tags": [f"te{NUL}am"],
             }
         ],
         request_context=request_context,

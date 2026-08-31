@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
-from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_llm_value
+from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_value
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from ..structured_output import strict_json_schema
@@ -2400,7 +2400,7 @@ async def extract_facts_from_contents_batch_api(
     # Batch results are downloaded straight from the provider's output file, so they
     # never pass through ``LLMProvider.call`` and miss the scrub it applies. Sanitize
     # them here so the batch path gets the same guarantee as the sync one (#3729).
-    batch_results = sanitize_llm_value(await batch_impl.retrieve_batch_results(batch_id))
+    batch_results = sanitize_value(await batch_impl.retrieve_batch_results(batch_id))
 
     # Map results by custom_id
     results_by_id = {result["custom_id"]: result for result in batch_results}

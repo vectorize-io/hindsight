@@ -198,21 +198,27 @@ def sanitize_text(text: str | None) -> str | None:
 sanitize_llm_output = sanitize_text
 
 
-def sanitize_llm_value(value: Any) -> Any:
+def sanitize_value(value: Any) -> Any:
     """
-    Recursively strip UTF-8-hostile characters from every string an LLM produced.
+    Recursively strip UTF-8-hostile characters from every string in a value.
 
-    ``sanitize_text`` guards a single field. This guards a whole response — the
+    ``sanitize_text`` guards a single field. This guards a whole structure — the
     text a provider returned, the dict a structured call parsed, the pydantic
     model it validated into, the ``(result, usage)`` tuple ``return_usage=True``
-    hands back — so that *every* LLM call is covered at one boundary instead of
-    each consumer remembering to scrub its own fields (see issue #3729).
+    hands back, and equally a whole client-supplied retain item — so that *every*
+    such boundary is covered at one place instead of each consumer remembering to
+    scrub its own fields (see issue #3729). It was introduced to scrub LLM output
+    and now also scrubs user input at the retain ingress, hence the broad name.
 
     It matters beyond embeddings. A lone surrogate is legal in a Python ``str``
     but cannot be UTF-8 encoded, so it also breaks the cross-encoder's Rust
     tokenizer at rerank time, asyncpg on the way into a ``text`` column, and
-    stdout logging. Sanitizing where the text enters the process means the
-    downstream stages never have to care which field it landed in.
+    stdout logging. ``U+0000`` is rejected by ``jsonb`` as well as ``text``, so a
+    retain item carrying one aborts the ``async_operations.task_payload`` INSERT
+    no matter which of its fields — content, a tag, a nested ``metadata`` value,
+    even a metadata *key* — happens to hold it. Sanitizing where the text enters
+    the process means the downstream stages never have to care which field it
+    landed in.
 
     Only strings are touched; ints, floats, datetimes and the like pass through
     as-is. Every container returns the *same object* when nothing inside it
@@ -230,7 +236,7 @@ def sanitize_llm_value(value: Any) -> Any:
     if isinstance(value, BaseModel):
         updates = {}
         for name, field_value in value.__dict__.items():
-            cleaned = sanitize_llm_value(field_value)
+            cleaned = sanitize_value(field_value)
             if cleaned is not field_value:
                 updates[name] = cleaned
         # ``model_copy`` skips validation, which is what we want: the values are
@@ -244,15 +250,15 @@ def sanitize_llm_value(value: Any) -> Any:
         for key, item in value.items():
             # Keys are sanitized too: a surrogate in a key is just as fatal once
             # the dict is rendered to text or bound to a query parameter.
-            cleaned_key = sanitize_llm_value(key)
-            cleaned_item = sanitize_llm_value(item)
+            cleaned_key = sanitize_value(key)
+            cleaned_item = sanitize_value(item)
             changed = changed or cleaned_key is not key or cleaned_item is not item
             cleaned_dict[cleaned_key] = cleaned_item
         return cleaned_dict if changed else value
 
     # ``tuple`` is here for the ``return_usage=True`` shape, ``(result, TokenUsage)``.
     if isinstance(value, (list, tuple)):
-        cleaned_items = [sanitize_llm_value(item) for item in value]
+        cleaned_items = [sanitize_value(item) for item in value]
         if all(cleaned is original for cleaned, original in zip(cleaned_items, value)):
             return value
         return cleaned_items if isinstance(value, list) else tuple(cleaned_items)
@@ -330,7 +336,7 @@ def parse_llm_json(raw: str) -> Any:
     degenerate-but-valid JSON (repetition loops or leaked scaffolding inside
     string values) parses fine here and is out of scope for this helper.
 
-    Every successful parse is passed through ``sanitize_llm_value``. Decoding is
+    Every successful parse is passed through ``sanitize_value``. Decoding is
     where an un-encodable surrogate is *born*: a model that writes ``"\\ud83d"``
     emits six harmless ASCII characters, and only ``json.loads`` turns them into a
     lone surrogate no downstream stage can UTF-8 encode (#3729). Scrubbing the raw
@@ -357,7 +363,7 @@ def parse_llm_json(raw: str) -> Any:
         text = text.strip()
 
     try:
-        return sanitize_llm_value(json.loads(text))
+        return sanitize_value(json.loads(text))
     except json.JSONDecodeError:
         # Some models (e.g. Gemini) embed raw control characters inside JSON
         # string values. Escape them rather than blank them out: a raw newline
@@ -368,7 +374,7 @@ def parse_llm_json(raw: str) -> Any:
         cleaned = _escape_control_chars_in_json(text)
 
     try:
-        return sanitize_llm_value(json.loads(cleaned))
+        return sanitize_value(json.loads(cleaned))
     except json.JSONDecodeError:
         # Last resort: structural repair of malformed JSON. ``repair_json`` never
         # raises — unrecoverable input yields an empty result ("" / {} / []). Keep
@@ -378,7 +384,7 @@ def parse_llm_json(raw: str) -> Any:
         repaired = repair_json(cleaned, return_objects=True)
         if not repaired:
             raise
-        return sanitize_llm_value(repaired)
+        return sanitize_value(repaired)
 
 
 _PROVIDERS_WITHOUT_API_KEY = frozenset(
@@ -1294,7 +1300,7 @@ class LLMProvider:
         # a model can emit a lone `\udXXX` escape that JSON decoding turns into an
         # un-encodable surrogate, and the field it lands in is not knowable here
         # (#3729). Clean output is returned unchanged, object identity included.
-        return sanitize_llm_value(result)
+        return sanitize_value(result)
 
     async def call_with_tools(
         self,
@@ -1441,7 +1447,7 @@ class LLMProvider:
 
         # Same scrub for the tool-calling path: the agent's text content and every
         # tool-call argument are model-authored and flow on to storage and reranking.
-        return sanitize_llm_value(result)
+        return sanitize_value(result)
 
     def set_response_callback(self, fn: Any) -> None:
         """Set a callback invoked on each call() instead of the fixed mock response."""
