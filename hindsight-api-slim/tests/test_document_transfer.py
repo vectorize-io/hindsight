@@ -16,7 +16,10 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.consolidation.consolidator import _create_observation_directly
+from hindsight_api.engine.consolidation.consolidator import (
+    _apply_create_observation,
+    _embed_observation_text,
+)
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.schema import fq_table
 from hindsight_api.engine.transfer import import_documents
@@ -63,6 +66,26 @@ class _RetainResultCapture(OperationValidatorExtension):
 
     async def on_retain_complete(self, result: RetainResult) -> None:
         self.results.append(result)
+
+
+async def _seed_observation(*, pool, memory, bank_id, source_memory_ids, observation_text):
+    """Insert one observation the way consolidation does: embed off-connection, write in a txn.
+
+    The consolidator itself only exposes the two halves — it batches every write from one LLM
+    response into a single transaction (#3876) — so this seeds a fixture observation with the
+    same pair of calls.
+    """
+    embedding_str = await _embed_observation_text(memory, observation_text)
+    async with acquire_with_retry(pool) as conn:
+        async with conn.transaction():
+            return await _apply_create_observation(
+                conn=conn,
+                memory_engine=memory,
+                bank_id=bank_id,
+                source_memory_ids=source_memory_ids,
+                observation_text=observation_text,
+                embedding_str=embedding_str,
+            )
 
 
 @pytest_asyncio.fixture
@@ -597,12 +620,11 @@ async def test_bank_import_preserves_consolidation_lifecycle(memory, request_con
             ]
         assert len(wf_ids) >= 3, "need enough facts to exercise the lineage gap"
 
-        # One surviving observation over the first two facts. The helper now self-acquires a
-        # short-lived connection (the embed runs off-connection), so pass the backend, not a conn.
+        # One surviving observation over the first two facts.
         obs_source_ids = [uuid.UUID(str(i)) for i in wf_ids[:2]]
-        await _create_observation_directly(
+        await _seed_observation(
             pool=backend,
-            memory_engine=memory,
+            memory=memory,
             bank_id=bank,
             source_memory_ids=obs_source_ids,
             observation_text="Alice and Bob are colleagues.",
@@ -1253,9 +1275,9 @@ async def test_export_import_observations(memory, request_context):
         # short-lived connection now (the embed runs off-connection), so pass the backend.
         backend = await memory._get_backend()
         archived_event_date = datetime(2001, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
-        await _create_observation_directly(
+        await _seed_observation(
             pool=backend,
-            memory_engine=memory,
+            memory=memory,
             bank_id=src,
             source_memory_ids=source_ids,
             observation_text="Alice and Bob are colleagues.",

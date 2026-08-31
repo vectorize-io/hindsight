@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from hindsight_api.engine.consolidation import consolidator
+from tests import consolidation_actions
 
 
 class _ZeroLengthEmbeddings:
@@ -110,7 +111,7 @@ async def test_create_observation_rejects_zero_length_embedding_before_insert():
     # Preflight passes (fetchval -> live); the real embedder then yields a zero-length vector,
     # which must be rejected before any write. _WriteForbiddenConn fails hard if a write runs.
     with pytest.raises(RuntimeError, match="embedding 0 has dimension 0; expected 384"):
-        await consolidator._create_observation_directly(
+        await consolidation_actions.create_observation(
             pool=_Backend(_WriteForbiddenConn()),
             memory_engine=_FakeMemoryEngine(),
             bank_id="test-bank",
@@ -124,7 +125,7 @@ async def test_create_observation_skips_before_embedding_when_all_sources_dead(m
     # All sources gone -> the create must short-circuit at the preflight, BEFORE the embedder
     # (patched to explode if reached). No write may run.
     _forbid_embedder(monkeypatch)
-    result = await consolidator._create_observation_directly(
+    result = await consolidation_actions.create_observation(
         pool=_Backend(_NoLiveConn()),
         memory_engine=_FakeMemoryEngine(),
         bank_id="test-bank",
@@ -141,7 +142,7 @@ async def test_update_action_skips_before_embedding_when_all_sources_dead(monkey
     # pass even with the embed-first ordering this finding fixed; this pins the embed-skip directly.
     _forbid_embedder(monkeypatch)
     obs_id = str(uuid.uuid4())
-    result = await consolidator._execute_update_action(
+    result = await consolidation_actions.execute_update_action(
         pool=_Backend(_NoLiveConn()),
         memory_engine=_FakeMemoryEngine(),
         bank_id="test-bank",
@@ -163,7 +164,7 @@ async def test_update_action_rejects_zero_length_embedding_before_write():
     # hard if the write transaction is reached.
     obs_id = str(uuid.uuid4())
     with pytest.raises(RuntimeError, match="embedding 0 has dimension 0; expected 384"):
-        await consolidator._execute_update_action(
+        await consolidation_actions.execute_update_action(
             pool=_Backend(_WriteForbiddenConn()),
             memory_engine=_FakeMemoryEngine(),
             bank_id="test-bank",

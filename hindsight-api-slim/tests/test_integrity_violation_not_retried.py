@@ -22,6 +22,7 @@ import asyncpg
 import pytest
 
 from hindsight_api.worker.exceptions import RetryTaskAt
+from tests import consolidation_actions
 
 
 async def _ensure_bank(pool, bank_id: str) -> None:
@@ -185,7 +186,7 @@ class _AsyncNullCtx:
 
 
 def _fake_config() -> SimpleNamespace:
-    """Minimal config for _execute_update_action: ``text_search_extension='none'``
+    """Minimal config for the update action: ``text_search_extension='none'``
     so no native tsvector clause is emitted, and observation-history enabled so
     the 0-row guard is the only thing preventing the (FK-violating) history INSERT."""
     return SimpleNamespace(
@@ -209,7 +210,7 @@ def _observation_fact(observation_id: str):
 
 
 def _patch_update_action_deps(consolidator, conn, source_ids, append_mock) -> ExitStack:
-    """Enter the common patch set for the two _execute_update_action guard tests
+    """Enter the common patch set for the two update-action guard tests
     and return the live ExitStack (use as ``with _patch_update_action_deps(...):``).
 
     Stubs the pool/transaction acquisition, the (slow) embedder, the source
@@ -240,7 +241,7 @@ def _patch_update_action_deps(consolidator, conn, source_ids, append_mock) -> Ex
 @pytest.mark.asyncio
 async def test_update_action_bails_when_observation_row_missing():
     """
-    Regression: the source-liveness checks in ``_execute_update_action`` guard the
+    Regression: the source-liveness checks in ``execute_update_action`` guard the
     *source* memories, but the observation row itself (``UPDATE ... WHERE id = $5``)
     can be concurrently invalidated/deleted, matching 0 rows. The prior code ignored
     the rowcount and still called ``_append_observation_history``, whose INSERT carries
@@ -262,7 +263,7 @@ async def test_update_action_bails_when_observation_row_missing():
 
     append_mock = AsyncMock()
     with _patch_update_action_deps(consolidator, conn, source_ids, append_mock):
-        result = await consolidator._execute_update_action(
+        result = await consolidation_actions.execute_update_action(
             pool=MagicMock(),
             memory_engine=MagicMock(),
             bank_id="bank-x",
@@ -295,7 +296,7 @@ async def test_update_action_writes_history_when_row_present():
 
     append_mock = AsyncMock()
     with _patch_update_action_deps(consolidator, conn, source_ids, append_mock):
-        result = await consolidator._execute_update_action(
+        result = await consolidation_actions.execute_update_action(
             pool=MagicMock(),
             memory_engine=memory_engine,
             bank_id="bank-x",

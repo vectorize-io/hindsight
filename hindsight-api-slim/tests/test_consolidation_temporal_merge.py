@@ -21,12 +21,15 @@ import pytest
 
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation import consolidator
+from tests.consolidation_actions import (
+    dedup_reconcile_update,
+    execute_create_action as _execute_create_action,
+    execute_update_action as _execute_update_action,
+)
 from hindsight_api.engine.consolidation.consolidator import (
     _aggregate_source_fields,
     _DedupDecision,
     _DedupOutcome,
-    _execute_create_action,
-    _execute_update_action,
     _TemporalBounds,
     run_consolidation_job,
 )
@@ -284,7 +287,7 @@ async def test_dedup_update_fold_unions_the_bounds_of_both_rows(
             )
         ),
     ):
-        await consolidator._dedup_reconcile_update(
+        await dedup_reconcile_update(
             await memory._get_backend(),
             memory,
             bank_id,

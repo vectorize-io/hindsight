@@ -1049,7 +1049,7 @@ class TestConsolidationSourceMemoryFiltering:
     async def test_create_observation_filters_deleted_source_memories(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        from hindsight_api.engine.consolidation.consolidator import _create_observation_directly
+        from tests.consolidation_actions import create_observation as _create_observation_directly
 
         bank_id = f"test-race-create-filter-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -1082,7 +1082,7 @@ class TestConsolidationSourceMemoryFiltering:
     async def test_create_observation_skipped_when_all_sources_deleted(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        from hindsight_api.engine.consolidation.consolidator import _create_observation_directly
+        from tests.consolidation_actions import create_observation as _create_observation_directly
 
         bank_id = f"test-race-create-skip-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -1109,7 +1109,7 @@ class TestConsolidationSourceMemoryFiltering:
     async def test_update_observation_skipped_when_all_new_sources_deleted(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        from hindsight_api.engine.consolidation.consolidator import _execute_update_action
+        from tests.consolidation_actions import execute_update_action as _execute_update_action
         from hindsight_api.engine.response_models import MemoryFact
 
         bank_id = f"test-race-update-skip-{uuid.uuid4().hex[:8]}"
@@ -1158,7 +1158,7 @@ class TestConsolidationSourceMemoryFiltering:
         # The preflight sees the source live, but it is deleted while the embedder runs
         # off-connection. The authoritative in-txn FOR SHARE liveness guard (not the preflight) must
         # then skip the update, so a dead source is never written back into the observation.
-        from hindsight_api.engine.consolidation.consolidator import _execute_update_action
+        from tests.consolidation_actions import execute_update_action as _execute_update_action
         from hindsight_api.engine.response_models import MemoryFact
 
         bank_id = f"test-race-update-inflight-{uuid.uuid4().hex[:8]}"
