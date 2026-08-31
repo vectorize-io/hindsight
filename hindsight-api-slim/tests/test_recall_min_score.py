@@ -188,18 +188,26 @@ class TestRetrievalLevelFilters:
         """
         engine, bank_id = seeded_memory
         baseline = await _recall(engine, bank_id, query="animals")
-        kws = sorted(r.scores.keyword for r in baseline.results if r.scores.keyword is not None)
-        assert len(kws) >= 2, "need >1 keyword-scored result for the floor to discriminate"
-        # Floor at the top score: every other keyword-scored row is now below it.
-        floor = kws[-1]
-        filtered = await _recall(engine, bank_id, query="animals", min_scores=MinScores(keyword=floor))
-        for r in filtered.results:
-            # A result may carry no keyword score at all (another arm surfaced it),
-            # but one that does must clear the floor.
-            assert r.scores.keyword is None or r.scores.keyword >= floor
-        # Before the fix the native backend ignored the floor entirely and every
-        # sub-threshold row came back with its real score, so this shrinks.
-        assert len([r for r in filtered.results if r.scores.keyword is not None]) < len(kws)
+        kws = [r.scores.keyword for r in baseline.results if r.scores.keyword is not None]
+        assert kws, "keyword arm should have surfaced these facts"
+        top = max(kws)
+
+        # A floor above every observed score must leave nothing keyword-scored.
+        # Before the fix the native backend dropped the floor on the floor and
+        # returned these same rows with their real, below-floor scores attached.
+        # Deliberately not a relative floor (e.g. "the second-highest score"): on
+        # a three-fact corpus the keyword arm may surface only one row, and ranks
+        # can tie, so neither a count nor a spread is something to assert on.
+        above = await _recall(engine, bank_id, query="animals", min_scores=MinScores(keyword=top + 1.0))
+        assert [r for r in above.results if r.scores.keyword is not None] == []
+
+        # At exactly the top score the floor is inclusive, so that row survives.
+        at_floor = await _recall(engine, bank_id, query="animals", min_scores=MinScores(keyword=top))
+        assert any(r.scores.keyword is not None for r in at_floor.results)
+        for r in at_floor.results:
+            # A result may carry no keyword score at all (another arm surfaced
+            # it), but one that does must clear the floor.
+            assert r.scores.keyword is None or r.scores.keyword >= top
 
     @pytest.mark.memory_backend_incompatible
     async def test_retrieval_floors_are_per_arm_not_per_result(self, seeded_memory):

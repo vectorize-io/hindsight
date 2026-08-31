@@ -285,7 +285,11 @@ class TestPostgreSQLDialect:
             text_search_extension="vchord",
             bm25_min_score=2.5,
         )
-        assert "> 2.5" in arm
+        # Inclusive (`>=`), matching the documented `min_scores` contract and the
+        # semantic arm's `>= min_similarity`. This was `>` until #3882: the same
+        # parameter served as both vchord's structural match gate and the caller's
+        # floor, and the gate's `>` leaked into the public contract.
+        assert ">= 2.5" in arm
 
     def test_build_bm25_arm_pg_textsearch_scores_each_row(self, d):
         arm = d.build_bm25_arm(

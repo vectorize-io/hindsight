@@ -20,7 +20,10 @@ def bm25_score_gate(bm25_min_score: float) -> str:
     """
     if bm25_min_score <= 0:
         return "> 0"
-    return f">= {bm25_min_score:g}"
+    # `!r` (shortest round-tripping repr), not `:g` — `:g` truncates to 6
+    # significant digits, so a caller echoing a `scores.keyword` value back as a
+    # floor could get a literal that rounds up past its own row and drops it.
+    return f">= {bm25_min_score!r}"
 
 
 class SQLDialect(ABC):
