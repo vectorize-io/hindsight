@@ -3011,6 +3011,54 @@ def test_retain_request_per_item_strategy_field():
     logger.info("✓ per-item strategy grouping works correctly")
 
 
+def test_retain_request_strips_nul_characters():
+    """
+    Unit test: NUL (U+0000) is stripped from every string in an item.
+
+    PostgreSQL stores U+0000 in neither text nor jsonb, so an async retain
+    carrying one aborts the async_operations INSERT with
+    UntranslatableCharacterError — the request 500s and the memory is dropped.
+    JSON allows \\u0000, so clients do send it (PDF scrapes, log captures, chat
+    exports).
+    """
+    from hindsight_api.api.http import RetainRequest
+
+    request = RetainRequest.model_validate(
+        {
+            "items": [
+                {
+                    "content": "Alice\u0000 joined.",
+                    "context": "team\u0000 meeting",
+                    "document_id": "doc\u00001",
+                    "metadata": {"so\u0000urce": "sl\u0000ack", "nested": ["a\u0000b"]},
+                    "tags": ["te\u0000am"],
+                }
+            ],
+        }
+    )
+
+    item = request.items[0]
+    assert item.content == "Alice joined."
+    assert item.context == "team meeting"
+    assert item.document_id == "doc1"
+    assert item.metadata == {"source": "slack", "nested": ["ab"]}
+    assert item.tags == ["team"]
+
+    # Nothing anywhere in the item may still carry a NUL, since the whole item
+    # is what gets serialised into task_payload::jsonb.
+    assert "\u0000" not in json.dumps(item.model_dump(), default=str)
+    logger.info("✓ NUL stripped from content, context, document_id, metadata and tags")
+
+
+def test_retain_request_preserves_non_nul_text():
+    """Unit test: only U+0000 is removed — other unicode survives untouched."""
+    from hindsight_api.api.http import RetainRequest
+
+    text = "Über — naïve 🙂 \t newline\n kept"
+    request = RetainRequest.model_validate({"items": [{"content": text}]})
+    assert request.items[0].content == text
+
+
 @pytest.mark.asyncio
 async def test_named_strategy_applied_end_to_end(memory, request_context):
     """

@@ -632,6 +632,23 @@ class EntityInput(BaseModel):
     type: str | None = Field(default=None, description="Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')")
 
 
+def _strip_nul(value):
+    """Recursively remove NUL (U+0000) from strings, keys included.
+
+    PostgreSQL rejects U+0000 in both ``text`` and ``jsonb``, so it can never
+    reach storage; see ``MemoryItem.strip_nul_characters``.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "") if "\x00" in value else value
+    if isinstance(value, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_nul(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_strip_nul(v) for v in value)
+    return value
+
+
 class MemoryItem(BaseModel):
     """Single memory item for retain."""
 
@@ -685,6 +702,25 @@ class MemoryItem(BaseModel):
         default=None,
         description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_nul_characters(cls, data):
+        """Drop NUL (U+0000) from every string in the item.
+
+        PostgreSQL cannot store U+0000 in ``text`` or ``jsonb``. An async retain
+        writes the whole item into ``async_operations.task_payload::jsonb``, so a
+        single NUL anywhere — content, context, metadata, a tag — aborts that
+        INSERT with ``UntranslatableCharacterError``. The request then fails with
+        a 500 and the memory is never queued, while the caller retries the same
+        payload forever. JSON permits ``\\u0000``, so clients legitimately send
+        it: text scraped from PDFs, log captures and chat exports all carry it.
+
+        Stripping is preferred over rejecting: the NUL is never meaningful
+        content — it is transport residue — and a 400 would lose the memory just
+        as completely as the 500 does today.
+        """
+        return _strip_nul(data)
 
     @field_validator("content")
     @classmethod
