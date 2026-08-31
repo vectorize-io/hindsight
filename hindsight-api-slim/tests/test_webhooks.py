@@ -525,9 +525,16 @@ class TestWebhookHttpApi:
         [
             ("POST", "/webhooks", {"url": "https://example.com/hook"}, "create_webhook"),
             ("GET", "/webhooks", None, "list_webhooks"),
-            ("DELETE", f"/webhooks/{uuid.uuid4()}", None, "delete_webhook"),
-            ("PATCH", f"/webhooks/{uuid.uuid4()}", {"enabled": False}, "update_webhook"),
-            ("GET", f"/webhooks/{uuid.uuid4()}/deliveries", None, "list_webhook_deliveries"),
+            # Fixed uuids, not uuid.uuid4(): the value is interpolated into the
+            # parameter — and therefore into the test id — at collection time, and
+            # every xdist worker collects independently. Random ids made each
+            # worker's node-id list differ, so the shard aborted with "Different
+            # tests were collected between gw0 and gw2" whenever more than one
+            # worker picked these up. The endpoint never looks the id up (the
+            # validator rejects the call first), so any well-formed uuid does.
+            ("DELETE", "/webhooks/44499a74-6ba1-4c39-bc1e-7ee63635429d", None, "delete_webhook"),
+            ("PATCH", "/webhooks/66935c96-7b4c-417b-8c60-db8f102bafe9", {"enabled": False}, "update_webhook"),
+            ("GET", "/webhooks/75daa3bb-0cb3-4106-9bac-ac003d8f7b23/deliveries", None, "list_webhook_deliveries"),
         ],
     )
     async def test_http_preserves_operation_validation_error(
