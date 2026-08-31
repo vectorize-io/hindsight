@@ -169,6 +169,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 from hindsight_api.config import HindsightConfig, StaticConfigProxy, get_config
 from hindsight_api.engine.interface import BankTemplateImportWrite
 from hindsight_api.engine.memory_engine import (
+    KEEP_PARENT,
     Budget,
     RetainOperationConflictError,
     _current_schema,
@@ -6084,51 +6085,45 @@ def _register_routes(app: FastAPI):
     ):
         """Rename/move a node and/or update a page's options."""
         try:
-            updated: dict[str, Any] | None = None
-            did_change = False
-            if body.name is not None:
-                did_change = True
-                updated = await app.state.memory.rename_knowledge_node(
-                    bank_id=bank_id, node_id=node_id, name=body.name, request_context=request_context
-                )
             # parent_id is applied only when present in the body, so passing null
-            # moves the node to the root (distinct from "not provided").
-            if "parent_id" in body.model_fields_set:
-                did_change = True
-                updated = await app.state.memory.move_knowledge_node(
-                    bank_id=bank_id, node_id=node_id, new_parent_id=body.parent_id, request_context=request_context
-                )
-            # Page options live on the backing mental model; each applies only when
-            # present in the body (so tags=[] clears, distinct from "not provided").
+            # moves the node to the root (distinct from "not provided"), which is
+            # what KEEP_PARENT stands in for. Page options live on the backing
+            # mental model and each applies only when supplied (so tags=[] clears,
+            # distinct from "not provided").
             page_fields = {"source_query", "tags", "max_tokens", "trigger"} & body.model_fields_set
-            if page_fields:
-                did_change = True
-                updated = await app.state.memory.update_knowledge_page(
-                    bank_id=bank_id,
-                    page_id=node_id,
-                    source_query=body.source_query if "source_query" in page_fields else None,
-                    tags=body.tags if "tags" in page_fields else None,
-                    max_tokens=body.max_tokens if "max_tokens" in page_fields else None,
-                    # Only the trigger fields the client stated: the engine patches them over
-                    # the page's current trigger, and a full dump would carry this model's own
-                    # defaults (mode="full", exclude_mental_models=False) into every update.
-                    trigger=(body.trigger.model_dump(exclude_unset=True) if body.trigger else None),
-                    request_context=request_context,
-                )
-                # A new source query means the content is stale — rebuild it.
-                if updated is not None and "source_query" in page_fields and updated.get("mental_model_id"):
-                    await app.state.memory.submit_async_refresh_mental_model(
-                        bank_id=bank_id,
-                        mental_model_id=updated["mental_model_id"],
-                        request_context=request_context,
-                    )
-            if not did_change:
+            if body.name is None and "parent_id" not in body.model_fields_set and not page_fields:
                 raise HTTPException(
                     status_code=400,
                     detail="Provide name, parent_id, source_query, tags, max_tokens, and/or trigger to update",
                 )
+            # One call, one transaction: a rename must not survive the move that
+            # fails after it, which is what left clients retrying against a tree
+            # they never asked for.
+            updated = await app.state.memory.update_knowledge_node(
+                bank_id=bank_id,
+                node_id=node_id,
+                name=body.name,
+                parent_id=body.parent_id if "parent_id" in body.model_fields_set else KEEP_PARENT,
+                source_query=body.source_query if "source_query" in page_fields else None,
+                tags=body.tags if "tags" in page_fields else None,
+                max_tokens=body.max_tokens if "max_tokens" in page_fields else None,
+                # Only the trigger fields the client stated: the engine patches them over
+                # the page's current trigger, and a full dump would carry this model's own
+                # defaults (mode="full", exclude_mental_models=False) into every update.
+                trigger=(body.trigger.model_dump(exclude_unset=True) if body.trigger else None),
+                request_context=request_context,
+            )
             if updated is None:
                 raise HTTPException(status_code=404, detail=f"Knowledge node '{node_id}' not found")
+            # A new source query means the content is stale — rebuild it. Scheduled
+            # only once the patch has committed, so a refresh is never queued for a
+            # change that rolled back.
+            if "source_query" in page_fields and body.source_query is not None and updated.get("mental_model_id"):
+                await app.state.memory.submit_async_refresh_mental_model(
+                    bank_id=bank_id,
+                    mental_model_id=updated["mental_model_id"],
+                    request_context=request_context,
+                )
             return _knowledge_node_model(updated)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

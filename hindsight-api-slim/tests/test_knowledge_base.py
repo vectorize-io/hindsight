@@ -282,7 +282,7 @@ class TestTree:
         which is the same policy stated a different way.)
         """
         bank_id, ids = kb_bank
-        await memory.update_knowledge_page(
+        await memory.update_knowledge_node(
             bank_id, ids.loose, trigger={"refresh_cron": "0 3 * * *"}, request_context=request_context
         )
         resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
@@ -574,7 +574,7 @@ class TestPageDefaults:
         """
         bank_id = f"test-kb-upd-{uuid.uuid4().hex[:8]}"
         page = await memory.create_knowledge_page(bank_id, "P", "What is P?", "seed", request_context=request_context)
-        await memory.update_knowledge_page(
+        await memory.update_knowledge_node(
             bank_id,
             page["id"],
             trigger={"refresh_cron": "0 3 * * *"},
@@ -590,7 +590,7 @@ class TestPageDefaults:
         assert "refresh_after_consolidation" not in mm["trigger"]
 
         # ...and back again: the stated auto-refresh clears the stored cron.
-        await memory.update_knowledge_page(
+        await memory.update_knowledge_node(
             bank_id,
             page["id"],
             trigger={"refresh_after_consolidation": True},
@@ -612,7 +612,7 @@ class TestPageDefaults:
             trigger={"refresh_cron": "0 3 * * *"},
             request_context=request_context,
         )
-        await memory.update_knowledge_page(bank_id, page["id"], max_tokens=2048, request_context=request_context)
+        await memory.update_knowledge_node(bank_id, page["id"], max_tokens=2048, request_context=request_context)
         mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
         assert mm["max_tokens"] == 2048
         assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
@@ -635,7 +635,7 @@ class TestPageDefaults:
             captured.update(kwargs)
             return {"id": ids.orders, "kind": "page", "name": "Orders", "mental_model_id": ids.orders_mm}
 
-        monkeypatch.setattr(memory, "update_knowledge_page", fake_update)
+        monkeypatch.setattr(memory, "update_knowledge_node", fake_update)
         resp = await api_client.patch(
             f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
             json={"trigger": {"refresh_cron": "0 4 * * *"}},
@@ -930,12 +930,16 @@ class TestMoveRenameDelete:
         pauser.install(monkeypatch)
         try:
             first = asyncio.create_task(
-                memory.move_knowledge_node(bank_id, folder_a["id"], folder_b["id"], request_context=request_context)
+                memory.update_knowledge_node(
+                    bank_id, folder_a["id"], parent_id=folder_b["id"], request_context=request_context
+                )
             )
             await asyncio.wait_for(pauser.first_holds_lock.wait(), timeout=5)
 
             second = asyncio.create_task(
-                memory.move_knowledge_node(bank_id, folder_b["id"], folder_a["id"], request_context=request_context)
+                memory.update_knowledge_node(
+                    bank_id, folder_b["id"], parent_id=folder_a["id"], request_context=request_context
+                )
             )
             await asyncio.wait_for(pauser.second_reached_lock.wait(), timeout=5)
             await _assert_blocked(second, "the second move")
@@ -969,7 +973,9 @@ class TestMoveRenameDelete:
             await asyncio.wait_for(pauser.first_holds_lock.wait(), timeout=5)
 
             moving = asyncio.create_task(
-                memory.move_knowledge_node(bank_id, folder_a["id"], folder_b["id"], request_context=request_context)
+                memory.update_knowledge_node(
+                    bank_id, folder_a["id"], parent_id=folder_b["id"], request_context=request_context
+                )
             )
             await asyncio.wait_for(pauser.second_reached_lock.wait(), timeout=5)
             await _assert_blocked(moving, "the move")
@@ -1050,8 +1056,8 @@ class TestMoveRenameDelete:
             # The ancestor walk never reaches C, so only the cycle guard ends it.
             with pytest.raises(ValueError, match="cycle"):
                 await asyncio.wait_for(
-                    memory.move_knowledge_node(
-                        bank_id, folder_c["id"], folder_a["id"], request_context=request_context
+                    memory.update_knowledge_node(
+                        bank_id, folder_c["id"], parent_id=folder_a["id"], request_context=request_context
                     ),
                     timeout=10,
                 )
@@ -1068,6 +1074,129 @@ class TestMoveRenameDelete:
             assert remaining == {folder_c["id"]}
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_patch_rolls_back_the_rename_when_the_move_fails(self, api_client, kb_bank, memory, request_context):
+        """One PATCH is one transaction.
+
+        A rename used to commit on its own connection before the move was even
+        attempted, so a bad parent left the node renamed but not moved: state the
+        client never asked for, and one its retry of the same PATCH could not undo.
+        """
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Renamed Orders", "parent_id": "kf-does-not-exist"},
+        )
+        assert resp.status_code == 400, resp.text
+
+        node = next(
+            n
+            for n in await memory.list_knowledge_nodes(bank_id, request_context=request_context)
+            if n["id"] == ids.orders
+        )
+        assert node["name"] == "Orders"
+        assert node["parent_id"] == ids.runbooks
+        # The backing mental model is written in the same transaction, so it has to
+        # roll back with the node rather than keep a name nothing points at.
+        mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
+        assert mm["name"] == "Orders"
+
+    async def test_patch_rolls_back_the_rename_when_the_page_options_do_not_apply(
+        self, api_client, kb_bank, memory, request_context
+    ):
+        """Same guarantee on the other ordering: page options are rejected last.
+
+        A folder has no backing mental model, so page options cannot apply to it.
+        That verdict used to arrive after the rename had already committed.
+        """
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.policies}",
+            json={"name": "Renamed Policies", "tags": ["type:policy"]},
+        )
+        assert resp.status_code == 404, resp.text
+
+        node = next(
+            n
+            for n in await memory.list_knowledge_nodes(bank_id, request_context=request_context)
+            if n["id"] == ids.policies
+        )
+        assert node["name"] == "Policies"
+
+    async def test_patch_rolls_back_the_move_when_it_would_make_a_cycle(
+        self, api_client, kb_bank, memory, request_context
+    ):
+        """The cycle guard fires mid-transaction; the rename beside it must not survive."""
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.runbooks}",
+            json={"name": "Renamed Runbooks", "parent_id": ids.sub},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "subtree" in resp.text
+
+        node = next(
+            n
+            for n in await memory.list_knowledge_nodes(bank_id, request_context=request_context)
+            if n["id"] == ids.runbooks
+        )
+        assert node["name"] == "Runbooks"
+        assert node["parent_id"] is None
+
+    async def test_patch_applies_rename_move_and_page_options_together(
+        self, api_client, kb_bank, memory, request_context
+    ):
+        """The whole patch commits as one, and each field still lands where it lives."""
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.loose}",
+            json={
+                "name": "Compliance Rules",
+                "parent_id": ids.policies,
+                "source_query": "what are the compliance rules?",
+                "tags": ["type:policy", "compliance"],
+                "max_tokens": 1024,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        node = resp.json()
+        assert node["name"] == "Compliance Rules"
+        assert node["parent_id"] == ids.policies
+        assert set(node["tags"]) == {"type:policy", "compliance"}
+
+        mm = await memory.get_mental_model(bank_id, node["mental_model_id"], request_context=request_context)
+        assert mm["name"] == "Compliance Rules"
+        assert mm["source_query"] == "what are the compliance rules?"
+        assert set(mm["tags"]) == {"type:policy", "compliance"}
+        assert mm["max_tokens"] == 1024
+
+    async def test_patch_does_not_schedule_a_refresh_it_rolled_back(self, api_client, kb_bank, memory, monkeypatch):
+        """A new source query rebuilds the page — but only if the patch committed.
+
+        The refresh is submitted after the transaction, so a move that fails beside
+        it leaves no job queued against a source query the page never took on.
+        """
+        bank_id, ids = kb_bank
+        submitted: list[str] = []
+
+        async def fake_submit(*, bank_id: str, mental_model_id: str, request_context):
+            submitted.append(mental_model_id)
+
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_submit)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"source_query": "a question the page never adopts", "parent_id": "kf-does-not-exist"},
+        )
+        assert resp.status_code == 400, resp.text
+        assert submitted == []
+
+        # The committing case still queues exactly one rebuild.
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"source_query": "a question the page does adopt"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert submitted == [ids.orders_mm]
 
     async def test_delete_folder_cascades(self, api_client, kb_bank, memory, request_context):
         bank_id, ids = kb_bank

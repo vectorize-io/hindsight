@@ -1348,7 +1348,7 @@ def _recall_scoring_now(question_date: datetime | None) -> datetime:
 # Logger for memory system
 logger = logging.getLogger(__name__)
 
-from .db_utils import acquire_with_retry, retry_with_backoff
+from .db_utils import acquire_with_retry, retry_with_backoff, use_or_acquire
 
 
 def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix: str = "") -> str:
@@ -1849,6 +1849,19 @@ class KnowledgeBaseExport:
 
     nodes: list[dict[str, Any]]
     pages: list[KnowledgeBaseExportPage]
+
+
+class KeepParentSentinel:
+    """Type of :data:`KEEP_PARENT`."""
+
+
+KEEP_PARENT = KeepParentSentinel()
+""""Leave the parent alone" for :meth:`MemoryEngine.update_knowledge_node`.
+
+Every other field of that patch reads ``None`` as "not supplied", but a null
+``parent_id`` is a real destination — the tree root — so it needs a value
+outside ``str | None`` to say the caller isn't moving anything.
+"""
 
 
 class MemoryEngine(MemoryEngineInterface):
@@ -13875,8 +13888,9 @@ class MemoryEngine(MemoryEngineInterface):
         # types deduced for parameter $3: text versus character varying". Casting
         # the column assignment pins the parameter to text; VARCHAR accepts a text
         # value on assignment. Every write that feeds mental_models.name into
-        # pg_search_vector_expr needs the same cast (see update_mental_model and
-        # rename_knowledge_node).
+        # pg_search_vector_expr needs the same cast (see update_mental_model,
+        # which is now the only other one — the knowledge-base rename goes through
+        # it rather than writing mental_models itself).
         sv_expr = pg_search_vector_expr(
             get_config(), text_col="$3", context_col="$5", signals_col=None, native_inline=False
         )
@@ -15100,6 +15114,7 @@ class MemoryEngine(MemoryEngineInterface):
         refresh_watermark: datetime | None = None,
         refresh_completed: bool = False,
         structured_content: dict[str, Any] | None = None,
+        conn: Any | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
         """Update a pinned mental model.
@@ -15125,6 +15140,10 @@ class MemoryEngine(MemoryEngineInterface):
                 which stamps ``last_refreshed_at = NOW()`` even if the refresh preserved
                 the existing content. A refresh that failed leaves it False, so the
                 timestamp keeps pointing at the last refresh that actually finished.
+            conn: Run on this connection instead of acquiring one, so the write joins
+                the caller's open transaction and rolls back with it. Used by the
+                knowledge-base patch, where the backing model and its node row have to
+                move together.
             request_context: Request context for authentication
 
         Returns:
@@ -15170,7 +15189,7 @@ class MemoryEngine(MemoryEngineInterface):
             if embedding:
                 new_embedding_str = str(embedding[0])
 
-        async with acquire_with_retry(backend) as conn:
+        async with use_or_acquire(backend, conn) as conn:
             # If content is changing, fetch current content + reflect_response to record history
             previous_content: str | None = None
             previous_reflect_response: dict[str, Any] | None = None
@@ -16060,189 +16079,168 @@ class MemoryEngine(MemoryEngineInterface):
             for r in rows
         ]
 
-    async def rename_knowledge_node(
-        self, bank_id: str, node_id: str, name: str, *, request_context: "RequestContext"
-    ) -> dict[str, Any] | None:
-        """Rename a folder or page node."""
-        await self._authenticate_tenant(request_context)
-        if self._operation_validator and not _nested_operation_authorized.get():
-            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
-
-            ctx = BankWriteContext(
-                bank_id=bank_id,
-                operation=BankWriteOperation.RENAME_KNOWLEDGE_NODE,
-                request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        backend = await self._get_backend()
-        # A page's searchable document is its backing mental model's name + content,
-        # so the rename must also update mental_models.name — and re-tokenize its
-        # search_vector for vchord (native is a generated column, the other backends
-        # index base columns; same helper as create/update/clear_mental_model). Both
-        # writes share one transaction, so a knowledge_pages name-uniqueness
-        # violation rolls the mental-model name back with it. Folders carry no
-        # backing model (mental_model_id is NULL), so only the node row is touched.
-        # The mental-model write casts $3 to text because the same bind feeds
-        # sv_expr; see _insert_pinned_mental_model. knowledge_pages.name is already
-        # TEXT, so the node write needs no cast.
-        sv_expr = pg_search_vector_expr(
-            get_config(), text_col="$3", context_col="content", signals_col=None, native_inline=False
-        )
-        sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    f"""
-                    UPDATE {fq_table("knowledge_pages")}
-                    SET name = $3, updated_at = now()
-                    WHERE bank_id = $1 AND id = $2
-                    RETURNING {self._KP_COLUMNS}
-                    """,
-                    bank_id,
-                    node_id,
-                    name,
-                )
-                if row is not None and row["mental_model_id"] is not None:
-                    await conn.execute(
-                        f"""
-                        UPDATE {fq_table("mental_models")}
-                        SET name = $3::text{sv_clause}
-                        WHERE bank_id = $1 AND id = $2
-                        """,
-                        bank_id,
-                        row["mental_model_id"],
-                        name,
-                    )
-        return self._row_to_knowledge_node(row) if row else None
-
-    async def update_knowledge_page(
+    async def update_knowledge_node(
         self,
         bank_id: str,
-        page_id: str,
+        node_id: str,
         *,
+        name: str | None = None,
+        parent_id: str | None | KeepParentSentinel = KEEP_PARENT,
         source_query: str | None = None,
         tags: list[str] | None = None,
         max_tokens: int | None = None,
         trigger: dict[str, Any] | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
-        """Update a page's editable options on its backing mental model.
+        """Rename, re-parent, and/or update a page's options in ONE transaction.
 
-        Covers the source query (the question that rebuilds the page), tags,
-        token budget, and refresh trigger — each applied only when provided.
-        Returns the refreshed node (carrying ``mental_model_id``) or ``None`` when
-        the page doesn't exist. Changing the source query does not rebuild content
-        here; the API layer schedules an async refresh so the page re-synthesizes
-        against the new question.
+        Every field applies only when supplied, and the whole patch commits or
+        rolls back together. Splitting it across a call per field is what let a
+        rename survive the move that failed after it, so a client retrying the
+        same PATCH saw a tree it never asked for (a node renamed but not moved).
+
+        ``name`` and the page options use ``None`` for "not supplied" — a null in
+        the request body means the client is not changing that field, which is
+        the contract the HTTP and MCP layers have always exposed. ``parent_id``
+        cannot: null there is a real destination (the tree root), so it takes the
+        ``KEEP_PARENT`` sentinel for "not supplied" instead.
+
+        Page options live on the backing mental model. Returns the updated node,
+        or ``None`` when the node doesn't exist — or when page options were asked
+        for on something that is not a page, in which case nothing is written.
+        Changing the source query does not rebuild content here; the API layer
+        schedules an async refresh so the page re-synthesizes against the new
+        question.
         """
         await self._authenticate_tenant(request_context)
+        # Bind the destination once, so the rest of the method reads a plain
+        # `str | None` and never has to re-narrow the sentinel out of it.
+        moving = not isinstance(parent_id, KeepParentSentinel)
+        new_parent: str | None = parent_id if not isinstance(parent_id, KeepParentSentinel) else None
+        page_options = source_query is not None or tags is not None or max_tokens is not None or trigger is not None
         if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(
-                bank_id=bank_id,
-                operation=BankWriteOperation.UPDATE_KNOWLEDGE_PAGE,
-                request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        backend = await self._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            # The page's CURRENT trigger comes back with it: a supplied trigger patches
-            # that rather than replacing it (see _merge_trigger).
-            row = await conn.fetchrow(
-                f"SELECT kp.mental_model_id, mm.trigger FROM {fq_table('knowledge_pages')} kp "
-                f"LEFT JOIN {fq_table('mental_models')} mm "
-                f"ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id "
-                f"WHERE kp.bank_id = $1 AND kp.id = $2 AND kp.kind = 'page'",
-                bank_id,
-                page_id,
-            )
-        if row is None or row["mental_model_id"] is None:
-            return None
-        effective_trigger = (
-            self._merge_trigger(trigger, base=self._stored_trigger(row["trigger"])) if trigger is not None else None
-        )
-        # The write is already authorized above; the backing mental-model update
-        # runs without re-invoking the validator.
-        with _authorize_nested_operations():
-            await self.update_mental_model(
-                bank_id=bank_id,
-                mental_model_id=row["mental_model_id"],
-                source_query=source_query,
-                tags=tags,
-                max_tokens=max_tokens,
-                trigger=effective_trigger,
-                request_context=request_context,
-            )
-        async with acquire_with_retry(backend) as conn:
-            node_row = await conn.fetchrow(
-                f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} "
-                f"WHERE kp.bank_id = $1 AND kp.id = $2 AND kp.kind = 'page'",
-                bank_id,
-                page_id,
-            )
-        return self._row_to_knowledge_node(node_row) if node_row else None
-
-    async def move_knowledge_node(
-        self, bank_id: str, node_id: str, new_parent_id: str | None, *, request_context: "RequestContext"
-    ) -> dict[str, Any] | None:
-        """Re-parent a node, rejecting self-parenting and cycles."""
-        await self._authenticate_tenant(request_context)
-        if self._operation_validator and not _nested_operation_authorized.get():
-            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
-
-            ctx = BankWriteContext(
-                bank_id=bank_id,
-                operation=BankWriteOperation.MOVE_KNOWLEDGE_NODE,
-                request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        if new_parent_id == node_id:
+            # One gate per operation the patch actually performs, so an extension
+            # that allows renames but not moves still sees both decisions. All of
+            # them run before the transaction opens: a denial must not leave a
+            # half-applied patch behind.
+            operations = []
+            if name is not None:
+                operations.append(BankWriteOperation.RENAME_KNOWLEDGE_NODE)
+            if moving:
+                operations.append(BankWriteOperation.MOVE_KNOWLEDGE_NODE)
+            if page_options:
+                operations.append(BankWriteOperation.UPDATE_KNOWLEDGE_PAGE)
+            for operation in operations:
+                ctx = BankWriteContext(
+                    bank_id=bank_id,
+                    operation=operation,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        if moving and new_parent == node_id:
             raise ValueError("A node cannot be its own parent")
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                # Structural tree writers lock this bank row before reading or
-                # changing the hierarchy, serializing moves with creates/deletes.
-                await self._kp_lock_bank(conn, bank_id)
-                await self._kp_assert_folder_parent(conn, bank_id, new_parent_id)
-                # Cycle guard: walk up from the new parent; if we reach node_id,
-                # the move would create a loop. Done in Python so the check stays
-                # dialect-agnostic (no recursive CTE).
-                if new_parent_id is not None:
-                    parents = {
-                        r["id"]: r["parent_id"]
-                        for r in await conn.fetch(
-                            f"SELECT id, parent_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1",
-                            bank_id,
-                        )
-                    }
-                    # `seen` bounds the walk. The lock above stops this process
-                    # from creating a loop, but a tree corrupted before the lock
-                    # existed (or restored from such an export) would otherwise
-                    # spin here forever, holding a connection and an open
-                    # transaction. Refuse the move instead of hanging.
-                    seen: set[str] = set()
-                    cursor: str | None = new_parent_id
-                    while cursor is not None:
-                        if cursor == node_id:
-                            raise ValueError("Cannot move a node into its own subtree")
-                        if cursor in seen:
-                            raise ValueError(f"Knowledge tree for bank '{bank_id}' contains a parent cycle")
-                        seen.add(cursor)
-                        cursor = parents.get(cursor)
+                if moving:
+                    # Structural tree writers lock this bank row before reading or
+                    # changing the hierarchy, serializing moves with creates/deletes.
+                    # A patch that only renames or only edits page options changes no
+                    # parent link and so takes no tree lock.
+                    await self._kp_lock_bank(conn, bank_id)
                 row = await conn.fetchrow(
-                    f"""
-                    UPDATE {fq_table("knowledge_pages")}
-                    SET parent_id = $3, updated_at = now()
-                    WHERE bank_id = $1 AND id = $2
-                    RETURNING {self._KP_COLUMNS}
-                    """,
+                    f"SELECT kind, mental_model_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     node_id,
-                    new_parent_id,
                 )
-        return self._row_to_knowledge_node(row) if row else None
+                if row is None:
+                    return None
+                mental_model_id = row["mental_model_id"]
+                # Page options only exist on a page's backing model. Reporting this
+                # as "not found" is what the dedicated endpoint always did; the part
+                # that changes here is that the rename alongside it rolls back too.
+                if page_options and (row["kind"] != "page" or mental_model_id is None):
+                    return None
+
+                if moving:
+                    await self._kp_assert_folder_parent(conn, bank_id, new_parent)
+                    # Cycle guard: walk up from the new parent; if we reach node_id,
+                    # the move would create a loop. Done in Python so the check stays
+                    # dialect-agnostic (no recursive CTE).
+                    if new_parent is not None:
+                        parents = {
+                            r["id"]: r["parent_id"]
+                            for r in await conn.fetch(
+                                f"SELECT id, parent_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1",
+                                bank_id,
+                            )
+                        }
+                        # `seen` bounds the walk. The lock above stops this process
+                        # from creating a loop, but a tree corrupted before the lock
+                        # existed (or restored from such an export) would otherwise
+                        # spin here forever, holding a connection and an open
+                        # transaction. Refuse the move instead of hanging.
+                        seen: set[str] = set()
+                        cursor: str | None = new_parent
+                        while cursor is not None:
+                            if cursor == node_id:
+                                raise ValueError("Cannot move a node into its own subtree")
+                            if cursor in seen:
+                                raise ValueError(f"Knowledge tree for bank '{bank_id}' contains a parent cycle")
+                            seen.add(cursor)
+                            cursor = parents.get(cursor)
+
+                node_updates: list[str] = []
+                node_params: list[Any] = [bank_id, node_id]
+                if name is not None:
+                    node_updates.append(f"name = ${len(node_params) + 1}")
+                    node_params.append(name)
+                if moving:
+                    node_updates.append(f"parent_id = ${len(node_params) + 1}")
+                    node_params.append(new_parent)
+                if node_updates:
+                    await conn.execute(
+                        f"UPDATE {fq_table('knowledge_pages')} "
+                        f"SET {', '.join(node_updates)}, updated_at = now() "
+                        f"WHERE bank_id = $1 AND id = $2",
+                        *node_params,
+                    )
+
+                if mental_model_id is not None and (name is not None or page_options):
+                    # A page's searchable document is its backing mental model's name +
+                    # content, so a rename has to reach the model too (which also
+                    # re-tokenizes its search_vector). Written on the SAME connection
+                    # and transaction as the node row, so a knowledge_pages
+                    # name-uniqueness violation rolls this back with it. Folders carry
+                    # no backing model (mental_model_id is NULL) and skip this.
+                    #
+                    # update_mental_model owns these columns — including patching a
+                    # partial trigger over the stored one — so this reuses it rather
+                    # than restating its SQL, which would be free to drift.
+                    #
+                    # Already authorized above; the nested write must not re-invoke
+                    # the validator.
+                    with _authorize_nested_operations():
+                        await self.update_mental_model(
+                            bank_id=bank_id,
+                            mental_model_id=mental_model_id,
+                            name=name,
+                            source_query=source_query,
+                            tags=tags,
+                            max_tokens=max_tokens,
+                            trigger=trigger,
+                            conn=conn,
+                            request_context=request_context,
+                        )
+
+                node_row = await conn.fetchrow(
+                    f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} WHERE kp.bank_id = $1 AND kp.id = $2",
+                    bank_id,
+                    node_id,
+                )
+        return self._row_to_knowledge_node(node_row) if node_row else None
 
     async def delete_knowledge_node(self, bank_id: str, node_id: str, *, request_context: "RequestContext") -> bool:
         """Delete a node and its whole subtree, including each page's mental model.

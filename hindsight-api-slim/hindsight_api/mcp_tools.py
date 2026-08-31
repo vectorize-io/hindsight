@@ -22,7 +22,7 @@ from hindsight_api.config import (
     DEFAULT_MCP_RETAIN_DESCRIPTION,
 )
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.memory_engine import KEEP_PARENT, Budget
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MinScores, TemporalWindow
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import OperationValidationError
@@ -2297,35 +2297,28 @@ async def _do_update_knowledge_node(
             "and/or refresh_after_consolidation to update"
         }
 
-    updated: dict[str, Any] | None = None
-    if name is not None:
-        updated = await memory.rename_knowledge_node(
-            bank_id=target_bank, node_id=node_id, name=name, request_context=request_context
-        )
-    if parent_id is not None:
-        updated = await memory.move_knowledge_node(
-            bank_id=target_bank,
-            node_id=node_id,
-            new_parent_id=None if parent_id == KNOWLEDGE_ROOT_PARENT else parent_id,
-            request_context=request_context,
-        )
-    if page_update:
-        updated = await memory.update_knowledge_page(
-            bank_id=target_bank,
-            page_id=node_id,
-            source_query=source_query,
-            tags=tags,
-            max_tokens=max_tokens,
-            trigger=trigger,
-            request_context=request_context,
-        )
-        # A new source query means the page's content no longer answers it — rebuild.
-        if updated is not None and source_query is not None and updated.get("mental_model_id"):
-            await memory.submit_async_refresh_mental_model(
-                bank_id=target_bank, mental_model_id=updated["mental_model_id"], request_context=request_context
-            )
+    # One call, one transaction: a rename must not survive the move that fails
+    # after it. This tool is driven by agents that retry on error, and a partly
+    # applied patch made the retry read a tree nobody asked for.
+    updated = await memory.update_knowledge_node(
+        bank_id=target_bank,
+        node_id=node_id,
+        name=name,
+        parent_id=(None if parent_id == KNOWLEDGE_ROOT_PARENT else parent_id) if parent_id is not None else KEEP_PARENT,
+        source_query=source_query,
+        tags=tags,
+        max_tokens=max_tokens,
+        trigger=trigger,
+        request_context=request_context,
+    )
     if updated is None:
         return {"error": f"Knowledge node '{node_id}' not found in bank '{target_bank}'"}
+    # A new source query means the page's content no longer answers it — rebuild.
+    # Scheduled only once the patch has committed.
+    if source_query is not None and updated.get("mental_model_id"):
+        await memory.submit_async_refresh_mental_model(
+            bank_id=target_bank, mental_model_id=updated["mental_model_id"], request_context=request_context
+        )
     return _knowledge_node_json(updated)
 
 
