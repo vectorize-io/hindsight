@@ -2882,6 +2882,7 @@ def test_retain_cacheable_prefix_invariant_to_per_bank_freetext(mode):
             "entity_labels": None,
             "entities_allow_free_form": True,
             "llm_output_language": None,
+            "llm_supports_string_pattern": False,
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
