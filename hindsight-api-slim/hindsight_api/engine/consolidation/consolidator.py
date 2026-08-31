@@ -654,6 +654,28 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
     return [frozenset(s) for s in parsed]  # explicit list[list[str]]
 
 
+def _consolidation_batch_key(memory: dict[str, Any]) -> tuple[str, ...]:
+    """Return the key that decides which memories may share an LLM batch.
+
+    The real security requirement is "memories targeting different observation
+    scopes must never share an LLM call" — tags are only a proxy for that in
+    the default ``combined`` mode, where a memory's target scope *is* its own
+    tag set. A memory that names a single alternate scope (``shared``, an
+    explicit one-scope list, or ``per_tag`` with exactly one tag) targets that
+    scope instead, so it batches with any other memory naming the identical
+    scope regardless of native tags — that is the whole point of requesting
+    it. A memory that fans out to *multiple* scopes (``per_tag`` with more
+    than one tag, ``all_combinations``, or a multi-scope explicit list) writes
+    several observations from one LLM call; there is no single target scope
+    to key on, so it keeps grouping by native tags like the default case
+    (unchanged from before this function existed).
+    """
+    resolved = _resolve_obs_tags_list(memory)
+    if resolved is not None and len(resolved) == 1:
+        return tuple(sorted(resolved[0]))
+    return tuple(sorted(memory.get("tags") or []))
+
+
 def _scope_sort_key(scope: frozenset[str]) -> tuple[str, ...]:
     """Total ordering on scope frozensets for deadlock-free lock acquisition.
 
@@ -1433,11 +1455,15 @@ async def _run_consolidation_job(
         if not memories:
             break  # No more unconsolidated memories
 
-        # Group memories by exact tag set before batching — security requirement:
-        # memories with different tags must never share an LLM call.
+        # Group memories by target observation scope before batching — security
+        # requirement: memories targeting different scopes must never share an
+        # LLM call. See _consolidation_batch_key for why that's scope, not raw
+        # tags: a memory requesting observation_scopes="shared" (or another
+        # single-scope override) targets a scope that can differ from its own
+        # tags, and must only batch with peers naming that same scope (#3924).
         tag_groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
         for m in memories:
-            tag_key = tuple(sorted(m.get("tags") or []))
+            tag_key = _consolidation_batch_key(m)
             tag_groups.setdefault(tag_key, []).append(dict(m))
 
         # Split each tag group into LLM batches respecting llm_batch_size, keeping

@@ -216,6 +216,72 @@ async def test_shared_mode_parallel_writes_only_untagged_scope(memory: MemoryEng
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
+async def test_shared_mode_pools_different_native_tags_into_one_llm_batch(memory: MemoryEngine, request_context):
+    """Regression test for #3953: two memories with different native tags,
+    both requesting ``observation_scopes="shared"``, must be pooled into the
+    same LLM consolidation batch/call — not split into two calls before their
+    scope override is ever consulted.
+
+    Before the fix, ``tag_groups`` keyed on each memory's raw native tag set,
+    so these two memories (different tags) landed in two separate tag groups
+    and were never presented to the LLM together, even though both named the
+    identical target scope. ``consolidation_llm_batch_size=1`` (used by the
+    sibling ``shared`` test above) doesn't exercise this: with batch size 1,
+    every memory gets its own LLM call regardless of grouping. This test uses
+    batch_size=2 so a single shared batch is actually observable.
+    """
+    bank_id = f"test-shared-pool-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        async with memory._pool.acquire() as conn:
+            mem_a = await _insert_memory(
+                conn, bank_id, "Terraform Cloud is our IaC tool", ["suggested_tool:terraform-cloud"], "shared"
+            )
+            mem_b = await _insert_memory(
+                conn, bank_id, "Gardea helps with garden planning", ["suggested_tool:gardea"], "shared"
+            )
+
+        calls: list[set[str]] = []
+
+        mock_llm = MockLLM(provider="mock", api_key="", base_url="", model="mock-model")
+
+        def callback(messages, scope):
+            if scope != "consolidation":
+                return _ConsolidationBatchResponse()
+            prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
+            fact_ids = set(re.findall(r"\[([0-9a-f-]{36})\]", prompt))
+            calls.append(fact_ids)
+            creates = [
+                _CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids
+            ]
+            return _ConsolidationBatchResponse(creates=creates)
+
+        mock_llm.set_response_callback(callback)
+        wrapper = MagicMock()
+        wrapper.with_config.return_value = mock_llm
+
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+        try:
+            with (
+                _override_config(memory, consolidation_llm_parallelism=2, consolidation_llm_batch_size=2),
+                patch.object(memory, "submit_async_consolidation"),
+            ):
+                result = await run_consolidation_job(
+                    memory_engine=memory, bank_id=bank_id, request_context=request_context
+                )
+        finally:
+            memory._consolidation_llm_config = original_llm
+
+        assert result["status"] == "completed"
+        assert len(calls) == 1, f"expected exactly one LLM consolidation call, got {len(calls)}: {calls}"
+        assert calls[0] == {str(mem_a), str(mem_b)}, calls[0]
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: MemoryEngine, request_context):
     """per_tag with tags [a, b] → two observations, tagged [a] and [b] respectively.
 
