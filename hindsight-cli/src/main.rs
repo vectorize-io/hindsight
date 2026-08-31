@@ -1357,6 +1357,17 @@ enum DirectiveCommands {
 }
 
 fn main() {
+    // When stdout/stderr is a pipe whose reader closes early (e.g.
+    // `hindsight ... | head`), a write triggers SIGPIPE. Rust's `println!`
+    // panics on the resulting EPIPE error, and with `panic = "abort"` in the
+    // release profile that becomes a silent SIGABRT — which surfaces as a
+    // spurious "fatal error" and kills the process without any message.
+    // Restore the default SIGPIPE disposition so we terminate cleanly on
+    // SIGPIPE, like other Unix CLI tools.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     if let Err(e) = run() {
         ui::print_error(&format!("{:#}", e));
         std::process::exit(1);
