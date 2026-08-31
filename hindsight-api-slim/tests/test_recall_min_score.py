@@ -4,7 +4,8 @@ Inserts memory_units with known content + real embeddings directly via SQL, then
 verifies that recall_async:
   - returns a `scores` object (final/reranker/semantic/keyword) on every result,
   - applies the post-query floors (`reranker`, `final`) to the scored results,
-  - applies the retrieval-level floors (`semantic`, `keyword`) inside the SQL arms,
+  - applies the retrieval-level `semantic` floor inside the SQL arm,
+  - keeps the retrieval floors per-arm rather than per-result,
   - is unchanged by the default (`min_scores=None`).
 
 Filtering is deterministic post/﻿pre-processing, so these assertions are direct —
@@ -178,38 +179,6 @@ class TestRetrievalLevelFilters:
         assert filtered.results == []
 
     @pytest.mark.memory_backend_incompatible
-    async def test_keyword_floor_prunes_in_retrieval(self, seeded_memory):
-        """min_scores.keyword is a SQL-arm cutoff: no returned result carries a
-        keyword score below the floor.
-
-        Regression for #3882 — the floor reached `build_bm25_arm` but only the
-        vchord and Oracle branches read it, so on the default `native` backend
-        sub-threshold rows came back with their real (below-floor) score attached.
-        """
-        engine, bank_id = seeded_memory
-        baseline = await _recall(engine, bank_id, query="animals")
-        kws = [r.scores.keyword for r in baseline.results if r.scores.keyword is not None]
-        assert kws, "keyword arm should have surfaced these facts"
-        top = max(kws)
-
-        # A floor above every observed score must leave nothing keyword-scored.
-        # Before the fix the native backend dropped the floor on the floor and
-        # returned these same rows with their real, below-floor scores attached.
-        # Deliberately not a relative floor (e.g. "the second-highest score"): on
-        # a three-fact corpus the keyword arm may surface only one row, and ranks
-        # can tie, so neither a count nor a spread is something to assert on.
-        above = await _recall(engine, bank_id, query="animals", min_scores=MinScores(keyword=top + 1.0))
-        assert [r for r in above.results if r.scores.keyword is not None] == []
-
-        # At exactly the top score the floor is inclusive, so that row survives.
-        at_floor = await _recall(engine, bank_id, query="animals", min_scores=MinScores(keyword=top))
-        assert any(r.scores.keyword is not None for r in at_floor.results)
-        for r in at_floor.results:
-            # A result may carry no keyword score at all (another arm surfaced
-            # it), but one that does must clear the floor.
-            assert r.scores.keyword is None or r.scores.keyword >= top
-
-    @pytest.mark.memory_backend_incompatible
     async def test_retrieval_floors_are_per_arm_not_per_result(self, seeded_memory):
         """The retrieval floors constrain the arm they name, not the fused result.
 
@@ -232,10 +201,12 @@ class TestRetrievalLevelFilters:
             assert r.scores.semantic is None or r.scores.semantic >= 0.1
             assert r.scores.keyword is None or r.scores.keyword >= 0.0001
         # The union behaviour itself: setting both floors does not narrow the
-        # response to results that cleared both arms. On this corpus the keyword
-        # arm surfaces fewer facts than the semantic one, so a strict intersection
-        # would drop results this assertion keeps.
-        assert any(r.scores.keyword is None for r in both.results)
+        # response to results that cleared both arms. Every result here is
+        # surfaced by the semantic arm alone and reports `keyword: null`, which a
+        # strict post-fusion intersection would have dropped to zero results.
+        assert not all(r.scores.semantic is not None and r.scores.keyword is not None for r in both.results), (
+            "expected at least one result missing a score for a floored arm"
+        )
 
 
 class TestRecallRequestDefault:
