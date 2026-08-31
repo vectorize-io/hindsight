@@ -1011,17 +1011,23 @@ async def _run_reflect_agent_inner(
         # Execute other tools in parallel (exclude done tool in all its format variants)
         other_tools = [tc for tc in result.tool_calls if not _is_done_tool(tc.name)]
         if other_tools:
-            # Partition into enabled vs hallucinated (not in enabled_tools set)
+            # Partition into enabled vs hallucinated (not in enabled_tools set),
+            # carrying each call's position in the model's original batch so the
+            # results can be re-emitted in that order below.
             allowed_tools = []
+            allowed_positions: list[int] = []
             hallucinated_tools = []
-            for tc in other_tools:
+            hallucinated_positions: list[int] = []
+            for position, tc in enumerate(other_tools):
                 norm = _normalize_tool_name(tc.name)
                 # "done" is always available. "expand" is governed by enabled_tools
                 # (it is excluded when text storage is disabled), so it is not hardcoded here.
                 if enabled_tools is not None and norm not in enabled_tools and norm != "done":
                     hallucinated_tools.append(tc)
+                    hallucinated_positions.append(position)
                 else:
                     allowed_tools.append(tc)
+                    allowed_positions.append(position)
 
             # Build assistant message with all tool calls (LLM requires them for history)
             messages.append(
@@ -1033,12 +1039,17 @@ async def _run_reflect_agent_inner(
 
             # Serialize tool results in the ORIGINAL tool_calls order. Anthropic
             # requires tool_result blocks to match the assistant tool_use order,
-            # so collect every result keyed by tool_call_id first and emit them
-            # in the model's order after execution (execution order may differ).
+            # so collect every result first and emit them in the model's order
+            # after execution (execution order may differ).
+            #
+            # Slots are indexed by POSITION, never by tool_call_id: a
+            # non-conforming OpenAI-compatible gateway can hand back duplicate or
+            # empty ids for a parallel batch, and an id-keyed map would silently
+            # drop one tool's evidence and duplicate another's.
             ordered_tool_calls = list(other_tools)
-            tool_outputs: dict[str, str] = {}
-            for tc in hallucinated_tools:
-                tool_outputs[tc.id] = json.dumps(
+            tool_outputs: list[str] = [""] * len(ordered_tool_calls)
+            for position, tc in zip(hallucinated_positions, hallucinated_tools):
+                tool_outputs[position] = json.dumps(
                     {
                         "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
                     },
@@ -1073,7 +1084,7 @@ async def _run_reflect_agent_inner(
             total_tools_called += len(other_tools)
 
             # Process results and add to messages
-            for tc, result_data in zip(other_tools, tool_results):
+            for position, tc, result_data in zip(allowed_positions, other_tools, tool_results):
                 if isinstance(result_data, Exception):
                     # Tool execution failed - send error back to LLM so it can try again
                     logger.warning(f"[REFLECT {reflect_id}] Tool {tc.name} failed with exception: {result_data}")
@@ -1135,7 +1146,7 @@ async def _run_reflect_agent_inner(
                             available_memory_ids.add(memory["id"])
 
                 # Record the serialized result; emitted in original order below.
-                tool_outputs[tc.id] = json.dumps(output, default=str, ensure_ascii=False)
+                tool_outputs[position] = json.dumps(output, default=str, ensure_ascii=False)
 
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
@@ -1175,12 +1186,12 @@ async def _run_reflect_agent_inner(
             # Emit tool_result messages in the assistant tool_calls order so the
             # serialized history matches the tool_use blocks (Anthropic requires
             # tool_result blocks in the same order as the corresponding tool_use).
-            for tc in ordered_tool_calls:
+            for tc, tool_output in zip(ordered_tool_calls, tool_outputs):
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": tool_outputs[tc.id],
+                        "content": tool_output,
                     }
                 )
 

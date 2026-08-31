@@ -886,6 +886,93 @@ class TestReflectAgentMocked:
                 timeout=0.1,  # Very short timeout to trigger quickly
             )
 
+    @pytest.mark.asyncio
+    async def test_tool_results_follow_the_models_tool_call_order(
+        self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
+    ) -> None:
+        """A mixed [allowed, hallucinated, allowed] batch serializes in the model's order.
+
+        Anthropic requires the tool_result blocks to line up with the assistant
+        tool_use blocks. Rejections for hallucinated tools used to be written
+        before the executed tools' results, so a hallucinated call in the middle
+        of a batch produced an out-of-order history the API rejects.
+        """
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="a", name="recall", arguments={"query": "q1"}),
+                    LLMToolCall(id="b", name="totally_made_up", arguments={}),
+                    LLMToolCall(id="c", name="search_observations", arguments={"query": "q2"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.call_args_list[-1].kwargs["messages"]
+        assistant = [m for m in messages if m.get("role") == "assistant" and m.get("tool_calls")][-1]
+        assert [tc["id"] for tc in assistant["tool_calls"]] == ["a", "b", "c"]
+        tool_messages = [m for m in messages if m.get("role") == "tool"]
+        assert [m["tool_call_id"] for m in tool_messages] == ["a", "b", "c"]
+        # Each slot carries its OWN payload rather than a neighbour's.
+        assert "memories" in tool_messages[0]["content"]
+        assert "totally_made_up" in tool_messages[1]["content"]
+        assert "observations" in tool_messages[2]["content"]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_tool_call_ids_keep_their_own_results(
+        self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
+    ) -> None:
+        """Results are slotted by position, so a reused tool_call_id loses nothing.
+
+        Every first-party provider mints unique ids, but a non-conforming
+        OpenAI-compatible gateway can repeat one (or send an empty string) across
+        a parallel batch. Keying the results by id would drop one tool's evidence
+        and duplicate the other's.
+        """
+        mock_functions["recall_fn"].side_effect = [
+            {"memories": [{"id": "mem-1", "content": "first"}]},
+            {"memories": [{"id": "mem-2", "content": "second"}]},
+        ]
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="dup", name="recall", arguments={"query": "q1"}),
+                    LLMToolCall(id="dup", name="recall", arguments={"query": "q2"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.call_args_list[-1].kwargs["messages"]
+        contents = [m["content"] for m in messages if m.get("role") == "tool"]
+        assert len(contents) == 2
+        assert "first" in contents[0], contents
+        assert "second" in contents[1], contents
+
 
 class TestContextOverflowHelpers:
     """Unit tests for context-overflow detection helpers."""
