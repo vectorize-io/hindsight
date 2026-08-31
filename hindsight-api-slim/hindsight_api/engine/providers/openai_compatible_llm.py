@@ -52,6 +52,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import strict_json_schema
@@ -273,6 +274,22 @@ def _summarize_provider_error_payload(error: Any, max_len: int = 400) -> str:
     if len(summary) > max_len:
         summary = summary[:max_len] + "...TRUNCATED"
     return summary
+
+
+# Finish reasons that positively say a generation ran to its own end. Repair is
+# gated on one of these because json_repair closes an unterminated string or list
+# by inventing the terminator, so repairing a body that may have been cut turns a
+# loud failure into a short answer reported as a complete one. A missing or
+# unrecognised reason is not evidence of completion.
+#
+# This is deliberately stricter than litellm_llm.py:367, which repairs whatever it
+# has left once the retry budget is spent. An explicit "length" raises before either
+# path reaches repair, so the gate's only remaining effect is to withhold repair from
+# a provider that omits or renames finish_reason — and those are exactly the proxies
+# and gateways this provider fronts. Losing the repair there is the cheaper mistake:
+# a JSONDecodeError is loud and the caller can split, while a silently short answer
+# is indistinguishable from a complete one. Same reasoning as #3827.
+_COMPLETED_FINISH_REASONS = frozenset({"stop", "tool_calls", "function_call", "end_turn"})
 
 
 def _finish_reason_for_choice(choice: Any) -> Any:
@@ -1178,14 +1195,36 @@ class OpenAICompatibleLLM(LLMInterface):
                                 f"  Content preview: {content_preview!r}\n"
                                 f"  Finish reason: {_finish_reason_for_choice(first_choice)}"
                             )
-                            # Retry on JSON parse errors
+                            # Retry on JSON parse errors for the whole
+                            # configured budget. Two identical bodies are not
+                            # proof the next one repeats: temperature is set by
+                            # the caller and not read here, so there is nothing
+                            # on this path that establishes a deterministic
+                            # generation.
                             if attempt < max_retries:
                                 backoff = min(initial_backoff * (2**attempt), max_backoff)
                                 await asyncio.sleep(backoff)
                                 last_exception = json_err
                                 continue
-                            else:
-                                logger.error(f"JSON parse error after {max_retries + 1} attempts, giving up")
+                            # Retry budget spent. Repair structurally as a
+                            # last resort, the way litellm_llm.py has since
+                            # #2547/#2544, but only for a generation that
+                            # reported reaching its own end. Without that,
+                            # a provider that omits finish_reason would have a
+                            # truncated body repaired into schema-valid partial
+                            # data.
+                            if _finish_reason_for_choice(first_choice) not in _COMPLETED_FINISH_REASONS:
+                                logger.error(
+                                    f"JSON parse error after {attempt + 1} attempts and no "
+                                    f"completion signal (finish_reason="
+                                    f"{_finish_reason_for_choice(first_choice)!r}); "
+                                    "not repairing, the body may be truncated"
+                                )
+                                raise
+                            try:
+                                json_data = parse_llm_json(content)
+                            except json.JSONDecodeError:
+                                logger.error(f"JSON parse error after {attempt + 1} attempts, giving up")
                                 raise
 
                     if skip_validation:
@@ -1742,7 +1781,39 @@ class OpenAICompatibleLLM(LLMInterface):
                     response.raise_for_status()
 
                     result = response.json()
+                    # Stash usage before the guards below, which can raise on a
+                    # capped response. Ollama charges for those tokens and the
+                    # capped calls are the expensive ones, so raising first would
+                    # drop exactly the calls worth accounting for.
+                    stash_response_usage(
+                        LLMResponseUsage(
+                            input_tokens=result.get("prompt_eval_count", 0) or 0,
+                            output_tokens=result.get("eval_count", 0) or 0,
+                        )
+                    )
                     content = result.get("message", {}).get("content", "")
+
+                    # Same case as the OpenAI-compatible path, different key: Ollama
+                    # reports a token cap as done_reason "length". Raised ahead of the
+                    # free-form/structured split, and ahead of reading the content, for
+                    # the two reasons _content_or_error gives:
+                    #
+                    #   - a cap that lands on a closing brace still parses and still
+                    #     validates, so the structured path would return a short answer
+                    #     as a complete one;
+                    #   - a cap reached before the first visible token leaves content
+                    #     empty, and the free-form branch below reads that as a
+                    #     *retryable* ProviderResponseError, which re-sends the same
+                    #     request against the same limit (#3811).
+                    #
+                    # Free-form calls raise too, matching the sibling path since #3827:
+                    # a truncated reflect synthesis or mental-model page fails rather
+                    # than being returned as if it were complete.
+                    if result.get("done_reason") == "length":
+                        raise OutputTooLongError(
+                            f"LLM output exceeded token limits (ollama/{self.model}, scope={scope}). "
+                            "Input may need to be split into smaller chunks."
+                        )
 
                     if response_format is None:
                         # Free-form output: no schema, nothing to parse. Reasoning
@@ -1782,7 +1853,21 @@ class OpenAICompatibleLLM(LLMInterface):
                                     await asyncio.sleep(backoff)
                                     last_exception = json_err
                                     continue
-                                else:
+                                # Same last-resort repair as the
+                                # OpenAI-compatible path above, gated the same
+                                # way: only a generation that reported reaching
+                                # its own end gets structurally repaired.
+                                if result.get("done_reason") not in _COMPLETED_FINISH_REASONS:
+                                    logger.error(
+                                        f"Ollama JSON parse error after {attempt + 1} attempts and no "
+                                        f"completion signal (done_reason={result.get('done_reason')!r}); "
+                                        "not repairing, the body may be truncated"
+                                    )
+                                    raise
+                                try:
+                                    json_data = parse_llm_json(content)
+                                except json.JSONDecodeError:
+                                    logger.error(f"Ollama JSON parse error after {attempt + 1} attempts, giving up")
                                     raise
 
                     # Extract token usage from Ollama response
@@ -1871,6 +1956,11 @@ class OpenAICompatibleLLM(LLMInterface):
                     else:
                         logger.error(f"Ollama connection error after {max_retries + 1} attempts: {e}")
                         raise
+
+                except OutputTooLongError:
+                    # Expected and handled upstream by splitting the input, so it
+                    # does not belong in the unexpected-error log below.
+                    raise
 
                 except Exception as e:
                     logger.error(f"Unexpected error during Ollama call: {type(e).__name__}: {e}")
