@@ -64,7 +64,7 @@ from hindsight_api.engine.providers.xai_oauth_auth import (
     XaiOAuthRefreshError,
 )
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
-from hindsight_api.engine.structured_output import strict_json_schema
+from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -711,7 +711,7 @@ class XaiOAuthLLM(LLMInterface):
         body = self._build_body(list(messages), max_completion_tokens, temperature)
 
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
+            schema = strict_json_schema(response_format) if strict_schema else provider_json_schema(response_format)
             if strict_schema:
                 body["response_format"] = {
                     "type": "json_schema",

@@ -1,5 +1,6 @@
 """Canonical JSON Schema serialization for OpenAI strict output."""
 
+from functools import lru_cache
 from typing import Any
 
 from pydantic import BaseModel
@@ -7,7 +8,35 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import core_schema
 
 
-class OpenAIStrictSchemaGenerator(GenerateJsonSchema):
+class UnionSafeSchemaGenerator(GenerateJsonSchema):
+    """Render a discriminated union as ``anyOf`` instead of ``oneOf`` + ``discriminator``.
+
+    Pydantic serializes a ``Field(discriminator=...)`` union as ``oneOf`` with a
+    ``discriminator`` block. No provider we target accepts that: OpenAI's strict
+    subset takes ``anyOf`` and rejects ``oneOf``, and the Gemini SDK rejects both
+    keys outright (``Extra inputs are not permitted`` on ``Schema.oneOf`` /
+    ``Schema.discriminator``) before a request is ever sent. That is why the
+    mental-model delta call could not use structured output at all and hand-parsed
+    its JSON instead — see ``parse_delta_operation_list``.
+
+    ``anyOf`` costs nothing here: each variant carries a ``Literal`` ``op`` field,
+    so the variants remain mutually exclusive and the discriminator block was only
+    ever a routing hint. Models with no tagged union serialize byte-identically to
+    the default generator (pinned by
+    ``test_union_safe_schema_is_identical_for_models_without_unions``), so this is
+    safe to use wherever a schema is serialized for a provider.
+    """
+
+    def tagged_union_schema(self, schema: core_schema.TaggedUnionSchema) -> JsonSchemaValue:
+        json_schema = super().tagged_union_schema(schema)
+        variants = json_schema.pop("oneOf", None)
+        if variants is not None:
+            json_schema["anyOf"] = variants
+        json_schema.pop("discriminator", None)
+        return json_schema
+
+
+class OpenAIStrictSchemaGenerator(UnionSafeSchemaGenerator):
     """Emit the strict JSON Schema subset required by OpenAI-compatible APIs."""
 
     def model_schema(self, schema: core_schema.ModelSchema) -> JsonSchemaValue:
@@ -28,6 +57,28 @@ class OpenAIStrictSchemaGenerator(GenerateJsonSchema):
 def strict_json_schema(response_format: type[BaseModel]) -> dict[str, Any]:
     """Serialize a typed response model directly into OpenAI's strict subset."""
     return response_format.model_json_schema(schema_generator=OpenAIStrictSchemaGenerator)
+
+
+def provider_json_schema(response_format: type[BaseModel]) -> dict[str, Any]:
+    """Serialize a response model for a provider that is not using the strict subset.
+
+    Same output as ``model_json_schema()`` for every model without a discriminated
+    union; for one that has a union, the union is rendered as ``anyOf`` so the
+    schema is transportable (see ``UnionSafeSchemaGenerator``).
+    """
+    return response_format.model_json_schema(schema_generator=UnionSafeSchemaGenerator)
+
+
+@lru_cache(maxsize=None)
+def has_tagged_union(response_format: type[BaseModel]) -> bool:
+    """Whether serializing this model rewrites a tagged union.
+
+    Asked per LLM call by providers that hand the *model* to their SDK rather than
+    a schema dict (Gemini), so they can keep that native path for every model it
+    already handles and only fall back to a serialized schema for the unions it
+    cannot accept. Cached because the answer is a property of the class.
+    """
+    return provider_json_schema(response_format) != response_format.model_json_schema()
 
 
 # Types the structured-output extractor knows how to build a Pydantic field for

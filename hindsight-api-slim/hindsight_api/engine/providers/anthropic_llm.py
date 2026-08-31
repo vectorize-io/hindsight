@@ -19,6 +19,7 @@ from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterfac
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -233,7 +234,7 @@ class AnthropicLLM(LLMInterface):
         use_forced_tool = False
         _tool_name = "structured_response"
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = response_format.model_json_schema()
+            schema = provider_json_schema(response_format)
             if strict_schema:
                 use_forced_tool = True
             else:

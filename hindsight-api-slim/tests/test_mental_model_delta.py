@@ -950,6 +950,62 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_delta_call_sends_the_operation_schema(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+    ):
+        """The delta call asks for structured output, like retain's extraction (#3901).
+
+        It used to be a bare text call: the operation schema is a discriminated
+        union, which no provider would accept as ``oneOf`` + ``discriminator``, so
+        the prompt was the only thing describing the payload and a model that
+        spelled a block differently cost a whole refresh. The union is now sent as
+        ``anyOf``, so the schema travels with the request.
+
+        ``skip_validation`` must stay on: the raw JSON goes to
+        ``parse_delta_operation_list``, which drops a single malformed op instead
+        of failing the batch the way ``model_validate`` would.
+        """
+        from hindsight_api.config import get_config
+        from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
+
+        bank_id = f"test-delta-schema-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nAlice is the lead.\n",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        # First refresh runs in full mode and seeds the tracking column; only the
+        # second one takes the delta path whose call shape this test is about.
+        patch_reflect(memory, text="ignored — full mode candidate")
+        patch_llm_call(memory, returns=[])
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        patch_reflect(
+            memory,
+            text="# Team\n\nAlice is the lead. Bob joined.",
+            facts=[{"id": "obs-bob", "text": "Bob joined the team", "type": "observation", "context": None}],
+        )
+        llm_calls = patch_llm_call(memory, returns=[])
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        assert llm_calls, "the structured-delta call must fire"
+        call = llm_calls[-1]
+        assert call["response_format"] is DeltaOperationList
+        assert call["skip_validation"] is True
+        assert call["strict_schema"] == get_config().llm_strict_schema_reflect
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_delta_call_is_traced_and_uses_decoupled_completion_cap(
         self,
         memory: MemoryEngine,

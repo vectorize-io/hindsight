@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -606,7 +607,7 @@ class GitHubCopilotLLM(LLMInterface):
                 system_suffix = ""
 
                 if response_format is not None:
-                    schema = response_format.model_json_schema()
+                    schema = provider_json_schema(response_format)
                     sdk_tools = [
                         self._terminal_tool(
                             _STRUCTURED_TOOL_NAME,

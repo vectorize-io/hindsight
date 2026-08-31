@@ -14553,6 +14553,7 @@ class MemoryEngine(MemoryEngineInterface):
         # drift is structurally impossible. Falls back to the full candidate
         # markdown if either the structuring or the LLM op call fails.
         from .reflect.delta_ops import (
+            DeltaOperationList,
             apply_operations,
             parse_delta_operation_list,
         )
@@ -14745,11 +14746,19 @@ class MemoryEngine(MemoryEngineInterface):
                 # operation + mental_model_id), same as every other pipeline call.
                 delta_llm = await _op_llm()
                 try:
-                    # Text-mode call (not structured-output) because Pydantic's
-                    # discriminated-union JSON schema isn't accepted by every
-                    # provider — Gemini in particular rejects ``oneOf`` /
-                    # ``discriminator``. We parse + validate the JSON ourselves
-                    # so the same prompt works against any LLM.
+                    # Structured-output call, following the retain extraction path:
+                    # the schema is sent, ``strict_schema`` is resolved from reflect's
+                    # own flag, and ``skip_validation`` keeps the raw JSON so
+                    # ``parse_delta_operation_list`` still validates op-by-op (a single
+                    # malformed op is dropped, not the whole batch).
+                    #
+                    # This was a text-mode call until #3901: pydantic renders the
+                    # eight-op discriminated union as ``oneOf`` + ``discriminator``,
+                    # which OpenAI's strict subset rejects and the Gemini SDK refuses
+                    # to even serialize, so no schema could be sent and the prompt was
+                    # the only description of the payload the model got. Providers are
+                    # now handed the union as ``anyOf`` (``provider_json_schema``),
+                    # which both accept.
                     #
                     # The transport cap is the decoupled ``reflect_max_completion_tokens``
                     # (uncapped by default), NOT ``delta_max_tokens``. On thinking models
@@ -14766,6 +14775,9 @@ class MemoryEngine(MemoryEngineInterface):
                             {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
                             {"role": "user", "content": user_prompt},
                         ],
+                        response_format=DeltaOperationList,
+                        strict_schema=get_config().llm_strict_schema_reflect,
+                        skip_validation=True,  # Get raw JSON; the op-by-op parser validates leniently
                         max_completion_tokens=get_config().reflect_max_completion_tokens,
                         temperature=get_config().llm_temperature_consolidation,
                         scope="mental_model_delta_ops",

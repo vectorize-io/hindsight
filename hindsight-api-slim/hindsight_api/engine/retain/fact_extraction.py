@@ -19,7 +19,7 @@ from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetEr
 from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_llm_value
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
-from ..structured_output import strict_json_schema
+from ..structured_output import provider_json_schema, strict_json_schema
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -1522,7 +1522,7 @@ def _build_request_body(batch_impl, config, prompt: str, user_message: str, resp
     # fallback, so the batch and streaming paths can't disagree.
     if hasattr(response_schema, "model_json_schema"):
         retain_strict_schema = config.llm_strict_schema_retain
-        schema = strict_json_schema(response_schema) if retain_strict_schema else response_schema.model_json_schema()
+        schema = strict_json_schema(response_schema) if retain_strict_schema else provider_json_schema(response_schema)
         request_body["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": "facts", "schema": schema, "strict": retain_strict_schema},
