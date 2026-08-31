@@ -978,9 +978,7 @@ async def _delta_store_owned_write(
     if replace_chunk_ids:
         outgoing = await chunk_storage.memory_ids_for_chunks(None, bank_id, replace_chunk_ids)
         if outgoing:
-            swept = await fact_storage.delete_stale_observations_for_memories(
-                None, bank_id, outgoing, ops=pool.ops
-            )
+            swept = await fact_storage.delete_stale_observations_for_memories(None, bank_id, outgoing, ops=pool.ops)
             if swept:
                 log_buffer.append(f"[delta] swept {swept} observation(s) whose sources are being replaced")
 
