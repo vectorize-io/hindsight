@@ -914,6 +914,9 @@ Use "Event Date" from input as reference for relative dates.
   "yesterday" → write the resolved date (e.g. "on November 12, 2024"), NOT the word "yesterday"
   "last night", "this morning", "today", "tonight" → convert to the resolved absolute date
 - For events: set occurred_start AND occurred_end (same for point events)
+- Coarse dates (only a year, or only a month, is stated): span the WHOLE period —
+  "in 2015" → 2015-01-01 to 2015-12-31, "in March 2026" → 2026-03-01 to 2026-03-31.
+  Never collapse to the period's first day or to the Event Date, current year included.
 - For conversation facts: NO occurred dates
 
 ══════════════════════════════════════════════════════════════════════════
@@ -1103,6 +1106,14 @@ For EVENTS (fact_kind="event") - MUST SET BOTH occurred_start AND occurred_end:
 - Always include the day name (Monday, Tuesday, etc.) in the 'when' field
 - Set occurred_start AND occurred_end to WHEN IT HAPPENED (not when mentioned)
 - For single-day/point events: set occurred_end = occurred_start (same timestamp)
+- COARSE DATES (the text states only a year, or only a month): set occurred_start and
+  occurred_end to the FULL SPAN of that period, so the range says how precisely the date
+  is actually known:
+    "in 2015"        → occurred_start="2015-01-01T00:00:00", occurred_end="2015-12-31T23:59:59"
+    "in March 2026"  → occurred_start="2026-03-01T00:00:00", occurred_end="2026-03-31T23:59:59"
+  Do NOT collapse a coarse date to the first day of the period, and do NOT resolve it to the
+  Event Date — even when the period is the current year. A year-only date is not a precise
+  date; recording it as one makes the memory claim a day it never stated.
 
 For CONVERSATIONS (fact_kind="conversation"):
 - General info, preferences, ongoing states → NO occurred dates
