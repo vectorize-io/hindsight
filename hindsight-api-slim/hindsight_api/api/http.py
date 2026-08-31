@@ -3161,6 +3161,7 @@ async def apply_bank_template_manifest(
             existing_by_name,
             request_context,
             config_applied=bool(config_updates),
+            defer_until_consolidation=False,
         )
 
 
@@ -3194,6 +3195,7 @@ async def apply_default_bank_template_resources(
         existing_by_name,
         request_context,
         config_applied=False,
+        defer_until_consolidation=True,
     )
 
 
@@ -3206,6 +3208,7 @@ async def _apply_bank_template_resources(
     request_context: "RequestContext",
     *,
     config_applied: bool,
+    defer_until_consolidation: bool,
 ) -> "BankTemplateImportResponse":
     """Apply template resources after the caller has handled config and access."""
     created_ids: list[str] = []
@@ -3214,6 +3217,11 @@ async def _apply_bank_template_resources(
 
     if manifest.mental_models:
         for mm in manifest.mental_models:
+            # Server defaults are installed before a new bank has memories. Auto-refreshing models can wait for the
+            # first consolidation instead of occupying an LLM slot with a reflect that cannot produce content (#3875).
+            enqueue_initial_refresh = not (
+                defer_until_consolidation and mm.trigger is not None and mm.trigger.refresh_after_consolidation
+            )
             if mm.id in existing_mental_models:
                 await memory.update_mental_model(
                     bank_id=bank_id,
@@ -3225,12 +3233,13 @@ async def _apply_bank_template_resources(
                     trigger=mm.trigger.model_dump() if mm.trigger else None,
                     request_context=request_context,
                 )
-                result = await memory.submit_async_refresh_mental_model(
-                    bank_id=bank_id,
-                    mental_model_id=mm.id,
-                    request_context=request_context,
-                )
-                operation_ids.append(result["operation_id"])
+                if enqueue_initial_refresh:
+                    result = await memory.submit_async_refresh_mental_model(
+                        bank_id=bank_id,
+                        mental_model_id=mm.id,
+                        request_context=request_context,
+                    )
+                    operation_ids.append(result["operation_id"])
                 updated_ids.append(mm.id)
             else:
                 mental_model = await memory.create_mental_model(
@@ -3244,12 +3253,13 @@ async def _apply_bank_template_resources(
                     trigger=mm.trigger.model_dump() if mm.trigger else None,
                     request_context=request_context,
                 )
-                result = await memory.submit_async_refresh_mental_model(
-                    bank_id=bank_id,
-                    mental_model_id=mental_model["id"],
-                    request_context=request_context,
-                )
-                operation_ids.append(result["operation_id"])
+                if enqueue_initial_refresh:
+                    result = await memory.submit_async_refresh_mental_model(
+                        bank_id=bank_id,
+                        mental_model_id=mental_model["id"],
+                        request_context=request_context,
+                    )
+                    operation_ids.append(result["operation_id"])
                 created_ids.append(mm.id)
 
     directives_created: list[str] = []

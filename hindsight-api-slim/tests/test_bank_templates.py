@@ -1,13 +1,20 @@
 """Integration tests for bank template import/export endpoints."""
 
 from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.api.http import BankTemplateManifest, validate_bank_template
+from hindsight_api.api.http import (
+    BankTemplateManifest,
+    apply_bank_template_manifest,
+    apply_default_bank_template_resources,
+    validate_bank_template,
+)
 from hindsight_api.models import RequestContext
 
 
@@ -632,6 +639,7 @@ class TestDefaultBankTemplateEnvVar:
                     "id": "default-env-model",
                     "name": "Default Env Model",
                     "source_query": "What is the default?",
+                    "trigger": {"refresh_after_consolidation": True},
                 },
             ],
             "directives": [
@@ -657,6 +665,94 @@ class TestDefaultBankTemplateEnvVar:
         raw = _get_raw_config()
         monkeypatch.setattr(raw, "default_bank_template", default_template)
         yield default_template
+
+    @pytest.mark.asyncio
+    async def test_default_template_resources_do_not_refresh_empty_bank(self, default_template):
+        """Default resources wait for the bank's first consolidation before refreshing."""
+        memory = SimpleNamespace(
+            list_mental_models=AsyncMock(return_value=SimpleNamespace(items=[])),
+            list_directives=AsyncMock(return_value=SimpleNamespace(items=[])),
+            create_mental_model=AsyncMock(return_value={"id": "default-env-model"}),
+            create_directive=AsyncMock(),
+            submit_async_refresh_mental_model=AsyncMock(return_value={"operation_id": "empty-bank-refresh"}),
+        )
+
+        await apply_default_bank_template_resources(
+            memory=memory,
+            bank_id="empty-bank",
+            manifest=BankTemplateManifest.model_validate(default_template),
+            request_context=RequestContext(),
+        )
+
+        memory.create_mental_model.assert_awaited_once()
+        memory.submit_async_refresh_mental_model.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_manual_default_template_keeps_initial_refresh(self):
+        """Manual default models still get their only automatic initialization opportunity."""
+        memory = SimpleNamespace(
+            list_mental_models=AsyncMock(return_value=SimpleNamespace(items=[])),
+            create_mental_model=AsyncMock(return_value={"id": "manual-model"}),
+            submit_async_refresh_mental_model=AsyncMock(return_value={"operation_id": "manual-refresh"}),
+        )
+        manifest = BankTemplateManifest.model_validate(
+            {
+                "version": "1",
+                "mental_models": [
+                    {
+                        "id": "manual-model",
+                        "name": "Manual Model",
+                        "source_query": "What should initialize once?",
+                    }
+                ],
+            }
+        )
+
+        await apply_default_bank_template_resources(
+            memory=memory,
+            bank_id="empty-bank",
+            manifest=manifest,
+            request_context=RequestContext(),
+        )
+
+        memory.submit_async_refresh_mental_model.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_client_template_import_still_refreshes_mental_models(self):
+        """Client-requested imports preserve their immediate refresh behavior."""
+        authorization = MagicMock()
+        authorization.__aenter__ = AsyncMock(return_value=None)
+        authorization.__aexit__ = AsyncMock(return_value=None)
+        memory = SimpleNamespace(
+            get_bank_profile=AsyncMock(return_value={"bank_id": "existing-bank"}),
+            list_mental_models=AsyncMock(return_value=SimpleNamespace(items=[])),
+            bank_template_import_authorization=MagicMock(return_value=authorization),
+            create_mental_model=AsyncMock(return_value={"id": "client-model"}),
+            submit_async_refresh_mental_model=AsyncMock(return_value={"operation_id": "client-refresh"}),
+        )
+        manifest = BankTemplateManifest.model_validate(
+            {
+                "version": "1",
+                "mental_models": [
+                    {
+                        "id": "client-model",
+                        "name": "Client Model",
+                        "source_query": "What did the client request?",
+                        "trigger": {"refresh_after_consolidation": True},
+                    }
+                ],
+            }
+        )
+
+        response = await apply_bank_template_manifest(
+            memory=memory,
+            bank_id="existing-bank",
+            manifest=manifest,
+            request_context=RequestContext(),
+        )
+
+        memory.submit_async_refresh_mental_model.assert_awaited_once()
+        assert response.operation_ids == ["client-refresh"]
 
     @pytest.mark.asyncio
     async def test_default_template_applied_on_new_bank(self, api_client, bank_id, _patched_default_template):
