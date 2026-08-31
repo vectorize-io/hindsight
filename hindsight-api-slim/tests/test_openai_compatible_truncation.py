@@ -38,7 +38,7 @@ def _make_llm() -> OpenAICompatibleLLM:
     )
 
 
-def _response(content: str, finish_reason: str):
+def _response(content: str, finish_reason: str) -> types.SimpleNamespace:
     return types.SimpleNamespace(
         choices=[
             types.SimpleNamespace(
@@ -101,7 +101,13 @@ async def test_structured_call_raises_output_too_long_without_retrying():
 @pytest.mark.asyncio
 async def test_freeform_call_raises_output_too_long_instead_of_returning_truncated_text():
     """Without a response_format there is no parse step, so a truncated body used to
-    be returned as a complete answer with nothing to signal the cut."""
+    be returned as a complete answer with nothing to signal the cut.
+
+    This is the shape every free-form scope takes -- reflect synthesis, a mental-model
+    page. Those have no ``OutputTooLongError`` handler, so raising here turns a
+    silently-cut answer into a failed call. That is the deliberate trade recorded at
+    the raise site in ``_content_or_error``, not an oversight.
+    """
     llm = _make_llm()
 
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
