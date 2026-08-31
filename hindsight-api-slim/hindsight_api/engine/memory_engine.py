@@ -7719,9 +7719,6 @@ class MemoryEngine(MemoryEngineInterface):
                         context=sr.retrieval.context or "",
                         event_date=sr.retrieval.occurred_start,
                         is_entry_point=(sr.id in [ep.node_id for ep in tracer.entry_points]),
-                        parent_node_id=None,  # In parallel retrieval, there's no clear parent
-                        link_type=None,
-                        link_weight=None,
                         activation=sr.candidate.rrf_score,  # Use RRF score as activation
                         semantic_similarity=sr.retrieval.similarity or 0.0,
                         recency=sr.recency,
