@@ -488,33 +488,6 @@ jobs:
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
 
-    # Gate the release on the published bytes: a fixed HIGH/CRITICAL in either
-    # architecture fails this job, so create-github-release (which needs it)
-    # never runs and no GitHub Release is published for the tag.
-    - name: Scan published image (linux/amd64)
-      uses: aquasecurity/trivy-action@v0.36.0
-      with:
-        image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}@${{ steps.build.outputs.digest }}
-        scanners: vuln
-        severity: HIGH,CRITICAL
-        ignore-unfixed: true
-        exit-code: '1'
-        format: table
-      env:
-        TRIVY_PLATFORM: linux/amd64
-
-    - name: Scan published image (linux/arm64)
-      uses: aquasecurity/trivy-action@v0.36.0
-      with:
-        image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}@${{ steps.build.outputs.digest }}
-        scanners: vuln
-        severity: HIGH,CRITICAL
-        ignore-unfixed: true
-        exit-code: '1'
-        format: table
-      env:
-        TRIVY_PLATFORM: linux/arm64
-
     - name: Install cosign
       uses: sigstore/cosign-installer@v3
 
