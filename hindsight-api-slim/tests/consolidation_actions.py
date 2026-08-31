@@ -36,7 +36,6 @@ async def create_observation(
     occurred_end=None,
     mentioned_at=None,
     perf=None,
-    txn=None,
 ) -> dict[str, Any]:
     """Preflight + embed off-connection, then insert in one short transaction."""
     async with C.acquire_with_retry(pool) as conn:
@@ -58,7 +57,6 @@ async def create_observation(
                 occurred_end=occurred_end,
                 mentioned_at=mentioned_at,
                 perf=perf,
-                txn=txn,
             )
 
 
@@ -75,7 +73,6 @@ async def execute_create_action(
     occurred_end=None,
     mentioned_at=None,
     perf=None,
-    txn=None,
 ) -> str:
     """One CREATE action: returns "created" or "skipped", as the batch executor sees it."""
     created = await create_observation(
@@ -90,7 +87,6 @@ async def execute_create_action(
         occurred_end=occurred_end,
         mentioned_at=mentioned_at,
         perf=perf,
-        txn=txn,
     )
     new_id = created.get("observation_id")
     if new_id:
@@ -110,7 +106,6 @@ async def execute_update_action(
     source_fact_tags: list[str] | None = None,
     source_bounds: C._TemporalBounds = C._TemporalBounds(),
     perf=None,
-    txn=None,
 ) -> str | None:
     """One UPDATE action: returns the observation's new embedding, or None if skipped."""
     model = next((m for m in observations if str(m.id) == observation_id), None)
@@ -141,7 +136,6 @@ async def execute_update_action(
                 bank_id=bank_id,
                 prepared=prepared,
                 perf=perf,
-                txn=txn,
             )
 
 
@@ -155,7 +149,6 @@ async def dedup_reconcile_update(
     updated_text: str,
     updated_emb_str: str | None,
     tags: list[str] | None,
-    txn=None,
 ) -> bool:
     """UPDATE-path dedup: adjudicate off-connection, then fold in one transaction."""
     outcome = await C._dedup_adjudicate(
@@ -172,5 +165,5 @@ async def dedup_reconcile_update(
     async with C.acquire_with_retry(pool) as conn:
         async with conn.transaction():
             return await C._apply_dedup_update_fold(
-                conn, memory_engine, bank_id, config, outcome, updated_id, updated_text, txn=txn
+                conn, memory_engine, bank_id, config, outcome, updated_id, updated_text
             )

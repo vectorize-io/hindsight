@@ -3,8 +3,8 @@
 A retain into a store-owned bank writes nothing to Postgres. What kept it holding a pooled
 connection anyway was two reads that are the same on every call for the life of a bank:
 
-    SELECT name, disposition, mission FROM banks WHERE bank_id = $1   -- the narrator name
-    SELECT config FROM banks WHERE bank_id = $1                       -- the resolved bank config
+    SELECT name, disposition, mission FROM {fq_table("banks")} WHERE bank_id = $1  -- the profile
+    SELECT config FROM {fq_table("banks")} WHERE bank_id = $1                      -- its config
 
 Neither is free. Each is a pool acquire, and an acquire costs more than the query it carries:
 the pool runs five ``set_config`` calls on checkout and a full ``RESET ALL`` on release, so one
