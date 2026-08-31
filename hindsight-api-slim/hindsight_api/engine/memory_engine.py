@@ -8312,10 +8312,18 @@ class MemoryEngine(MemoryEngineInterface):
         - The document's own units and any co-source memories from other documents
           have consolidated_at reset so they are re-consolidated under the new tags.
 
+        That cascade is required: consolidation scopes a memory by its tags, so an
+        observation built under the old tag set is no longer valid, and deleting it
+        strands every OTHER source that observation carried unless they are requeued
+        too. It only runs when the tag set actually changes — a PATCH re-sending the
+        tags the document already has (an idempotent normalisation sweep) is a no-op.
+
         Args:
             document_id: Document ID to update
             bank_id: Bank ID that owns the document
-            tags: New tags to apply to the document and all its memory units (optional)
+            tags: New tags to apply to the document and all its memory units (optional).
+                Compared as a set against the document's current tags; equal means no
+                retag and no re-consolidation.
             request_context: Request context for authentication.
 
         Returns:
@@ -8333,6 +8341,51 @@ class MemoryEngine(MemoryEngineInterface):
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                from .memories import MemoryPatch, get_memories
+
+                _store = get_memories()
+
+                # Read the tags the document already carries BEFORE overwriting them.
+                # A tags array equal to the current one is a semantic no-op, and a bulk
+                # tag-normalisation sweep re-sends an identical array on every run. The
+                # retag cascade below is not cheap enough to pay for that: it deletes
+                # every observation built over this document's memories and then
+                # requeues each of those observations' OTHER sources, so one no-op
+                # PATCH re-consolidates memories reaching well past the document
+                # itself, and a repeated sweep multiplies that by its document count.
+                # Compare as SETS — consolidation scopes a memory by its tag set, never
+                # by the order the array arrived in, so a reordered array changes
+                # nothing that consolidation can observe.
+                _doc_row = await conn.fetchrow(
+                    f"SELECT tags FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                    document_id,
+                    bank_id,
+                )
+                _store_record: dict[str, Any] | None = None
+                if _doc_row is not None:
+                    current_tags: list[str] | None = list(_doc_row["tags"] or [])
+                elif _store.owns_document_store_for(bank_id):
+                    # Store-owned bank: no SQL documents row exists, the tags live on
+                    # the store's record. Fetched once here and reused below.
+                    _store_record = await _store.get_document_record(bank_id=bank_id, document_id=document_id)
+                    # A record that does not carry a "tags" key at all is unreadable for
+                    # this purpose, not empty — collapsing it to [] would read a PATCH of
+                    # [] as "unchanged" and skip a real clear-the-tags request.
+                    current_tags = (
+                        list(_store_record["tags"] or [])
+                        if _store_record is not None and "tags" in _store_record
+                        else None
+                    )
+                else:
+                    current_tags = None
+
+                # `None` means "could not read the current tags" (document not found, or
+                # a store record that does not carry them) — never claim unchanged on a
+                # value we did not see, or a real retag would be silently skipped.
+                retag = (
+                    tags if (tags is not None and (current_tags is None or set(current_tags) != set(tags))) else None
+                )
+
                 set_parts: list[str] = ["updated_at = now()"]
                 params: list[Any] = []
                 p = 1
@@ -8352,9 +8405,6 @@ class MemoryEngine(MemoryEngineInterface):
                     """,
                     *params,
                 )
-                from .memories import MemoryPatch, get_memories
-
-                _store = get_memories()
                 if not doc_id_found:
                     # A store-owned bank writes NO Postgres documents row, so the UPDATE above
                     # matched nothing and `doc_id_found` is None for a document that plainly
@@ -8364,13 +8414,13 @@ class MemoryEngine(MemoryEngineInterface):
                     # Drive existence off the STORE instead, the same way document DELETE had to.
                     if not _store.owns_document_store_for(bank_id):
                         return False
-                    if await _store.get_document_record(bank_id=bank_id, document_id=document_id) is None:
+                    if _store_record is None:
                         return False
                     if tags is not None:
                         # The document's OWN tags live on the store's record; the memories are
                         # retagged separately below. Both, or the browser shows one of them stale.
                         await _store.set_document_tags(bank_id=bank_id, document_id=document_id, tags=list(tags))
-                if tags is not None and not _store.writes_memory_rows_in_sql_for(bank_id):
+                if retag is not None and not _store.writes_memory_rows_in_sql_for(bank_id):
                     # A store that keeps memories outside SQL: retag the document's memories, then
                     # invalidate the observations built on them and requeue their sources so the
                     # next consolidation rebuilds them under the new tags (the cascade the SQL
@@ -8381,7 +8431,7 @@ class MemoryEngine(MemoryEngineInterface):
                     _doc_units = _doc_page.memories
                     if _doc_units:
                         await _store.update_memories(
-                            bank_id, [MemoryPatch(unit_id=m.unit_id, tags=list(tags)) for m in _doc_units]
+                            bank_id, [MemoryPatch(unit_id=m.unit_id, tags=list(retag)) for m in _doc_units]
                         )
                     _src_ids = [m.unit_id for m in _doc_units if m.fact_type in ("experience", "world")]
                     if _src_ids:
@@ -8391,7 +8441,7 @@ class MemoryEngine(MemoryEngineInterface):
                         await _store.mark_consolidated(
                             conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=_src_ids, when=None
                         )
-                elif tags is not None:
+                elif retag is not None:
                     unit_rows = await conn.fetch(
                         f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND bank_id = $2 AND fact_type IN ('experience', 'world')",
                         document_id,
@@ -8402,7 +8452,7 @@ class MemoryEngine(MemoryEngineInterface):
                     await conn.execute(
                         f"UPDATE {fq_table('memory_units')} SET tags = $1, updated_at = now() "
                         f"WHERE document_id = $2 AND bank_id = $3",
-                        tags,
+                        retag,
                         document_id,
                         bank_id,
                     )
