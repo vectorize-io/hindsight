@@ -12,6 +12,7 @@ import pytest
 from hindsight_api.engine.memory_engine import (
     MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
+    _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
     fq_table,
 )
@@ -2415,10 +2416,15 @@ class TestMentalModelRefreshMaxTokens:
         engine._mental_model_refresh_cutoff = AsyncMock(  # type: ignore[method-assign]
             return_value=datetime(2026, 1, 1, tzinfo=timezone.utc)
         )
-        engine._mental_model_processed_watermark = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        # This bank has memories to reflect over; the empty-scope short-circuit
-        # (#3875) is exercised by TestRefreshSkipsEmptyScope below.
-        engine._mental_model_refresh_has_sources = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        # A scope with a memory in it: the reading this returns is also what decides
+        # whether the refresh has anything to reflect over (#3875), so a stub saying
+        # "empty" would skip the reflect call this test asserts on. The short-circuit
+        # itself is covered by TestRefreshSkipsEmptyScope below.
+        engine._mental_model_scope_watermark = AsyncMock(  # type: ignore[method-assign]
+            return_value=_MentalModelScopeWatermark(
+                newest_in_scope=datetime(2025, 12, 1, tzinfo=timezone.utc), watermark=None
+            )
+        )
 
         await engine.refresh_mental_model(
             bank_id="bank-1",
