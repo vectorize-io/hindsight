@@ -1818,6 +1818,11 @@ jobs:
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # The real-LLM delta/retraction/cache evals gate on this flag *and* a key. The
+      # key was already set here, so they sat skipped and the mental-model delta path —
+      # the one that hands a provider a schema it has to accept — had no end-to-end
+      # coverage anywhere. Found while landing the structured-output change (#3937).
+      HINDSIGHT_RUN_GEMINI_EVALS: "1"
 
     steps:
     - uses: actions/checkout@v6
