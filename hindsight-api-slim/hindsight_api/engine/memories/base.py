@@ -1827,6 +1827,69 @@ class MemoriesExtension(Extension, ABC):
     async def graph_direct_links(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[dict[str, Any]]:
         """Memory-to-memory edges among ``unit_ids`` for the graph view."""
 
+    async def graph_view(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        fact_type: "str | list[str] | None" = None,
+        search_query: str | None = None,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: str = "all_strict",
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """Everything one graph render reads, in one pass:
+        ``{"units", "total", "links", "entity_rows"}``.
+
+        The three questions are about ONE set of memories — which are visible, how they link, and
+        what they mention — and against a store that keeps memories outside SQL they are all
+        answered by the same records. Asked separately, the visible set is read, then read again to
+        pick its edges off, then a third time for its entity ids. Asked together, once.
+
+        This default composes the parts, which is right where they really are different queries
+        (SQL joins different tables per question). A store that would re-read overrides it.
+
+        ``entity_rows`` covers the units AND their source memories, because an observation borrows
+        its sources' entities for the render.
+        """
+        page = await self.graph_units(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            fact_type=fact_type,
+            search_query=search_query,
+            document_id=document_id,
+            chunk_id=chunk_id,
+            tags=tags,
+            tags_match=tags_match,
+            limit=limit,
+        )
+        units = page["units"]
+        ids = [str(row["id"]) for row in units]
+        sources = sorted({str(s) for row in units for s in (row["source_memory_ids"] or [])})
+        links, entity_rows = await self.graph_links_and_entities(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=ids + sources
+        )
+        return {"units": units, "total": page["total"], "links": links, "entity_rows": entity_rows}
+
+    async def graph_links_and_entities(
+        self, *, conn, fq_table, bank_id: str, unit_ids: list[str]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """``(direct_links, entity_rows)`` for the same ``unit_ids``, in one pass.
+
+        The graph view asks both questions about exactly one set of memories, and a store that
+        keeps memories outside SQL answers both from the same records — so asking separately reads
+        the whole set twice for a single render. This default keeps that shape for stores where the
+        two really are different queries (SQL joins different tables); a store that would re-read
+        overrides it and reads once.
+        """
+        links = await self.graph_direct_links(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        entities = await self.graph_entity_rows(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return links, entities
+
     # ------------------------------------------------------------------ observations
 
     async def upsert_observation(self, *, conn, bank_id: str, record: FactRecord) -> None:
