@@ -135,6 +135,71 @@ export interface MemoryItemInput {
 }
 
 /**
+ * Refresh settings for a mental model or knowledge page, in this client's
+ * camelCase style.
+ *
+ * One shape for every method that takes a trigger, so a setting exposed on
+ * creation is also settable on update: `updateMentalModel` used to accept two
+ * of these fields and `createMentalModel` four, which left the rest reachable
+ * only by calling the generated SDK directly.
+ */
+export interface MentalModelTriggerOptions {
+  /** `full` regenerates the content from scratch on each refresh; `delta` edits the existing content in place. */
+  mode?: "full" | "delta";
+  refreshAfterConsolidation?: boolean;
+  /** Cron expression (UTC, 5-field). Mutually exclusive with refreshAfterConsolidation; null removes a schedule. */
+  refreshCron?: string | null;
+  /** Floor, in seconds, on how often an automatic refresh of this model may run. A trigger firing sooner is queued and parked until the window closes, and further triggers fold into it, so a burst of retains costs one refresh. Explicit refreshes ignore it. 0 disables the floor for this model; omit to inherit the bank/global default. */
+  minRefreshIntervalSeconds?: number;
+  /** Which fact types refresh retrieves. Omit for all of them. */
+  factTypes?: Array<"world" | "experience" | "observation">;
+  /** Skip the search_mental_models tool during refresh, so this model does not reflect over its siblings. */
+  excludeMentalModels?: boolean;
+  excludeMentalModelIds?: string[];
+  /** How this model's tags filter source memories on refresh. If omitted, a tagged model defaults to 'all_strict' (a memory must carry every one of the model's tags), which silently drops memories that only carry a subset. Set 'any' to match memories carrying any of the tags — the same default recall/reflect use. */
+  tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+  /** Compound tag filter using boolean groups; overrides the model's flat tags/tagsMatch during refresh. */
+  tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+  includeChunks?: boolean;
+  recallMaxTokens?: number;
+  recallChunksMaxTokens?: number;
+  /** JSON Schema for structured output, stored alongside the markdown content. */
+  responseSchema?: Record<string, unknown>;
+  /** Record how each refresh reached its result under reflect_response.trace. */
+  keepTrace?: boolean;
+}
+
+/**
+ * Map the camelCase trigger options onto the snake_case request body.
+ *
+ * Every key is emitted, and the ones the caller omitted are `undefined`, which
+ * JSON serialization drops. That is what keeps a partial trigger partial: the
+ * server patches a trigger over the stored one and reads "named" from the
+ * fields the request actually carried (#3506/#3549), so a mapper that filled in
+ * its own defaults would silently reset the settings the caller never mentioned
+ * — the trap the Python wrapper fell into, where the generated model's
+ * defaults rode along on every request.
+ */
+function toTriggerBody(trigger: MentalModelTriggerOptions): MentalModelTriggerInput {
+  return {
+    mode: trigger.mode,
+    refresh_after_consolidation: trigger.refreshAfterConsolidation,
+    refresh_cron: trigger.refreshCron,
+    min_refresh_interval_seconds: trigger.minRefreshIntervalSeconds,
+    fact_types: trigger.factTypes,
+    exclude_mental_models: trigger.excludeMentalModels,
+    exclude_mental_model_ids: trigger.excludeMentalModelIds,
+    tags_match: trigger.tagsMatch,
+    tag_groups: trigger.tagGroups,
+    include_chunks: trigger.includeChunks,
+    recall_max_tokens: trigger.recallMaxTokens,
+    recall_chunks_max_tokens: trigger.recallChunksMaxTokens,
+    response_schema: trigger.responseSchema,
+    keep_trace: trigger.keepTrace,
+  };
+}
+
+/**
  * Warn when a caller-supplied operationId will be silently ignored.
  *
  * operationId only enables idempotent retries for asynchronous retain; on a
@@ -893,15 +958,7 @@ export class HindsightClient {
       id?: string;
       tags?: string[];
       maxTokens?: number;
-      trigger?: {
-        refreshAfterConsolidation?: boolean;
-        /** Floor, in seconds, on how often an automatic refresh of this model may run. A trigger firing sooner is queued and parked until the window closes, and further triggers fold into it, so a burst of retains costs one refresh. Explicit refreshes ignore it. 0 disables the floor for this model; omit to inherit the bank/global default. */
-        minRefreshIntervalSeconds?: number;
-        /** How this model's tags filter source memories on refresh. If omitted, a tagged model defaults to 'all_strict' (a memory must carry every one of the model's tags), which silently drops memories that only carry a subset. Set 'any' to match memories carrying any of the tags — the same default recall/reflect use. */
-        tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
-        /** Compound tag filter using boolean groups; overrides the model's flat tags/tagsMatch during refresh. */
-        tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
-      };
+      trigger?: MentalModelTriggerOptions;
       signal?: AbortSignal;
     }
   ): Promise<CreateMentalModelResponse> {
@@ -914,14 +971,7 @@ export class HindsightClient {
         source_query: sourceQuery,
         tags: options?.tags,
         max_tokens: options?.maxTokens,
-        trigger: options?.trigger
-          ? {
-              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
-              min_refresh_interval_seconds: options.trigger.minRefreshIntervalSeconds,
-              tags_match: options.trigger.tagsMatch,
-              tag_groups: options.trigger.tagGroups,
-            }
-          : undefined,
+        trigger: options?.trigger ? toTriggerBody(options.trigger) : undefined,
       },
       signal: options?.signal,
     });
@@ -1051,7 +1101,9 @@ export class HindsightClient {
       sourceQuery?: string;
       tags?: string[];
       maxTokens?: number;
-      trigger?: { refreshAfterConsolidation?: boolean; minRefreshIntervalSeconds?: number };
+      /** Refresh settings to change. Applied as a patch: the fields you send are updated
+       *  and the rest keep the model's current values. */
+      trigger?: MentalModelTriggerOptions;
       signal?: AbortSignal;
     }
   ): Promise<MentalModelResponse> {
@@ -1063,12 +1115,7 @@ export class HindsightClient {
         source_query: options.sourceQuery,
         tags: options.tags,
         max_tokens: options.maxTokens,
-        trigger: options.trigger
-          ? {
-              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
-              min_refresh_interval_seconds: options.trigger.minRefreshIntervalSeconds,
-            }
-          : undefined,
+        trigger: options.trigger ? toTriggerBody(options.trigger) : undefined,
       },
       signal: options.signal,
     });
@@ -1170,19 +1217,7 @@ export class HindsightClient {
        */
       tags?: string[];
       maxTokens?: number;
-      trigger?: {
-        mode?: "full" | "delta";
-        refreshAfterConsolidation?: boolean;
-        refreshCron?: string | null;
-        factTypes?: Array<"world" | "experience" | "observation">;
-        excludeMentalModels?: boolean;
-        excludeMentalModelIds?: string[];
-        tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
-        tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
-        includeChunks?: boolean;
-        recallMaxTokens?: number;
-        recallChunksMaxTokens?: number;
-      };
+      trigger?: MentalModelTriggerOptions;
       signal?: AbortSignal;
     }
   ): Promise<CreateKnowledgePageResponse> {
@@ -1195,21 +1230,7 @@ export class HindsightClient {
         parent_id: options?.parentId,
         tags: options?.tags,
         max_tokens: options?.maxTokens,
-        trigger: options?.trigger
-          ? {
-              mode: options.trigger.mode,
-              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
-              refresh_cron: options.trigger.refreshCron,
-              fact_types: options.trigger.factTypes,
-              exclude_mental_models: options.trigger.excludeMentalModels,
-              exclude_mental_model_ids: options.trigger.excludeMentalModelIds,
-              tags_match: options.trigger.tagsMatch,
-              tag_groups: options.trigger.tagGroups,
-              include_chunks: options.trigger.includeChunks,
-              recall_max_tokens: options.trigger.recallMaxTokens,
-              recall_chunks_max_tokens: options.trigger.recallChunksMaxTokens,
-            }
-          : undefined,
+        trigger: options?.trigger ? toTriggerBody(options.trigger) : undefined,
       },
       signal: options?.signal,
     });

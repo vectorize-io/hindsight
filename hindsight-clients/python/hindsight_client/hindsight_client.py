@@ -81,6 +81,35 @@ def _warn_if_operation_id_dropped(retain_async: bool, operation_id: str | None) 
         )
 
 
+def _trigger_input(trigger: dict[str, Any]) -> Any:
+    """Build a MentalModelTriggerInput carrying ONLY the settings the caller named.
+
+    The routes that take a trigger patch it over what is already there — the
+    page defaults on page creation, the stored trigger on either update — and
+    they read "named" from the fields the request actually carried
+    (``model_dump(exclude_unset=True)``, #3506/#3549). The generated model
+    defeats that on its own: ``to_dict`` drops ``None`` but keeps defaults, so a
+    caller asking for one setting also shipped ``mode="full"``,
+    ``refresh_after_consolidation=False``, ``exclude_mental_models=False`` and
+    ``keep_trace=False`` — quietly rebuilding a delta page from scratch, over
+    its sibling pages, which is the very bug #3506 fixed one layer up.
+
+    Passing ``None`` for the defaulted fields the caller left out makes
+    ``to_dict`` drop them. Only fields whose default is non-None need this: a
+    nullable field left unset is already omitted, while explicitly passing it as
+    ``None`` would serialize a null and clear the stored value.
+    """
+    from hindsight_client_api.models import mental_model_trigger_input
+
+    model = mental_model_trigger_input.MentalModelTriggerInput
+    unnamed_defaults = {
+        name: None
+        for name, field in model.model_fields.items()
+        if name not in trigger and field.default is not None
+    }
+    return model(**unnamed_defaults, **trigger)
+
+
 class Hindsight:
     """
     High-level, easy-to-use Hindsight API client.
@@ -1233,11 +1262,9 @@ class Hindsight:
         Returns:
             CreateMentalModelResponse with operation_id
         """
-        from hindsight_client_api.models import create_mental_model_request, mental_model_trigger_input
+        from hindsight_client_api.models import create_mental_model_request
 
-        trigger_obj = None
-        if trigger:
-            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+        trigger_obj = _trigger_input(trigger) if trigger else None
 
         request_obj = create_mental_model_request.CreateMentalModelRequest(
             id=id,
@@ -1395,11 +1422,9 @@ class Hindsight:
         Returns:
             MentalModelResponse
         """
-        from hindsight_client_api.models import mental_model_trigger_input, update_mental_model_request
+        from hindsight_client_api.models import update_mental_model_request
 
-        trigger_obj = None
-        if trigger:
-            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+        trigger_obj = _trigger_input(trigger) if trigger else None
 
         request_obj = update_mental_model_request.UpdateMentalModelRequest(
             name=name,
@@ -1518,11 +1543,9 @@ class Hindsight:
         Returns:
             CreateKnowledgePageResponse with page_id, mental_model_id and operation_id
         """
-        from hindsight_client_api.models import create_page_request, mental_model_trigger_input
+        from hindsight_client_api.models import create_page_request
 
-        trigger_obj = None
-        if trigger:
-            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+        trigger_obj = _trigger_input(trigger) if trigger else None
 
         request_obj = create_page_request.CreatePageRequest(
             name=name,
@@ -1620,7 +1643,10 @@ class Hindsight:
         if max_tokens is not None:
             fields["max_tokens"] = max_tokens
         if trigger is not None:
-            fields["trigger"] = trigger
+            # Built through the helper rather than handed over as a dict: pydantic
+            # would fill the unnamed fields with the model's defaults and the page
+            # would lose the settings this patch never mentioned.
+            fields["trigger"] = _trigger_input(trigger)
 
         request_obj = update_node_request.UpdateNodeRequest(**fields)
 
