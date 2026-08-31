@@ -85,7 +85,17 @@ export function buildMcpServer(tools: ToolSpec[]): McpServer {
   }
 
   for (const tool of tools) {
-    server.tool(tool.name, tool.description, tool.inputSchema, tool.handler);
+    // registerTool (not the deprecated `tool()`) so the read-only annotation reaches the client:
+    // Dcode rejects unannotated MCP calls outright in headless mode. See ToolSpec.readOnly.
+    server.registerTool(
+      tool.name,
+      {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        ...(tool.readOnly ? { annotations: { readOnlyHint: true, destructiveHint: false } } : {}),
+      },
+      tool.handler
+    );
   }
   return server;
 }

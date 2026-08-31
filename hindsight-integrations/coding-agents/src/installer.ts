@@ -753,7 +753,9 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
     const pkgJson = join(c.pkgRoot, "package.json");
     if (existsSync(pkgJson)) copyFileSync(pkgJson, join(target, "package.json"));
-    for (const resource of ["plugin.json", "hooks", ".agents"]) {
+    // The Dcode Agent Plugin surface: its manifest and the hooks document the manifest points at.
+    // (Both are listed in package.json#files, so they exist in a published install too.)
+    for (const resource of ["plugin.json", "hooks"]) {
       const source = join(c.pkgRoot, resource);
       if (existsSync(source)) cpSync(source, join(target, resource), { recursive: true });
     }
@@ -1273,7 +1275,6 @@ function prepareDcodeMarketplace(c: InstallCtx): string | false {
     }
   }
   if (path !== conventionalPath && existsSync(path)) {
-    registrationSource = path;
     try {
       const parsed = JSON.parse(readFileSync(path, "utf8"));
       if (
@@ -1336,8 +1337,18 @@ const dcode: HarnessInstaller = {
   uninstall(c) {
     const plugin = c.dcodePlugin ?? runDcodePlugin;
     const removed = plugin(["plugin", "uninstall", DCODE_PLUGIN_ID]);
+    // Also retire the marketplace WE registered. `plugin uninstall` alone leaves it listed by
+    // `dcode plugin marketplace list` and the plugin itself listed as `disabled` — our own
+    // leftovers in Dcode's state, not foreign state we are obliged to preserve. Only ours is
+    // named DCODE_MARKETPLACE, so a foreign marketplace at the conventional path is untouched.
+    const marketplaceRemoved = plugin(["plugin", "marketplace", "remove", DCODE_MARKETPLACE]);
     if (removed) {
       c.log?.("dcode: native Agent Plugin removed (foreign ~/.deepagents state preserved)");
+      if (!marketplaceRemoved) {
+        c.log?.(
+          `dcode: the ${DCODE_MARKETPLACE} marketplace is still registered — remove it with \`dcode plugin marketplace remove ${DCODE_MARKETPLACE}\``
+        );
+      }
     } else {
       c.log?.(`dcode: could not run native uninstall for ${DCODE_PLUGIN_ID}`);
     }

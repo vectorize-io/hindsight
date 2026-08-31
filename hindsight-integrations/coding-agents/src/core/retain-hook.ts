@@ -44,6 +44,12 @@ export interface RetainHookEventFields {
  *  schemas, so each harness supplies its own reader (default: Claude). */
 export type TranscriptReader = (path: string) => TransportTurn[];
 
+/** Normalize a harness's `lastAssistantMessage` into the same text its transcript reader would
+ *  produce for that message. Harness-specific because the field is not always prose: Dcode sends
+ *  `str(content)`, a Python repr, whenever the provider returns content blocks. Defaults to
+ *  identity for harnesses that send the reply verbatim. */
+export type LastMessageReader = (raw: string) => string;
+
 export interface RetainHookSpec {
   /** Harness name — config `harnesses.<name>` section, {harness} template field, diag records. */
   harness: string;
@@ -56,6 +62,8 @@ export interface RetainHookSpec {
   parse(event: Record<string, unknown>): RetainHookEventFields;
   /** Harness-specific transcript parser. Defaults to the Claude JSONL reader. */
   readTranscript?: TranscriptReader;
+  /** Harness-specific decoder for `lastAssistantMessage`. Defaults to identity. */
+  readLastMessage?: LastMessageReader;
 }
 
 /** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. The
@@ -78,6 +86,7 @@ export async function buildRetain(args: {
   client: RetainClient;
   readTranscript?: TranscriptReader;
   lastAssistantMessage?: string;
+  readLastMessage?: LastMessageReader;
   /** Configured retainTags/retainMetadata, already resolved for this session (core/retain-stamp.ts). */
   stamp?: RetainStamp;
   /** Injectable for tests; defaults to the per-session temp file (a Stop hook has no memory). */
@@ -89,12 +98,17 @@ export async function buildRetain(args: {
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
 
   const turns = readTranscript(transcriptPath);
-  const lastAssistantMessage = args.lastAssistantMessage
-    ? stripInjectedMemory(args.lastAssistantMessage).trim()
+  // Decode BEFORE stripping/trimming: the raw field can be a serialized content-block list rather
+  // than prose (see LastMessageReader), and the injected-memory tags live inside its text blocks.
+  const decoded = args.lastAssistantMessage
+    ? (args.readLastMessage ?? ((raw: string) => raw))(args.lastAssistantMessage)
     : "";
+  const lastAssistantMessage = stripInjectedMemory(decoded).trim();
   // Dcode materializes before Stop handlers run, so its final response can be absent from the
   // file. Dedupe by adjacent content because the same response is present after a flush on some
   // runs; this keeps repeated Stop delivery idempotent without dropping a legitimate later reply.
+  // The decode above is what makes that compare meaningful — both sides now join text blocks the
+  // same way, so an already-flushed reply matches instead of being appended twice.
   if (lastAssistantMessage && turns.at(-1)?.content !== lastAssistantMessage) {
     turns.push({
       role: "assistant",
@@ -185,6 +199,7 @@ export async function runRetainHook(
     client,
     readTranscript: spec.readTranscript,
     lastAssistantMessage,
+    readLastMessage: spec.readLastMessage,
     retryUntil: hostDeadline,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,

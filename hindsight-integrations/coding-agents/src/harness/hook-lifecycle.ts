@@ -13,7 +13,7 @@ import { readAntigravityTranscript } from "../core/transcript-antigravity";
 import { readCopilotTranscript } from "../core/transcript-copilot";
 import { grokTranscriptPath, readGrokTranscript } from "../core/transcript-grok";
 import { readDevinTranscript } from "../core/transcript-devin";
-import { readDcodeTranscript } from "../core/transcript-dcode";
+import { dcodeAssistantText, readDcodeTranscript } from "../core/transcript-dcode";
 
 export type HookHarnessName =
   | "claude-code"
@@ -205,6 +205,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         lastAssistantMessage: ev.last_assistant_message as string | undefined,
       }),
       readTranscript: readDcodeTranscript,
+      readLastMessage: dcodeAssistantText,
     },
   },
   "antigravity-cli": {

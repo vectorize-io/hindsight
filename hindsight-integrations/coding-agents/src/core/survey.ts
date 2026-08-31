@@ -23,6 +23,16 @@
  * Each is read-only sandboxed (prompt-injection safety, since the survey reads untrusted repo files)
  * and spawned with HINDSIGHT_DISABLE_HOOKS=1 so the survey's own session doesn't re-fire our hooks.
  *
+ * **Dcode is deliberately not on this list**, unlike its otherwise-full harness support. Its
+ * headless runtime (`dcode -n`) rejects every MCP tool that is not annotated read-only —
+ * "This MCP action requires approval, but the current headless runtime has no approval UI"
+ * (`auto_mode.py:HeadlessMCPGuardMiddleware`). `hindsight_ingest_document` writes, so it is gated
+ * by design and no flag lifts it: `--yolo`/`-y` are documented as ignored in headless mode. A
+ * survey that cannot call the one tool it exists to call would spend a model budget and ingest
+ * nothing, so Dcode falls back to another installed agent's CLI below — the same treatment as
+ * Cursor, Copilot, Devin, Grok Build, Cline, Kilo and Prime Agent. Verified against
+ * deepagents-code 0.1.65; revisit if Dcode gains a headless approval policy.
+ *
  * Fire-and-forget and fail-safe throughout, mirroring core/seed.ts's `startBackgroundSeed`: a
  * missing binary or a spawn failure must silently no-op, never crash the caller.
  */

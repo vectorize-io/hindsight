@@ -847,14 +847,27 @@ describe("dcode installer", () => {
     expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(true);
   });
 
-  it("uninstalls only the native plugin id and leaves Dcode state to Dcode", () => {
+  it("uninstalls the native plugin id and retires only OUR marketplace", () => {
     const ctx = makeCtx();
     expect(run(["uninstall", "dcode"], ctx)).toBe(0);
-    expect(ctx.dcodePlugin).toHaveBeenCalledWith([
-      "plugin",
-      "uninstall",
-      "hindsight-coding-agents@hindsight-coding-agents",
+    // `plugin uninstall` alone leaves the plugin listed as `disabled` and the marketplace still
+    // registered — our own leftovers in Dcode's state. Only the marketplace WE named is removed,
+    // so a foreign one at the conventional path is untouched.
+    expect(ctx.dcodePlugin.mock.calls.map(([args]) => args)).toEqual([
+      ["plugin", "uninstall", "hindsight-coding-agents@hindsight-coding-agents"],
+      ["plugin", "marketplace", "remove", "hindsight-coding-agents"],
     ]);
+  });
+
+  it("still reports a clean uninstall when only the marketplace removal fails", () => {
+    const ctx = makeCtx();
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    ctx.dcodePlugin.mockImplementation((args: string[]) => args[1] !== "marketplace");
+    // The plugin is gone, which is what "uninstalled" means; the stale marketplace is reported
+    // with the command to clear it rather than failing the whole run.
+    expect(run(["uninstall", "dcode"], ctx)).toBe(0);
+    expect(logs.join("\n")).toContain("dcode plugin marketplace remove hindsight-coding-agents");
   });
 });
 

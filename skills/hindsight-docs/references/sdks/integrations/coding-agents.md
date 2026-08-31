@@ -51,7 +51,7 @@ npx @vectorize-io/hindsight-coding-agents install codex
 
 3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
 
-#### DeepAgents Dcode
+####  DeepAgents Dcode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install dcode
@@ -62,6 +62,15 @@ The installer registers this package as a local marketplace with Dcode, then inv
 Hooks V2 `SessionStart`, `UserPromptSubmit`, and `Stop` lifecycle, and the namespaced
 `hindsight_*` MCP server. Enable the plugin through Dcode's normal plugin manager; no Dcode config
 patcher or compatibility bridge is required.
+
+Dcode namespaces a plugin's MCP tools, so they appear as
+`plugin__hindsight-coding-…__hindsight_…` rather than under their bare names — the agent resolves
+them from the tool guide either way. In headless runs (`dcode -n`) Dcode allows the read-only
+Hindsight tools and gates the two that write (`hindsight_ingest_document`,
+`hindsight_capture_initiative`) behind an approval it has no UI for; use the interactive TUI to
+capture an initiative or ingest a document. For the same reason the one-time codebase survey runs
+under another installed agent's CLI when there is one, exactly as it does for Cursor, Copilot,
+Devin, Grok Build, Cline, Kilo and Prime Agent.
 
 ####  opencode
 
@@ -224,9 +233,12 @@ folders after the project path) but unsafe: `/` and `.` both encode to `-`, so `
 the subdirectory `repo/sub` or an unrelated sibling repo — and a wrong guess files someone else's
 conversation into your bank. Sessions that record nothing are skipped and the count is reported.
 DeepSeek Harness logs are Zstandard-framed JSONL under `$DSH_HOME/sessions`, which needs Node 22.15+
-to read; an older Node skips the import with that reason rather than silently importing nothing. The
-other harnesses (opencode, Kilo, Cursor, Cline, Copilot, Devin) keep history in internal SQLite
-databases with unversioned schemas and are skipped with a reason.
+to read; an older Node skips the import with that reason rather than silently importing nothing.
+Dcode's transcripts record no directory at all — the working directory lives only in its LangGraph
+checkpoint database — so the repo comes from `dcode threads list --json`, a declared, versioned
+command contract rather than that internal schema; with the `dcode` CLI unavailable the import is
+skipped with that reason. The other harnesses (opencode, Kilo, Cursor, Cline, Copilot, Devin) keep
+history in internal SQLite databases with unversioned schemas and are skipped with a reason.
 
 **Nothing else is translated.** The old plugin's behavioural settings — 12 `recall*`, 7 `retain*`,
 `bankMission`/`retainMission`, `dynamicBankGranularity` — describe a pipeline this package replaced,

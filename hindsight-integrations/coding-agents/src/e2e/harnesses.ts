@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HarnessDockerSetup } from "./harness";
 import { codexDockerSetup } from "./codex";
+import { dcodeDockerSetup } from "./dcode";
 
 const home = (...parts: string[]) => join(homedir(), ...parts);
 
@@ -235,6 +236,7 @@ export const dshDockerSetup: HarnessDockerSetup = {
 /** Every harness the unified Docker E2E can drive, in a stable order. */
 export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   codexDockerSetup,
+  dcodeDockerSetup,
   opencodeDockerSetup,
   kiloDockerSetup,
   claudeCodeDockerSetup,

@@ -37,6 +37,17 @@ export interface ToolSpec {
   name: string;
   description: string;
   inputSchema: ZodRawShape;
+  /**
+   * True when the tool only READS Hindsight — no document, page or initiative is written.
+   *
+   * Surfaced to clients as MCP's standard `readOnlyHint` annotation (src/mcp-server.ts). It is not
+   * cosmetic: Dcode gates every MCP tool lacking a coherent read-only annotation behind an approval
+   * prompt, so in its headless (`dcode -n`) runtime an unannotated tool is REJECTED outright —
+   * "This MCP action requires approval, but the current headless runtime has no approval UI."
+   * Without this, recall and the knowledge-page tools were unusable in every non-interactive Dcode
+   * session. Writes stay unannotated on purpose: gating them there is the correct behaviour.
+   */
+  readOnly?: boolean;
   handler: (args: any) => Promise<ToolResult>;
 }
 
@@ -81,6 +92,7 @@ export function buildKnowledgeTools(
   return [
     {
       name: "hindsight_sync_status",
+      readOnly: true,
       description:
         "Report whether this repo's memory bank is in sync: gitlog seed present, how much recent " +
         "history has been deepened with full diffs, conversations ingested, knowledge pages " +
@@ -98,6 +110,7 @@ export function buildKnowledgeTools(
     },
     {
       name: "hindsight_diagnose",
+      readOnly: true,
       description:
         "Report safe Hindsight runtime diagnostics for this coding-agent session: resolved bank, " +
         "workspace, harness, config location, API endpoint, and non-secret environment overrides. " +
@@ -148,6 +161,7 @@ export function buildKnowledgeTools(
     },
     {
       name: "hindsight_search_knowledge_pages",
+      readOnly: true,
       description:
         "Search this repository's Hindsight knowledge pages for content relevant to a query — " +
         "hybrid full-text + semantic search, server-side. Call this when the user's question may " +
@@ -175,6 +189,7 @@ export function buildKnowledgeTools(
     },
     {
       name: "hindsight_list_knowledge_pages",
+      readOnly: true,
       description:
         "List this repository's Hindsight knowledge pages — curated, continuously-updated " +
         "summaries of the project's durable knowledge (architecture, components, conventions, key " +
@@ -187,6 +202,7 @@ export function buildKnowledgeTools(
     },
     {
       name: "hindsight_read_knowledge_page",
+      readOnly: true,
       description:
         "Read the full content of one knowledge page by its id (from " +
         "hindsight_list_knowledge_pages). Call this whenever a listed page is relevant to what " +
@@ -199,6 +215,7 @@ export function buildKnowledgeTools(
     },
     {
       name: "hindsight_reflect",
+      readOnly: true,
       description:
         "Deep memory reasoning: an agentic synthesis over this repository's FULL memory (git " +
         "decisions, past sessions, ingested knowledge) that answers WHY questions — the past " +
