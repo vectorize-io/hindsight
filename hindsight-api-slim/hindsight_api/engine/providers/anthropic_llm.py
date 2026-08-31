@@ -468,22 +468,33 @@ class AnthropicLLM(LLMInterface):
         # Convert messages - handle tool results
         system_prompt = None
         anthropic_messages = []
-        for msg in messages:
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
             role = msg.get("role", "user")
             content = msg.get("content", "")
 
             if role == "system":
                 system_prompt = (system_prompt + "\n\n" + content) if system_prompt else content
+                i += 1
             elif role == "tool":
-                # Anthropic uses tool_result blocks
-                anthropic_messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "tool_result", "tool_use_id": msg.get("tool_call_id", ""), "content": content}
-                        ],
-                    }
-                )
+                # Anthropic requires every tool_use block in an assistant turn to be
+                # answered by a tool_result block in the single immediately-following
+                # user message. OpenAI-style histories split parallel tool results
+                # into one ``role:tool`` message per result, so group the consecutive
+                # run into one user message carrying every tool_result block.
+                tool_results = []
+                while i < len(messages) and messages[i].get("role") == "tool":
+                    tm = messages[i]
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tm.get("tool_call_id", ""),
+                            "content": tm.get("content", ""),
+                        }
+                    )
+                    i += 1
+                anthropic_messages.append({"role": "user", "content": tool_results})
             elif role == "assistant" and msg.get("tool_calls"):
                 # Convert assistant tool calls
                 tool_use_blocks = []
@@ -497,8 +508,10 @@ class AnthropicLLM(LLMInterface):
                         }
                     )
                 anthropic_messages.append({"role": "assistant", "content": tool_use_blocks})
+                i += 1
             else:
                 anthropic_messages.append({"role": role, "content": content})
+                i += 1
 
         # Multi-turn tool loop: cache the stable prefix (tools + system) via
         # the system marker, and the growing conversation via an end-marker
