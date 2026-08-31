@@ -5,11 +5,15 @@ from __future__ import annotations
 import pytest
 
 from hindsight_api.engine.reflect.delta_ops import (
+    AddSectionOp,
     AppendBlockOp,
     DeltaAllOpsInvalidError,
     DeltaOperationList,
+    ReplaceSectionBlocksOp,
+    apply_operations,
     parse_delta_operation_list,
 )
+from hindsight_api.engine.reflect.structured_doc import Block, Section, StructuredDocument
 
 
 def test_parse_delta_operation_list_trailing_brackets():
@@ -82,6 +86,77 @@ def test_parse_delta_operation_list_rejects_v1_block_payloads():
         parse_delta_operation_list(raw)
 
 
+def test_add_section_accepts_id_bearing_blocks():
+    """A model that gives its new blocks ids must still land them (#3901).
+
+    Every block in the document it was shown carries an id, so it emits ids for
+    the blocks it creates. The id is meaningless to us — ``apply_operations``
+    mints its own — but rejecting the op costs a whole refresh.
+    """
+    raw = (
+        '{"operations": [{"op": "add_section", "heading": "Tools", "blocks": ['
+        '{"id": "b12a001", "text": "First paragraph."}, '
+        '{"id": "b12a002", "text": "Second paragraph."}'
+        "]}]}"
+    )
+    op = parse_delta_operation_list(raw).operations[0]
+    assert isinstance(op, AddSectionOp)
+    assert op.blocks == ["First paragraph.", "Second paragraph."]
+
+
+def test_replace_section_blocks_accepts_id_bearing_blocks():
+    """The other op carrying ``blocks`` has the same exposure and the same fix."""
+    raw = (
+        '{"operations": [{"op": "replace_section_blocks", "section_id": "members", '
+        '"blocks": [{"id": "b1", "text": "- Only Alice now."}]}]}'
+    )
+    op = parse_delta_operation_list(raw).operations[0]
+    assert isinstance(op, ReplaceSectionBlocksOp)
+    assert op.blocks == ["- Only Alice now."]
+
+
+def test_blocks_coercion_accepts_a_mix_of_both_spellings():
+    """One op may carry both shapes; neither spelling disturbs the other."""
+    raw = (
+        '{"operations": [{"op": "add_section", "heading": "Tools", '
+        '"blocks": ["plain string", {"id": "b1", "text": "object form"}]}]}'
+    )
+    op = parse_delta_operation_list(raw).operations[0]
+    assert isinstance(op, AddSectionOp)
+    assert op.blocks == ["plain string", "object form"]
+
+
+def test_blocks_coercion_ignores_a_model_supplied_id():
+    """The id is dropped, not honoured: ids for new blocks are minted by the
+    applier against the ids already in the document, so accepting the model's
+    would reintroduce the collisions that scheme prevents."""
+    doc = StructuredDocument(
+        sections=[Section(id="members", heading="Members", level=2, blocks=[Block(id="b1", text="- Alice")])]
+    )
+    raw = '{"operations": [{"op": "add_section", "heading": "Tools", "blocks": [{"id": "b1", "text": "- Linear"}]}]}'
+    outcome = apply_operations(doc, parse_delta_operation_list(raw).operations)
+    assert len(outcome.applied) == 1
+    new_block = outcome.document.section_by_id("tools").blocks[0]
+    assert new_block.text == "- Linear"
+    assert new_block.id != "b1"
+
+
+def test_blocks_coercion_leaves_unrecognised_entries_to_fail_validation():
+    """An object with no ``text`` is not a block we can read. It must fail with
+    its own error rather than be silently dropped from the section."""
+    raw = '{"operations": [{"op": "add_section", "heading": "Tools", "blocks": [{"id": "b1", "kind": "paragraph"}]}]}'
+    with pytest.raises(DeltaAllOpsInvalidError):
+        parse_delta_operation_list(raw)
+
+
+def test_blocks_coercion_does_not_touch_non_block_text_fields():
+    """The coercion is scoped to ``blocks`` lists; ``text`` is untouched, so the
+    v1 typed-block payload stays invalid."""
+    raw = '{"operations": [{"op": "append_block", "section_id": "s", "text": {"id": "b1", "text": "nope"}}]}'
+    with pytest.raises(DeltaAllOpsInvalidError):
+        parse_delta_operation_list(raw)
+
+
 def test_parse_delta_operation_list_empty():
     assert parse_delta_operation_list("").operations == []
 
@@ -94,8 +169,8 @@ def test_parse_delta_operation_list_empty_operations_is_noop():
 
 def test_parse_delta_operation_list_all_invalid_raises():
     """If the model emits ops but every one is malformed, raise so the caller
-    falls back to a full rewrite instead of applying zero ops — which would
-    silently drop this refresh's new facts."""
+    refuses the refresh instead of applying zero ops — which would record a
+    clean refresh while silently dropping this refresh's new facts."""
     raw = (
         '{"operations": ['
         '{"op": "replace_block", "section_id": "s", "text": "missing block_id a"}, '
