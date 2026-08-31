@@ -45,6 +45,7 @@ from ..config import (
     DEFAULT_ZEROENTROPY_BASE_URL,
     ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_GEMINI_API_KEY,
+    ENV_EMBEDDINGS_LITELLM_DIMENSIONS,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_OPENAI_BASE_URL,
     ENV_EMBEDDINGS_OPENAI_MODEL,
@@ -1377,7 +1378,8 @@ class LiteLLMEmbeddings(Embeddings):
     - Vertex AI (textembedding-gecko, etc.) - prefix with vertex_ai/
     - HuggingFace, Mistral, Voyage AI, etc.
 
-    The embedding dimension is auto-detected from the model at initialization.
+    The embedding dimension is auto-detected from the model at initialization,
+    or declared up front via ``dimensions`` to skip that startup probe.
     """
 
     def __init__(
@@ -1386,6 +1388,7 @@ class LiteLLMEmbeddings(Embeddings):
         api_key: str | None = None,
         model: str = DEFAULT_EMBEDDINGS_LITELLM_MODEL,
         batch_size: int = 100,
+        dimensions: int | None = None,
         timeout: float = 60.0,
         query_prefix: str = "",
         passage_prefix: str = "",
@@ -1400,6 +1403,14 @@ class LiteLLMEmbeddings(Embeddings):
             model: Embedding model name (default: text-embedding-3-small)
                    Use provider prefix for non-OpenAI models (e.g., cohere/embed-english-v3.0)
             batch_size: Maximum batch size for embedding requests (default: 100)
+            dimensions: Vector width this proxy/model returns. When set, the startup
+                     probe is skipped entirely, so the API boots even while the proxy
+                     is still coming up (issue #3695). This *declares* the width
+                     rather than requesting it: the value is not forwarded to the
+                     proxy, because the backends LiteLLM fronts (vLLM, Cohere, Voyage,
+                     HuggingFace) reject an unexpected "dimensions" field. A wrong
+                     value is caught on the first encode() instead of silently
+                     producing vectors pgvector will reject.
             timeout: Request timeout in seconds (default: 60.0)
             query_prefix: Prefix prepended to recall/search queries (default: none)
             passage_prefix: Prefix prepended to retained document text (default: none)
@@ -1410,12 +1421,14 @@ class LiteLLMEmbeddings(Embeddings):
         self.api_key = api_key
         self.model = model
         self.batch_size = batch_size
+        self.dimensions = dimensions
         self.timeout = timeout
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
         self.retry_policy = retry_policy or EmbeddingRetryPolicy()
         self._client: httpx.Client | None = None
         self._dimension: int | None = None
+        self._dimension_verified = False
 
     @property
     def provider_name(self) -> str:
@@ -1440,19 +1453,49 @@ class LiteLLMEmbeddings(Embeddings):
 
         self._client = httpx.Client(timeout=self.timeout, headers=headers)
 
-        # Do a test embedding to detect dimension
-        try:
-            response = self._client.post(
+        # An explicitly declared width means we never have to reach the proxy to
+        # learn it, so the API boots even while the proxy is still starting up.
+        if self.dimensions is not None:
+            self._dimension = self.dimensions
+            logger.info(
+                f"Embeddings: LiteLLM provider initialized "
+                f"(model: {self.model}, dim: {self._dimension}, declared; startup probe skipped)"
+            )
+            return
+
+        # Do a test embedding to detect dimension.
+        def probe():
+            resp = self._client.post(
                 f"{self.api_base}/embeddings",
                 json={"model": self.model, "input": ["test"]},
             )
-            response.raise_for_status()
-            result = response.json()
-            if result.get("data") and len(result["data"]) > 0:
-                self._dimension = len(result["data"][0]["embedding"])
-            logger.info(f"Embeddings: LiteLLM provider initialized (model: {self.model}, dim: {self._dimension})")
-        except httpx.HTTPError as e:
-            raise RuntimeError(f"Failed to connect to LiteLLM proxy at {self.api_base}: {e}")
+            # Inside the retried closure so a 5xx from a proxy that is still
+            # coming up is retried rather than crash-looping the daemon (#3695).
+            resp.raise_for_status()
+            return resp.json()
+
+        try:
+            # to_thread + the async retry helper: initialize() is awaited on the
+            # event loop, so a blocking post and a time.sleep() backoff would
+            # stall the model loads running concurrently with it and freeze the
+            # model_init_timeout watchdog that is supposed to bound this.
+            result = await _acall_with_retry(
+                lambda: asyncio.to_thread(probe),
+                policy=self.retry_policy,
+                budget=self.retry_policy.new_budget(),
+                provider=self.provider_name,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to connect to LiteLLM proxy at {self.api_base}: {e}") from e
+
+        if not result.get("data"):
+            raise RuntimeError(
+                f"LiteLLM proxy at {self.api_base} returned no embedding data for model "
+                f"{self.model}; cannot detect the vector dimension. Set "
+                f"{ENV_EMBEDDINGS_LITELLM_DIMENSIONS} to declare it explicitly."
+            )
+        self._dimension = len(result["data"][0]["embedding"])
+        logger.info(f"Embeddings: LiteLLM provider initialized (model: {self.model}, dim: {self._dimension})")
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         """
@@ -1501,7 +1544,30 @@ class LiteLLMEmbeddings(Embeddings):
             batch_embeddings = sorted(result["data"], key=lambda x: x["index"])
             all_embeddings.extend([e["embedding"] for e in batch_embeddings])
 
+        self._check_declared_dimension(all_embeddings)
         return all_embeddings
+
+    def _check_declared_dimension(self, embeddings: list[list[float]]) -> None:
+        """
+        Validate a declared dimension against what the proxy actually returns.
+
+        Declaring the width skips the startup probe, which means nothing has
+        verified the number until the first real embedding comes back. Left
+        unchecked, a wrong value surfaces much later as an opaque pgvector
+        "expected N dimensions, not M" on insert, or as a bank whose vector
+        column was created at the wrong width. Checked once here, the operator
+        gets told which env var to correct.
+        """
+        if self.dimensions is None or self._dimension_verified or not embeddings:
+            return
+        actual = len(embeddings[0])
+        self._dimension_verified = True
+        if actual != self.dimensions:
+            raise RuntimeError(
+                f"{ENV_EMBEDDINGS_LITELLM_DIMENSIONS} declares {self.dimensions} dimensions but "
+                f"model {self.model} on the LiteLLM proxy at {self.api_base} returned {actual}. "
+                f"Correct the value, or unset it to let startup detect the dimension."
+            )
 
 
 class LiteLLMSDKEmbeddings(Embeddings):
@@ -2100,6 +2166,7 @@ def create_embeddings_from_env() -> Embeddings:
             api_base=config.embeddings_litellm_api_base,
             api_key=config.embeddings_litellm_api_key,
             model=config.embeddings_litellm_model,
+            dimensions=config.embeddings_litellm_dimensions,
             query_prefix=query_prefix,
             passage_prefix=passage_prefix,
             retry_policy=_retry_policy_from_config(config),

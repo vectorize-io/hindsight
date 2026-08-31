@@ -461,6 +461,7 @@ ENV_COHERE_API_KEY = "HINDSIGHT_API_COHERE_API_KEY"
 ENV_EMBEDDINGS_LITELLM_API_BASE = "HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE"
 ENV_EMBEDDINGS_LITELLM_API_KEY = "HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY"
 ENV_EMBEDDINGS_LITELLM_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL"
+ENV_EMBEDDINGS_LITELLM_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_DIMENSIONS"
 ENV_RERANKER_LITELLM_API_BASE = "HINDSIGHT_API_RERANKER_LITELLM_API_BASE"
 ENV_RERANKER_LITELLM_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_API_KEY"
 ENV_RERANKER_LITELLM_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_MODEL"
@@ -2554,6 +2555,7 @@ class HindsightConfig:
     embeddings_litellm_api_base: str
     embeddings_litellm_api_key: str | None
     embeddings_litellm_model: str
+    embeddings_litellm_dimensions: int | None
     embeddings_litellm_sdk_api_key: str | None
     embeddings_litellm_sdk_model: str
     embeddings_litellm_sdk_api_base: str | None
@@ -3743,6 +3745,10 @@ class HindsightConfig:
             or os.getenv(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE),
             embeddings_litellm_api_key=os.getenv(ENV_EMBEDDINGS_LITELLM_API_KEY) or os.getenv(ENV_LITELLM_API_KEY),
             embeddings_litellm_model=os.getenv(ENV_EMBEDDINGS_LITELLM_MODEL, DEFAULT_EMBEDDINGS_LITELLM_MODEL),
+            embeddings_litellm_dimensions=_parse_optional_positive_int(
+                ENV_EMBEDDINGS_LITELLM_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_LITELLM_DIMENSIONS),
+            ),
             # LiteLLM SDK embeddings (direct API access)
             embeddings_litellm_sdk_api_key=os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_API_KEY),
             embeddings_litellm_sdk_model=os.getenv(

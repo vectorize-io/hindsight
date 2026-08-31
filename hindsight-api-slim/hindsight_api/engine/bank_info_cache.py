@@ -109,4 +109,3 @@ async def invalidate(bank_id: str, kind: str | None = None) -> None:
     for k in (kind,) if kind else ("profile", "config"):
         schema, key = _key(bank_id, k)
         await cache.invalidate(schema, key)
-

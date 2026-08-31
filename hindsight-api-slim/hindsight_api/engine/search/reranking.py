@@ -2,6 +2,7 @@
 Cross-encoder neural reranking for search results.
 """
 
+import calendar
 import math
 from datetime import datetime, timezone
 
@@ -53,6 +54,99 @@ def compute_recency_decay(
     # "linear" (default): straight decay to a 0.1 floor over the window.
     window = linear_window_days if linear_window_days > 0 else _RECENCY_DECAY_LINEAR_WINDOW_DAYS
     return max(0.1, min(1.0, 1.0 - (days_ago / window)))
+
+
+# A memory dated to a *period* rather than an instant carries that period in
+# (occurred_start, occurred_end). Extraction emits a full span for coarse dates —
+# "in 2015" becomes 2015-01-01 → 2015-12-31, "in March 2026" becomes
+# 2026-03-01 → 2026-03-31 — so the granularity is already in the data and does
+# not need to be stored separately.
+#
+# How far SHORT of an exact calendar month/year a span may fall and still be read
+# as that period. Extraction spells the last instant of a period three ways —
+# Dec 31 23:59:59 (period - 1s), Dec 31 00:00:00 (period - 1 day), or the
+# exclusive Jan 1 of the next year (exactly the period) — so accept that window
+# rather than matching one spelling. The window is deliberately one-sided: a span
+# LONGER than the calendar period is a genuine interval, not a coarse date.
+_CALENDAR_PERIOD_TOLERANCE_SECONDS: float = 86400.0
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+def _spans_calendar_period(start: datetime, end: datetime) -> bool:
+    """True when [start, end] covers exactly one calendar month or year.
+
+    This distinguishes a *coarse date* — "sometime in 2015", where the whole
+    period is one unit of uncertainty — from a *genuine interval* such as an
+    employment or a multi-day conference, which really did span its whole range.
+    The two are scored differently: see ``_recency_for_unit``.
+
+    Matched on span length rather than on the boundaries lining up with midnight,
+    because ``_add_temporal_offsets`` shifts every fact's timestamps by a
+    sub-second amount to keep them ordered. That shift moves both ends equally,
+    so it preserves the span exactly while destroying absolute alignment.
+    """
+    span = (end - start).total_seconds()
+    if span <= 0:
+        return False
+    month_seconds = calendar.monthrange(start.year, start.month)[1] * 86400.0
+    year_seconds = (366.0 if calendar.isleap(start.year) else 365.0) * 86400.0
+    return any(
+        period - _CALENDAR_PERIOD_TOLERANCE_SECONDS <= span <= period for period in (month_seconds, year_seconds)
+    )
+
+
+def _recency_for_unit(
+    occurred_start: datetime | None,
+    occurred_end: datetime | None,
+    mentioned_at: datetime | None,
+    now: datetime,
+    function: str,
+    linear_window_days: float,
+    halflife_days: float,
+) -> float:
+    """Freshness signal in [0, 1] (neutral 0.5) for one memory unit.
+
+    A unit carrying a *coarse* date — one the text stated only to the year or the
+    month, which extraction records as that whole calendar period — is scored from
+    the END of the period, the latest the event could have happened, instead of
+    from ``occurred_start``. Scoring it from the start invents an age the memory
+    never had: "the 2026 summit" stored as 2026-01-01 reads as eight months stale
+    in August 2026 and loses to any newer but unrelated fact — issue #3893.
+
+    For a coarse date the signal is additionally capped at neutral, because the
+    end of the period is a bound and not an observation. Without the cap a period
+    still in progress ends in the future, ``compute_recency_decay`` clamps it to
+    1.0, and we would swap an invented staleness penalty for an equally invented
+    freshness boost. Capping says "we don't know when in this period" while still
+    letting genuinely old periods decay — a 2015 date reaches the floor either way.
+    """
+    if occurred_start is not None and occurred_end is not None:
+        start, end = _as_utc(occurred_start), _as_utc(occurred_end)
+        if _spans_calendar_period(start, end):
+            recency = compute_recency_decay(
+                (now - end).total_seconds() / 86400,
+                function,
+                linear_window_days,
+                halflife_days,
+            )
+            return min(0.5, recency)
+
+    # Not a coarse date: score the unit's effective instant, unchanged. Note this
+    # deliberately leaves a genuine interval (a multi-day trip, an employment)
+    # aged from occurred_start as it always has been — arguably it should age from
+    # its end too, but that is a separate ranking change and not what #3893 reports.
+    effective = occurred_start or mentioned_at or occurred_end
+    if effective is None:
+        return 0.5
+    return compute_recency_decay(
+        (now - _as_utc(effective)).total_seconds() / 86400,
+        function,
+        linear_window_days,
+        halflife_days,
+    )
 
 
 def apply_combined_scoring(
@@ -146,25 +240,21 @@ def apply_combined_scoring(
 
     for sr in scored_results:
         # Recency: configurable decay (linear default; see compute_recency_decay)
-        # → [0.0, 1.0]; neutral 0.5 if no date.
-        # Use the unit's effective time (occurred_start, then mentioned_at, then
-        # occurred_end) — the same COALESCE order as retrieval._coalesce_date — so a
-        # memory that carries only a mentioned_at / occurred_end (e.g. conversation
-        # facts or ongoing states that intentionally lack occurred_start) still gets
-        # correct recency ordering instead of a flat neutral 0.5.
-        sr.recency = 0.5
-        effective = sr.retrieval.occurred_start or sr.retrieval.mentioned_at or sr.retrieval.occurred_end
-        if effective:
-            occurred = effective
-            if occurred.tzinfo is None:
-                occurred = occurred.replace(tzinfo=UTC)
-            days_ago = (now - occurred).total_seconds() / 86400
-            sr.recency = compute_recency_decay(
-                days_ago,
-                recency_decay_function,
-                recency_decay_linear_window_days,
-                recency_decay_halflife_days,
-            )
+        # → [0.0, 1.0]; neutral 0.5 if no date. Period-dated units are scored from
+        # the end of their period; everything else falls back to the effective
+        # instant (occurred_start, then mentioned_at, then occurred_end — the same
+        # COALESCE order as retrieval._coalesce_date), so a memory carrying only a
+        # mentioned_at / occurred_end still gets correct recency ordering instead
+        # of a flat neutral 0.5. See _recency_for_unit.
+        sr.recency = _recency_for_unit(
+            sr.retrieval.occurred_start,
+            sr.retrieval.occurred_end,
+            sr.retrieval.mentioned_at,
+            now,
+            recency_decay_function,
+            recency_decay_linear_window_days,
+            recency_decay_halflife_days,
+        )
 
         # Temporal proximity: meaningful only for temporal queries; neutral otherwise.
         sr.temporal = sr.retrieval.temporal_proximity if sr.retrieval.temporal_proximity is not None else 0.5

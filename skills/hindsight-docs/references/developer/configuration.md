@@ -752,6 +752,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE` | LiteLLM proxy base URL for embeddings (falls back to `HINDSIGHT_API_LITELLM_API_BASE`) | `http://localhost:4000` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY` | LiteLLM proxy API key for embeddings (optional, depends on proxy config; falls back to `HINDSIGHT_API_LITELLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL` | LiteLLM embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `text-embedding-3-small` |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_DIMENSIONS` | Vector width the configured LiteLLM model returns. When set, the startup dimension probe is skipped, so the API boots even while the proxy is still starting. Declares the width rather than requesting it (the value is not sent to the proxy); a wrong value fails the first embedding call with an explicit error. | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY` | LiteLLM SDK API key for direct embedding provider access (optional — omit for providers that use ambient credentials, e.g. AWS Bedrock with IAM) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL` | LiteLLM SDK embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `cohere/embed-english-v3.0` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE` | Custom base URL for LiteLLM SDK embeddings (optional) | - |
@@ -965,6 +966,7 @@ export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE=http://localhost:4000
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY=your-litellm-key  # optional
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL=text-embedding-3-small  # or cohere/embed-english-v3.0
+# export HINDSIGHT_API_EMBEDDINGS_LITELLM_DIMENSIONS=1536  # optional: declare the width, skip the startup probe
 
 # Google - Gemini API (API key auth)
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=google
