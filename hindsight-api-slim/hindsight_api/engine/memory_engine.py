@@ -5366,7 +5366,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         _store = _get_memories_session()
         retain_session = None
-        if _store.owns_retain_persistence_for(bank_id):
+        if _store.store_owned_for(bank_id):
             _session_config = await self._resolve_retain_config(bank_id, request_context, strategy)
             retain_session = await _store.begin_retain(bank_id=bank_id, config=_session_config)
 

@@ -1284,7 +1284,7 @@ class TestRetainCompletedWebhook:
                 # exercise, so say that rather than fail as though the webhook misfired.
                 from hindsight_api.engine.memories import get_memories
 
-                if get_memories().owns_retain_persistence:
+                if get_memories().store_owned:
                     pytest.skip("the memories store does not sub-batch; no slices to fire across")
             assert split_counts and split_counts[0] > 1, (
                 f"the batch never split, so nothing was tested (sub-batches: {split_counts})"
@@ -1349,7 +1349,7 @@ class TestRetainCompletedWebhook:
                 # exercise, so say that rather than fail as though the webhook misfired.
                 from hindsight_api.engine.memories import get_memories
 
-                if get_memories().owns_retain_persistence:
+                if get_memories().store_owned:
                     pytest.skip("the memories store does not sub-batch; no slices to fire across")
             assert split_counts and split_counts[0] > 1, (
                 f"the document was never sliced, so nothing was tested (sub-batches: {split_counts})"
