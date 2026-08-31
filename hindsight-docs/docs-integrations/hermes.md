@@ -185,13 +185,17 @@ When using Hermes in gateway mode (multi-platform messaging), the provider works
 
 ## Disabling Hermes's Built-in Memory
 
-Hermes has a built-in `memory` tool that saves to local markdown files. If both are active, the LLM may prefer the built-in one. Disable it:
+Hermes has a built-in memory store that saves to local markdown files (`MEMORY.md`, plus a slimmer `USER.md` profile). If both are active, the LLM may prefer the built-in one. Turn the flat-file stores off:
 
 ```bash
-hermes tools disable memory
+# Turn off the built-in MEMORY.md store
+hermes config set memory.memory_enabled false
+
+# Optional — also turn off the slimmer USER.md profile store
+hermes config set memory.user_profile_enabled false
 ```
 
-Re-enable later with `hermes tools enable memory`.
+Setting both to `false` removes the built-in `memory` tool from the agent entirely. Re-enable later by setting the same flags back to `true`.
 
 ## Troubleshooting
 

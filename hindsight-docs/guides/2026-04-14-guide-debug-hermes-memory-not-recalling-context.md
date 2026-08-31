@@ -176,21 +176,18 @@ then hook support is the likely missing piece.
 
 ### 5. Check whether the model is using the wrong memory path
 
-Hermes still has a built-in `memory` tool that writes markdown notes locally. If that tool stays enabled, the model may keep using it instead of Hindsight. The result is confusing because the assistant looks like it is storing memory, but not in the path you are trying to debug.
+Hermes still has a built-in memory store that writes markdown notes locally (`MEMORY.md`, plus a slimmer `USER.md` profile). If those stay enabled, the model may keep using them instead of Hindsight. The result is confusing because the assistant looks like it is storing memory, but not in the path you are trying to debug.
 
-Disable the built-in tool while testing:
+Turn the flat-file stores off while testing:
 
 ```bash
-hermes tools disable memory
+hermes config set memory.memory_enabled false
+hermes config set memory.user_profile_enabled false
 ```
 
 Then repeat the controlled retain and recall test. This removes one of the messiest sources of false positives.
 
-If you later decide you want the built-in tool back for a specific workflow, you can re-enable it:
-
-```bash
-hermes tools enable memory
-```
+If you later decide you want the built-in store back for a specific workflow, set the same flags back to `true`.
 
 ### 6. Inspect logs instead of guessing
 
