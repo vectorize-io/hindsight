@@ -858,6 +858,13 @@ def retraction_llm():
         api_key=config.llm_api_key or _GEMINI_API_KEY or _OPENAI_API_KEY or "",
         base_url=config.llm_base_url or "",
         model=config.llm_model,
+        # Vertex AI authenticates by project + service account, not an api_key, so a
+        # config built from provider/key/model alone raises before any call. The gap
+        # was invisible while this test was skipped everywhere; CI runs the evals
+        # under `provider=vertexai`, which is exactly the case it did not cover.
+        vertexai_project_id=config.llm_vertexai_project_id,
+        vertexai_region=config.llm_vertexai_region,
+        vertexai_service_account_key=config.llm_vertexai_service_account_key,
     )
 
 
