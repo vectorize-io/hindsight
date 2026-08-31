@@ -161,7 +161,8 @@ WORKDIR /app
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y \
     curl \
     procps \
     libxml2 \
@@ -270,7 +271,7 @@ COPY docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
 
 # Install curl for health checks
-RUN apk add --no-cache curl bash
+RUN apk upgrade --no-cache && apk add --no-cache curl bash
 
 EXPOSE 9999
 
@@ -292,7 +293,8 @@ WORKDIR /app
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y \
     curl \
     procps \
     libxml2 \

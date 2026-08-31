@@ -117,6 +117,10 @@ jobs:
             - 'hindsight-cli/**'
           docker:
             - 'docker/**'
+            # The image installs the workspace from the lock, so a dependency
+            # bump changes what ships even when docker/ is untouched.
+            - 'uv.lock'
+            - 'pyproject.toml'
           helm:
             - 'helm/**'
           # The RUNNABLE samples only. This replaces a broad `docs` filter that also
@@ -1680,6 +1684,20 @@ jobs:
         # Removed GitHub Actions cache (type=gha) - it frequently returns 502 errors
         # causing buildx to fail with "failed to parse error response 502"
         # Build will be slower but more reliable
+
+    # Only slim variants are loaded into the local daemon (disk space), so they
+    # are the only ones scannable here. They share every runtime layer and the
+    # same lock with the full variants, so a fixed HIGH in either shows up here.
+    - name: Scan ${{ matrix.name }} image for fixed HIGH/CRITICAL CVEs
+      if: matrix.variant == 'slim'
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        image-ref: hindsight-${{ matrix.name }}:test
+        scanners: vuln
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: '1'
+        format: table
 
     # Only test slim variants to save disk space (they're much smaller)
     # Slim variants require external embedding providers
