@@ -117,6 +117,27 @@ postgresql:
     password: "your-password"
 ```
 
+### Sidecars and Init Containers
+
+`api`, `worker`, and `controlPlane` each take `extraContainers` and `extraInitContainers`. Both default to `[]` and render nothing when empty. Use them for containers that have to share the pod, such as a database auth proxy reached over localhost:
+
+```yaml
+api:
+  extraContainers:
+    - name: cloud-sql-proxy
+      image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.24.1
+      args:
+        - --port=5432
+        - my-project:us-west1:my-instance
+      securityContext:
+        runAsNonRoot: true
+
+postgresql:
+  enabled: false
+  external:
+    host: "127.0.0.1"
+```
+
 ### Ingress
 
 To expose the services via ingress:

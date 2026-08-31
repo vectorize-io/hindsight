@@ -892,7 +892,9 @@
     "selectModelPrompt": "Select a mental model to view its content.",
     "optionsSectionTroubleshooting": "Troubleshooting",
     "optionsKeepTraceLabel": "Keep refresh traces",
-    "optionsKeepTraceDescription": "Record how each refresh reached its result — mode, scope, time window, facts retrieved versus used, and delta operations. The only way to diagnose scheduled refreshes after they run."
+    "optionsKeepTraceDescription": "Record how each refresh reached its result — mode, scope, time window, facts retrieved versus used, and delta operations. The only way to diagnose scheduled refreshes after they run.",
+    "toastContentCleared": "Mental model content cleared",
+    "actionOpenDetail": "Open"
   },
   "cronPreview": {
     "invalid": "Invalid cron expression",

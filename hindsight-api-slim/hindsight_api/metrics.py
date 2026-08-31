@@ -1116,7 +1116,24 @@ def create_metrics_collector() -> MetricsCollector:
     Create and set the global metrics collector.
 
     Should be called after initialize_metrics().
+
+    The collector it replaces is *not* remembered here — callers that can shut
+    down (the API lifespan, tests) should snapshot ``get_metrics_collector()``
+    first and hand it back to ``reset_metrics_collector()`` on teardown.
     """
     global _metrics_collector
     _metrics_collector = MetricsCollector()
     return _metrics_collector
+
+
+def reset_metrics_collector(collector: MetricsCollectorBase | None = None) -> None:
+    """
+    Restore the global metrics collector, undoing ``create_metrics_collector()``.
+
+    Pass the collector that was installed beforehand to put it back; with no
+    argument the process falls back to the default no-op collector. Without
+    this, an app that starts once leaves a live ``MetricsCollector`` (and its
+    reference to a now-closed DB pool) installed for the rest of the process.
+    """
+    global _metrics_collector
+    _metrics_collector = collector if collector is not None else NoOpMetricsCollector()

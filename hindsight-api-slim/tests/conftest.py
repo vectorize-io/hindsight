@@ -111,6 +111,28 @@ def _cleanup_leaked_span_recorders():
             recorders.remove(recorder)
 
 
+@pytest.fixture(autouse=True)
+def _restore_global_metrics_collector():
+    """Fail-safe for the process-global metrics collector (#3780).
+
+    ``create_metrics_collector()`` swaps the module-global collector in
+    ``hindsight_api.metrics`` for a real ``MetricsCollector``. The API lifespan
+    now restores it on shutdown, but a test that starts the app and never runs
+    shutdown (or calls ``create_metrics_collector()`` itself) still leaves the
+    real collector installed for every test that follows in the same xdist
+    worker. ``NoOpMetricsCollector`` ignores its arguments while the real one
+    compares them, so provider tests that pass a bare ``MagicMock`` usage object
+    then blow up with "'>' not supported between instances of 'MagicMock' and
+    'int'" — in whichever files the worker happened to be given, which is why
+    the failure count moved every time someone added a test.
+    """
+    from hindsight_api import metrics as metrics_module
+
+    before = metrics_module.get_metrics_collector()
+    yield
+    metrics_module.reset_metrics_collector(before)
+
+
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))

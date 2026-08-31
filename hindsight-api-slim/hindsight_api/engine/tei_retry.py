@@ -1,5 +1,6 @@
 """Shared retry timing for Text Embeddings Inference HTTP clients."""
 
+import errno
 import math
 import random
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ import httpx
 # capping well below the request timeout keeps a slow proxy from converting a
 # transient overload into a minutes-long recall stall.
 MAX_RETRY_DELAY_SECONDS = 5.0
+TEI_KEEPALIVE_EXPIRY_SECONDS = 15.0
 
 # Fraction of the delay used as the jitter window, matching the "equal jitter"
 # policy of ``db_utils._backoff_delay``. TEI overload is self-synchronising -- a
@@ -21,6 +23,23 @@ MAX_RETRY_DELAY_SECONDS = 5.0
 # the burst apart. A token few percent would leave the callers retrying in
 # lockstep and re-colliding on the same exhausted pool.
 JITTER_RATIO = 0.5
+
+# TEI requests are usually against a pooled HTTP client. If the underlying
+# socket dies while idle, the first failure often shows up as a bare OSError
+# instead of a structured httpx timeout/connect error.
+RETRYABLE_OS_ERRNOS = {
+    errno.EBADF,
+    errno.ECONNABORTED,
+    errno.ECONNREFUSED,
+    errno.ECONNRESET,
+    errno.EHOSTDOWN,
+    errno.EHOSTUNREACH,
+    errno.ENETDOWN,
+    errno.ENETRESET,
+    errno.ENETUNREACH,
+    errno.EPIPE,
+    errno.ETIMEDOUT,
+}
 
 
 def _retry_after_seconds(value: str | None) -> float | None:
@@ -71,3 +90,21 @@ def tei_retry_delay(
         return delay - random.uniform(0.0, spread)
     # Retry-After is a minimum, so spread upward -- but never past the ceiling.
     return delay + random.uniform(0.0, min(spread, limit - delay))
+
+
+def is_retryable_tei_transport_error(exc: BaseException) -> bool:
+    """Return True for transport failures that should be retried once.
+
+    This keeps stale pooled sockets from bubbling up as hard failures when the
+    underlying descriptor died while idle.
+    """
+
+    if isinstance(exc, OSError):
+        return exc.errno in RETRYABLE_OS_ERRNOS or exc.errno is None
+
+    for attr in ("__cause__", "__context__"):
+        nested = getattr(exc, attr, None)
+        if nested is not None and nested is not exc and is_retryable_tei_transport_error(nested):
+            return True
+
+    return False
