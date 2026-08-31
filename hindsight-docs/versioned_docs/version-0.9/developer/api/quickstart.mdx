@@ -52,10 +52,6 @@ docker run -it --pull always --name hindsight --restart unless-stopped --shm-siz
 - **API**: http://localhost:8888
 - **Control Plane** (Web UI): http://localhost:9999
 
-:::note Shared memory for embedded PostgreSQL
-Docker allocates 64 MiB to `/dev/shm` by default. Hindsight's embedded PostgreSQL can exceed that limit while creating vector indexes, causing `could not resize shared memory segment ... No space left on device`. The quick start reserves 1 GiB as a safe baseline; actual requirements depend on the workload, index type, PostgreSQL settings, and parallelism. In Docker Compose, use `shm_size: 1gb` on the Hindsight service.
-:::
-
 :::tip Set a stable `HINDSIGHT_API_WORKER_ID` in production
 The worker uses the container hostname as its identity, which Docker sets to the container ID by default. That value changes on every restart, so any task that was being processed when the container went down stays parked under the old ID with no way for the new container to recognize it as its own.
 
