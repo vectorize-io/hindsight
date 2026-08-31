@@ -1031,19 +1031,18 @@ async def _run_reflect_agent_inner(
                 }
             )
 
-            # Immediately reject hallucinated tool calls without adding to trace
+            # Serialize tool results in the ORIGINAL tool_calls order. Anthropic
+            # requires tool_result blocks to match the assistant tool_use order,
+            # so collect every result keyed by tool_call_id first and emit them
+            # in the model's order after execution (execution order may differ).
+            ordered_tool_calls = list(other_tools)
+            tool_outputs: dict[str, str] = {}
             for tc in hallucinated_tools:
-                messages.append(
+                tool_outputs[tc.id] = json.dumps(
                     {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(
-                            {
-                                "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
+                        "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
+                    },
+                    ensure_ascii=False,
                 )
 
             other_tools = allowed_tools
@@ -1135,14 +1134,8 @@ async def _run_reflect_agent_inner(
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
 
-                # Add tool result message
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(output, default=str, ensure_ascii=False),
-                    }
-                )
+                # Record the serialized result; emitted in original order below.
+                tool_outputs[tc.id] = json.dumps(output, default=str, ensure_ascii=False)
 
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
@@ -1178,6 +1171,18 @@ async def _run_reflect_agent_inner(
 
                 # Keep context history for fallback final prompt
                 context_history.append({"tool": tc.name, "input": input_dict, "output": output})
+
+            # Emit tool_result messages in the assistant tool_calls order so the
+            # serialized history matches the tool_use blocks (Anthropic requires
+            # tool_result blocks in the same order as the corresponding tool_use).
+            for tc in ordered_tool_calls:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_outputs[tc.id],
+                    }
+                )
 
     # Unreachable in practice: the last iteration returns the forced synthesis
     # above, so the loop cannot fall out of the bottom. Kept as a hard failure
