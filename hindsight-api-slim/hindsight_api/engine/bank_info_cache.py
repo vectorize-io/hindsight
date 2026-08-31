@@ -110,8 +110,3 @@ async def invalidate(bank_id: str, kind: str | None = None) -> None:
         schema, key = _key(bank_id, k)
         await cache.invalidate(schema, key)
 
-
-def reset_for_tests() -> None:
-    """Drop the module-level instance so a test can rebuild it against changed config."""
-    global _cache
-    _cache = None
