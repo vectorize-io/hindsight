@@ -62,6 +62,59 @@ class FakeOnnxSession:
         return [token_embeddings]
 
 
+class FakeLengthTokenizer:
+    """Encodes each text's length into its ids, padding to the longest text *in this call*."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, texts, padding, truncation, max_length, return_tensors):
+        self.calls.append({"texts": list(texts)})
+        lengths = [len(text) for text in texts]
+        width = max(lengths)
+        input_ids = np.zeros((len(texts), width), dtype=np.int64)
+        attention_mask = np.zeros((len(texts), width), dtype=np.int64)
+        for row, length in enumerate(lengths):
+            input_ids[row, :length] = length
+            attention_mask[row, :length] = 1
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "token_type_ids": np.zeros_like(input_ids),
+        }
+
+
+class FakeLengthOnnxSession:
+    """Token embeddings read off the ids, so every text gets its own vector."""
+
+    def __init__(self):
+        self.batch_sizes = []
+
+    def get_inputs(self):
+        return [SimpleNamespace(name="input_ids"), SimpleNamespace(name="attention_mask")]
+
+    def run(self, output_names, inputs):
+        ids = inputs["input_ids"].astype(np.float32)
+        self.batch_sizes.append(ids.shape[0])
+        # [batch, seq, 2]: mean pooling over the unmasked tokens yields [length, 1.0].
+        # Padded positions carry 0 and are masked out, which is what makes the result
+        # independent of who else is in the batch.
+        return [np.stack([ids, np.ones_like(ids)], axis=-1)]
+
+
+def _length_embedder(batch_size: int) -> OnnxEmbeddings:
+    emb = OnnxEmbeddings(
+        model_id="intfloat/multilingual-e5-small",
+        dimensions=2,
+        normalize=False,
+        batch_size=batch_size,
+    )
+    emb._tokenizer = FakeLengthTokenizer()
+    emb._session = FakeLengthOnnxSession()
+    emb._dimension = 2
+    return emb
+
+
 class FakePooledOnnxSession:
     def get_inputs(self):
         return [SimpleNamespace(name="input_ids"), SimpleNamespace(name="attention_mask")]
@@ -235,49 +288,40 @@ def test_create_embeddings_from_env_supports_onnx_provider():
 
 def test_onnx_embeddings_chunks_into_batches_and_preserves_order():
     """One forward pass per batch, with the caller's ordering restored (issue #3891)."""
-    emb = OnnxEmbeddings(model_id="intfloat/multilingual-e5-small", dimensions=2, batch_size=2)
-    emb._tokenizer = FakeTokenizer()
-    emb._session = FakeOnnxSession()
-    emb._dimension = 2
-
+    emb = _length_embedder(batch_size=2)
     texts = ["a", "bbbb", "cc", "ddddddd", "e"]
+
     result = emb.encode(texts)
 
     assert emb._session.batch_sizes == [2, 2, 1]
-    assert result == [pytest.approx([0.6, 0.8])] * len(texts)
+    # Each vector carries its own text's length, so a misplaced scatter-back shows up here.
+    assert result == [pytest.approx([float(len(text)), 1.0]) for text in texts]
     # Longest first, so a single long text cannot pad an entire batch of short ones.
-    batched = [call["texts"] for call in emb._tokenizer.calls]
-    assert batched == [["ddddddd", "bbbb"], ["cc", "a"], ["e"]]
+    assert [call["texts"] for call in emb._tokenizer.calls] == [["ddddddd", "bbbb"], ["cc", "a"], ["e"]]
 
 
 def test_onnx_embeddings_single_batch_when_input_fits():
-    emb = OnnxEmbeddings(model_id="intfloat/multilingual-e5-small", dimensions=2, batch_size=8)
-    emb._tokenizer = FakeTokenizer()
-    emb._session = FakeOnnxSession()
-    emb._dimension = 2
+    emb = _length_embedder(batch_size=8)
 
-    emb.encode(["a", "bbb", "cc"])
+    result = emb.encode(["a", "bbb", "cc"])
 
     assert emb._session.batch_sizes == [3]
     # Input order is untouched when nothing needs splitting.
     assert emb._tokenizer.calls[0]["texts"] == ["a", "bbb", "cc"]
+    assert result == [pytest.approx([1.0, 1.0]), pytest.approx([3.0, 1.0]), pytest.approx([2.0, 1.0])]
 
 
 def test_onnx_embeddings_batching_does_not_change_vectors():
     """Batch composition cannot move a vector: pooling masks padding."""
-    texts = [f"text {'x' * i}" for i in range(10)]
+    texts = [f"text {'x' * index}" for index in range(10)]
 
-    unbatched = OnnxEmbeddings(model_id="intfloat/multilingual-e5-small", dimensions=2, batch_size=len(texts))
-    unbatched._tokenizer = FakeTokenizer()
-    unbatched._session = FakeOnnxSession()
-    unbatched._dimension = 2
-
-    batched = OnnxEmbeddings(model_id="intfloat/multilingual-e5-small", dimensions=2, batch_size=3)
-    batched._tokenizer = FakeTokenizer()
-    batched._session = FakeOnnxSession()
-    batched._dimension = 2
+    unbatched = _length_embedder(batch_size=len(texts))
+    batched = _length_embedder(batch_size=3)
 
     assert batched.encode(texts) == unbatched.encode(texts)
+    # The two runs really did pad to different widths — otherwise this proves nothing.
+    assert unbatched._session.batch_sizes == [10]
+    assert batched._session.batch_sizes == [3, 3, 3, 1]
 
 
 def test_onnx_embeddings_rejects_non_positive_batch_size():
