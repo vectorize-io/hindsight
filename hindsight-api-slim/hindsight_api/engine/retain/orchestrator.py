@@ -383,7 +383,7 @@ def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
 # and only the resulting facts are wrong. Inverting it makes the safe case the
 # default — a new retain field round-trips unless someone deliberately excludes it,
 # and the single source of truth becomes what api_retain puts on the content dict.
-_RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags"})
+_RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags", "force_reextract"})
 
 
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
@@ -1526,6 +1526,18 @@ async def retain_batch(
             update_mode = item_mode
             break
 
+    # --- Forced re-extraction ---
+    # Two independent skips make a re-retain of byte-identical content a no-op: the delta
+    # path finds no changed chunk and updates document metadata only, and the recovery gate
+    # in `_streaming_retain_batch` treats a matching content_hash plus surviving chunk hashes
+    # as a crashed retain being resumed and preserves every existing unit. Both are right for
+    # a re-push of unchanged content; both are wrong for `reprocess_document`, whose whole
+    # purpose is "extract this again under the CURRENT config", where the content is unchanged
+    # by definition (#3899). The flag rides on the content item, so it survives the async
+    # operation payload and the oversized-item splitter (which copies every field onto each
+    # slice) without a parameter on every frame in between.
+    force_reextract = any(bool(item.get("force_reextract")) for item in contents_dicts)
+
     # The document version this append was built on. Captured with the text it
     # reads so the write path can prove nothing else appended in between — see
     # ``ConcurrentAppendConflict`` and the gate in ``_streaming_retain_batch``.
@@ -1711,7 +1723,7 @@ async def retain_batch(
     from ..memories import get_memories as _get_memories_delta
 
     _delta_provider = _get_memories_delta()
-    if attempts_delta_retain(_delta_provider, bank_id, is_first_batch):
+    if not force_reextract and attempts_delta_retain(_delta_provider, bank_id, is_first_batch):
         delta_result = await _try_delta_retain(
             pool,
             embeddings_model,
@@ -1815,6 +1827,7 @@ async def retain_batch(
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
+        force_reextract=force_reextract,
     )
 
 
@@ -2233,6 +2246,7 @@ async def _streaming_retain_batch(
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
+    force_reextract: bool = False,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -2304,7 +2318,11 @@ async def _streaming_retain_batch(
     # nothing, `is_recovery` stayed False, and it cost a pool acquire and a query per document.
     from ..memories import get_memories as _get_memories_recov
 
-    _sql_recovery_possible = not _get_memories_recov().store_owned_for(bank_id)
+    # A forced re-extraction is an operator saying "extract this again under the current
+    # config", so it must never be classified as a crashed retain being resumed: recovery
+    # preserves every existing unit and skips every matching chunk, which is exactly the
+    # silent no-op #3899 reports. Skipping the probe also skips its two queries.
+    _sql_recovery_possible = not force_reextract and not _get_memories_recov().store_owned_for(bank_id)
     try:
         if _sql_recovery_possible:
             async with acquire_with_retry(pool) as conn:

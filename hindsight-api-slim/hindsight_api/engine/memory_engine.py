@@ -11434,10 +11434,19 @@ class MemoryEngine(MemoryEngineInterface):
         # on the item, so retain_params came back without it and the NEXT reprocess
         # fell back to the bank default again.
         content_dict.update(retain_params)
-        # These three are the reprocess's own and must win over anything stored.
+        # These are the reprocess's own and must win over anything stored.
         content_dict["content"] = original_text
         content_dict["document_id"] = document_id
         content_dict["update_mode"] = "replace"
+        # A reprocess replays the SAME content by construction, and the retain pipeline has two
+        # skips for exactly that: the delta path sees no changed chunk and updates metadata only,
+        # and the crash-recovery gate sees the matching content_hash plus surviving chunk hashes
+        # and preserves every existing unit. Either one makes the reprocess a silent no-op — zero
+        # LLM calls, `unit_ids_count: 0`, operation `completed` — which is the opposite of what
+        # this endpoint is for ("re-extract using the current engine configuration"). Whether it
+        # no-opped or re-extracted depended on how faithfully retain_params happened to replay
+        # (#3873), so the outcome was not even stable. Force it (#3899).
+        content_dict["force_reextract"] = True
 
         tags = doc.get("tags") or []
         if tags:

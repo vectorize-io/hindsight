@@ -103,6 +103,10 @@ class RetainContentDict(TypedDict, total=False):
         update_mode: How to handle existing documents with the same document_id (optional).
             "replace" (default) deletes old data and reprocesses. "append" concatenates
             new content to the existing document and reprocesses.
+        force_reextract: Re-run extraction even when the content is byte-identical to what
+            is already stored (optional, default False). Internal — set by
+            ``reprocess_document``, not accepted on the public retain API. See
+            ``retain_batch`` for the two skips it suppresses.
     """
 
     content: str  # Required
@@ -117,6 +121,7 @@ class RetainContentDict(TypedDict, total=False):
         Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
     )  # Observation scopes for consolidation
     update_mode: Literal["replace", "append"]
+    force_reextract: bool
 
 
 @dataclass
