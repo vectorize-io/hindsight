@@ -101,7 +101,6 @@ Optional settings in `~/.openclaw/openclaw.json`:
         "enabled": true,
         "config": {
           "apiPort": 9077,
-          "daemonIdleTimeout": 0,
           "embedVersion": "latest"
         }
       }
@@ -112,7 +111,6 @@ Optional settings in `~/.openclaw/openclaw.json`:
 
 **Options:**
 - `apiPort` - Port for the openclaw profile daemon (default: `9077`)
-- `daemonIdleTimeout` - Seconds before daemon shuts down from inactivity (default: `0` = never)
 - `embedVersion` - hindsight-embed version (default: `"latest"`)
 - `llmProvider` - LLM provider for memory extraction (`openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`). Required unless `hindsightApiUrl` is set.
 - `llmModel` - LLM model used with `llmProvider` (provider default if omitted)

@@ -156,7 +156,6 @@ All settings live in `~/.hindsight/cursor.json`. Every setting can also be overr
 | `hindsightApiUrl` | `HINDSIGHT_API_URL` | `""` | URL of an external Hindsight API server |
 | `hindsightApiToken` | `HINDSIGHT_API_TOKEN` | `null` | Authentication token for the external API |
 | `apiPort` | `HINDSIGHT_API_PORT` | `9077` | Port for the local `hindsight-embed` daemon |
-| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | `300` | Seconds before idle daemon shuts down (0 = never) |
 | `embedVersion` | `HINDSIGHT_EMBED_VERSION` | `"latest"` | Version of `hindsight-embed` to install |
 | `embedPackagePath` | `HINDSIGHT_EMBED_PACKAGE_PATH` | `null` | Local path to `hindsight-embed` package (dev override) |
 

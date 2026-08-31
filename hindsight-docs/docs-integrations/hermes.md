@@ -115,7 +115,6 @@ All settings are in `~/.hermes/hindsight/config.json`. Every setting can also be
 | `api_url` | `https://api.hindsight.vectorize.io` | `HINDSIGHT_API_URL` | Hindsight API URL |
 | `api_key` | `null` | `HINDSIGHT_API_KEY` | Auth token for Hindsight Cloud |
 | `apiPort` | `9077` | `HINDSIGHT_API_PORT` | Port for local Hindsight daemon |
-| `daemonIdleTimeout` | `0` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | Seconds before idle daemon shuts down (0 = never) |
 | `embedVersion` | `"latest"` | `HINDSIGHT_EMBED_VERSION` | `hindsight-embed` version for `uvx` |
 
 ### LLM Provider (local mode only)

@@ -262,7 +262,6 @@ Nothing to sign up for and nothing to host — memory runs on your machine. The 
   same error handling and the same diagnostics. Nothing downstream of the URL knows which mode it is.
 - **It keeps running** until you stop it. There is deliberately no stop-on-exit: one daemon is
   shared, so ending one session must not cut memory out from under another agent still working.
-  Set `daemonIdleTimeout` to have it exit after that many seconds of inactivity.
 - **macOS additionally needs a current Rust toolchain.** `litellm` (a transitive dependency of the
   API) publishes wheels only for Linux and Windows, so a Mac compiles it from source through
   maturin and its crates pin a recent `rustc`. Install from [rustup.rs](https://rustup.rs) and keep
@@ -275,14 +274,14 @@ Nothing to sign up for and nothing to host — memory runs on your machine. The 
 Daemon settings keep the names the old per-agent Claude Code plugin used, so an existing
 environment carries over unchanged:
 
-| field               | env                             | default        | meaning                                    |
-| ------------------- | ------------------------------- | -------------- | ------------------------------------------ |
-| `serverMode`        | `HINDSIGHT_SERVER_MODE`         | `cloud`        | `cloud` \| `self-hosted` \| `daemon`       |
-| `apiPort`           | `HINDSIGHT_API_PORT`            | `9077`         | port the local daemon listens on           |
-| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | —              | seconds of inactivity before it exits      |
-| `daemonProfile`     | `HINDSIGHT_DAEMON_PROFILE`      | `coding-agent` | which local database it uses               |
-| `embedVersion`      | `HINDSIGHT_EMBED_VERSION`       | `latest`       | which `hindsight-embed` release to run     |
-| `embedPackagePath`  | `HINDSIGHT_EMBED_PACKAGE_PATH`  | —              | run a local checkout instead (development) |
+| field               | env                             | default        | meaning                                                    |
+| ------------------- | ------------------------------- | -------------- | ---------------------------------------------------------- |
+| `serverMode`        | `HINDSIGHT_SERVER_MODE`         | `cloud`        | `cloud` \| `self-hosted` \| `daemon`                       |
+| `apiPort`           | `HINDSIGHT_API_PORT`            | `9077`         | port the local daemon listens on                           |
+| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | —              | deprecated, ignored: the daemon no longer exits on its own |
+| `daemonProfile`     | `HINDSIGHT_DAEMON_PROFILE`      | `coding-agent` | which local database it uses                               |
+| `embedVersion`      | `HINDSIGHT_EMBED_VERSION`       | `latest`       | which `hindsight-embed` release to run                     |
+| `embedPackagePath`  | `HINDSIGHT_EMBED_PACKAGE_PATH`  | —              | run a local checkout instead (development)                 |
 
 Any `HINDSIGHT_API_*` variable you export is forwarded to the daemon, so server-side settings need
 no equivalent here.

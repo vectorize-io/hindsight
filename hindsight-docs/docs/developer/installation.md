@@ -400,7 +400,7 @@ with HindsightServer(llm_provider="openai", llm_api_key="sk-xxx") as server:
     results = client.recall(bank_id="alice", query="How should I respond to Alice?")
 ```
 
-**Managed subprocess** (`HindsightEmbedded`): the server runs as a background daemon process, shared across multiple Python processes or sessions. The daemon starts on first use and shuts down automatically after an idle timeout.
+**Managed subprocess** (`HindsightEmbedded`): the server runs as a background daemon process, shared across multiple Python processes or sessions. The daemon starts on first use and runs until it is stopped.
 
 ```python
 from hindsight import HindsightEmbedded

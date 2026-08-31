@@ -21,7 +21,7 @@ Zero-configuration local memory system with automatic daemon management. Perfect
 **Key features:**
 
 - **Zero setup** — One `configure` command and you're ready
-- **Automatic lifecycle** — Daemon starts on-demand, stops when idle
+- **Automatic lifecycle** — Daemon starts on-demand and is shared by every client
 - **Isolated storage** — Each bank gets its own embedded PostgreSQL database
 - **Local-only** — Binds to `127.0.0.1:8888`, not accessible from network
 - **Production-grade engine** — Uses the same memory engine as the full API service
@@ -118,7 +118,6 @@ The control center runs as a separate process from the memory daemon. Stopping o
 | `HINDSIGHT_API_LLM_API_KEY` | **Required**. API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama` | `openai` |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-4o-mini` |
-| `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT` | Seconds before daemon auto-exits when idle (0 = never) | `0` |
 | `HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES` | Rotate the daemon log at startup when it reaches this size; `0` disables rotation | `10485760` (10 MiB) |
 | `HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT` | Retained backups; `0` truncates a full log at startup | `3` |
 | `HINDSIGHT_EMBED_CONTROL_PORT` | Default port for `hindsight-embed control start` | `7878` |
@@ -126,8 +125,8 @@ The control center runs as a separate process from the memory daemon. Stopping o
 The size is checked only when a daemon starts, so a single uninterrupted run is never truncated and can
 grow past `MAX_BYTES` — and at the next start that whole file is kept as the first backup. Retained size
 is therefore around `MAX_BYTES × (BACKUP_COUNT + 1)` (40 MiB by default) only for daemons that restart
-regularly; a daemon left running for weeks (the default, since it never auto-exits) keeps whatever it
-wrote. Restart it, or lower `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT`, to keep the bound meaningful.
+regularly; a daemon left running for weeks keeps whatever it wrote. Restart it to keep the bound
+meaningful.
 
 **Provider Examples:**
 
@@ -150,20 +149,8 @@ export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
 
 ## Daemon Management
 
-### Idle Timeout
-
-Customize how long the daemon stays alive when idle:
-
-```bash
-# Never timeout (daemon runs until manually stopped)
-export HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT=0
-
-# Shorter timeout: 1 minute
-export HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT=60
-
-# Longer timeout: 30 minutes
-export HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT=1800
-```
+The daemon runs until you stop it — it never exits on its own, so a long retain, reflect or
+consolidation is never cut short.
 
 ### Daemon Commands
 
@@ -276,12 +263,11 @@ Common issues:
 
 ### Daemon Exits Immediately
 
-Check if you have the idle timeout set too low:
+The daemon never stops itself, so an exit is a crash or a failed startup. Check the log:
 
 ```bash
-# Disable idle timeout for debugging
-export HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT=0
 hindsight-embed daemon status
+tail -n 100 ~/.hindsight/daemon.log
 ```
 
 ### Reset Configuration

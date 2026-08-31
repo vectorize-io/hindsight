@@ -81,8 +81,8 @@ class HindsightEmbedded:
             for the resolved provider.
         llm_base_url: Optional custom base URL for LLM API
         database_url: Optional database URL override (default: profile-specific pg0)
-        idle_timeout: Seconds before daemon auto-exits when idle. Omit to inherit
-            (daemon default: 0, disabled).
+        idle_timeout: Deprecated and ignored — the daemon no longer auto-exits
+            when idle. Still accepted so existing callers keep working.
         log_level: Daemon log level. Omit to inherit (daemon default: "info").
         ui: Whether to start the control plane web UI alongside the daemon (default: False)
         ui_port: Port for the UI. Defaults to daemon_port + 10000.
@@ -118,8 +118,7 @@ class HindsightEmbedded:
             llm_model: Model name to use. Omit to inherit.
             llm_base_url: Optional custom base URL for LLM API
             database_url: Optional database URL override
-            idle_timeout: Seconds before daemon auto-exits when idle (0 = disabled).
-                Omit to inherit.
+            idle_timeout: Deprecated and ignored (the daemon no longer auto-exits).
             log_level: Daemon log level. Omit to inherit.
             ui: Whether to start the control plane web UI alongside the daemon
             ui_port: Port for the UI (defaults to daemon_port + 10000)
