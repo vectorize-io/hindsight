@@ -154,7 +154,7 @@ async def tool_search_mental_models(
     from ..memories import get_memories
 
     store = get_memories()
-    if store.owns_knowledge_index_for(bank_id):
+    if store.store_owned_for(bank_id):
         matches = await store.search_knowledge_pages_semantic(
             bank_id,
             embedding=list(query_embedding),

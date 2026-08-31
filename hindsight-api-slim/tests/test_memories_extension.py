@@ -649,7 +649,7 @@ class InMemoryMemories(MemoriesExtension):
     # first embedding component for vectors — because what these tests assert is that the engine
     # ROUTES here and hydrates what comes back, not that a dict can rank.
 
-    owns_knowledge_index = True
+    store_owned = True
 
     def _pages(self, bank_id):
         return self.knowledge_pages.setdefault(bank_id, {})
