@@ -36,18 +36,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-
-@pytest.fixture(autouse=True)
-def _isolate_codex_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep Codex auth tests from touching a developer's real Codex home."""
-    home = tmp_path_factory.mktemp("codex-home")
-    codex_home = home / ".codex"
-    codex_home.mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-
-
 from hindsight_api.engine.providers.codex_llm import (
     _CODEX_CLIENT_ID,
     _CODEX_REFRESH_TOKEN_URL,
@@ -55,6 +43,23 @@ from hindsight_api.engine.providers.codex_llm import (
     CodexLLM,
     CodexRefreshExpiredError,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_codex_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Codex auth tests off the developer's (or CI's) real Codex home.
+
+    ``default_codex_auth_file()`` reads ``$CODEX_HOME`` and falls back to
+    ``Path.home() / ".codex"``, so any test that constructs a provider without
+    an explicit auth path would otherwise pick up real credentials on a machine
+    where Codex is actually logged in. Both inputs are redirected at a tmp dir.
+    """
+    home = tmp_path_factory.mktemp("codex-home")
+    codex_home = home / ".codex"
+    codex_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
 
 
 def _make_jwt(exp_unixtime: int | None) -> str:
@@ -509,8 +514,13 @@ def test_refresh_token_reused_retries_with_newer_disk_refresh_token_when_disk_ac
     assert manager.refresh_token == "rt-final"
 
 
-def test_force_refresh_token_reused_does_not_skip_refresh_when_disk_access_is_stale(tmp_path: Path):
-    """Reactive force refresh must still refresh when adopted disk access is stale."""
+def test_force_refresh_retries_with_newer_disk_refresh_token_after_reuse_401(tmp_path: Path):
+    """The reuse-401 retry is reachable from the reactive path too.
+
+    ``force=True`` bypasses the JWT-clock gate, so a token the client still
+    considers fresh (but the server rejected) reaches the refresh call and then
+    the same rotate-under-us recovery as the proactive path.
+    """
     old_fresh_access = _make_jwt(int(time.time()) + 3600)
     disk_stale_access = _make_jwt(int(time.time()) - 30)
     final_access = _make_jwt(int(time.time()) + 3600)
@@ -543,6 +553,51 @@ def test_force_refresh_token_reused_does_not_skip_refresh_when_disk_access_is_st
         manager.refresh_tokens(reason="reactive", force=True)
 
     assert requests == ["rt-old", "rt-disk-new"]
+    assert manager.access_token == final_access
+    assert manager.refresh_token == "rt-final"
+
+
+def test_force_refresh_does_not_skip_when_disk_already_rotated_to_a_stale_access_token(tmp_path: Path):
+    """Adopting a *different* on-disk token is not enough to skip the refresh.
+
+    Reactive callers get exactly one retry (``CodexOAuthEmbeddings.encode``
+    retries ``super().encode`` once on ``AuthenticationError``). If auth.json
+    was rotated by another Codex process long enough ago that its access token
+    has itself expired, returning it spends that retry on a second 401 and
+    fails the whole call. Only a token that is fresh by the JWT clock may
+    short-circuit the network refresh.
+    """
+    memory_access = _make_jwt(int(time.time()) + 3600)  # clock-fresh, but server rejected it
+    disk_stale_access = _make_jwt(int(time.time()) - 30)  # newer on disk, already expired
+    final_access = _make_jwt(int(time.time()) + 3600)
+
+    auth_file = _make_codex_auth_file(tmp_path, memory_access, refresh_token="rt-old")
+    manager = CodexAuthManager.from_file(auth_file)
+
+    # Another Codex process rotated auth.json before this caller takes the lock.
+    auth_file.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": disk_stale_access,
+                    "refresh_token": "rt-disk-new",
+                    "account_id": "acct-test",
+                },
+            }
+        )
+    )
+
+    requests: list[str] = []
+
+    def fake_post(url, **kwargs):
+        requests.append(kwargs["json"]["refresh_token"])
+        return _refresh_response(200, {"access_token": final_access, "refresh_token": "rt-final"})
+
+    with patch.object(manager._http_client, "post", new=fake_post):
+        manager.refresh_tokens(reason="reactive (401 from embeddings API)", force=True)
+
+    assert requests == ["rt-disk-new"], "force refresh returned without refreshing"
     assert manager.access_token == final_access
     assert manager.refresh_token == "rt-final"
 
@@ -750,8 +805,7 @@ def test_codex_oauth_embeddings_picks_up_refreshed_token_on_encode(tmp_path: Pat
     new_access = _make_jwt(int(time.time()) + 3600)
 
     _make_codex_auth_file(tmp_path, expired, refresh_token="rt-embed")
-    monkeypatch.delenv("CODEX_HOME", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
 
     emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
 
@@ -782,8 +836,7 @@ def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, monkeypa
     new_access = _make_jwt(int(time.time()) + 7200)
 
     _make_codex_auth_file(tmp_path, fresh, refresh_token="rt-embed")
-    monkeypatch.delenv("CODEX_HOME", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
 
     emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
     emb._dimension = 1536

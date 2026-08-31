@@ -422,7 +422,13 @@ class CodexAuthManager:
             with _codex_auth_lock(self._auth_file):
                 disk_tokens = self._load_tokens_from_file(self._auth_file)
                 if disk_tokens and self._adopt_tokens(disk_tokens):
-                    if force or self._token_is_fresh_with_known_expiry():
+                    # Only skip the network refresh when the adopted token is
+                    # demonstrably usable. A reactive (force) caller is here
+                    # because the server rejected its token, and its one retry
+                    # is spent on whatever we return: adopting a token that is
+                    # merely *different* — but itself past expiry, or with an
+                    # unparseable exp — burns that retry on a second 401.
+                    if self._token_is_fresh_with_known_expiry():
                         return
 
                 if not self.refresh_token:
@@ -431,12 +437,11 @@ class CodexAuthManager:
                         "Run 'codex auth login' to re-authenticate."
                     )
 
-                response: httpx.Response | None = None
+                log_reason = f" ({reason})" if reason else ""
+                logger.info(f"Refreshing Codex OAuth access_token{log_reason}")
+
                 refresh_attempt = 0
                 while True:
-                    log_reason = f" ({reason})" if reason else ""
-                    logger.info(f"Refreshing Codex OAuth access_token{log_reason}")
-
                     request_access_token = self.access_token
                     request_refresh_token = self.refresh_token
                     request_body = {
