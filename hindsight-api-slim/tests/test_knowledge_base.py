@@ -18,7 +18,11 @@ import pytest_asyncio
 
 import hindsight_api.engine.memory_engine as memory_engine_module
 from hindsight_api.engine.db import DatabaseConnection
-from hindsight_api.engine.memory_engine import MemoryEngine, _may_need_refresh
+from hindsight_api.engine.memory_engine import (
+    MENTAL_MODEL_PENDING_CONTENT,
+    MemoryEngine,
+    _may_need_refresh,
+)
 from hindsight_api.extensions import (
     BankReadContext,
     BankReadOperation,
@@ -116,6 +120,13 @@ class _RecordingValidator(OperationValidatorExtension):
         self._reason = reason
         self.read_ops: list[BankReadOperation] = []
         self.write_ops: list[BankWriteOperation] = []
+        # A page read is a mental model read, so it runs the metering pair
+        # too. Recorded here so tests can assert the meter fires rather than
+        # only that access was checked.
+        self.model_gets: list[str] = []
+        self.model_reads: list[str] = []
+        self.model_get_tokens: list[int] = []
+        self.reject_model_get = False
 
     async def validate_retain(self, ctx) -> ValidationResult:
         return ValidationResult.accept()
@@ -125,6 +136,19 @@ class _RecordingValidator(OperationValidatorExtension):
 
     async def validate_reflect(self, ctx) -> ValidationResult:
         return ValidationResult.accept()
+
+    async def validate_mental_model_get(self, ctx) -> ValidationResult:
+        self.model_gets.append(ctx.mental_model_id)
+        if self.reject_model_get:
+            return ValidationResult.reject("insufficient credits")
+        return ValidationResult.accept()
+
+    async def on_mental_model_get_complete(self, result) -> None:
+        # Recorded separately from `model_gets`: the gate and the completion
+        # hook do not always both fire. A single read runs both; a list reports
+        # completion for each model it delivered without gating each one.
+        self.model_reads.append(result.mental_model_id)
+        self.model_get_tokens.append(result.output_tokens)
 
     async def validate_bank_read(self, ctx: BankReadContext) -> ValidationResult:
         self.read_ops.append(ctx.operation)
@@ -1081,6 +1105,187 @@ class TestMoveRenameDelete:
         # the backing mental model is gone too
         mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
         assert mm is None
+
+
+class TestListReportsTheContentItDelivers:
+    """A list that carries content is a bulk read of that content.
+
+    A knowledge page is a mental_models row and is not excluded from
+    list_mental_models, so a list that returns content hands back every
+    page in the bank. Reporting the single-page read while leaving that
+    unreported would watch the narrow door and leave the wide one open — a
+    caller could enumerate a bank's synthesized knowledge by asking for it in
+    one page instead of one at a time.
+    """
+
+    async def test_listing_with_content_reports_each_model(self, memory, kb_bank, request_context, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        with_content = [m for m in page.items if m.get("content")]
+        assert with_content, "fixture should have at least one model with content"
+        assert sorted(validator.model_reads) == sorted(str(m["id"]) for m in with_content)
+
+    async def test_the_page_backing_model_is_among_them(self, memory, kb_bank, request_context, monkeypatch):
+        # The specific hole: pages ride in on this list.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        assert ids.orders_mm in validator.model_reads
+
+    async def test_listing_metadata_reports_nothing(self, memory, kb_bank, request_context, monkeypatch):
+        # No content delivered, nothing to report — and this is the detail
+        # level the internal template-provisioning callers now ask for.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="metadata", request_context=request_context)
+
+        assert page.items, "metadata listing should still return the models"
+        assert validator.model_reads == []
+
+    async def test_reported_size_tracks_the_content_returned(self, memory, kb_bank, request_context, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        expected = sorted(len(m["content"]) // 4 for m in page.items if m.get("content"))
+        assert sorted(validator.model_get_tokens) == expected
+
+    async def test_config_detail_carries_the_definition_without_the_body(
+        self, memory, kb_bank, request_context, monkeypatch
+    ):
+        # The level the bank-template export asks for: it copies how a model is
+        # built and never reads what it says, so it must not pull — or be
+        # reported for — content it discards.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="config", request_context=request_context)
+
+        assert page.items, "config listing should still return the models"
+        assert all("content" not in m for m in page.items)
+        # The fields a template manifest is built from survive the trim.
+        assert all(m["source_query"] and "trigger" in m and "max_tokens" in m for m in page.items)
+        assert validator.model_reads == []
+
+    async def test_a_model_still_generating_is_not_reported(self, memory, kb_bank, request_context, monkeypatch):
+        # The placeholder is not synthesized knowledge; nothing was delivered.
+        bank_id, ids = kb_bank
+        pending = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Pending",
+            source_query="Not answered yet.",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            request_context=request_context,
+        )
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        assert any(m["id"] == pending["id"] for m in page.items), "the pending model should still be listed"
+        assert pending["id"] not in validator.model_reads
+
+
+class TestExportReportsOnceNotPerPage:
+    """An export is a single named operation, not N model reads.
+
+    export_knowledge_base runs its per-page reads under
+    _authorize_nested_operations, so the whole bundle costs exactly one
+    EXPORT_KNOWLEDGE_BASE hook. Pinned here because it is the widest read of
+    model content in the engine, and the suppression that keeps it to one hook
+    is invisible at the call site.
+    """
+
+    async def test_export_reports_one_hook_for_the_whole_bundle(self, memory, kb_bank, request_context, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        export = await memory.export_knowledge_base(bank_id=bank_id, request_context=request_context)
+
+        assert len(export.pages) >= 3, "fixture seeds three pages"
+        assert _read_ops(validator) == [BankReadOperation.EXPORT_KNOWLEDGE_BASE]
+        # The nested page and list reads inside it report nothing of their own.
+        assert validator.model_gets == []
+        assert validator.model_reads == []
+
+
+class TestPageReadIsAModelRead:
+    """Reading a page runs the same validator pair as reading its mental model.
+
+    get_knowledge_page joins mental_models and returns mm.content as
+    the page body, so a page read delivers exactly what get_mental_model
+    delivers off the same row. The two endpoints are doors onto one object, and
+    a deployment that meters model reads must see both — otherwise the price of
+    the same content depends on which URL the caller picked.
+    """
+
+    async def test_reading_a_page_runs_the_model_get_validator(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+
+        assert resp.status_code == 200, resp.text
+        # Gated on the page's backing model, not on the page id.
+        assert validator.model_gets == [ids.orders_mm]
+
+    async def test_reading_a_page_reports_completion_with_the_content_size(
+        self, api_client, kb_bank, memory, monkeypatch
+    ):
+        # The post-hook is what records usage; without it a deployment could
+        # gate a read it then never bills for.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+        body = resp.json()
+
+        # The response renames the model's content to body; the hook is
+        # given the same string, so the recorded size must track it.
+        assert len(validator.model_get_tokens) == 1
+        assert validator.model_get_tokens[0] == len(body.get("body") or "") // 4
+        assert validator.model_get_tokens[0] > 0
+
+    async def test_a_refused_model_get_returns_no_page_content(self, api_client, kb_bank, memory, monkeypatch):
+        # The gate has to run before the body is handed back, or it is
+        # decoration: the caller would get the content and the refusal.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        validator.reject_model_get = True
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+
+        assert resp.status_code != 200
+        assert "Orders" not in resp.text
+        # Refused before delivery means nothing to record.
+        assert validator.model_get_tokens == []
+
+    async def test_bank_read_access_check_still_runs(self, api_client, kb_bank, memory, monkeypatch):
+        # Metering is added alongside the access check, not in place of it.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        validator.read_ops.clear()
+        await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+
+        assert _read_ops(validator) == [BankReadOperation.GET_KNOWLEDGE_PAGE]
 
 
 class TestAuthorizationReadDenied:

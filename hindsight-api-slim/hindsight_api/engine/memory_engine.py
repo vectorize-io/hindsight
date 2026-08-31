@@ -11726,6 +11726,90 @@ class MemoryEngine(MemoryEngineInterface):
         state.bank_write_remaining[write] = remaining - 1
         return True
 
+    async def _gate_mental_model_read(
+        self, bank_id: str, mental_model_id: str, *, request_context: "RequestContext"
+    ) -> None:
+        """Run the pre-read validation for one mental model.
+
+        Shared by every endpoint that hands a model's content to a caller, so
+        "which reads are gated" is a property of this method rather than
+        something each call site has to remember. A knowledge page is a second
+        view over a mental model and reaches this by the same route.
+        """
+        if not self._operation_validator:
+            return
+        from hindsight_api.extensions.operation_validator import MentalModelGetContext
+
+        if self._consume_preauthorized_mental_model_operation(
+            bank_id, mental_model_id, refresh=False, request_context=request_context
+        ):
+            return
+        await self._validate_operation(
+            self._operation_validator.validate_mental_model_get(
+                MentalModelGetContext(
+                    bank_id=bank_id,
+                    mental_model_id=mental_model_id,
+                    request_context=request_context,
+                )
+            )
+        )
+
+    async def _record_mental_model_list_read(
+        self,
+        bank_id: str,
+        items: list[dict[str, Any]],
+        *,
+        request_context: "RequestContext",
+    ) -> None:
+        """Report the content a list handed back, one entry per model.
+
+        Reported per model rather than as a single aggregate so a deployment
+        sees the same shape whether a caller fetched ten models one at a time
+        or asked for them in one page — the unit is a model's content, and the
+        route it arrived by is not something pricing should have to know about.
+
+        Items carrying no content are skipped: nothing was delivered, so there
+        is nothing to report. That covers a model that has never been refreshed,
+        one still generating its first content, and every detail level that
+        drops the column — so "report what was delivered" is read off the items
+        themselves rather than inferred from the caller's ``detail`` argument.
+        """
+        for item in items:
+            content = item.get("content")
+            if not content or content.strip() == MENTAL_MODEL_PENDING_CONTENT:
+                continue
+            await self._record_mental_model_read(bank_id, str(item["id"]), content, request_context=request_context)
+
+    async def _record_mental_model_read(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        content: str | None,
+        *,
+        request_context: "RequestContext",
+    ) -> None:
+        """Report a completed model read, sized by the content actually returned.
+
+        Best-effort by design: the caller already has the content, so a failure
+        here must not turn a served read into an error.
+        """
+        if not self._operation_validator:
+            return
+        from hindsight_api.extensions.operation_validator import MentalModelGetResult
+
+        try:
+            await self._operation_validator.on_mental_model_get_complete(
+                MentalModelGetResult(
+                    bank_id=bank_id,
+                    mental_model_id=mental_model_id,
+                    request_context=request_context,
+                    output_tokens=len(content) // 4 if content else 0,
+                    success=True,
+                )
+            )
+        except Exception as hook_err:
+            logger.warning(f"Post-mental-model-get hook error (non-fatal): {hook_err}")
+
     def _consume_preauthorized_mental_model_operation(
         self,
         bank_id: str,
@@ -13399,7 +13483,8 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: Bank identifier
             tags: Optional tags to filter by
             tags_match: How to match tags - 'any', 'all', or 'exact'
-            detail: Detail level - 'metadata', 'content', or 'full'
+            detail: Detail level - 'metadata', 'config', 'content', or 'full'.
+                See ``_row_to_mental_model``; 'config' is internal.
             limit: Maximum number of results, or None for every match. The HTTP
                 endpoint always caps it; None is for internal callers that must
                 see the whole set (bank-template export/import), which used to
@@ -13483,7 +13568,26 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 for item in items:
                     item["is_stale"] = stale[item["id"]]
-            return MentalModelPage(items=items, total=int(total or 0))
+
+        # A list that carries content delivers the same synthesized text a
+        # per-model read delivers, in bulk. Report it the same way, so what a
+        # caller pays tracks the content it receives rather than which endpoint
+        # it happened to call. A detail level that drops ``content`` (``metadata``,
+        # ``config``) leaves nothing to report, and the per-item check below sees
+        # that directly rather than re-deriving it from the detail string.
+        #
+        # This matters most for knowledge pages: a page is a mental_models
+        # row and is not excluded from this query, so an unreported list
+        # hands back every page in a bank while a single-page read is
+        # reported. The narrow door should not be the only one watched.
+        #
+        # Outside the connection block on purpose: the hook is an extension
+        # seam that may go over the network, once per model, and a pooled
+        # connection must not be held across it.
+        if not _nested_operation_authorized.get():
+            await self._record_mental_model_list_read(bank_id, items, request_context=request_context)
+
+        return MentalModelPage(items=items, total=int(total or 0))
 
     async def get_mental_model(
         self,
@@ -13498,7 +13602,8 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: Bank identifier
             mental_model_id: Pinned mental model UUID
-            detail: Detail level - 'metadata', 'content', or 'full'
+            detail: Detail level - 'metadata', 'config', 'content', or 'full'.
+                See ``_row_to_mental_model``; 'config' is internal.
             request_context: Request context for authentication
 
         Returns:
@@ -13507,21 +13612,7 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
 
         # Pre-operation validation (credit check / usage metering)
-        if self._operation_validator:
-            from hindsight_api.extensions.operation_validator import MentalModelGetContext
-
-            if not self._consume_preauthorized_mental_model_operation(
-                bank_id,
-                mental_model_id,
-                refresh=False,
-                request_context=request_context,
-            ):
-                ctx = MentalModelGetContext(
-                    bank_id=bank_id,
-                    mental_model_id=mental_model_id,
-                    request_context=request_context,
-                )
-                await self._validate_operation(self._operation_validator.validate_mental_model_get(ctx))
+        await self._gate_mental_model_read(bank_id, mental_model_id, request_context=request_context)
 
         backend = await self._get_backend()
 
@@ -13543,23 +13634,10 @@ class MemoryEngine(MemoryEngineInterface):
                 result["is_stale"] = await self.compute_mental_model_is_stale(conn, bank_id, row)
 
         # Post-operation hook (usage recording)
-        if result and self._operation_validator:
-            from hindsight_api.extensions.operation_validator import MentalModelGetResult
-
-            content = result.get("content", "")
-            output_tokens = len(content) // 4 if content else 0
-
-            result_ctx = MentalModelGetResult(
-                bank_id=bank_id,
-                mental_model_id=mental_model_id,
-                request_context=request_context,
-                output_tokens=output_tokens,
-                success=True,
+        if result:
+            await self._record_mental_model_read(
+                bank_id, mental_model_id, result.get("content"), request_context=request_context
             )
-            try:
-                await self._operation_validator.on_mental_model_get_complete(result_ctx)
-            except Exception as hook_err:
-                logger.warning(f"Post-mental-model-get hook error (non-fatal): {hook_err}")
 
         return result
 
@@ -15688,8 +15766,31 @@ class MemoryEngine(MemoryEngineInterface):
             )
         if row is None:
             return None
+
+        # A page read IS a mental model read: the join above returns
+        # ``mm.content`` as the page body, so this delivers exactly what
+        # ``get_mental_model`` delivers, off the same row. Run the same
+        # validator pair so the two doors onto that object are treated alike
+        # rather than differing by which URL the caller happened to use.
+        #
+        # Ordered after the fetch, unlike ``get_mental_model``, because the
+        # model's id is a property of the page rather than something the
+        # caller supplies — it is not known until the row is read. The gate
+        # still runs before any content is returned, so a rejected read
+        # yields no page; the only cost of the reordering is one indexed
+        # SELECT performed for a request that is then refused.
+        mental_model_id = row["mental_model_id"]
+        meter = bool(mental_model_id) and not _nested_operation_authorized.get()
+        if meter:
+            await self._gate_mental_model_read(bank_id, mental_model_id, request_context=request_context)
+
         node = self._row_to_knowledge_node(row)
         node["content"] = row["mm_content"]
+
+        if meter:
+            await self._record_mental_model_read(
+                bank_id, mental_model_id, node.get("content"), request_context=request_context
+            )
         return node
 
     async def search_knowledge_pages(
@@ -16059,6 +16160,14 @@ class MemoryEngine(MemoryEngineInterface):
         it performs run under that authorization so the whole export costs exactly
         one validator hook and leaks no content when the caller is denied. The API
         layer renders the returned data into a markdown bundle.
+
+        Note that this is the widest read of model content in the engine — every
+        page in the bank — and it deliberately reports as one export rather than
+        as one model read per page: an export is a single named operation a
+        deployment can price on its own terms, and re-reporting its pages would
+        double-count against the ``EXPORT_KNOWLEDGE_BASE`` hook that already fired.
+        Changing that means changing what the export hook means, which is a
+        decision for the extension contract rather than a detail of this method.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator and not _nested_operation_authorized.get():
@@ -16335,7 +16444,12 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             row: Database row
-            detail: Detail level - 'metadata', 'content', or 'full'
+            detail: Detail level - 'metadata', 'config', 'content', or 'full'.
+                ``config`` is internal (not offered by the HTTP or MCP surface):
+                it carries the fields that describe how a model is built —
+                ``source_query``, ``max_tokens``, ``trigger`` — without its
+                synthesized content, for callers that copy a model's definition
+                and never read its body.
         """
         result: dict[str, Any] = {
             "id": str(row["id"]),
@@ -16356,9 +16470,12 @@ class MemoryEngine(MemoryEngineInterface):
             except json.JSONDecodeError:
                 trigger = None
         result["source_query"] = row["source_query"]
-        result["content"] = row["content"]
         result["max_tokens"] = row.get("max_tokens")
         result["trigger"] = trigger
+        if detail == "config":
+            return result
+
+        result["content"] = row["content"]
 
         if detail == "full":
             reflect_response = row.get("reflect_response")
