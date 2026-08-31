@@ -628,6 +628,11 @@ class ConfigResolver:
                 bank_id,
             )
 
+        # The config column just changed; the next read must not serve the entry loaded before it.
+        from .engine import bank_info_cache
+
+        await bank_info_cache.invalidate(bank_id, "config")
+
         logger.info(f"Updated bank config for {bank_id}: {list(validated.updates.keys())}")
 
     async def reset_bank_config(self, bank_id: str) -> None:
@@ -652,6 +657,11 @@ class ConfigResolver:
                 """,
                 bank_id,
             )
+
+        # The config column just changed; the next read must not serve the entry loaded before it.
+        from .engine import bank_info_cache
+
+        await bank_info_cache.invalidate(bank_id, "config")
 
         logger.info(f"Reset bank config for {bank_id} to defaults")
 

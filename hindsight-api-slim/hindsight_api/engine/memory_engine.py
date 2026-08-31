@@ -18349,6 +18349,10 @@ class MemoryEngine(MemoryEngineInterface):
                     f"UPDATE {fq_table('banks')} SET {', '.join(set_clauses)} WHERE bank_id = $1",
                     *params,
                 )
+            # Before the read-back below, or it returns the profile this update just replaced.
+            from .bank_info_cache import invalidate as _invalidate_bank_info
+
+            await _invalidate_bank_info(bank_id, "profile")
         profile = await self._get_bank_profile_authenticated(
             bank_id,
             request_context=request_context,

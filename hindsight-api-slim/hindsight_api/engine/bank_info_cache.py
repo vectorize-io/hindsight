@@ -11,17 +11,19 @@ the pool runs five ``set_config`` calls on checkout and a full ``RESET ALL`` on 
 cached read removes roughly three statements, not one. Removing both is what lets such a retain
 run without touching the database at all.
 
-**This is a real consistency trade, not a free win, and the trade is TTL-only.** There is
-deliberately no invalidation: an edit to a bank is not visible to a reader holding a cached entry
-until that entry expires -- in the writing process as much as in any other. So after changing a
-bank's name, mission, disposition or config, expect up to one TTL before every reader agrees.
+**This is a real consistency trade, not a free win.** A bank edited in ANOTHER process is not
+visible to a reader holding a cached entry until that entry expires, so across pods the guarantee
+is "eventually consistent within the TTL".
 
-Invalidation is left out on purpose rather than forgotten. A per-process invalidate only ever
-fixes the process that did the write; every other pod still waits out the TTL, so the guarantee
-is "eventually consistent within the TTL" either way. Adding it would buy a faster path for one
-pod at the cost of an invalidation call on every bank-write path -- five of them -- each a place
-to forget one and produce a cache that is stale in a way the TTL no longer bounds. One rule that
-always holds beats a fast path plus four correct call sites and a fifth that was missed.
+Within the writing process it is not a trade, because :func:`invalidate` is called on every path
+that writes the bank row. That is not an optimisation for one pod -- it is what keeps the API's
+own contract. `update_bank` returns the profile it reads back after writing, so without
+invalidation the endpoint answers a successful update with the values it just replaced; and a
+caller that PUTs a bank and immediately GETs it is the ordinary case, not a race.
+
+The cost is that every bank-write path has to invalidate, and a forgotten one produces staleness
+the TTL no longer bounds. `test_bank_info_cache_invalidation` is what makes a forgotten site fail
+loudly instead of silently.
 
 What that permits is bounded by what these two rows carry: a bank's display name, its
 disposition, its mission and its config. None is a correctness gate on a write, and this cache is
@@ -94,6 +96,19 @@ async def get_or_load(bank_id: str, kind: str, loader: Callable[[], Awaitable[di
     if not value:
         await cache.invalidate(schema, key)
     return value
+
+
+async def invalidate(bank_id: str, kind: str | None = None) -> None:
+    """Drop this bank's cached rows. `kind` narrows it to "profile" or "config"; None drops both.
+
+    Called by every path that writes the bank row. The two kinds are dropped together by default
+    because a caller that has just written one rarely knows which reads the request will make next,
+    and dropping the other costs a single re-read.
+    """
+    cache = _get_cache()
+    for k in (kind,) if kind else ("profile", "config"):
+        schema, key = _key(bank_id, k)
+        await cache.invalidate(schema, key)
 
 
 def reset_for_tests() -> None:

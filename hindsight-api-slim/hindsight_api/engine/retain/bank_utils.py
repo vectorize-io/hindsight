@@ -399,6 +399,11 @@ async def update_bank_disposition(pool, bank_id: str, disposition: dict[str, int
             json.dumps(disposition),
         )
 
+    # The profile row just changed; the next read must not serve the entry loaded before it.
+    from .. import bank_info_cache
+
+    await bank_info_cache.invalidate(bank_id, "profile")
+
 
 async def set_bank_mission(pool, bank_id: str, mission: str) -> None:
     """
@@ -423,6 +428,11 @@ async def set_bank_mission(pool, bank_id: str, mission: str) -> None:
             bank_id,
             mission,
         )
+
+    # The profile row just changed; the next read must not serve the entry loaded before it.
+    from .. import bank_info_cache
+
+    await bank_info_cache.invalidate(bank_id, "profile")
 
 
 async def merge_bank_mission(pool, llm_config, bank_id: str, new_info: str) -> dict:
@@ -460,6 +470,11 @@ async def merge_bank_mission(pool, llm_config, bank_id: str, new_info: str) -> d
             bank_id,
             merged_mission,
         )
+
+    # The profile row just changed; the next read must not serve the entry loaded before it.
+    from .. import bank_info_cache
+
+    await bank_info_cache.invalidate(bank_id, "profile")
 
     return {"mission": merged_mission}
 
