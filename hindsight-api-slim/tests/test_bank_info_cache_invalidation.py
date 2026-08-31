@@ -71,3 +71,34 @@ async def test_a_config_override_is_visible_to_the_next_resolve(memory: MemoryEn
 
     after = await resolver._load_bank_config(bank_id)
     assert after.get("retain_chunk_size") == 1234, "the cached config row survived a config write"
+
+
+@pytest.mark.asyncio
+async def test_a_config_read_back_does_not_go_through_the_cache(memory: MemoryEngine, request_context, monkeypatch):
+    """The cache is per PROCESS and a deployment runs several API pods, so invalidating on write
+    only ever fixes the pod that served the write. The endpoint a caller reads back through must
+    therefore not consult the cache at all.
+
+    The other pods are modelled by disabling invalidation entirely: that leaves this process in
+    exactly their state -- an entry cached before the write, and no notification that it moved.
+    A read that still sees the new value is one that did not come from the cache.
+    """
+    from hindsight_api.engine import bank_info_cache
+
+    bank_id = _bank("cache_bypass")
+    await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+    # Warm the config entry, then take invalidation away before the write.
+    await memory.get_bank_config(bank_id, request_context=request_context)
+
+    async def _no_invalidation(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(bank_info_cache, "invalidate", _no_invalidation)
+    await memory.update_bank_config(bank_id, {"retain_chunk_size": 4321}, request_context=request_context)
+
+    state = await memory.get_bank_config(bank_id, request_context=request_context)
+    assert state.overrides.get("retain_chunk_size") == 4321, (
+        "get_bank_config served a cached config row; a caller reading back its own edit sees the "
+        "value it replaced on any pod that did not serve the write"
+    )
+    assert state.config.get("retain_chunk_size") == 4321, "the resolved config came from the cache too"

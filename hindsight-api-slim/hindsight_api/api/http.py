@@ -7314,7 +7314,9 @@ def _register_routes(app: FastAPI):
             # Get bank-specific config overrides (not the fully resolved config,
             # so the template only contains what was explicitly set on this bank)
             await app.state.memory._authenticate_tenant(request_context)
-            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id)
+            # Fresh, not cached: this exports what is stored ON the bank, and a template taken
+            # right after a config edit must not carry the values that edit replaced.
+            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id, cached=False)
 
             # Filter to only BankTemplateConfig fields (exclude credentials, static fields)
             template_config_fields = set(BankTemplateConfig.model_fields.keys())
