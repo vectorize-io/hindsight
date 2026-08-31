@@ -210,8 +210,13 @@ class CausalRelation(BaseModel):
 # ISO-8601-ish calendar timestamp. Deliberately permissive about precision
 # (date only, date+time, optional seconds/fraction, optional Z or UTC offset)
 # and strict about everything else, so a grammar-constrained model cannot put
-# prose in a timestamp field. See the class docstrings below for why this is a
-# `pattern` and not just a description.
+# prose in a timestamp field -- under constrained decoding a description is not
+# a constraint, only the grammar is.
+#
+# NOT baked into the models below: the JSON Schema ``pattern`` keyword is only
+# usable on backends that accept it (see DEFAULT_LLM_SUPPORTS_STRING_PATTERN --
+# Bedrock 400s on schema keywords outside its allowlist). It is layered on at
+# schema-build time by _with_iso_timestamp_pattern() when the operator opts in.
 ISO_TIMESTAMP_PATTERN = (
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}"
     r"([T ][0-9]{2}:[0-9]{2}(:[0-9]{2})?(\.[0-9]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?)?$"
@@ -251,12 +256,8 @@ class ExtractedFact(BaseModel):
     why: str = Field(description="Context/significance if important. 'N/A' if obvious.")
 
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
-    occurred_start: str | None = Field(
-        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for events"
-    )
-    occurred_end: str | None = Field(
-        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for event end"
-    )
+    occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
+    occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts, including user preferences, rules, corrections, and constraints even when stated during a conversation. 'assistant' = actions, experiences, or observations the assistant/agent actually performed."
     )
@@ -394,12 +395,10 @@ class ExtractedFactVerbose(BaseModel):
 
     occurred_start: str | None = Field(
         default=None,
-        pattern=ISO_TIMESTAMP_PATTERN,
         description="WHEN the event happened (ISO timestamp). Only for fact_kind='event'. Leave null for conversations.",
     )
     occurred_end: str | None = Field(
         default=None,
-        pattern=ISO_TIMESTAMP_PATTERN,
         description="WHEN the event ended (ISO timestamp). Only for events with duration. Leave null for conversations.",
     )
 
@@ -449,12 +448,8 @@ class ExtractedFactNoCausal(BaseModel):
         default="conversation",
         description="'event' = specific datable occurrence, 'conversation' = general info",
     )
-    occurred_start: str | None = Field(
-        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="WHEN the event happened (ISO timestamp)."
-    )
-    occurred_end: str | None = Field(
-        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="WHEN the event ended (ISO timestamp)."
-    )
+    occurred_start: str | None = Field(default=None, description="WHEN the event happened (ISO timestamp).")
+    occurred_end: str | None = Field(default=None, description="WHEN the event ended (ISO timestamp).")
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = about the user/others, including user preferences, rules, corrections, and constraints. 'assistant' = actions or experiences the assistant/agent actually performed."
     )
@@ -493,12 +488,8 @@ class VerbatimExtractedFact(BaseModel):
     who: str = Field(description="People involved with relationships. 'N/A' if general.")
 
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
-    occurred_start: str | None = Field(
-        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for events"
-    )
-    occurred_end: str | None = Field(
-        default=None, pattern=ISO_TIMESTAMP_PATTERN, description="ISO timestamp for event end"
-    )
+    occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
+    occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
     fact_type: Literal["world", "assistant"] = Field(
         description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker."
     )
@@ -1255,6 +1246,27 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
     return "\n".join(lines)
 
 
+def _with_iso_timestamp_pattern(fact_class: type[BaseModel]) -> type[BaseModel]:
+    """Re-declare occurred_start/occurred_end with an ISO-timestamp ``pattern``.
+
+    Layered on rather than declared on the models so the constraint only reaches
+    backends that can take it. Constraining the Pydantic model (instead of
+    post-processing the serialized schema) is what makes this uniform across
+    providers: Gemini is handed the response model itself, not a schema dict.
+    """
+    constrained: dict[str, Any] = {}
+    for name in ("occurred_start", "occurred_end"):
+        constrained[name] = (
+            str | None,
+            Field(
+                default=None,
+                pattern=ISO_TIMESTAMP_PATTERN,
+                description=fact_class.model_fields[name].description,
+            ),
+        )
+    return create_model(f"{fact_class.__name__}IsoTimestamps", __base__=fact_class, **constrained)
+
+
 def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     """
     Build extraction prompt and response schema based on config.
@@ -1317,6 +1329,23 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     else:
         base_fact_class = ExtractedFactNoCausal
         base_response_class = FactExtractionResponseNoCausal
+
+    # Constrain the timestamp fields when the backend accepts JSON Schema
+    # `pattern`. Off by default: it stops a grammar-constrained model from
+    # reasoning inside a timestamp string (and burning the whole completion
+    # budget doing it), but backends that validate schemas against an allowlist
+    # reject the request outright. See DEFAULT_LLM_SUPPORTS_STRING_PATTERN.
+    if config.llm_supports_string_pattern:
+        base_fact_class = _with_iso_timestamp_pattern(base_fact_class)
+        base_response_class = create_model(
+            f"{base_response_class.__name__}IsoTimestamps",
+            # Carry the wrapper's field description across — it is part of the
+            # schema the model sees.
+            facts=(
+                list[base_fact_class],  # type: ignore[valid-type]
+                Field(description=base_response_class.model_fields["facts"].description),
+            ),
+        )
 
     # Add entity labels section if configured and build dynamic schema
     entity_labels_raw = config.entity_labels
