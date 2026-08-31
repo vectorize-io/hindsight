@@ -10239,7 +10239,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             # The nodes, and how many match the filters, come from the store — it
             # is the one that knows where the memories live and how to page them.
-            page = await store.graph_units(
+            page = await store.graph_view(
                 conn=conn,
                 fq_table=fq_table,
                 bank_id=bank_id,
@@ -10266,16 +10266,18 @@ class MemoryEngine(MemoryEngineInterface):
                     source_memory_ids.extend(unit["source_memory_ids"])
             source_memory_ids = list(set(source_memory_ids))  # Deduplicate
 
-            # Fetch links where BOTH endpoints are in the visible set (or source
-            # memories). Entity edges are derived below from unit_entities so we
-            # don't materialize them in memory_links anymore (dropped in migration
-            # e9b2c7d1f3a4) — no link_type filter is needed.
-            # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
-            # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
-            all_relevant_ids = unit_ids + source_memory_ids
-            links = await store.graph_direct_links(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in all_relevant_ids]
-            )
+            # Links and entity rows came back with the units: which memories are visible, how they
+            # link, and what they mention are three questions about ONE set of memories, and
+            # `graph_view` reads that set once. Asked as three calls, a store that keeps memories
+            # outside SQL fetched the whole visible set three times per render.
+            #
+            # Links cover both endpoints in the visible set (or its source memories); entity edges
+            # are derived below from `unit_entities` rather than materialized as memory_links rows
+            # (dropped in migration e9b2c7d1f3a4), so no link_type filter is needed. The store caps
+            # the edge count — the UI cannot usefully render more, and a densely-linked bank (1000
+            # nodes, 500k+ edges) is too slow uncapped.
+            links = page["links"]
+            unit_entities = page["entity_rows"]
 
             # Copy links from source memories to observations
             # Observations inherit links from their source memories via source_memory_ids
@@ -10332,14 +10334,6 @@ class MemoryEngine(MemoryEngineInterface):
             direct_links = [
                 link for link in links if link["from_unit_id"] in unit_id_set and link["to_unit_id"] in unit_id_set
             ]
-
-            # Get entity information — only for visible units
-            # Fetch entities for visible units AND their source memories
-            # (so observations can inherit entities from source memories)
-            entity_lookup_ids = unit_ids + source_memory_ids
-            unit_entities = await store.graph_entity_rows(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in entity_lookup_ids]
-            )
 
         # Build entity mapping
         entity_map = {}
