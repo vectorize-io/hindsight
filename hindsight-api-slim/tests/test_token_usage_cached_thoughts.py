@@ -377,3 +377,177 @@ async def test_openai_compatible_metrics_account_for_every_billed_output_token()
     assert recorded["output_tokens"] == completion - reasoning  # visible-only
     assert recorded["thoughts_tokens"] == reasoning
     assert recorded["output_tokens"] + recorded["thoughts_tokens"] == completion
+
+
+# --- #3851: folded vs unfolded reasoning on OpenAI-compatible gateways -------
+#
+# Not every OpenAI-compatible upstream folds reasoning into ``completion_tokens``.
+# The gateway in #3851 reported prompt=3110, completion=673, reasoning=909,
+# total=4692 -- ``completion_tokens`` already visible-only -- and the
+# unconditional subtraction clamped a real 673-token completion to 0 on 426 of
+# 565 retain calls. ``total`` reads as prompt + visible + reasoning under both
+# shapes, so these pin that visible output is derived from it rather than from a
+# guess at which shape the upstream used.
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_unfolded_reasoning_keeps_visible_output():
+    """#3851: reasoning reported separately from completion_tokens must not be
+    subtracted out of it."""
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=4692))
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        _, token_usage = await llm.call(
+            messages=[{"role": "user", "content": "Extract facts"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    assert token_usage.output_tokens == 673  # was 0: max(0, 673 - 909)
+    assert token_usage.thoughts_tokens == 909
+    assert token_usage.input_tokens == 3110
+    assert token_usage.total_tokens == 3110 + 673  # visible-only, excludes reasoning
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_with_tools_unfolded_reasoning_keeps_visible_output():
+    """#3851 carries the same defect on the tool-call path, which reports its own
+    metrics and returns its own LLMToolCallResult."""
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=4692), content="done")
+    )
+    collector = MagicMock(spec=MetricsCollector)
+    with patch(
+        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector",
+        return_value=collector,
+    ):
+        result = await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=[], max_retries=0)
+
+    assert result.output_tokens == 673
+    assert result.thoughts_tokens == 909
+    recorded = _recorded_llm_call(collector)
+    assert recorded["output_tokens"] == 673
+    assert recorded["thoughts_tokens"] == 909
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_unfolded_reasoning_survives_drifted_total():
+    """#3851: a proxy whose ``total`` is a token off the unfolded identity must
+    still not clamp visible output to 0.
+
+    This is what defeats shape *detection*: comparing prompt + completion against
+    total classifies 4691 (one under the true 4692) as the folded shape, and the
+    subtraction that follows puts output straight back to 0. Deriving from total
+    degrades by the same one token instead.
+    """
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=4691))
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        _, token_usage = await llm.call(
+            messages=[{"role": "user", "content": "Extract facts"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    assert token_usage.output_tokens == 672
+    assert token_usage.thoughts_tokens == 909
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_folded_reasoning_survives_drifted_total():
+    """#3851: the folded shape (#3851's gpt-5.4 row) with a one-token ``total``
+    drift stays within a token of the folded reading."""
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=48, prompt=3340, completion=1337, total=4678))
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        _, token_usage = await llm.call(
+            messages=[{"role": "user", "content": "Query"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    assert token_usage.output_tokens == (1337 - 48) + 1
+    assert token_usage.thoughts_tokens == 48
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_missing_total_falls_back_to_folded_reading():
+    """#3851: nothing to derive from when the upstream omits ``total_tokens``, so
+    keep the folded reading rather than reporting the whole completion twice."""
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=64, prompt=20, completion=83, total=0))
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        _, token_usage = await llm.call(
+            messages=[{"role": "user", "content": "Query"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    assert token_usage.output_tokens == 83 - 64
+    assert token_usage.thoughts_tokens == 64
+    assert token_usage.total_tokens == 20 + (83 - 64)
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_clamps_unusable_total_to_an_admissible_reading():
+    """An upstream whose ``total`` fits neither shape must still land on one of the
+    two readings ``completion_tokens`` admits, never on a count derived from the
+    nonsense total.
+
+    ``total=99`` here is below ``prompt`` alone; the derived value is negative, so
+    the folded reading is the floor. The mirror case -- an absurdly large total --
+    is capped at the full completion.
+    """
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=99))
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        _, low = await llm.call(
+            messages=[{"role": "user", "content": "Query"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    assert low.output_tokens == 0  # max(0, 673 - 909), the folded reading
+
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=999_999))
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        _, high = await llm.call(
+            messages=[{"role": "user", "content": "Query"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    assert high.output_tokens == 673  # capped at completion_tokens
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_without_reasoning_reports_completion_verbatim():
+    """No reasoning tokens means nothing to disentangle: visible output is exactly
+    ``completion_tokens``, whatever ``total`` says."""
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=0, prompt=120, completion=45, total=165))
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        _, token_usage = await llm.call(
+            messages=[{"role": "user", "content": "Query"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    assert token_usage.output_tokens == 45
+    assert token_usage.thoughts_tokens == 0
+    assert token_usage.total_tokens == 165

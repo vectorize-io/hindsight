@@ -382,6 +382,63 @@ def _usage_from_openai_response(response: Any) -> LLMResponseUsage:
     )
 
 
+def _visible_token_usage(response: Any) -> TokenUsage:
+    """Normalize an OpenAI-shaped usage block into visible-only output plus reasoning.
+
+    The ``TokenUsage`` contract — and the Gemini provider — treat
+    ``output_tokens``/``total_tokens`` as *visible* output, with reasoning
+    surfaced separately in ``thoughts_tokens``. OpenAI-compatible upstreams do
+    not agree on where reasoning lives in the wire format:
+
+    * folded (OpenAI's own reasoning models): ``total = prompt + completion``
+      and ``completion`` already includes ``reasoning``;
+    * unfolded (several gateways and proxies): ``total = prompt + completion +
+      reasoning`` and ``completion`` is already visible-only.
+
+    Subtracting ``reasoning`` from ``completion`` unconditionally clamps a real,
+    non-empty completion to 0 on the unfolded shape whenever reasoning exceeds
+    visible output — routine for high-effort model variants (#3851). Detecting
+    the shape by comparing ``prompt + completion`` against ``total`` is no
+    better: proxies are a token or two off on ``total``, and near-miss drift on
+    the unfolded shape lands back on the clamp.
+
+    ``total`` reads as ``prompt + visible + reasoning`` under *both* shapes, so
+    visible output is derived from it and never needs the shape to be known.
+    The result is then clamped to the only two admissible readings —
+    ``completion`` (unfolded) and ``completion - reasoning`` (folded) — so an
+    upstream whose ``total`` is drifted or outright unusable degrades to the
+    nearer of those instead of to a bogus count. A missing or zero ``total``
+    leaves nothing to derive from and falls back to the folded reading.
+    """
+    usage = getattr(response, "usage", None)
+    input_tokens = (getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+    completion_tokens = (getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+    reported_total = (getattr(usage, "total_tokens", 0) or 0) if usage else 0
+    cached_tokens = 0
+    if usage and getattr(usage, "prompt_tokens_details", None):
+        cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
+    thoughts_tokens = 0
+    if usage and getattr(usage, "completion_tokens_details", None):
+        thoughts_tokens = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
+
+    folded_reading = max(0, completion_tokens - thoughts_tokens)
+    if not thoughts_tokens:
+        output_tokens = completion_tokens
+    elif reported_total > 0:
+        derived = (reported_total - thoughts_tokens) - input_tokens
+        output_tokens = min(completion_tokens, max(folded_reading, derived))
+    else:
+        output_tokens = folded_reading
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        cached_tokens=cached_tokens,
+        thoughts_tokens=thoughts_tokens,
+    )
+
+
 def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Some OpenAI-compatible gateways require 'json' in a user message for json_object mode."""
 
@@ -1157,23 +1214,15 @@ class OpenAICompatibleLLM(LLMInterface):
                 # Record token usage metrics
                 duration = time.time() - start_time
                 usage = response.usage
-                response_usage = _usage_from_openai_response(response)
-                input_tokens = response_usage.input_tokens
-                output_tokens = response_usage.output_tokens
-                total_tokens = usage.total_tokens or 0 if usage else 0
-                cached_tokens = response_usage.cached_tokens
-                thoughts_tokens = 0
-                if usage and getattr(usage, "completion_tokens_details", None):
-                    thoughts_tokens = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
-                # OpenAI-compatible providers fold reasoning tokens into
-                # ``completion_tokens`` (and thus ``total_tokens``), but the
-                # TokenUsage contract — and the Gemini provider — treat
-                # ``output_tokens``/``total_tokens`` as visible-only, surfacing
-                # reasoning separately in ``thoughts_tokens``. Subtract so the
-                # two fields don't double-count reasoning (cost over-attribution).
-                if thoughts_tokens:
-                    output_tokens = max(0, output_tokens - thoughts_tokens)
-                    total_tokens = max(0, total_tokens - thoughts_tokens)
+                # ``output_tokens``/``total_tokens`` are visible-only past this
+                # point, with reasoning surfaced separately in
+                # ``thoughts_tokens`` — see ``_visible_token_usage``.
+                token_counts = _visible_token_usage(response)
+                input_tokens = token_counts.input_tokens
+                output_tokens = token_counts.output_tokens
+                total_tokens = token_counts.total_tokens
+                cached_tokens = token_counts.cached_tokens
+                thoughts_tokens = token_counts.thoughts_tokens
 
                 # Record LLM metrics. ``output_tokens`` is visible-only by now, so
                 # ``thoughts_tokens`` has to be recorded alongside it or the reasoning
@@ -1214,21 +1263,18 @@ class OpenAICompatibleLLM(LLMInterface):
                 if duration > 10.0 and usage:
                     ratio = max(1, output_tokens) / max(1, input_tokens)
                     cache_info = f", cached_tokens={cached_tokens}" if cached_tokens > 0 else ""
+                    # Without the reasoning count a high-effort call reads as a
+                    # slow, near-empty completion (#3851).
+                    thoughts_info = f", thoughts_tokens={thoughts_tokens}" if thoughts_tokens > 0 else ""
                     logger.info(
                         f"slow llm call: scope={scope}, model={self.provider}/{self.model}, "
                         f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
-                        f"total_tokens={total_tokens}{cache_info}, time={duration:.3f}s, ratio out/in={ratio:.2f}"
+                        f"total_tokens={total_tokens}{cache_info}{thoughts_info}, "
+                        f"time={duration:.3f}s, ratio out/in={ratio:.2f}"
                     )
 
                 if return_usage:
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=total_tokens,
-                        cached_tokens=cached_tokens,
-                        thoughts_tokens=thoughts_tokens,
-                    )
-                    return result, token_usage
+                    return result, token_counts
                 return result
 
             except LengthFinishReasonError as e:
@@ -1484,20 +1530,13 @@ class OpenAICompatibleLLM(LLMInterface):
 
                 # Record metrics
                 duration = time.time() - start_time
-                usage = response.usage
-                input_tokens = usage.prompt_tokens or 0 if usage else 0
-                output_tokens = usage.completion_tokens or 0 if usage else 0
-                cached_tokens = 0
-                if usage and getattr(usage, "prompt_tokens_details", None):
-                    cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
-                thoughts_tokens = 0
-                if usage and getattr(usage, "completion_tokens_details", None):
-                    thoughts_tokens = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
-                # See ``call()``: OpenAI-compatible ``completion_tokens`` includes
-                # reasoning, so make ``output_tokens`` visible-only to avoid
-                # double-counting it against ``thoughts_tokens``.
-                if thoughts_tokens:
-                    output_tokens = max(0, output_tokens - thoughts_tokens)
+                # See ``_visible_token_usage``: ``output_tokens`` is visible-only,
+                # with reasoning surfaced separately in ``thoughts_tokens``.
+                token_counts = _visible_token_usage(response)
+                input_tokens = token_counts.input_tokens
+                output_tokens = token_counts.output_tokens
+                cached_tokens = token_counts.cached_tokens
+                thoughts_tokens = token_counts.thoughts_tokens
 
                 # See ``call()``: record the reasoning and cached counts too, so no
                 # billed token is dropped from the metrics counters.
