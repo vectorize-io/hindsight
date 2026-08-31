@@ -125,21 +125,10 @@ impl Config {
 
         // Simple TOML parsing for api_url and api_key
         for line in content.lines() {
-            let line = line.trim();
-            if line.starts_with("api_url") {
-                if let Some(value) = line.split('=').nth(1) {
-                    let value = value.trim().trim_matches('"').trim_matches('\'');
-                    if !value.is_empty() {
-                        api_url = Some(value.to_string());
-                    }
-                }
-            } else if line.starts_with("api_key") {
-                if let Some(value) = line.split('=').nth(1) {
-                    let value = value.trim().trim_matches('"').trim_matches('\'');
-                    if !value.is_empty() {
-                        api_key = Some(value.to_string());
-                    }
-                }
+            if let Some(v) = parse_config_value(line, "api_url") {
+                api_url = Some(v);
+            } else if let Some(v) = parse_config_value(line, "api_key") {
+                api_key = Some(v);
             }
         }
 
@@ -375,21 +364,21 @@ pub fn generate_doc_id() -> String {
 
 /// Parse a simple TOML-like config line and extract value.
 /// Handles both quoted and unquoted values.
+///
+/// Uses `split_once('=')` so the value keeps any literal `=` characters it
+/// contains (e.g. the trailing padding of a base64 API key).
 pub fn parse_config_value(line: &str, key: &str) -> Option<String> {
     let line = line.trim();
-    if !line.starts_with(key) {
+    let (k, v) = line.split_once('=')?;
+    if k.trim() != key {
         return None;
     }
-    line.split('=')
-        .nth(1)
-        .map(|value| {
-            value
-                .trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string()
-        })
-        .filter(|v| !v.is_empty())
+    let value = v.trim().trim_matches('"').trim_matches('\'');
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -611,6 +600,21 @@ mod tests {
     fn test_parse_config_value_empty() {
         assert_eq!(parse_config_value("api_url = ", "api_url"), None);
         assert_eq!(parse_config_value("api_url = \"\"", "api_url"), None);
+    }
+
+    #[test]
+    fn test_parse_config_value_preserves_base64_padding() {
+        let key = "dCcxYDq+Bg0G268UuJIIHvQG4Cp5GnJWR+HIm8WRAIM=";
+        let line = format!("api_key = \"{}\"", key);
+        assert_eq!(parse_config_value(&line, "api_key").as_deref(), Some(key));
+    }
+
+    #[test]
+    fn test_parse_config_value_key_with_equals() {
+        assert_eq!(
+            parse_config_value("api_key = a=b=c", "api_key").as_deref(),
+            Some("a=b=c")
+        );
     }
 
     #[test]
