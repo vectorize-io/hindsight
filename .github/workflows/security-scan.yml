@@ -1,0 +1,97 @@
+name: Security Scan
+
+# Image vulnerability scanning runs on a schedule rather than per-PR: the
+# findings that matter here appear when a CVE is *published*, not when our code
+# changes, so a PR gate would stay green for weeks and then fail an unrelated PR
+# the day an advisory lands.
+#
+# Two jobs, answering two different questions:
+#   scan-published  — do the images users are running right now have a fix
+#                     available? (seconds; no build)
+#   scan-next-build — would an image built from main today be clean? (one build;
+#                     catches a regression before it reaches a release tag)
+on:
+  schedule:
+    # 05:30 UTC daily, after Debian's usual security-update publication window.
+    - cron: '30 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan-published:
+    name: Scan published ${{ matrix.image }} (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - hindsight-api:latest
+          - hindsight-api:latest-slim
+          - hindsight:latest
+          - hindsight:latest-slim
+          - hindsight-control-plane:latest
+        platform: [linux/amd64, linux/arm64]
+
+    steps:
+    - name: Scan ${{ matrix.image }}
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+        scanners: vuln
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: '1'
+        format: table
+      env:
+        TRIVY_PLATFORM: ${{ matrix.platform }}
+
+  scan-next-build:
+    name: Scan a fresh build of main
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    # The slim api image is the smallest thing that carries every layer the
+    # scan cares about: the same Debian runtime base as the full and standalone
+    # images, and the same locked Python environment.
+    - name: Build api-slim image
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: docker/standalone/Dockerfile
+        target: api-only
+        build-args: |
+          INCLUDE_LOCAL_MODELS=false
+          PRELOAD_ML_MODELS=false
+        push: false
+        load: true
+        tags: hindsight-api-slim:scan
+
+    - name: Scan freshly built image
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        image-ref: hindsight-api-slim:scan
+        scanners: vuln
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: '1'
+        format: table
