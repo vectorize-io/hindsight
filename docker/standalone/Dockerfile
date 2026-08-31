@@ -161,6 +161,11 @@ WORKDIR /app
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
+# `upgrade` before `install`: without it the image ships whatever package
+# snapshot the base image was cut with, so security updates published since
+# never reach the runtime layers - that is how 0.9.2 shipped openssl 3.5.6 with
+# 3.5.7 available (#3906). The tradeoff is deliberate: two builds of the same
+# commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
     curl \
@@ -270,7 +275,8 @@ WORKDIR /app
 COPY docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
 
-# Install curl for health checks
+# Install curl for health checks. `apk upgrade` first, for the same reason the
+# Debian stages run `apt-get upgrade` - see the comment on the api-only stage.
 RUN apk upgrade --no-cache && apk add --no-cache curl bash
 
 EXPOSE 9999
@@ -293,6 +299,11 @@ WORKDIR /app
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
+# `upgrade` before `install`: without it the image ships whatever package
+# snapshot the base image was cut with, so security updates published since
+# never reach the runtime layers - that is how 0.9.2 shipped openssl 3.5.6 with
+# 3.5.7 available (#3906). The tradeoff is deliberate: two builds of the same
+# commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
     curl \

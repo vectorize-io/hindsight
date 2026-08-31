@@ -70,9 +70,11 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
 
-    # The slim api image is the smallest thing that carries every layer the
-    # scan cares about: the same Debian runtime base as the full and standalone
-    # images, and the same locked Python environment.
+    # The slim api image is the smallest one covering the Debian family: it
+    # shares its runtime base with the full and standalone images and its locked
+    # Python environment with all of them, so a finding in any of those shows up
+    # here for a fraction of the build time. The alpine control-plane image
+    # shares none of that and is covered by scan-published only.
     - name: Build api-slim image
       uses: docker/build-push-action@v7
       with:
