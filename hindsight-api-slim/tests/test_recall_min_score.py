@@ -24,6 +24,7 @@ from hindsight_api.engine.retain import embedding_utils
 # onto one group to avoid pk conflicts, same as test_recall_time_range.py.
 pytestmark = pytest.mark.xdist_group("recall_min_score")
 
+
 ID_A = "00000000-0000-0000-0000-0000000000a1"
 ID_B = "00000000-0000-0000-0000-0000000000a2"
 ID_C = "00000000-0000-0000-0000-0000000000a3"
@@ -175,6 +176,58 @@ class TestRetrievalLevelFilters:
         engine, bank_id = seeded_memory
         filtered = await _recall(engine, bank_id, min_scores=MinScores(semantic=1.1))
         assert filtered.results == []
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_keyword_floor_prunes_in_retrieval(self, seeded_memory):
+        """min_scores.keyword is a SQL-arm cutoff: no returned result carries a
+        keyword score below the floor.
+
+        Regression for #3882 — the floor reached `build_bm25_arm` but only the
+        vchord and Oracle branches read it, so on the default `native` backend
+        sub-threshold rows came back with their real (below-floor) score attached.
+        """
+        engine, bank_id = seeded_memory
+        baseline = await _recall(engine, bank_id, query="animals")
+        kws = sorted(r.scores.keyword for r in baseline.results if r.scores.keyword is not None)
+        assert len(kws) >= 2, "need >1 keyword-scored result for the floor to discriminate"
+        # Floor at the top score: every other keyword-scored row is now below it.
+        floor = kws[-1]
+        filtered = await _recall(engine, bank_id, query="animals", min_scores=MinScores(keyword=floor))
+        for r in filtered.results:
+            # A result may carry no keyword score at all (another arm surfaced it),
+            # but one that does must clear the floor.
+            assert r.scores.keyword is None or r.scores.keyword >= floor
+        # Before the fix the native backend ignored the floor entirely and every
+        # sub-threshold row came back with its real score, so this shrinks.
+        assert len([r for r in filtered.results if r.scores.keyword is not None]) < len(kws)
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_retrieval_floors_are_per_arm_not_per_result(self, seeded_memory):
+        """The retrieval floors constrain the arm they name, not the fused result.
+
+        Recall returns a memory that *any* arm surfaced, so with both floors set a
+        result may still report `null` for the stage that did not surface it. This
+        is the documented contract (see MinScores) — an intersection would discard
+        the strong single-arm matches hybrid retrieval exists to find. Callers who
+        want abstention use the post-query `reranker`/`final` floors instead.
+        """
+        engine, bank_id = seeded_memory
+        both = await _recall(
+            engine,
+            bank_id,
+            query="animals",
+            min_scores=MinScores(semantic=0.1, keyword=0.0001),
+        )
+        assert both.results, "floors this low should not empty the response"
+        # Whatever survives, each arm's own floor held for the scores it produced.
+        for r in both.results:
+            assert r.scores.semantic is None or r.scores.semantic >= 0.1
+            assert r.scores.keyword is None or r.scores.keyword >= 0.0001
+        # The union behaviour itself: setting both floors does not narrow the
+        # response to results that cleared both arms. On this corpus the keyword
+        # arm surfaces fewer facts than the semantic one, so a strict intersection
+        # would drop results this assertion keeps.
+        assert any(r.scores.keyword is None for r in both.results)
 
 
 class TestRecallRequestDefault:

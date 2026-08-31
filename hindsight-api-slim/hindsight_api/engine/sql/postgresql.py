@@ -8,7 +8,7 @@ and other non-portable patterns.
 from dataclasses import dataclass
 
 from ..._text_search import mental_models_text_document
-from .base import SQLDialect
+from .base import SQLDialect, bm25_score_gate
 
 
 @dataclass(frozen=True)
@@ -306,6 +306,12 @@ class PostgreSQLDialect(SQLDialect):
         pg_search_function_schema: str = "paradedb",
         extra_where: str = "",
     ) -> str:
+        # Whether the branch's own WHERE enforces ``bm25_min_score``. Branches that
+        # cannot (their score is only valid in the target list, or re-evaluating it
+        # in WHERE would cost a second computation) get the floor applied by the
+        # outer wrapper below instead.
+        floor_in_where = False
+
         if text_search_extension == "vchord":
             # <&> returns the NEGATIVE BM25 score (lower = more relevant), negate
             # for a positive score where higher = more relevant.
@@ -315,7 +321,11 @@ class PostgreSQLDialect(SQLDialect):
             # VectorChord operator ranks *every* document, so a bare ORDER BY ...
             # LIMIT pads the result with zero-score, non-matching rows. Gate on the
             # score so only genuine term matches survive into fusion/reranking.
-            bm25_where_filter = f"AND -(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2'))) > {bm25_min_score:g}"
+            # With no caller floor that gate is `> 0` (structural: keep genuine
+            # matches only); with one it becomes the caller's inclusive floor,
+            # which subsumes it.
+            bm25_where_filter = f"AND {bm25_score_expr} {bm25_score_gate(bm25_min_score)}"
+            floor_in_where = True
         elif text_search_extension == "pg_textsearch":
             bm25_score_expr = f"-(text <@> to_bm25query({text_param}, 'idx_memory_units_text_search'))"
             bm25_order_by = f"text <@> to_bm25query({text_param}, 'idx_memory_units_text_search') ASC"
@@ -359,7 +369,7 @@ class PostgreSQLDialect(SQLDialect):
             bm25_order_by = f"{bm25_score_expr} DESC"
             bm25_where_filter = f"AND search_vector @@ to_tsquery('{bm25_language}', {text_param})"
 
-        return (
+        arm = (
             f"(SELECT {cols},"
             f"        NULL::float AS similarity,"
             f"        {bm25_score_expr} AS bm25_score,"
@@ -374,6 +384,22 @@ class PostgreSQLDialect(SQLDialect):
             f" ORDER BY {bm25_order_by}"
             f" LIMIT {limit_param})"
         )
+
+        if floor_in_where or bm25_min_score <= 0:
+            # Either the branch already gated on the floor, or there is no caller
+            # floor to apply and the branch's own boolean match gate (`@@`, `&@~`,
+            # `@@@`) is the only filter — the default, and unchanged by this path.
+            return arm
+
+        # Apply the caller's floor from the outside. pgroonga's `pgroonga_score()`
+        # and pg_search's `<schema>.score()` are only valid in the target list, and
+        # re-evaluating native's `ts_rank_cd` or pg_textsearch's `<@>` in WHERE
+        # would compute the score twice per row (and, for `<@>`, forfeit the index
+        # scan the ORDER BY relies on). Every arm orders by score DESC, so filtering
+        # the ordered LIMIT slice keeps exactly the rows an inner predicate would:
+        # when at least `limit` rows clear the floor the slice is entirely above it,
+        # and otherwise both forms return precisely the rows that clear it.
+        return f"(SELECT * FROM {arm} AS bm25_arm_{arm_index} WHERE bm25_score {bm25_score_gate(bm25_min_score)})"
 
     def prepare_bm25_text(
         self,

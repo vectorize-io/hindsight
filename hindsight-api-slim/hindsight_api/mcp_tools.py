@@ -1111,9 +1111,13 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     Anchors relative temporal expressions and recency scoring.
                 min_scores: Optional per-stage score floors as an object with any of: "semantic", "keyword"
                     (retrieval-level cutoffs), "reranker", "final" (post-ranking). E.g. {"reranker": 0.5}.
-                    All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
-                    not calibrated across queries, so only threshold against scores you've calibrated for your
-                    own data.
+                    Each floor is inclusive; omit for no score filtering. "semantic" and "keyword" prune only
+                    the retrieval arm they name — recall fuses four arms (semantic, keyword, graph, temporal)
+                    and returns what any of them surfaced, so a result may report null or a lower score for an
+                    arm that did not surface it, and setting both does not restrict results to those clearing
+                    both. Use "reranker"/"final" — applied to every scored result — to make recall abstain.
+                    The reranker's absolute scores are not calibrated across queries, so only threshold
+                    against scores you've calibrated for your own data.
                 temporal_window: Window for the temporal arm as {"start": ISO, "end": ISO}, used instead of
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
@@ -1203,9 +1207,13 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     Anchors relative temporal expressions and recency scoring.
                 min_scores: Optional per-stage score floors as an object with any of: "semantic", "keyword"
                     (retrieval-level cutoffs), "reranker", "final" (post-ranking). E.g. {"reranker": 0.5}.
-                    All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
-                    not calibrated across queries, so only threshold against scores you've calibrated for your
-                    own data.
+                    Each floor is inclusive; omit for no score filtering. "semantic" and "keyword" prune only
+                    the retrieval arm they name — recall fuses four arms (semantic, keyword, graph, temporal)
+                    and returns what any of them surfaced, so a result may report null or a lower score for an
+                    arm that did not surface it, and setting both does not restrict results to those clearing
+                    both. Use "reranker"/"final" — applied to every scored result — to make recall abstain.
+                    The reranker's absolute scores are not calibrated across queries, so only threshold
+                    against scores you've calibrated for your own data.
                 temporal_window: Window for the temporal arm as {"start": ISO, "end": ISO}, used instead of
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside

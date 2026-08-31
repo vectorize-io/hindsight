@@ -1207,7 +1207,12 @@ DEFAULT_ANN_MAX_SCAN_TUPLES = 4000
 
 # Text search extension (native PostgreSQL, vchord BM25, Timescale pg_textsearch,
 # pgroonga, or ParadeDB pg_search). Unused by banks with enable_text_search off.
-DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_textsearch", "pgroonga", "pg_search"
+# Every PostgreSQL full-text backend `build_bm25_arm` dispatches on. Exported so
+# tests can enumerate the family rather than hardcoding a copy that drifts — a
+# backend added here but forgotten in one of the arm builders is exactly how
+# `min_scores.keyword` became a no-op on four of them (#3882).
+VALID_TEXT_SEARCH_EXTENSIONS = ("native", "vchord", "pg_textsearch", "pgroonga", "pg_search")
+DEFAULT_TEXT_SEARCH_EXTENSION = "native"
 
 # PostgreSQL text search dictionary used by the native tsvector backend. Only
 # affects text_search_extension == "native"; other backends use their own
@@ -3200,10 +3205,10 @@ class HindsightConfig:
             )
 
         # Validate text_search_extension
-        valid_text_search = ("native", "vchord", "pg_textsearch", "pgroonga", "pg_search")
-        if self.text_search_extension not in valid_text_search:
+        if self.text_search_extension not in VALID_TEXT_SEARCH_EXTENSIONS:
             raise ValueError(
-                f"Invalid text_search_extension: {self.text_search_extension}. Must be one of: {', '.join(valid_text_search)}"
+                f"Invalid text_search_extension: {self.text_search_extension}. "
+                f"Must be one of: {', '.join(VALID_TEXT_SEARCH_EXTENSIONS)}"
             )
 
         # Validate text_search_extension_native_language as a PG identifier.
