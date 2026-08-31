@@ -34,6 +34,8 @@ from ..config import (
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
     DEFAULT_EMBEDDINGS_MAX_BACKOFF,
     DEFAULT_EMBEDDINGS_MAX_RETRIES,
+    DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE,
+    DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_RETRY_BUDGET,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
@@ -538,6 +540,8 @@ class OnnxEmbeddings(Embeddings):
         query_prefix: str = "query: ",
         passage_prefix: str = "passage: ",
         output_name: str | None = None,
+        batch_size: int = DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE,
+        cpu_mem_arena: bool = DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA,
     ):
         self.model_id = model_id
         self.model_path = model_path
@@ -559,6 +563,10 @@ class OnnxEmbeddings(Embeddings):
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
         self.output_name = output_name
+        if batch_size < 1:
+            raise ValueError("ONNX embeddings batch_size must be >= 1")
+        self.batch_size = batch_size
+        self.cpu_mem_arena = cpu_mem_arena
         self._session = None
         self._tokenizer = None
         self._dimension: int | None = dimensions
@@ -610,14 +618,26 @@ class OnnxEmbeddings(Embeddings):
             model_path,
         )
         logger.info(
-            "Embeddings: ONNX query_prefix=%r passage_prefix=%r pooling=%s normalize=%s",
+            "Embeddings: ONNX query_prefix=%r passage_prefix=%r pooling=%s normalize=%s batch_size=%s cpu_mem_arena=%s",
             self.query_prefix,
             self.passage_prefix,
             self.pooling,
             self.normalize,
+            self.batch_size,
+            self.cpu_mem_arena,
         )
         self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
-        self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        # With the arena enabled (ORT's default) freed activation blocks are cached and
+        # never returned to the OS, so RSS ratchets up to the largest batch ever run and
+        # holds that plateau for the life of the process. The reranker disables it for
+        # the same reason (see FlashRankCrossEncoder).
+        session_options = None
+        if not self.cpu_mem_arena:
+            session_options = ort.SessionOptions()
+            session_options.enable_cpu_mem_arena = False
+        self._session = ort.InferenceSession(
+            model_path, sess_options=session_options, providers=["CPUExecutionProvider"]
+        )
 
         detected = len(self.encode(["test"])[0])
         if self.configured_dimensions is not None and detected != self.configured_dimensions:
@@ -628,10 +648,37 @@ class OnnxEmbeddings(Embeddings):
         logger.info("Embeddings: ONNX provider initialized (dim: %s)", self._dimension)
 
     def encode(self, texts: list[str]) -> list[list[float]]:
+        """Embed ``texts`` in bounded forward passes.
+
+        Every remote provider slices its input before calling out; this one runs the
+        model in-process, so nothing downstream bounds it and a caller that hands over
+        a whole bank's worth of text gets a single ``[n_texts x max_seq_len x hidden]``
+        float32 activation tensor (issue #3891).
+        """
         if self._session is None or self._tokenizer is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
         if not texts:
             return []
+        if len(texts) <= self.batch_size:
+            return self._encode_batch(texts)
+
+        # Pack similar-length texts together: tokenization pads every text in a call up
+        # to the longest one in that same call, so one long text otherwise inflates the
+        # tensor for every short text batched with it. Character length is a cheap
+        # stand-in for token count — it only decides grouping, never the output, since
+        # both pooling modes mask padding and so cannot see batch composition.
+        order = sorted(range(len(texts)), key=lambda index: len(texts[index]), reverse=True)
+        embeddings: list[list[float]] = [[] for _ in texts]
+        for start in range(0, len(order), self.batch_size):
+            window = order[start : start + self.batch_size]
+            batch = self._encode_batch([texts[index] for index in window])
+            for index, embedding in zip(window, batch, strict=True):
+                embeddings[index] = embedding
+        return embeddings
+
+    def _encode_batch(self, texts: list[str]) -> list[list[float]]:
+        """Run one forward pass over at most ``batch_size`` texts."""
+        assert self._session is not None and self._tokenizer is not None
 
         import numpy as np
 
@@ -2074,6 +2121,8 @@ def create_embeddings_from_env() -> Embeddings:
             query_prefix=config.embeddings_onnx_query_prefix,
             passage_prefix=config.embeddings_onnx_passage_prefix,
             output_name=config.embeddings_onnx_output_name,
+            batch_size=config.embeddings_onnx_batch_size,
+            cpu_mem_arena=config.embeddings_onnx_cpu_mem_arena,
         )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key
