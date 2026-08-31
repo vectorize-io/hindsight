@@ -371,7 +371,6 @@ async def _apply_dedup_create_fold(
     outcome: _DedupOutcome,
     create_source_ids: list[uuid.UUID],
     source_bounds: _TemporalBounds,
-    txn=None,
 ) -> str | None:
     """Fold a CREATE the adjudicator called a duplicate into its existing twin.
 
@@ -448,7 +447,6 @@ async def _apply_dedup_create_fold(
             outcome.merged_text,
             live_source_ids,
             source_bounds,
-            txn=txn,
         )
     return outcome.best_id
 
@@ -461,7 +459,6 @@ async def _apply_dedup_update_fold(
     outcome: _DedupOutcome,
     updated_id: str,
     updated_text: str,
-    txn=None,
 ) -> bool:
     """Fold a just-rewritten observation into the twin the adjudicator matched it to.
 
@@ -550,9 +547,8 @@ async def _apply_dedup_update_fold(
             outcome.merged_text,
             live_u_sources,
             _TemporalBounds.of(updated_obs[0]),
-            txn=txn,
         )
-    await _execute_delete_action(conn, bank_id, updated_id, txn=txn)
+    await _execute_delete_action(conn, bank_id, updated_id)
     logger.info(
         "[CONSOLIDATION] dedup-merged updated observation %s into %s (cosine>=%.2f)",
         updated_id[:8],
@@ -711,7 +707,7 @@ async def _any_live_source_memory(
 
     Lets the create/update executors skip the (slow) embedder when every source
     memory is already gone, restoring the pre-refactor short-circuit. The
-    authoritative, FOR SHARE liveness check still runs inside the write txn.
+    authoritative, FOR SHARE liveness check still runs inside the write transaction.
     """
     if not source_memory_ids:
         return False
@@ -1100,7 +1096,6 @@ async def _reconcile_merge_via_store(
     merged_text: str,
     add_source_ids: list,
     add_bounds: _TemporalBounds,
-    txn=None,
 ) -> None:
     """Dedup merge for a store that owns its rows: fold the extra source facts and the merged text
     into the twin observation and re-upsert it, preserving its other fields. Re-embeds the merged
@@ -1119,7 +1114,6 @@ async def _reconcile_merge_via_store(
     await store.upsert_observation(
         conn=conn,
         bank_id=bank_id,
-        txn=txn,
         record=FactRecord(
             unit_id=observation_id,
             text=merged_text,
@@ -1493,91 +1487,27 @@ async def _run_consolidation_job(
             succeeded_ids: list[Any] = []
             failed_ids: list[Any] = []
 
-            # One cross-store write-group per LLM batch: MINT the txn up front (no Postgres held)
-            # and tag every observation upsert/delete + the mark_consolidated stamps with it, so
-            # they are durable-but-invisible in the external store while this batch runs its LLM work. The
-            # witness row + decide happen in ONE short transaction at the end (below) — we must not
-            # hold a Postgres transaction across the LLM calls in the sub-batch loop.
-            #
-            # A store that owns the whole retain (store_owned_retain) keeps ALL of this batch's memory
-            # writes — observation upserts/deletes and the mark_consolidated stamps — in ITS store, not
-            # Postgres, so there is nothing to make atomic with a Postgres witness. Skip the write-group
-            # entirely (``_batch_txn = None`` → the writes below are plain, immediately-visible writes).
-            # This is also why consolidation was the source of the undecided write-group txns that stall
-            # the store's indexer: mint-early / witness-late meant a crash or a sibling-cancel between
-            # mint and decide left a pending txn with no witness. With no txn there is nothing to leave
-            # undecided. The mental-model refresh-tag bookkeeping below becomes a plain Postgres write
-            # (best-effort rather than atomic-with-the-batch — a missed tag only defers a refresh).
-            _txn_provider = get_memories()
-            _store_owned = _txn_provider.store_owned_for(bank_id)
-            _batch_txn = None if _store_owned else await _txn_provider.mint_txn(bank_id=bank_id, mutating=True)
+            pending: list[list[dict[str, Any]]] = [llm_batch_local]
+            while pending:
+                sub_batch = pending.pop(0)
 
-            try:
-                pending: list[list[dict[str, Any]]] = [llm_batch_local]
-                while pending:
-                    sub_batch = pending.pop(0)
+                # No connection is held across the batch: recall, the main LLM call, the
+                # per-action embeds, and dedup adjudication all run connection-free. Only then
+                # does the sub-batch take one connection and write everything that LLM response
+                # decided — observations and consolidated_at stamps alike — in one transaction.
+                obs_tags_list = _resolve_obs_tags_list(sub_batch[0]) if sub_batch else None
 
-                    # No connection is held across the batch: recall, the main LLM call, the
-                    # per-action embeds, and dedup adjudication all run connection-free. Only then
-                    # does the sub-batch take one connection and write everything that LLM response
-                    # decided — observations and consolidated_at stamps alike — in one transaction.
-                    obs_tags_list = _resolve_obs_tags_list(sub_batch[0]) if sub_batch else None
-
-                    sub_deleted: int = 0
-                    sub_llm_failed = False
-                    sub_ids = [m["id"] for m in sub_batch]
-                    if obs_tags_list:
-                        sub_results: list[dict[str, Any]] = []
-                        for pass_index, obs_tags in enumerate(obs_tags_list):
-                            # A memory consolidated at several tag scopes gets one LLM call per
-                            # scope; the ``consolidated_at`` stamp belongs to the last of them, so
-                            # an earlier scope's write and the stamp never commit apart (#3876).
-                            is_final_pass = pass_index == len(obs_tags_list) - 1
-                            pass_results, pass_deleted, pass_failed = await _process_memory_batch(
-                                pool=pool,
-                                memory_engine=memory_engine,
-                                llm_config=llm_config,
-                                bank_id=bank_id,
-                                memories=sub_batch,
-                                request_context=request_context,
-                                perf=batch_perf,
-                                config=config,
-                                obs_tags_override=obs_tags,
-                                mark_consolidated_ids=sub_ids if is_final_pass else None,
-                                txn=_batch_txn,
-                            )
-                            sub_deleted += pass_deleted
-                            if pass_failed:
-                                # Stop the remaining scopes: the sub-batch is going to be bisected
-                                # and re-run in full, and every write this pass made is already
-                                # committed. Running the rest would only add writes to discard.
-                                sub_llm_failed = True
-                                break
-                            if not sub_results:
-                                sub_results = pass_results
-                            else:
-                                for i, (existing, new) in enumerate(zip(sub_results, pass_results)):
-                                    if existing.get("action") == "skipped" and new.get("action") != "skipped":
-                                        sub_results[i] = new
-                                    elif existing.get("action") != "skipped" and new.get("action") != "skipped":
-                                        existing_created = existing.get(
-                                            "created", 1 if existing.get("action") == "created" else 0
-                                        )
-                                        existing_updated = existing.get(
-                                            "updated", 1 if existing.get("action") == "updated" else 0
-                                        )
-                                        new_created = new.get("created", 1 if new.get("action") == "created" else 0)
-                                        new_updated = new.get("updated", 1 if new.get("action") == "updated" else 0)
-                                        total = existing_created + existing_updated + new_created + new_updated
-                                        sub_results[i] = {
-                                            "action": "multiple",
-                                            "created": existing_created + new_created,
-                                            "updated": existing_updated + new_updated,
-                                            "merged": 0,
-                                            "total_actions": total,
-                                        }
-                    else:
-                        sub_results, sub_deleted, sub_llm_failed = await _process_memory_batch(
+                sub_deleted: int = 0
+                sub_llm_failed = False
+                sub_ids = [m["id"] for m in sub_batch]
+                if obs_tags_list:
+                    sub_results: list[dict[str, Any]] = []
+                    for pass_index, obs_tags in enumerate(obs_tags_list):
+                        # A memory consolidated at several tag scopes gets one LLM call per
+                        # scope; the ``consolidated_at`` stamp belongs to the last of them, so
+                        # an earlier scope's write and the stamp never commit apart (#3876).
+                        is_final_pass = pass_index == len(obs_tags_list) - 1
+                        pass_results, pass_deleted, pass_failed = await _process_memory_batch(
                             pool=pool,
                             memory_engine=memory_engine,
                             llm_config=llm_config,
@@ -1586,101 +1516,104 @@ async def _run_consolidation_job(
                             request_context=request_context,
                             perf=batch_perf,
                             config=config,
-                            mark_consolidated_ids=sub_ids,
-                            txn=_batch_txn,
+                            obs_tags_override=obs_tags,
+                            mark_consolidated_ids=sub_ids if is_final_pass else None,
                         )
+                        sub_deleted += pass_deleted
+                        if pass_failed:
+                            # Stop the remaining scopes: the sub-batch is going to be bisected
+                            # and re-run in full, and every write this pass made is already
+                            # committed. Running the rest would only add writes to discard.
+                            sub_llm_failed = True
+                            break
+                        if not sub_results:
+                            sub_results = pass_results
+                        else:
+                            for i, (existing, new) in enumerate(zip(sub_results, pass_results)):
+                                if existing.get("action") == "skipped" and new.get("action") != "skipped":
+                                    sub_results[i] = new
+                                elif existing.get("action") != "skipped" and new.get("action") != "skipped":
+                                    existing_created = existing.get(
+                                        "created", 1 if existing.get("action") == "created" else 0
+                                    )
+                                    existing_updated = existing.get(
+                                        "updated", 1 if existing.get("action") == "updated" else 0
+                                    )
+                                    new_created = new.get("created", 1 if new.get("action") == "created" else 0)
+                                    new_updated = new.get("updated", 1 if new.get("action") == "updated" else 0)
+                                    total = existing_created + existing_updated + new_created + new_updated
+                                    sub_results[i] = {
+                                        "action": "multiple",
+                                        "created": existing_created + new_created,
+                                        "updated": existing_updated + new_updated,
+                                        "merged": 0,
+                                        "total_actions": total,
+                                    }
+                else:
+                    sub_results, sub_deleted, sub_llm_failed = await _process_memory_batch(
+                        pool=pool,
+                        memory_engine=memory_engine,
+                        llm_config=llm_config,
+                        bank_id=bank_id,
+                        memories=sub_batch,
+                        request_context=request_context,
+                        perf=batch_perf,
+                        config=config,
+                        mark_consolidated_ids=sub_ids,
+                    )
 
-                    all_deleted += sub_deleted
+                all_deleted += sub_deleted
 
-                    if sub_llm_failed and len(sub_batch) > 1:
-                        mid = len(sub_batch) // 2
-                        logger.warning(
-                            f"[CONSOLIDATION] bank={bank_id} LLM failed for sub-batch of {len(sub_batch)},"
-                            f" splitting into {mid}/{len(sub_batch) - mid}"
-                        )
-                        pending[0:0] = [sub_batch[:mid], sub_batch[mid:]]
-                    elif sub_llm_failed:
-                        failed_ids.append(sub_batch[0]["id"])
-                        all_results.append({"action": "failed"})
-                        logger.warning(
-                            f"[CONSOLIDATION] bank={bank_id} LLM failed for single memory"
-                            f" {sub_batch[0]['id']}, marking consolidation_failed_at"
-                        )
-                    else:
-                        succeeded_ids.extend(m["id"] for m in sub_batch)
-                        all_results.extend(sub_results)
+                if sub_llm_failed and len(sub_batch) > 1:
+                    mid = len(sub_batch) // 2
+                    logger.warning(
+                        f"[CONSOLIDATION] bank={bank_id} LLM failed for sub-batch of {len(sub_batch)},"
+                        f" splitting into {mid}/{len(sub_batch) - mid}"
+                    )
+                    pending[0:0] = [sub_batch[:mid], sub_batch[mid:]]
+                elif sub_llm_failed:
+                    failed_ids.append(sub_batch[0]["id"])
+                    all_results.append({"action": "failed"})
+                    logger.warning(
+                        f"[CONSOLIDATION] bank={bank_id} LLM failed for single memory"
+                        f" {sub_batch[0]['id']}, marking consolidation_failed_at"
+                    )
+                else:
+                    succeeded_ids.extend(m["id"] for m in sub_batch)
+                    all_results.extend(sub_results)
 
-                # The successful sub-batches stamped their own ``consolidated_at`` inside the
-                # transaction that wrote their observations (#3876) — a stamp and the writes it
-                # accounts for must never commit apart. What is left here is the failed ids, which
-                # have no writes to share a transaction with, the witness row, and the refresh
-                # tags. Marking goes through the store so the flag lands wherever the source facts
-                # live — tagged with this batch's txn, so it becomes visible with the observations.
-                # The witness commit in this ONE short transaction (no LLM work inside it) is the
-                # batch's fate, and `decide` publishes the group.
-                async with acquire_with_retry(pool) as conn:
-                    store = get_memories()
-                    now = datetime.now(timezone.utc)
-                    if failed_ids:
-                        await store.mark_consolidated(
-                            conn=conn,
-                            fq_table=fq_table,
-                            bank_id=bank_id,
-                            unit_ids=[str(mem_id) for mem_id in failed_ids],
-                            when=now,
-                            failed=True,
-                            txn=_batch_txn,
+            # The successful sub-batches stamped their own ``consolidated_at`` inside the
+            # transaction that wrote their observations (#3876) — a stamp and the writes it
+            # accounts for must never commit apart. What is left here is the failed ids, which
+            # have no writes to share a transaction with, and the refresh tags. Marking goes
+            # through the store so the flag lands wherever the source facts live. ONE short
+            # transaction, with no LLM work inside it: the sub-batch loop above must not hold a
+            # Postgres connection across its LLM calls.
+            async with acquire_with_retry(pool) as conn:
+                store = get_memories()
+                now = datetime.now(timezone.utc)
+                if failed_ids:
+                    await store.mark_consolidated(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        unit_ids=[str(mem_id) for mem_id in failed_ids],
+                        when=now,
+                        failed=True,
+                    )
+                async with conn.transaction():
+                    # Persist this batch's mental-model refresh tags atomically with the
+                    # witness, so they share the batch's fate: durable iff the batch is
+                    # (#3411). Only the succeeded source facts — the ones just marked
+                    # consolidated — contribute a tag. (Store-owned: no witness, so this is a
+                    # plain best-effort write; a missed tag only defers a mental-model refresh.)
+                    if operation_id and succeeded_ids:
+                        succeeded_set = {str(mem_id) for mem_id in succeeded_ids}
+                        batch_tags = sorted(
+                            {t for m in llm_batch_local if str(m["id"]) in succeeded_set for t in (m.get("tags") or [])}
                         )
-                    async with conn.transaction():
-                        if _batch_txn is not None:
-                            await _txn_provider.write_txn_witness(_batch_txn, conn=conn, fq_table=fq_table)
-                        # Persist this batch's mental-model refresh tags atomically with the
-                        # witness, so they share the batch's fate: durable iff the batch is
-                        # (#3411). Only the succeeded source facts — the ones just marked
-                        # consolidated — contribute a tag. (Store-owned: no witness, so this is a
-                        # plain best-effort write; a missed tag only defers a mental-model refresh.)
-                        if operation_id and succeeded_ids:
-                            succeeded_set = {str(mem_id) for mem_id in succeeded_ids}
-                            batch_tags = sorted(
-                                {
-                                    t
-                                    for m in llm_batch_local
-                                    if str(m["id"]) in succeeded_set
-                                    for t in (m.get("tags") or [])
-                                }
-                            )
-                            if batch_tags:
-                                await _persist_pending_refresh_tags(conn, operation_id, batch_tags)
-            except BaseException:
-                # The witness row was never committed, so this batch's writes are invisible;
-                # discard the write-group rather than leaving it pending for the recovery
-                # sweep. This matters more now that a sibling group's failure cancels this
-                # task mid-batch instead of letting it run to completion. Kept OUTSIDE the
-                # decide(commit=True) below on purpose: once the witness has committed, the
-                # batch's fate is decided and an abort here would discard durable writes.
-                # Store-owned batches hold no write-group (writes were plain and are already
-                # durable/visible); there is nothing to abort — consolidation is idempotent on retry.
-                if not _store_owned:
-                    try:
-                        await _txn_provider.decide_txn(_batch_txn, commit=False)
-                    except Exception:
-                        logger.warning(
-                            f"[CONSOLIDATION] bank={bank_id} failed to abort write-group for"
-                            f" llm_batch #{batch_num_local}; recovery sweep will resolve it",
-                            exc_info=True,
-                        )
-                raise
-            # Postgres committed the witness: publish the batch's write-group. On a crash before
-            # here the writes stay invisible and the recovery sweep resolves them (spec §5). No-op for
-            # a store-owned batch (no write-group; its writes were already visible).
-            #
-            # Guarded on `_store_owned`, NOT on `_batch_txn is not None`: a store whose `mint_txn`
-            # legitimately returns None (Postgres does) still has its decide called, exactly as
-            # before this skip existed. Guarding on the handle silently dropped that call for every
-            # SQL bank — behaviourally a no-op, but it is the one observable the write-group tests
-            # assert on, and it made two of them fail.
-            if not _store_owned:
-                await _txn_provider.decide_txn(_batch_txn, commit=True)
+                        if batch_tags:
+                            await _persist_pending_refresh_tags(conn, operation_id, batch_tags)
 
             cancelled_local = False
             if operation_id and not await memory_engine._check_op_alive(operation_id):
@@ -1881,8 +1814,8 @@ async def _run_consolidation_job(
     # memories can straddle rounds, and gating on the final round alone (the prior
     # behaviour) dropped every model consolidated earlier because the final round's tags
     # no longer named them (#3411). The union is durable: each batch writes its tags into
-    # the op's ``task_payload`` inside the batch's own witness txn (crash-safe), and the
-    # re-queue threads the accumulated set forward to the next round. Prefer that durable
+    # the op's ``task_payload`` in its own transaction (crash-safe), and the re-queue threads
+    # the accumulated set forward to the next round. Prefer that durable
     # value; fall back to the in-memory union when there is no backing op (a direct
     # ``run_consolidation_job`` call, e.g. in tests).
     all_refresh_tags = set(pending_refresh_tags or []) | consolidated_tags
@@ -2104,7 +2037,6 @@ async def _process_memory_batch(
     config: Any = None,
     obs_tags_override: list[str] | None = None,
     mark_consolidated_ids: list[Any] | None = None,
-    txn=None,
 ) -> tuple[list[dict[str, Any]], int, bool]:
     """
     Process a batch of memories in a single LLM call.
@@ -2397,7 +2329,7 @@ async def _process_memory_batch(
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
                 for observation_id in prepared_deletes:
-                    await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=observation_id, txn=txn)
+                    await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=observation_id)
                     deleted_count += 1
 
                 for prepared in prepared_updates:
@@ -2407,7 +2339,6 @@ async def _process_memory_batch(
                         bank_id=bank_id,
                         prepared=prepared,
                         perf=perf,
-                        txn=txn,
                     )
                     if updated_emb_str is None:
                         # Skipped inside the write (sources or the observation vanished).
@@ -2423,7 +2354,6 @@ async def _process_memory_batch(
                             prepared.dedup,
                             prepared.update.observation_id,
                             prepared.update.text,
-                            txn=txn,
                         )
 
                 for prepared_create in prepared_creates:
@@ -2436,7 +2366,6 @@ async def _process_memory_batch(
                             prepared_create.dedup,
                             prepared_create.source_memory_ids,
                             _TemporalBounds.of(prepared_create.agg),
-                            txn=txn,
                         )
                         if merged_into is not None:
                             logger.info(
@@ -2454,7 +2383,6 @@ async def _process_memory_batch(
                         bank_id=bank_id,
                         prepared=prepared_create,
                         perf=perf,
-                        txn=txn,
                     )
                     # Count a memory as created only when an observation was actually written (the
                     # source-liveness recheck inside the write can skip it).
@@ -2475,7 +2403,6 @@ async def _process_memory_batch(
                         unit_ids=[str(mem_id) for mem_id in stamp_ids],
                         when=datetime.now(timezone.utc),
                         failed=False,
-                        txn=txn,
                     )
 
     # Build per-memory result dicts for the stats tracker in the outer loop
@@ -2577,7 +2504,6 @@ async def _apply_update_action(
     bank_id: str,
     prepared: _PreparedUpdate,
     perf: ConsolidationPerfLog | None = None,
-    txn=None,
 ) -> str | None:
     """Write one prepared UPDATE: rewrite the observation and re-attach its sources.
 
@@ -2704,7 +2630,6 @@ async def _apply_update_action(
         await store.upsert_observation(
             conn=conn,
             bank_id=bank_id,
-            txn=txn,
             record=FactRecord(
                 unit_id=observation_id,
                 text=new_text,
@@ -2762,7 +2687,6 @@ async def _apply_create_action(
     bank_id: str,
     prepared: "_PreparedCreate",
     perf: ConsolidationPerfLog | None = None,
-    txn=None,
 ) -> str:
     """
     Create a new observation from one or more source memories.
@@ -2785,7 +2709,6 @@ async def _apply_create_action(
         occurred_end=prepared.agg.occurred_end,
         mentioned_at=prepared.agg.mentioned_at,
         perf=perf,
-        txn=txn,
     )
     # Map the new observation onto the consolidation trace as a produced memory.
     new_id = created.get("observation_id")
@@ -2799,7 +2722,6 @@ async def _execute_delete_action(
     conn: "Connection",
     bank_id: str,
     observation_id: str,
-    txn=None,
 ) -> None:
     """Delete a superseded or contradicted observation."""
     store = get_memories()
@@ -2810,7 +2732,7 @@ async def _execute_delete_action(
             bank_id,
         )
     else:
-        await store.delete_facts(bank_id, [observation_id], txn=txn)
+        await store.delete_facts(bank_id, [observation_id])
     # History lives in Postgres regardless of where the observation itself does, and no
     # longer cascades from memory_units (that FK was dropped so it could be recorded for
     # observations kept outside SQL). Drop it explicitly so a deleted observation's
@@ -3247,7 +3169,6 @@ async def _apply_create_observation(
     occurred_end: datetime | None = None,
     mentioned_at: datetime | None = None,
     perf: ConsolidationPerfLog | None = None,
-    txn=None,
 ) -> dict[str, Any]:
     """Insert one observation from pre-embedded text.
 
@@ -3347,7 +3268,6 @@ async def _apply_create_observation(
         await store.upsert_observation(
             conn=conn,
             bank_id=bank_id,
-            txn=txn,
             record=FactRecord(
                 unit_id=str(observation_id),
                 text=observation_text,
