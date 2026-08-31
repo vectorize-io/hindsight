@@ -6,9 +6,9 @@
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
 import {
+  type BankOverrides,
   buildPageTrigger,
-  CODING_BANK_STRUCTURE,
-  CODING_BANK_TEMPLATE,
+  codingBankManifest,
   PAGE_MAX_TOKENS,
   pagesFor,
   type PageTrigger,
@@ -142,9 +142,6 @@ const RETRY_AFTER_FLOOR_MS = 10 * 1000;
  * another 429 and backs off again.
  */
 const RETRY_AFTER_CEILING_MS = 60 * 1000;
-
-/** Bank-level missions the template seeds once and then leaves alone (#2492). */
-const MISSION_FIELDS = ["reflect_mission", "retain_mission", "observations_mission"] as const;
 
 export class HindsightClient {
   readonly apiUrl: string;
@@ -343,52 +340,55 @@ export class HindsightClient {
     return ids;
   }
 
-  /** Configure the bank: POST the coding bank template manifest to /import (missions, retain
-   *  strategies, entity labels), then seed knowledge pages when the server supports them. Both
-   *  halves are idempotent, so the deepen engine can re-run this every pass. Creates the bank if
-   *  missing; legacy servers continue with the template-only path. */
-  async configureBank(opts: { reset?: boolean; pageTrigger?: PageTrigger } = {}): Promise<void> {
+  /** Configure the bank: POST the coding bank manifest to /import (missions, retain strategies,
+   *  entity labels), then seed knowledge pages when the server supports them. Both halves are
+   *  idempotent and strictly ADDITIVE — nothing the bank already says is overwritten (#3927) — so
+   *  the deepen engine can re-run this every pass. Creates the bank if missing; legacy servers
+   *  continue with the template-only path.
+   *
+   *  `manage: false` skips the config half entirely, for a bank whose owner shapes it themselves.
+   *  That bank must then define the strategies this plugin writes under (`git`, `gitlog`,
+   *  `conversation`, `document`, `survey`) — a retain naming a strategy the bank lacks is rejected. */
+  async configureBank(
+    opts: { reset?: boolean; pageTrigger?: PageTrigger; manage?: boolean } = {}
+  ): Promise<void> {
     if (opts.reset) {
       await this.req("DELETE", this.bankUrl());
       this.log(`[bank] reset ${this.bank}`);
     }
-    // Seed the missions ONCE. After that they belong to whoever set them — see CODING_BANK_STRUCTURE.
-    const seeded = opts.reset ? false : await this.hasBankMissions();
-    await this.req(
-      "POST",
-      this.bankUrl("/import"),
-      seeded ? CODING_BANK_STRUCTURE : CODING_BANK_TEMPLATE
-    );
-    this.log(
-      seeded
-        ? `[bank] structure applied to ${this.bank}: entity_labels {knowledge}, ` +
-            `strategies {git, gitlog, conversation, document} — missions left as configured`
-        : `[bank] template applied to ${this.bank}: missions, entity_labels {knowledge}, ` +
-            `strategies {git, gitlog, conversation, document}`
-    );
+    if (opts.manage === false) {
+      this.log(`[bank] manageBankConfig: false — leaving ${this.bank}'s configuration alone`);
+    } else {
+      // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
+      // and then belong to whoever set them (#2492), and every other field is added only where the
+      // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
+      const manifest = codingBankManifest(opts.reset ? undefined : await this.readBankOverrides());
+      if (!manifest) {
+        this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
+      } else {
+        await this.req("POST", this.bankUrl("/import"), manifest);
+        this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort().join(", ")}`);
+      }
+    }
     await this.seedPages(opts.pageTrigger);
   }
 
   /**
-   * Whether this bank already carries bank-level mission overrides — ours from an earlier seed, or
-   * the user's own edit. Either way they are not ours to overwrite.
+   * This bank's own config OVERRIDES, or undefined when there are none to read.
    *
-   * Reads the bank-scoped OVERRIDES, not the resolved config, so inherited global defaults don't
-   * read as "already set". A missing bank, or a deployment with the bank-config API switched off,
-   * answers false: there is nothing to preserve, and without that API a user cannot set per-bank
-   * missions in the first place.
+   * Deliberately the overrides and not the resolved config: an inherited global default is not
+   * something this bank's owner chose, so it must not read as "already set". `undefined` means the
+   * bank does not exist yet, or the deployment has the bank-config API switched off — in neither
+   * case can anything have been customised, so the caller seeds the full template.
    */
-  private async hasBankMissions(): Promise<boolean> {
+  private async readBankOverrides(): Promise<BankOverrides | undefined> {
     try {
       const r = await this.req("GET", this.bankUrl("/config"));
-      if (!r.ok) return false;
-      const j = (await r.json()) as { overrides?: Record<string, unknown> };
-      return MISSION_FIELDS.some((f) => {
-        const v = j.overrides?.[f];
-        return typeof v === "string" && v.trim() !== "";
-      });
+      if (!r.ok) return undefined;
+      const j = (await r.json()) as { overrides?: BankOverrides };
+      return j.overrides ?? {};
     } catch {
-      return false;
+      return undefined;
     }
   }
 

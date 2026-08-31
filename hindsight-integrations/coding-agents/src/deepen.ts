@@ -151,7 +151,10 @@ async function main() {
         sessionId,
       });
 
-    await client.configureBank({ pageTrigger: buildPageTrigger(cfg) });
+    await client.configureBank({
+      pageTrigger: buildPageTrigger(cfg),
+      manage: cfg.manageBankConfig,
+    });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
         bank: FINAL_BANK,

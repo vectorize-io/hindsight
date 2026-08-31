@@ -419,6 +419,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `resolveWorktrees`      | `true`                               | linked worktrees inherit the main checkout's bank identity, path approval, and mapping                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `retainTags`            | —                                    | extra tags on every document written by the integration, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `manageBankConfig`      | `true`                               | let the plugin shape the bank's own configuration — the retain strategies it writes under, the `knowledge` entity-label group, and, on a bank that has none, the missions. Writing is strictly **additive**: it adds what the bank does not define and never overwrites what is there, so your control-plane edits survive. Set `false` to keep it out of the bank config entirely — see **A bank you shape yourself** below                                                                                                                                                                                                                                                                 |
 | `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `reflectTimeoutMs`      | `120000`                             | **automatic** session-reflect timeout (hook harnesses additionally cap it at 25s to fit the host's hook window); on timeout the session runs without reflect (recorded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -452,6 +453,36 @@ repo already has: a page keeps the trigger it was created with, so a bank seeded
 `"manual"` keeps refreshing on every consolidation. To move an existing page, change its trigger
 through the API (`PATCH /knowledge-base/nodes/{id}`), an SDK, or the control plane — or delete it
 and let the next session seed it again.
+
+### A bank you shape yourself — `manageBankConfig`
+
+Pointed at a bank, this plugin gives it the shape its ingestion needs: retain strategies for the
+kinds of document it writes (`git`, `gitlog`, `conversation`, `document`, `survey`), a `knowledge`
+entity-label group that routes facts to the knowledge pages, and — on a bank that has no missions of
+its own — the coding missions.
+
+**It only ever adds what is missing.** A strategy you defined, an edit you made to one of the
+plugin's, a reworded label group, a mission you rewrote in the control plane: each is left exactly
+as it is, on every session, forever. What the bank already says wins. The cost of that promise is
+that a plugin release which _rewords_ an existing strategy or label does not reach a bank that
+already has it. To take the current default back, clear that override on the bank (delete the
+strategy, or the whole `retain_strategies` entry, in the control plane): the next session finds the
+bank silent there and seeds it again.
+
+Set `manageBankConfig: false` to keep the plugin out of the bank's configuration altogether — the
+right setting for a bank you share with non-coding work, or one you configure yourself. That bank
+must then define the five strategies above itself, because a retain naming a strategy the bank does
+not have is rejected. Knowledge pages are seeded either way; `pageTriggerType` governs what they
+cost.
+
+Like every field here it can be set per bank, which is usually where it belongs:
+
+```json
+{
+  "bankId": "my-global-bank",
+  "banks": { "my-global-bank": { "manageBankConfig": false } }
+}
+```
 
 ### Per-repo opt-in/out — `banks.<bankId>`
 

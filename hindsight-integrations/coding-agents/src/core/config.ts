@@ -145,6 +145,16 @@ export interface RawConfig {
   /** Extra metadata stamped on every session write-back, e.g. {"repo": "{gitProject}"}. Same
    *  placeholders as retainTags; built-in metadata (harness attribution) wins on conflict. */
   retainMetadata?: Record<string, string>;
+  /** Let the plugin shape the bank's own configuration — the retain strategies it writes under,
+   *  the `knowledge` entity-label group, and (on a bank that has none) the missions (default true).
+   *
+   *  Writing is strictly ADDITIVE: the plugin adds what the bank does not already define and never
+   *  overwrites an existing value, so an edit made in the control plane survives (#3927). Set false
+   *  to keep it out of the bank's configuration entirely — for a bank you shape yourself, or share
+   *  with non-coding work. That bank must then define the strategies this plugin retains under
+   *  (`git`, `gitlog`, `conversation`, `document`, `survey`), since a retain naming a strategy the
+   *  bank lacks is rejected. Knowledge pages are seeded either way (see `pageTriggerType`). */
+  manageBankConfig?: boolean;
   /** How consolidation groups the observations this plugin's memories feed (default "shared" — one
    *  global scope per bank, so every agent working a repo builds ONE set of beliefs; see
    *  DEFAULT_OBSERVATION_SCOPES). "combined" restores the server default of one scope per distinct
@@ -205,6 +215,7 @@ export interface Config {
   gitIngest: "message" | "full" | "none";
   retainTags: string[];
   retainMetadata: Record<string, string>;
+  manageBankConfig: boolean;
   observationScopes: ObservationScopes;
   banks: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
   logLevel: "debug" | "info" | "warn" | "error";
@@ -314,6 +325,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // write sessions back by default, every harness
+    manageBankConfig: raw.manageBankConfig ?? true,
     maxParallelRetains: raw.maxParallelRetains || 10,
     reflectTimeoutMs: raw.reflectTimeoutMs || 120000,
     // Inherit an explicitly-raised reflectTimeoutMs (that is what users reaching for a longer
@@ -450,6 +462,7 @@ const ENV_KEYS = {
   // Comma-separated, e.g. HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work". A LIST rather than
   // a map, so it flattens cleanly; its sibling retainMetadata stays file-only for the reason above.
   retainTags: "HINDSIGHT_RETAIN_TAGS",
+  manageBankConfig: "HINDSIGHT_MANAGE_BANK_CONFIG",
 } as const satisfies Partial<Record<keyof RawConfig, string>>;
 
 /** Fields parsed as booleans/numbers/comma-separated lists; everything else is taken as a string. */
@@ -463,6 +476,7 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "autoSeed",
   "codebaseSurvey",
   "autoUpdate",
+  "manageBankConfig",
 ]);
 const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "optInPaths"]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
