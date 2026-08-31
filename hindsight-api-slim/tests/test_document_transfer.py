@@ -226,7 +226,13 @@ def test_export_bank_covers_schema():
 
 
 def test_remap_mental_model_evidence_updates_current_and_history():
-    """Transfer remapping changes only known memory-unit ids in both payloads."""
+    """Transfer remapping changes only known memory-unit ids in both payloads.
+
+    The two rows carry the two real shapes. A ``mental_models`` row has its own
+    ``reflect_response`` column; a ``mental_model_history`` row stores the whole
+    snapshot in a JSONB ``content`` blob, so its evidence is nested one level
+    down and there is no top-level ``previous_reflect_response`` to find.
+    """
     from hindsight_api.engine.transfer.importer import _remap_mental_model_evidence
 
     rows = [
@@ -234,14 +240,22 @@ def test_remap_mental_model_evidence_updates_current_and_history():
             "reflect_response": {"based_on": {"world": [{"id": "old", "text": "fact"}]}},
         },
         {
-            "previous_reflect_response": json.dumps({"based_on": {"observation": [{"id": "obs-old"}]}}),
+            "content": json.dumps(
+                {
+                    "previous_content": "an earlier draft",
+                    "previous_reflect_response": {"based_on": {"observation": [{"id": "obs-old"}]}},
+                }
+            ),
         },
     ]
 
     _remap_mental_model_evidence(rows, {"old": "new", "obs-old": "obs-new"})
 
     assert rows[0]["reflect_response"]["based_on"]["world"][0]["id"] == "new"
-    assert rows[1]["previous_reflect_response"]["based_on"]["observation"][0]["id"] == "obs-new"
+    history_content = rows[1]["content"]
+    assert history_content["previous_reflect_response"]["based_on"]["observation"][0]["id"] == "obs-new"
+    # The rest of the snapshot is copied through untouched.
+    assert history_content["previous_content"] == "an earlier draft"
 
 
 def test_topological_page_order_is_parent_first():

@@ -184,6 +184,7 @@ async def import_documents(
     on_conflict: OnConflict = "skip",
     ops: Any = None,
     outbox_callback_factory: Any = None,
+    restore_bank_scoped_rows: bool = True,
 ) -> ImportResult:
     """Import every document in ``archive_bytes`` into ``bank_id``.
 
@@ -200,6 +201,15 @@ async def import_documents(
             bank — ``skip`` (default), ``replace`` (delete old data and re-import),
             or ``new-id`` (import under a freshly generated id).
         ops: Backend ``DataAccessOps``. Defaults to ``backend.ops``.
+        restore_bank_scoped_rows: Whether to restore the archive's mental models
+            and knowledge pages. True for a documents archive, which merges them
+            into an existing bank. False for a whole-bank restore, which owns
+            those rows: ``import_bank`` carries the same ``mental_models.json``
+            in ``bank_rows``, restores it with the archive's own JSON encoding
+            alongside ``mental_model_history``, and — the reason this switch
+            exists — rewrites the persisted ``based_on`` evidence ids onto the
+            replayed facts first. ``_restore_rows`` is ON CONFLICT DO NOTHING,
+            so a copy inserted here would win and strip that repair (#3833).
 
     Returns:
         An :class:`ImportResult` with per-document counts.
@@ -275,7 +285,7 @@ async def import_documents(
         result.observations_skipped = outcome.skipped
         result.remapped_unit_ids.update(outcome.remapped_unit_ids)
 
-    if parsed.mental_models or parsed.knowledge_pages:
+    if restore_bank_scoped_rows and (parsed.mental_models or parsed.knowledge_pages):
         mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
         async with acquire_with_retry(backend) as conn:
             # Document archives serialize bank-row JSON values directly. Keep
@@ -658,6 +668,9 @@ async def import_bank(
         archive_bytes=archive_bytes,
         ops=ops,
         outbox_callback_factory=None,
+        # The bank path restores mental models and knowledge pages itself, below,
+        # after remapping their evidence ids onto the facts just replayed.
+        restore_bank_scoped_rows=False,
     )
 
     result = BankImportResult(
@@ -1136,16 +1149,26 @@ def _remap_based_on_ids(payload: dict[str, Any] | None, unit_id_map: dict[str, s
 
 
 def _remap_mental_model_evidence(rows: list[dict], unit_id_map: dict[str, str]) -> None:
-    """Repair current and historical mental-model reflect-response evidence."""
+    """Repair current and historical mental-model reflect-response evidence.
+
+    Handles both row shapes. A ``mental_models`` row carries the response in its
+    own ``reflect_response`` column. A ``mental_model_history`` row carries one
+    snapshot as a single JSONB ``content`` blob holding ``previous_content`` and
+    ``previous_reflect_response`` — there is no top-level column of that name, so
+    the nested payload has to be decoded, rewritten and put back.
+    """
     for row in rows:
         reflect_response = _decode_json_object(row.get("reflect_response"))
         if isinstance(reflect_response, dict):
             _remap_based_on_ids(reflect_response, unit_id_map)
             row["reflect_response"] = reflect_response
-        previous = _decode_json_object(row.get("previous_reflect_response"))
-        if isinstance(previous, dict):
-            _remap_based_on_ids(previous, unit_id_map)
-            row["previous_reflect_response"] = previous
+        content = _decode_json_object(row.get("content"))
+        if isinstance(content, dict):
+            previous = _decode_json_object(content.get("previous_reflect_response"))
+            if isinstance(previous, dict):
+                _remap_based_on_ids(previous, unit_id_map)
+                content["previous_reflect_response"] = previous
+                row["content"] = content
 
 
 def _decode_json_object(value: Any) -> Any:
