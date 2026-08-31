@@ -30,7 +30,7 @@ def _shed_error() -> Exception:
         "AioRpcError: <AioRpcError of RPC that terminated with:\n"
         "\tstatus = StatusCode.UNAVAILABLE\n"
         '\tdetails = "fold behind: un-folded tail of tenant_x__bank holds 1075346560 bytes, '
-        'over the 1073741824-byte write bound (half MEMLAKE_MAX_TAIL_SCAN_BYTES)"\n>"'
+        'over the 1073741824-byte write bound (half the max tail scan)"\n>"'
     )
 
 

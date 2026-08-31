@@ -144,6 +144,16 @@ async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(mo
         return None
 
     class _StoreOwned:
+        def store_owned_for(self, bank_id):
+            return True
+
+        async def scan_memories(self, **kw):
+            # The observation sweep asks the store which facts the replaced chunks own. Answering
+            # "none" is the interesting case here: it must still go through the STORE, never the
+            # SQL read, which is what `saw_open` staying three entries proves.
+            saw_open.append(tracker.open)
+            return SimpleNamespace(memories=[], next_page_token="")
+
         async def retain(self, bank_id, unit_ids, facts, **kw):
             saw_open.append(tracker.open)
             retained.update(kw)
@@ -183,8 +193,8 @@ async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(mo
 
     assert ok is True
     assert unit_ids == [["u1"]]
-    # Nothing slow ran while a connection was checked out.
-    assert saw_open == [False, False, False], saw_open
+    # Nothing slow ran while a connection was checked out — the observation sweep's scan included.
+    assert saw_open == [False, False, False, False], saw_open
     # And the replace was SCOPED — the changed chunk named, not the whole document blown away.
     assert retained["replace_document_id"] == "d1"
     assert retained["replace_chunk_ids"] == ["b_d1_1"]

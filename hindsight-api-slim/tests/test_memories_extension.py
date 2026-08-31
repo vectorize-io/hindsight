@@ -34,6 +34,8 @@ from hindsight_api.engine.memories.base import (
     MemoriesExtension,
     RecallArms,
     RelinkPassResult,
+    RetainResult,
+    RetainSession,
     ScanPage,
     StoredMemory,
 )
@@ -51,7 +53,6 @@ class InMemoryMemories(MemoriesExtension):
     name = "in-memory"
     # This store keeps memory rows in its own dict, not in Postgres, so the engine must take the
     # store-delegating branches (never the inline-SQL fast paths that assume a live ``conn``).
-    store_owned = True
     # It also owns the document/chunk bodies, so the retain and read paths route those through the
     # document methods below — exercising that half of the seam too.
     store_owned = True
@@ -135,6 +136,14 @@ class InMemoryMemories(MemoriesExtension):
     ):
         self.calls.append("retain")
         return None
+
+    async def begin_retain(self, *, bank_id, config):
+        """A session that buffers and commits once, which is the policy a store with no LLM in the
+        loop should pick. It writes through the same ``index_facts`` the non-session path uses, so
+        a test asserting on ``rows`` cannot tell which path produced them — the point being that the
+        session is a different WHEN, not a different WHAT."""
+        self.calls.append("begin_retain")
+        return _InMemoryRetainSession(self, bank_id)
 
     async def index_facts(self, bank_id, unit_ids, facts, document_id=None, unit_entity_ids=None):
         self.calls.append("index_facts")
@@ -709,6 +718,46 @@ class InMemoryMemories(MemoriesExtension):
         return [KnowledgePageRef(page_id=e.page_id, updated_at=e.updated_at) for e in self._pages(bank_id).values()]
 
 
+class _InMemoryRetainSession(RetainSession):
+    """Buffer-then-commit. Deliberately the whole-retain policy rather than a per-part flush: it is
+    the one that would break if `commit` ever stopped being called, so a leak in the orchestrator's
+    session handling shows up as missing rows instead of passing on a partial write."""
+
+    def __init__(self, store: "InMemoryMemories", bank_id: str):
+        self._store = store
+        self._bank_id = bank_id
+        self._parts: list = []
+
+    async def add(self, part) -> None:
+        self._store.calls.append("session.add")
+        self._parts.append(part)
+
+    async def commit(self) -> RetainResult:
+        self._store.calls.append("session.commit")
+        unit_ids: dict[str, list[str]] = {}
+        for part in self._parts:
+            doc = self._store.documents.setdefault(part.document_id, {"chunks": [], "text": ""})
+            if part.document_body is not None:
+                doc["text"] = part.document_body
+            if part.chunk_texts:
+                # `chunk_offset` is per document, so a part is placed at its offset rather than
+                # appended — two parts of one document can arrive in either order.
+                needed = part.chunk_offset + len(part.chunk_texts)
+                if len(doc["chunks"]) < needed:
+                    doc["chunks"].extend([""] * (needed - len(doc["chunks"])))
+                doc["chunks"][part.chunk_offset : needed] = list(part.chunk_texts)
+            if part.facts:
+                ids = self._store.allocate_unit_ids(len(part.facts))
+                await self._store.index_facts(self._bank_id, ids, part.facts, part.document_id)
+                unit_ids.setdefault(part.document_id, []).extend(ids)
+        self._parts.clear()
+        return RetainResult(unit_ids=unit_ids)
+
+    async def abort(self) -> None:
+        self._store.calls.append("session.abort")
+        self._parts.clear()
+
+
 @pytest.fixture
 def restore_default_store():
     """Put the process-wide store back, whatever a test did to it."""
@@ -852,12 +901,11 @@ def test_per_bank_capability_defaults_to_the_class_attribute():
     """A single-store extension needs no override: the _for methods return the class attr, so
     every existing store keeps its exact behaviour for every bank."""
     pg = PostgresMemories({})
-    assert not (pg.store_owned, pg.store_owned) == (True, False)
-    assert not pg.store_owned_for("any-bank") is True
+    assert pg.store_owned is False
     assert pg.store_owned_for("any-bank") is False
 
     mem = InMemoryMemories({})  # owns its rows AND its document store
-    assert not mem.store_owned_for("any-bank") is False
+    assert mem.store_owned is True
     assert mem.store_owned_for("any-bank") is True
 
 

@@ -234,11 +234,13 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
     async def _load() -> dict:
         async with acquire_with_retry(pool) as conn:
             profile = await get_bank_profile_if_exists_on_conn(conn, bank_id)
-        # A dict either way: the cache stores dicts, and "the bank does not exist" has to be
-        # representable or every miss re-reads it.
+        # "The bank does not exist" has to be representable as a cached value, or every miss for a
+        # missing bank re-reads it. `BankProfile` is a TypedDict, so the only thing that has to be
+        # unpacked is `disposition`, which is a pydantic model the cache would otherwise hand back
+        # by reference and let a caller mutate for every other holder of the entry.
         if profile is None:
             return {}
-        return {"name": profile.name, "disposition": profile.disposition.__dict__, "mission": profile.mission}
+        return {**profile, "disposition": profile["disposition"].model_dump()}
 
     row = await bank_info_cache.get_or_load(bank_id, "profile", _load)
     if not row:

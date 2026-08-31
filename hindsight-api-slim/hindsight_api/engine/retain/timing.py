@@ -1,7 +1,7 @@
 """Where a retain's wall time actually goes.
 
 Retain crosses four subsystems -- chunking, the embedder, the memories store and Postgres --
-and before this existed a slow retain in production could only be attributed by reasoning
+and without this a slow retain could only be attributed by reasoning
 about which of them was likely. That reasoning got it wrong more than once: the store's share
 was read as Postgres, and Postgres work on a store-owned bank (queries against tables holding
 no rows for such a bank) was invisible because nothing counted the round trips.
@@ -22,7 +22,7 @@ fraction of the others.
 Usage -- the accumulator is per-retain and lives in a contextvar, so the phases do not have to
 be threaded through every call:
 
-    async with retain_timing(bank_id="b", store="memlake") as t:
+    async with retain_timing(bank_id="b", store="the-store") as t:
         async with t.phase("embed"):
             ...
 

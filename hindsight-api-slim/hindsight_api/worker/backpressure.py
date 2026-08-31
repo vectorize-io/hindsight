@@ -23,7 +23,8 @@ genuinely broken still fails on its next attempt, when the message no longer mat
 """
 
 # Substrings a store's own backpressure refusal carries. `fold behind` and the write-bound message
-# are memlake's; `UNAVAILABLE` covers the gRPC status a shedding store returns generally.
+# are a particular store's wording; `UNAVAILABLE` covers the gRPC status a shedding store returns
+# generally.
 _BACKPRESSURE_MARKERS = (
     "fold behind",
     "write bound",

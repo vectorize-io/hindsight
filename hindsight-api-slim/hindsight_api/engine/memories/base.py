@@ -798,11 +798,11 @@ class MemoriesExtension(Extension, ABC):
     # embedding, so a lost or diverged entry is repaired by indexing it again and the two never need
     # a transaction between them.
     #
-    # That is why this is its own flag rather than part of `store_owned`. `store_owned` collapsed
-    # three flags into one because no store ever wanted a mixed combination — this is the mixed
-    # combination: the ownership split runs the opposite way (Postgres keeps the row, the store
-    # keeps the index), and a store can own every memory in a bank while its pages are still
-    # searched in SQL. The rollout needs exactly that state.
+    # It follows `store_owned` rather than carrying a flag of its own. A separate flag would only
+    # earn its place if some store wanted the mixed state — owning every memory in a bank while its
+    # pages were still searched in SQL — and none does: a store that owns the bank's memories is
+    # already the thing answering its searches, so splitting the two only creates a combination
+    # nothing sets and every call site has to keep handling.
 
     async def index_knowledge_pages(self, bank_id: str, entries: list["KnowledgePageEntry"]) -> None:
         """Upsert pages into the store's index. A ``page_id`` already present is replaced.

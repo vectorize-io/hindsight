@@ -58,7 +58,7 @@ async def load_existing_chunks(conn, bank_id: str, document_id: str) -> list[Exi
     ]
 
 
-async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> list[str]:
+async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str], *, store=None) -> list[str]:
     """Ids of the facts these chunks own, asked of whichever store holds them.
 
     The SQL store keeps ``chunk_id`` as a column; a store that keeps memories outside SQL
@@ -67,11 +67,17 @@ async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> lis
     observations are not chunk-scoped, and feeding one back as a *source* id would be
     meaningless. Paged to exhaustion — every id is about to be deleted, and a chunk whose
     facts overflow one page must not keep half of them.
+
+    ``store`` is the provider the caller already resolved for this bank. A caller inside a
+    store-owned path has it in hand, and passing it is what keeps this from re-deciding ownership
+    against the global registry: that registry answers for the PROCESS, and a router serving both
+    kinds of bank would send a store-owned delta down the SQL branch -- reading with the connection
+    that path deliberately never acquired.
     """
     from ..memories import META_CHUNK_ID, get_memories
 
-    store = get_memories()
-    if not store.store_owned:
+    store = get_memories() if store is None else store
+    if not store.store_owned_for(bank_id):
         rows = await conn.fetch(
             f"""
             SELECT id

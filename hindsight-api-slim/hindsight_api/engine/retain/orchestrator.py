@@ -988,7 +988,7 @@ async def _delta_store_owned_write(
     # from its own cascade in `chunk_storage`; a store-owned delta retires its facts through the
     # replace below instead, so this is the only place that can catch them.
     if replace_chunk_ids:
-        outgoing = await chunk_storage.memory_ids_for_chunks(None, bank_id, replace_chunk_ids)
+        outgoing = await chunk_storage.memory_ids_for_chunks(None, bank_id, replace_chunk_ids, store=provider)
         if outgoing:
             swept = await fact_storage.delete_stale_observations_for_memories(None, bank_id, outgoing, ops=pool.ops)
             if swept:
