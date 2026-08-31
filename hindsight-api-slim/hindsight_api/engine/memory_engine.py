@@ -15307,36 +15307,48 @@ class MemoryEngine(MemoryEngineInterface):
             content = document.markdown
             structured_content = document.structure.model_dump()
 
-        # Compute the new embedding BEFORE acquiring a pooled connection: a slow
-        # embedder must never pin a DB connection. The embedding text depends only
-        # on the incoming name/content, never on DB state, so it can be done here.
+        # A model's searchable document is its name AND its content, so half of it
+        # cannot be embedded on its own: a content-only edit that embedded just the
+        # content, and a name-only edit that skipped the embedding altogether, both
+        # left the vector describing text the model no longer holds (#3926). Resolve
+        # the stored half first and embed the whole document. The lexical projection
+        # below already falls back to the untouched column and needs no such read.
+        #
+        # The read happens before the write block so a slow embedder never pins a
+        # pooled connection; when the caller supplied a connection we are inside
+        # their transaction already, so the read joins it rather than racing it.
+        previous_content: str | None = None
+        previous_reflect_response: dict[str, Any] | None = None
         new_embedding_str: str | None = None
-        if content is not None:
-            embedding_text = f"{name or ''} {content}"
-            embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
-            if embedding:
-                new_embedding_str = str(embedding[0])
+        document_changed = name is not None or content is not None
+        if document_changed:
+            async with use_or_acquire(backend, conn) as read_conn:
+                current_row = await read_conn.fetchrow(
+                    f"SELECT name, content, reflect_response FROM {fq_table('mental_models')} "
+                    "WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+            if current_row is None:
+                return None
+
+            if content is not None:
+                # Snapshot for history, taken from the same read.
+                previous_content = current_row["content"]
+                raw_rr = current_row["reflect_response"]
+                if isinstance(raw_rr, str):
+                    previous_reflect_response = json.loads(raw_rr) if raw_rr else None
+                else:
+                    previous_reflect_response = raw_rr
+
+            new_embedding_str = await self._generate_mental_model_embedding(
+                name if name is not None else (current_row["name"] or ""),
+                content if content is not None else (current_row["content"] or ""),
+            )
 
         # The exit stack carries the row lock a trigger patch takes below; it stays
         # empty (and free) on every other update.
         async with use_or_acquire(backend, conn) as conn, AsyncExitStack() as stack:
-            # If content is changing, fetch current content + reflect_response to record history
-            previous_content: str | None = None
-            previous_reflect_response: dict[str, Any] | None = None
-            if content is not None:
-                current_row = await conn.fetchrow(
-                    f"SELECT content, reflect_response FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    mental_model_id,
-                )
-                if current_row:
-                    previous_content = current_row["content"]
-                    raw_rr = current_row["reflect_response"]
-                    if isinstance(raw_rr, str):
-                        previous_reflect_response = json.loads(raw_rr) if raw_rr else None
-                    else:
-                        previous_reflect_response = raw_rr
-
             # A supplied trigger PATCHES the stored one (see _merge_trigger): callers
             # send only the fields they set, so the rest have to be read back rather
             # than defaulted. Only paid for when a trigger is actually being changed.
@@ -15407,11 +15419,14 @@ class MemoryEngine(MemoryEngineInterface):
                             slim["trace"] = previous_trace
                         slim_reflect_response = slim or None
                     record_mm_history = True
-                # Apply the embedding computed above (off-connection).
-                if new_embedding_str is not None:
-                    updates.append(f"embedding = ${param_idx}")
-                    params.append(new_embedding_str)
-                    param_idx += 1
+
+            # Apply the embedding computed above (off-connection). Written whenever
+            # either half of the document moved, so the vector and the stored text
+            # never describe different things.
+            if document_changed:
+                updates.append(f"embedding = ${param_idx}")
+                params.append(new_embedding_str)
+                param_idx += 1
 
             # The two timestamps move independently, and conflating them is what made a
             # refresh look like it never ran (#3531): the watermark is clamped so it
@@ -15584,6 +15599,20 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
+        # The dense vector has to be rebuilt from the name alone as well: leaving the
+        # one built from the discarded content behind kept a deliberately cleared
+        # model ranking in semantic recall on a body it no longer has (#3926). Read
+        # the name and embed it before touching a pooled connection for the write.
+        async with acquire_with_retry(backend) as conn:
+            current_row = await conn.fetchrow(
+                f"SELECT name FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mental_model_id,
+            )
+        if current_row is None:
+            return None
+        embedding_str = await self._generate_mental_model_embedding(current_row["name"] or "", "")
+
         # Content is cleared to '', so re-tokenize search_vector from the name
         # alone — vchord only (see update_mental_model). Non-vchord backends leave
         # the column untouched (generated / base-column indexed).
@@ -15597,7 +15626,8 @@ class MemoryEngine(MemoryEngineInterface):
                 UPDATE {fq_table("mental_models")}
                 SET content = '',
                     structured_content = NULL,
-                    last_refreshed_source_query = NULL{sv_clause}
+                    last_refreshed_source_query = NULL,
+                    embedding = $3{sv_clause}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
                           last_refreshed_at, last_memory_seen_at, created_at, reflect_response,
@@ -15605,6 +15635,7 @@ class MemoryEngine(MemoryEngineInterface):
                 """,
                 bank_id,
                 mental_model_id,
+                embedding_str,
             )
 
         return self._row_to_mental_model(row) if row else None

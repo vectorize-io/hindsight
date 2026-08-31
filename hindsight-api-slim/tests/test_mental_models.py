@@ -2646,6 +2646,53 @@ class TestClearMentalModel:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_clear_rebuilds_embedding_from_the_name(self, memory: MemoryEngine, request_context, monkeypatch):
+        """Regression for #3926: clearing the content must not leave the vector
+        built from that content behind, or the model keeps ranking in semantic
+        recall on a body it no longer has."""
+        bank_id = f"test-mm-clear-embed-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What do we know?",
+            content="Some existing content",
+            request_context=request_context,
+        )
+
+        # No engine read exposes a model's embedding, and the stale column is the
+        # defect under test, so it has to be read directly.
+        async def stored_embedding() -> str:
+            async with memory._pool.acquire() as conn:
+                return await conn.fetchval(
+                    f"SELECT embedding::text FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mm["id"],
+                )
+
+        before = await stored_embedding()
+
+        embedded: list[str] = []
+        original_generate = embedding_utils.generate_embeddings_batch
+
+        async def recording_generate(backend, texts, *args, **kwargs):
+            embedded.extend(texts)
+            return await original_generate(backend, texts, *args, **kwargs)
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", recording_generate)
+
+        cleared = await memory.clear_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+        assert cleared is not None
+        assert embedded == ["Test Model "]
+        assert await stored_embedding() != before
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_clear_nonexistent_returns_none(self, memory: MemoryEngine, request_context):
         """Clearing a non-existent mental model returns None."""
         bank_id = f"test-mm-clear-none-{uuid.uuid4().hex[:8]}"

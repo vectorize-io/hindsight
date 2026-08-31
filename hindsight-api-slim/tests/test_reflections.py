@@ -7,7 +7,8 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.retain import embedding_utils
 from tests.llm_judge import assert_meets_criteria
 
 
@@ -194,6 +195,75 @@ class TestMentalModelsCRUD:
         assert updated["content"] == "Updated Content\n"
 
         # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_partial_update_embeds_the_whole_stored_document(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """Regression for #3926.
+
+        A model's searchable document is ``name + content``. An update that supplies
+        only one of them must embed the stored other half, and a name-only update
+        must re-embed at all — otherwise the vector keeps describing text the model
+        no longer holds.
+        """
+        bank_id = f"test-mm-partial-embed-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        mental_model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Original Name",
+            source_query="Original Query",
+            content="Original Content",
+            request_context=request_context,
+        )
+
+        embedded: list[str] = []
+        original_generate = embedding_utils.generate_embeddings_batch
+
+        async def recording_generate(backend, texts, *args, **kwargs):
+            embedded.extend(texts)
+            return await original_generate(backend, texts, *args, **kwargs)
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", recording_generate)
+
+        # Read the raw vector: the engine API deliberately never exposes a model's
+        # embedding, and the whole point of the regression is that the column went
+        # stale, so there is no public read that can observe it.
+        async def stored_embedding() -> str:
+            async with memory._pool.acquire() as conn:
+                return await conn.fetchval(
+                    f"SELECT embedding::text FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model["id"],
+                )
+
+        before_content_edit = await stored_embedding()
+
+        # Content-only: the stored name has to be part of the embedded document.
+        updated = await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mental_model["id"],
+            content="Rewritten Content",
+            request_context=request_context,
+        )
+        assert embedded == [f"Original Name {updated['content']}"]
+        after_content_edit = await stored_embedding()
+        assert after_content_edit != before_content_edit
+
+        # Name-only: re-embedded, and against the content still stored.
+        embedded.clear()
+        renamed = await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mental_model["id"],
+            name="Renamed Model",
+            request_context=request_context,
+        )
+        assert renamed["name"] == "Renamed Model"
+        assert embedded == [f"Renamed Model {updated['content']}"]
+        assert await stored_embedding() != after_content_edit
+
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio

@@ -22,7 +22,9 @@ from hindsight_api.engine.memory_engine import (
     MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
     _may_need_refresh,
+    fq_table,
 )
+from hindsight_api.engine.retain import embedding_utils
 from hindsight_api.extensions import (
     BankReadContext,
     BankReadOperation,
@@ -894,6 +896,45 @@ class TestMoveRenameDelete:
         )
         assert hit.status_code == 200, hit.text
         assert any(r["id"] == ids.orders for r in hit.json()["results"])
+
+    async def test_rename_page_reembeds_backing_model(
+        self, api_client, kb_bank, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """Regression for #3926: the rename reached the backing model's name and its
+        lexical projection, but not its vector, so semantic recall kept matching the
+        page on its old title."""
+        bank_id, ids = kb_bank
+
+        # No engine read exposes a model's embedding, and the stale column is the
+        # defect under test, so it has to be read directly.
+        async def stored_embedding() -> str:
+            async with memory._pool.acquire() as conn:
+                return await conn.fetchval(
+                    f"SELECT embedding::text FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    ids.orders_mm,
+                )
+
+        before = await stored_embedding()
+
+        embedded: list[str] = []
+        original_generate = embedding_utils.generate_embeddings_batch
+
+        async def recording_generate(backend, texts, *args, **kwargs):
+            embedded.extend(texts)
+            return await original_generate(backend, texts, *args, **kwargs)
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", recording_generate)
+
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Order Operations"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
+        assert embedded == [f"Order Operations {mm['content']}"]
+        assert await stored_embedding() != before
 
     async def test_update_page_options(self, api_client, kb_bank):
         bank_id, ids = kb_bank
