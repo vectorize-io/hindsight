@@ -718,6 +718,14 @@ class MemoriesExtension(Extension, ABC):
     #: entire retain — resolution, upserts and the document replace — as ONE atomic server-side call
     #: (``retain``). The orchestrator then needs no Postgres connection phase for it.
     #:
+    #: This is also what selects the retain SESSION (:meth:`begin_retain`): a store that owns its
+    #: memories owns the persistence half of a retain, and the engine hands it the whole of it —
+    #: how many round trips it takes, how chunk identity is derived, and what commits atomically
+    #: with what. There is no separate flag for that, deliberately. There was, and a router that
+    #: forwarded `store_owned_for` but not the second probe silently answered "no session" for
+    #: every bank: nothing failed, retain just fell back to writing per consumer batch and ran at
+    #: half the throughput. One capability, one flag, one thing for a router to forward.
+    #:
     #: Bank-scoped via :meth:`store_owned_for`, for a router whose banks live in different backends.
     store_owned: bool = False
 
@@ -741,21 +749,6 @@ class MemoriesExtension(Extension, ABC):
         for d in documents:
             await self.put_document(bank_id=bank_id, expect_watermark=expect_watermark, **d)
 
-    #: True when the store owns the whole persistence half of a retain, via :meth:`begin_retain`.
-    #:
-    #: The seam sits above persistence and below extraction: the engine still chunks, embeds and
-    #: extracts, and the store decides everything after — how many round trips it takes, how chunk
-    #: identity is derived, and what commits atomically with what. A store that sets this is opting
-    #: OUT of the engine's per-document orchestration entirely, not customising a step of it.
-    #:
-    #: Declared here rather than probed with `getattr`, because an attribute only the provider
-    #: knows about is one the engine silently never consults — which has shipped twice.
-    owns_retain_persistence: bool = False
-
-    def owns_retain_persistence_for(self, bank_id: str) -> bool:
-        """Per-bank form, for a router whose banks live in different backends."""
-        return self.owns_retain_persistence
-
     async def get_document_records(self, *, bank_id: str, document_ids: list[str]) -> dict[str, dict]:
         """Several documents' metadata in one read, keyed by document_id; absent ones omitted.
 
@@ -771,7 +764,7 @@ class MemoriesExtension(Extension, ABC):
         return out
 
     async def begin_retain(self, *, bank_id: str, config: Any) -> "RetainSession":
-        """Open a retain session. Only a store advertising :attr:`owns_retain_persistence`
+        """Open a retain session. Only a store advertising :attr:`store_owned`
         implements this; the orchestrator calls it instead of driving the writes itself."""
         raise NotImplementedError
 
