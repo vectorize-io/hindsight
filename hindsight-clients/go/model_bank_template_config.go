@@ -23,6 +23,7 @@ type BankTemplateConfig struct {
 	RetainMission NullableString `json:"retain_mission,omitempty"`
 	RetainExtractionMode NullableString `json:"retain_extraction_mode,omitempty"`
 	RetainCustomInstructions NullableString `json:"retain_custom_instructions,omitempty"`
+	ConsolidationPoolingTagsMatch NullableString `json:"consolidation_pooling_tags_match,omitempty"`
 	RetainChunkSize NullableInt32 `json:"retain_chunk_size,omitempty"`
 	RetainStructuredChunkSize NullableInt32 `json:"retain_structured_chunk_size,omitempty"`
 	EnableObservations NullableBool `json:"enable_observations,omitempty"`
@@ -251,6 +252,48 @@ func (o *BankTemplateConfig) SetRetainCustomInstructionsNil() {
 // UnsetRetainCustomInstructions ensures that no value is present for RetainCustomInstructions, not even an explicit nil
 func (o *BankTemplateConfig) UnsetRetainCustomInstructions() {
 	o.RetainCustomInstructions.Unset()
+}
+
+// GetConsolidationPoolingTagsMatch returns the ConsolidationPoolingTagsMatch field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetConsolidationPoolingTagsMatch() string {
+	if o == nil || IsNil(o.ConsolidationPoolingTagsMatch.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ConsolidationPoolingTagsMatch.Get()
+}
+
+// GetConsolidationPoolingTagsMatchOk returns a tuple with the ConsolidationPoolingTagsMatch field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetConsolidationPoolingTagsMatchOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ConsolidationPoolingTagsMatch.Get(), o.ConsolidationPoolingTagsMatch.IsSet()
+}
+
+// HasConsolidationPoolingTagsMatch returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasConsolidationPoolingTagsMatch() bool {
+	if o != nil && o.ConsolidationPoolingTagsMatch.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetConsolidationPoolingTagsMatch gets a reference to the given NullableString and assigns it to the ConsolidationPoolingTagsMatch field.
+func (o *BankTemplateConfig) SetConsolidationPoolingTagsMatch(v string) {
+	o.ConsolidationPoolingTagsMatch.Set(&v)
+}
+// SetConsolidationPoolingTagsMatchNil sets the value for ConsolidationPoolingTagsMatch to be an explicit nil
+func (o *BankTemplateConfig) SetConsolidationPoolingTagsMatchNil() {
+	o.ConsolidationPoolingTagsMatch.Set(nil)
+}
+
+// UnsetConsolidationPoolingTagsMatch ensures that no value is present for ConsolidationPoolingTagsMatch, not even an explicit nil
+func (o *BankTemplateConfig) UnsetConsolidationPoolingTagsMatch() {
+	o.ConsolidationPoolingTagsMatch.Unset()
 }
 
 // GetRetainChunkSize returns the RetainChunkSize field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2026,6 +2069,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RetainCustomInstructions.IsSet() {
 		toSerialize["retain_custom_instructions"] = o.RetainCustomInstructions.Get()
+	}
+	if o.ConsolidationPoolingTagsMatch.IsSet() {
+		toSerialize["consolidation_pooling_tags_match"] = o.ConsolidationPoolingTagsMatch.Get()
 	}
 	if o.RetainChunkSize.IsSet() {
 		toSerialize["retain_chunk_size"] = o.RetainChunkSize.Get()

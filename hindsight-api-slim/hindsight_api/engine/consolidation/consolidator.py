@@ -2732,14 +2732,21 @@ async def _find_related_observations(
     """
     Find observations related to the given query using optimized recall.
 
-    SECURITY: Filters by tags using all_strict matching to prevent cross-tenant/cross-user
-    information leakage. Observations are only consolidated within the same tag scope.
+    SECURITY: By default, filters by tags using all_strict matching to prevent cross-tenant/
+    cross-user information leakage. Observations are only consolidated within the same tag
+    scope. Configurable via ``consolidation_pooling_tags_match`` (default "all_strict") for
+    deployments whose tags encode purely descriptive/classification metadata rather than a
+    tenant/user security boundary -- "any_strict" widens pooling to an OR-match so facts about
+    the same entity can still find each other as merge candidates even when they differ on
+    non-scoping tags. Leave the default in place if this bank's tags are relied on to isolate
+    different users/tenants sharing it.
 
     Uses max_tokens to naturally limit observations (no artificial count limit).
     Includes source memories with dates for LLM context.
 
     Args:
-        tags: Optional tags to filter observations (uses all_strict matching for security)
+        tags: Optional tags to filter observations (matched per
+            ``consolidation_pooling_tags_match``; all_strict by default, for security)
 
     Returns:
         List of related observations with their tags, source memories, and dates
@@ -2750,8 +2757,9 @@ async def _find_related_observations(
 
     config = await memory_engine._config_resolver.resolve_full_config(bank_id, request_context)
 
-    # SECURITY: Use all_strict matching if tags provided to prevent cross-scope consolidation
-    tags_match = "all_strict" if tags else "any"
+    # SECURITY: all_strict is the default to prevent cross-scope consolidation; only relax to
+    # any_strict via consolidation_pooling_tags_match if tags aren't a tenant/user boundary here.
+    tags_match = config.consolidation_pooling_tags_match if tags else "any"
 
     # Create span for recall operation within consolidation
     tracer = get_tracer()

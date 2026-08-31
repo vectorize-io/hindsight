@@ -55,6 +55,19 @@
           "description": "Custom extraction prompt (when mode='custom')",
           "title": "Retain Custom Instructions"
         },
+        "consolidation_pooling_tags_match": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tag-match strategy for pooling existing observations as consolidation merge candidates: 'all_strict' (default, security boundary) or 'any_strict'",
+          "title": "Consolidation Pooling Tags Match"
+        },
         "retain_chunk_size": {
           "anyOf": [
             {

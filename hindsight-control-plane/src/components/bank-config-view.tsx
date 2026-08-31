@@ -112,6 +112,13 @@ type DocStorageEdits = {
   store_document_text: boolean | null;
 };
 
+type ConsolidationPoolingEdits = {
+  // null = inherit the server default. "all_strict" is the security boundary
+  // that scopes consolidation merge candidates to the same tag set;
+  // "any_strict" widens pooling for banks whose tags aren't a tenant/user boundary.
+  consolidation_pooling_tags_match: string | null;
+};
+
 // Mental models and the knowledge pages backed by them. null = inherit the
 // server default.
 type MentalModelsEdits = {
@@ -336,6 +343,12 @@ function docStorageSlice(overrides: Record<string, any>): DocStorageEdits {
   };
 }
 
+function consolidationPoolingSlice(overrides: Record<string, any>): ConsolidationPoolingEdits {
+  return {
+    consolidation_pooling_tags_match: overrides.consolidation_pooling_tags_match ?? null,
+  };
+}
+
 function mentalModelsSlice(overrides: Record<string, any>): MentalModelsEdits {
   return {
     mental_model_min_refresh_interval_seconds:
@@ -386,6 +399,8 @@ export function BankConfigView() {
   const [geminiEdits, setGeminiEdits] = useState<GeminiEdits>(geminiSlice({}));
   const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
   const [docStorageEdits, setDocStorageEdits] = useState<DocStorageEdits>(docStorageSlice({}));
+  const [consolidationPoolingEdits, setConsolidationPoolingEdits] =
+    useState<ConsolidationPoolingEdits>(consolidationPoolingSlice({}));
   const [recallEdits, setRecallEdits] = useState<RecallEdits>(recallSlice({}));
   const [mentalModelsEdits, setMentalModelsEdits] = useState<MentalModelsEdits>(
     mentalModelsSlice({})
@@ -442,6 +457,12 @@ export function BankConfigView() {
     () => JSON.stringify(docStorageEdits) !== JSON.stringify(docStorageSlice(baseOverrides)),
     [docStorageEdits, baseOverrides]
   );
+  const consolidationPoolingDirty = useMemo(
+    () =>
+      JSON.stringify(consolidationPoolingEdits) !==
+      JSON.stringify(consolidationPoolingSlice(baseOverrides)),
+    [consolidationPoolingEdits, baseOverrides]
+  );
   const recallDirty = useMemo(
     () => JSON.stringify(recallEdits) !== JSON.stringify(recallSlice(baseOverrides)),
     [recallEdits, baseOverrides]
@@ -483,6 +504,7 @@ export function BankConfigView() {
       setGeminiEdits(geminiSlice(cfg));
       setAuditEdits(auditSlice(overrides));
       setDocStorageEdits(docStorageSlice(overrides));
+      setConsolidationPoolingEdits(consolidationPoolingSlice(overrides));
       setRecallEdits(recallSlice(overrides));
       setMentalModelsEdits(mentalModelsSlice(overrides));
     } catch (err) {
@@ -583,13 +605,22 @@ export function BankConfigView() {
     try {
       // A null on either key clears that override server-side (JSON null is the
       // "Server Default" tombstone); mirror both into local override state.
-      await client.updateBankConfig(bankId, { ...auditEdits, ...docStorageEdits });
+      await client.updateBankConfig(bankId, {
+        ...auditEdits,
+        ...docStorageEdits,
+        ...consolidationPoolingEdits,
+      });
       setBaseOverrides((prev) => {
         const next = { ...prev };
         if (auditEdits.audit_log_enabled === null) delete next.audit_log_enabled;
         else next.audit_log_enabled = auditEdits.audit_log_enabled;
         if (docStorageEdits.store_document_text === null) delete next.store_document_text;
         else next.store_document_text = docStorageEdits.store_document_text;
+        if (consolidationPoolingEdits.consolidation_pooling_tags_match === null)
+          delete next.consolidation_pooling_tags_match;
+        else
+          next.consolidation_pooling_tags_match =
+            consolidationPoolingEdits.consolidation_pooling_tags_match;
         return next;
       });
     } catch (err: any) {
@@ -966,7 +997,7 @@ export function BankConfigView() {
           title={t("securityPrivacyTitle")}
           description={t("securityPrivacyDescription")}
           error={securityPrivacyError}
-          dirty={auditDirty || docStorageDirty}
+          dirty={auditDirty || docStorageDirty || consolidationPoolingDirty}
           saving={securityPrivacySaving}
           onSave={saveSecurityPrivacy}
         >
@@ -1029,6 +1060,35 @@ export function BankConfigView() {
                 </SelectItem>
                 <SelectItem value="true">{t("enabled")}</SelectItem>
                 <SelectItem value="false">{t("disabled")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FieldRow>
+          <FieldRow
+            label={t("consolidationPoolingTagsMatchLabel")}
+            description={t("consolidationPoolingTagsMatchDescription")}
+          >
+            {/* Tri-state: inherit the server default, or override per bank. */}
+            <Select
+              value={consolidationPoolingEdits.consolidation_pooling_tags_match ?? INHERIT_SENTINEL}
+              onValueChange={(v) =>
+                setConsolidationPoolingEdits({
+                  consolidation_pooling_tags_match: v === INHERIT_SENTINEL ? null : v,
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INHERIT_SENTINEL}>
+                  {t("consolidationPoolingTagsMatchServerDefault", { state: "all_strict" })}
+                </SelectItem>
+                <SelectItem value="all_strict">
+                  {t("consolidationPoolingTagsMatchAllStrict")}
+                </SelectItem>
+                <SelectItem value="any_strict">
+                  {t("consolidationPoolingTagsMatchAnyStrict")}
+                </SelectItem>
               </SelectContent>
             </Select>
           </FieldRow>

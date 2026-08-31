@@ -491,6 +491,12 @@ export type BankTemplateConfig = {
    */
   retain_custom_instructions?: string | null;
   /**
+   * Consolidation Pooling Tags Match
+   *
+   * Tag-match strategy for pooling existing observations as consolidation merge candidates: 'all_strict' (default, security boundary) or 'any_strict'
+   */
+  consolidation_pooling_tags_match?: string | null;
+  /**
    * Retain Chunk Size
    *
    * Target max characters for each content chunk

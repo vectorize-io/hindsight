@@ -687,6 +687,7 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
     "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION"
 )
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
+ENV_CONSOLIDATION_POOLING_TAGS_MATCH = "HINDSIGHT_API_CONSOLIDATION_POOLING_TAGS_MATCH"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
@@ -1364,6 +1365,16 @@ DEFAULT_CONSOLIDATION_MAX_TOKENS = 512  # Max tokens for recall when finding rel
 # models, which cap at 4096 and truncate structured consolidation JSON) set this explicitly to fix #1939.
 DEFAULT_CONSOLIDATION_MAX_COMPLETION_TOKENS = None
 DEFAULT_CONSOLIDATION_RECALL_BUDGET = "low"  # Budget level for consolidation recall (low/mid/high)
+# Tag-match strategy for pooling existing observations as merge candidates in
+# _find_related_observations. "all_strict" (default) requires a candidate observation to carry
+# every tag of the fact being consolidated -- this is also the security boundary that keeps
+# consolidation scoped within a tag-defined tenant/user boundary when tags encode that scope.
+# "any_strict" widens the pool to an OR-match, letting facts about the same entity find each
+# other as candidates even when they differ on purely descriptive tags (e.g. classifier-assigned
+# category/tool labels) that carry no scoping meaning. Only relax to "any_strict" if this bank's
+# tags are not relied on to isolate different users/tenants sharing the bank.
+DEFAULT_CONSOLIDATION_POOLING_TAGS_MATCH = "all_strict"
+CONSOLIDATION_POOLING_TAGS_MATCH_VALUES = ("all_strict", "any_strict")  # Allowed pooling tag-match values
 DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = (
     4096  # Total token budget for source facts in consolidation recall (-1 = unlimited)
 )
@@ -1863,6 +1874,19 @@ def _validate_extraction_mode(mode: str) -> str:
         )
         return DEFAULT_RETAIN_EXTRACTION_MODE
     return mode_lower
+
+
+def _validate_consolidation_pooling_tags_match(value: str) -> str:
+    """Validate and normalize the consolidation pooling tag-match setting."""
+    value_lower = value.lower()
+    if value_lower not in CONSOLIDATION_POOLING_TAGS_MATCH_VALUES:
+        logger.warning(
+            f"Invalid consolidation pooling tags_match '{value}', must be one of "
+            f"{CONSOLIDATION_POOLING_TAGS_MATCH_VALUES}. Defaulting to "
+            f"'{DEFAULT_CONSOLIDATION_POOLING_TAGS_MATCH}'."
+        )
+        return DEFAULT_CONSOLIDATION_POOLING_TAGS_MATCH
+    return value_lower
 
 
 def _validate_recall_budget_function(function: str) -> str:
@@ -2695,6 +2719,7 @@ class HindsightConfig:
     consolidation_max_tokens: int
     consolidation_max_completion_tokens: int | None
     consolidation_recall_budget: str
+    consolidation_pooling_tags_match: str
     consolidation_source_facts_max_tokens: int
     consolidation_source_facts_max_tokens_per_observation: int
     consolidation_max_attempts: int
@@ -3008,6 +3033,7 @@ class HindsightConfig:
         "consolidation_max_memories_per_round",
         "consolidation_source_facts_max_tokens",
         "consolidation_source_facts_max_tokens_per_observation",
+        "consolidation_pooling_tags_match",
         "observations_mission",
         "max_observations_per_scope",
         "observation_scope_limits",
@@ -4095,6 +4121,9 @@ class HindsightConfig:
                 else DEFAULT_CONSOLIDATION_MAX_COMPLETION_TOKENS
             ),
             consolidation_recall_budget=os.getenv(ENV_CONSOLIDATION_RECALL_BUDGET, DEFAULT_CONSOLIDATION_RECALL_BUDGET),
+            consolidation_pooling_tags_match=_validate_consolidation_pooling_tags_match(
+                os.getenv(ENV_CONSOLIDATION_POOLING_TAGS_MATCH, DEFAULT_CONSOLIDATION_POOLING_TAGS_MATCH)
+            ),
             consolidation_source_facts_max_tokens=int(
                 os.getenv(ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS, str(DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS))
             ),

@@ -56,7 +56,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
-from hindsight_api.config import RETAIN_EXTRACTION_MODES
+from hindsight_api.config import CONSOLIDATION_POOLING_TAGS_MATCH_VALUES, RETAIN_EXTRACTION_MODES
 from hindsight_api.config_resolver import BankConfigPersistenceConflictError
 from hindsight_api.engine.retain.entity_labels import LabelGroup, _migrate_label_group
 
@@ -2721,6 +2721,13 @@ class BankTemplateConfig(BaseModel):
     retain_custom_instructions: str | None = Field(
         default=None, description="Custom extraction prompt (when mode='custom')"
     )
+    consolidation_pooling_tags_match: str | None = Field(
+        default=None,
+        description=(
+            "Tag-match strategy for pooling existing observations as consolidation merge "
+            "candidates: 'all_strict' (default, security boundary) or 'any_strict'"
+        ),
+    )
     retain_chunk_size: int | None = Field(default=None, description="Target max characters for each content chunk")
     retain_structured_chunk_size: int | None = Field(
         default=None,
@@ -2993,6 +3000,13 @@ def validate_bank_template(manifest: "BankTemplateManifest") -> list[str]:
                 )
         if bank.retain_custom_instructions and bank.retain_extraction_mode != "custom":
             errors.append("bank.retain_custom_instructions: requires retain_extraction_mode='custom'")
+        if bank.consolidation_pooling_tags_match is not None:
+            if bank.consolidation_pooling_tags_match not in CONSOLIDATION_POOLING_TAGS_MATCH_VALUES:
+                errors.append(
+                    "bank.consolidation_pooling_tags_match: "
+                    f"must be one of {CONSOLIDATION_POOLING_TAGS_MATCH_VALUES}, "
+                    f"got '{bank.consolidation_pooling_tags_match}'"
+                )
     if manifest.mental_models:
         seen_mental_model_ids: set[str] = set()
         for i, mm in enumerate(manifest.mental_models):

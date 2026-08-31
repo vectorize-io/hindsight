@@ -5226,6 +5226,9 @@ components:
         retain_custom_instructions:
           nullable: true
           type: string
+        consolidation_pooling_tags_match:
+          nullable: true
+          type: string
         retain_chunk_size:
           nullable: true
           type: integer
