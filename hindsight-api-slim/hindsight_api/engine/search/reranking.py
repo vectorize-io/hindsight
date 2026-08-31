@@ -62,10 +62,12 @@ def compute_recency_decay(
 # 2026-03-01 → 2026-03-31 — so the granularity is already in the data and does
 # not need to be stored separately.
 #
-# How far a span may deviate from an exact calendar month/year and still be read
-# as that period. Extraction encodes the last instant of a period inconsistently
-# (Dec 31 23:59:59, Dec 31 00:00:00, or Jan 1 of the next year), so allow a day
-# either way rather than matching one spelling.
+# How far SHORT of an exact calendar month/year a span may fall and still be read
+# as that period. Extraction spells the last instant of a period three ways —
+# Dec 31 23:59:59 (period - 1s), Dec 31 00:00:00 (period - 1 day), or the
+# exclusive Jan 1 of the next year (exactly the period) — so accept that window
+# rather than matching one spelling. The window is deliberately one-sided: a span
+# LONGER than the calendar period is a genuine interval, not a coarse date.
 _CALENDAR_PERIOD_TOLERANCE_SECONDS: float = 86400.0
 
 
@@ -91,7 +93,9 @@ def _spans_calendar_period(start: datetime, end: datetime) -> bool:
         return False
     month_seconds = calendar.monthrange(start.year, start.month)[1] * 86400.0
     year_seconds = (366.0 if calendar.isleap(start.year) else 365.0) * 86400.0
-    return any(abs(span - period) <= _CALENDAR_PERIOD_TOLERANCE_SECONDS for period in (month_seconds, year_seconds))
+    return any(
+        period - _CALENDAR_PERIOD_TOLERANCE_SECONDS <= span <= period for period in (month_seconds, year_seconds)
+    )
 
 
 def _recency_for_unit(

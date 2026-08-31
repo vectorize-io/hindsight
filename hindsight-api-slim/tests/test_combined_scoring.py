@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from hindsight_api.engine.search.reranking import (
     _RECENCY_ALPHA,
     _TEMPORAL_ALPHA,
+    _spans_calendar_period,
     apply_combined_scoring,
     compute_recency_decay,
 )
@@ -361,6 +362,30 @@ class TestPeriodDatedRecency:
         )
         apply_combined_scoring([sr], now=NOW)
         assert sr.recency == 0.5
+
+    def test_all_three_period_end_encodings_are_recognised(self):
+        """Extraction spells a period's last instant three ways; all must match.
+
+        The tolerance exists for exactly this. Dec 31 23:59:59 and the exclusive
+        Jan 1 boundary are covered elsewhere; the midnight-on-the-last-day form
+        is a full day short of the period and is what the window has to absorb.
+        """
+        year_start = datetime(2015, 1, 1, tzinfo=UTC)
+        for year_end in (
+            datetime(2015, 12, 31, 23, 59, 59, tzinfo=UTC),  # period - 1s
+            datetime(2015, 12, 31, tzinfo=UTC),  # period - 1 day
+            datetime(2016, 1, 1, tzinfo=UTC),  # exclusive next boundary
+        ):
+            assert _spans_calendar_period(year_start, year_end), year_end
+
+    def test_span_longer_than_the_period_is_not_coarse(self):
+        """The window is one-sided: overshooting a year is an interval, not a year.
+
+        "worked at Acme from Jan 2015 to Mar 2016" spans more than a calendar year
+        and must keep the interval behaviour rather than being capped as coarse.
+        """
+        assert not _spans_calendar_period(datetime(2015, 1, 1, tzinfo=UTC), datetime(2016, 3, 1, tzinfo=UTC))
+        assert not _spans_calendar_period(datetime(2015, 1, 1, tzinfo=UTC), datetime(2015, 3, 1, tzinfo=UTC))
 
     def test_sub_second_ordering_offset_does_not_break_detection(self):
         """_add_temporal_offsets shifts both ends equally; the span must still match.
