@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { claudeProjectDir, importLocalHistory } from "./history";
+import { claudeProjectDir, importLocalHistory, piSessionDir } from "./history";
 
 let home: string;
 afterEach(() => {
@@ -20,6 +20,43 @@ const claudeLine = (role: string, text: string, cwd?: string) =>
     ...(cwd ? { cwd } : {}),
     message: { role, content: [{ type: "text", text }] },
   });
+
+/** One entry of a stored pi/Prime Agent session log. */
+const piHeader = (id: string, cwd?: string) =>
+  JSON.stringify({
+    type: "session",
+    version: 3,
+    id,
+    timestamp: "2026-08-24T12:00:00.000Z",
+    ...(cwd ? { cwd } : {}),
+  });
+const piMessage = (role: string, text: string) =>
+  JSON.stringify({
+    type: "message",
+    id: "e1",
+    timestamp: "2026-08-24T12:00:01.000Z",
+    message: { role, content: [{ type: "text", text }] },
+  });
+const piLog = (id: string, cwd: string | undefined, ...turns: string[]) =>
+  `${[piHeader(id, cwd), ...turns].join("\n")}\n`;
+
+/** Write a stored session where each host actually keeps it: pi under an encoded per-cwd folder,
+ *  Prime Agent flat. */
+function writePiSession(home: string, cwd: string, id: string, ...turns: string[]): void {
+  const dir = join(home, ".pi", "agent", "sessions", piSessionDir(cwd));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `2026-08-24T12-00-00-000Z_${id}.jsonl`), piLog(id, cwd, ...turns));
+}
+function writePrimeSession(
+  home: string,
+  cwd: string | undefined,
+  id: string,
+  ...turns: string[]
+): void {
+  const dir = join(home, ".prime", "agent", "sessions");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.jsonl`), piLog(id, cwd, ...turns));
+}
 
 describe("local history import", () => {
   it("reads Claude sessions from the project directory for THIS repo only", () => {
@@ -220,5 +257,128 @@ describe("attribution must be proven, never guessed", () => {
 
     const r = importLocalHistory("claude-code", repo, h);
     expect(JSON.stringify(r.sessions)).toContain("work in a subpackage");
+  });
+});
+
+/**
+ * pi and Prime Agent write the same session schema but lay the files out differently, so each host
+ * needs its own enumeration proved — the shared body that reads a header is only reached if the
+ * files were found at all.
+ */
+describe("pi-family history import", () => {
+  it("reads pi sessions from the encoded per-directory folder for THIS repo only", () => {
+    const h = newHome();
+    const repo = "/Users/x/dev/myrepo";
+    writePiSession(
+      h,
+      repo,
+      "s1",
+      piMessage("user", "why retry 429?"),
+      piMessage("assistant", "backpressure")
+    );
+    writePiSession(h, "/Users/x/dev/otherrepo", "s2", piMessage("user", "unrelated"));
+
+    const r = importLocalHistory("pi", repo, h);
+    expect(r.supported).toBe(true);
+    expect(r.sessions).toHaveLength(1);
+    expect(r.sessions[0].id).toBe("s1");
+    expect(JSON.stringify(r.sessions[0].turns)).toContain("why retry 429?");
+    expect(JSON.stringify(r.sessions)).not.toContain("unrelated");
+  });
+
+  it("includes a pi session started in a SUBDIRECTORY of the repo", () => {
+    const h = newHome();
+    writePiSession(
+      h,
+      "/Users/x/dev/repo/packages/api",
+      "s1",
+      piMessage("user", "work in a subpackage")
+    );
+    expect(JSON.stringify(importLocalHistory("pi", "/Users/x/dev/repo", h).sessions)).toContain(
+      "work in a subpackage"
+    );
+  });
+
+  // The folder name is lossy in exactly the way the Claude encoding is: "/Users/x/dev/repo-sub"
+  // matches the prefix scan for "/Users/x/dev/repo", so only the header cwd can separate them.
+  it("does not pull a SIBLING repo's pi sessions in via the ambiguous folder name", () => {
+    const h = newHome();
+    writePiSession(h, "/Users/x/dev/repo-sub", "s1", piMessage("user", "sibling repo work"));
+    expect(JSON.stringify(importLocalHistory("pi", "/Users/x/dev/repo", h).sessions)).not.toContain(
+      "sibling repo work"
+    );
+  });
+
+  // Regression: `~/.pi/agent/sessions` itself as a regular file passed the existsSync check and the
+  // root readdirSync threw ENOTDIR out of importLocalHistory — which documents that it never throws,
+  // and whose caller does not catch. One junk file killed the whole --import-conversations run.
+  it("treats a stray file where the pi sessions ROOT was expected as no history", () => {
+    const h = newHome();
+    mkdirSync(join(h, ".pi", "agent"), { recursive: true });
+    writeFileSync(join(h, ".pi", "agent", "sessions"), "not a folder");
+
+    expect(importLocalHistory("pi", "/Users/x/dev/myrepo", h)).toEqual({
+      supported: true,
+      sessions: [],
+      unattributed: 0,
+    });
+  });
+
+  // Same shape one level down: a regular file named like a session folder must cost that one
+  // entry, not the run.
+  it("skips a stray file where a pi session folder was expected, keeping the real sessions", () => {
+    const h = newHome();
+    const repo = "/Users/x/dev/myrepo";
+    writePiSession(h, repo, "s1", piMessage("user", "real work"));
+    writeFileSync(join(h, ".pi", "agent", "sessions", piSessionDir(`${repo}/sub`)), "not a folder");
+
+    const r = importLocalHistory("pi", repo, h);
+    expect(r.sessions).toHaveLength(1);
+    expect(JSON.stringify(r.sessions)).toContain("real work");
+  });
+
+  it("reads Prime Agent sessions out of its FLAT directory, attributing by header cwd", () => {
+    const h = newHome();
+    const repo = "/Users/x/dev/myrepo";
+    writePrimeSession(h, repo, "p1", piMessage("user", "which statuses retry?"));
+    writePrimeSession(h, "/Users/x/dev/otherrepo", "p2", piMessage("user", "unrelated"));
+
+    const r = importLocalHistory("prime-agent", repo, h);
+    expect(r.sessions).toHaveLength(1);
+    expect(r.sessions[0].id).toBe("p1");
+    expect(JSON.stringify(r.sessions)).not.toContain("unrelated");
+  });
+
+  it("skips a session whose header records no cwd rather than trusting where the file sits", () => {
+    const h = newHome();
+    writePrimeSession(h, undefined, "p1", piMessage("user", "ambiguous"));
+    const r = importLocalHistory("prime-agent", "/Users/x/dev/myrepo", h);
+    expect(r.sessions).toEqual([]);
+    expect(r.unattributed).toBe(1);
+  });
+
+  it("reports no sessions, not an error, when the host has never run on this machine", () => {
+    const h = newHome();
+    for (const harness of ["pi", "prime-agent"]) {
+      const r = importLocalHistory(harness, "/Users/x/dev/myrepo", h);
+      expect(r.supported).toBe(true);
+      expect(r.sessions).toEqual([]);
+    }
+  });
+});
+
+describe("piSessionDir", () => {
+  // Verified against pi 0.84.2's SessionManager: one leading separator dropped, `/`, `\` and `:`
+  // mapped to `-`, everything else — dots, spaces, case — left alone.
+  it.each([
+    ["/Users/x/dev/myrepo", "--Users-x-dev-myrepo--"],
+    ["/private/tmp", "--private-tmp--"],
+    ["/Users/x/dev/repo.git", "--Users-x-dev-repo.git--"],
+    ["/Users/x/My Projects/App", "--Users-x-My Projects-App--"],
+    // Windows: no leading separator to strip, and the drive colon maps to `-` like the
+    // separators, so the drive letter survives as its own segment.
+    ["C:\\Users\\x\\repo", "--C--Users-x-repo--"],
+  ])("encodes %s", (repo, encoded) => {
+    expect(piSessionDir(repo)).toBe(encoded);
   });
 });

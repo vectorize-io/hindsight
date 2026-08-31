@@ -36,8 +36,9 @@ describe("documentHarness", () => {
 describe("resolveHarnessLogo", () => {
   // The exact set hindsight-coding-agents emits: one per HookSpec in
   // src/harness/hook-lifecycle.ts, plus the persistent-plugin harnesses whose id
-  // is their entrypoint's createPluginEntry(...) argument (opencode, kilo,
-  // cline-cli). The registry must cover these and nothing speculative.
+  // is their entrypoint's argument to the shared factory they use (opencode,
+  // kilo, cline-cli, pi, prime-agent). The registry must cover these and nothing
+  // speculative.
   const EMITTED_HARNESSES = [
     "antigravity-cli",
     "claude-code",
@@ -50,6 +51,7 @@ describe("resolveHarnessLogo", () => {
     "grok-build",
     "kilo",
     "opencode",
+    "pi",
     "prime-agent",
   ];
   // Ids the integration used to emit. Kept so documents already retained under

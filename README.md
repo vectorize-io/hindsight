@@ -254,7 +254,7 @@ npx @vectorize-io/hindsight-coding-agents install all          # every detected 
 npx @vectorize-io/hindsight-coding-agents install claude-code  # or just one
 ```
 
-Supports Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, opencode, Kilo CLI, Cline CLI, Antigravity CLI, Devin CLI, Prime Agent, Grok Build and DeepSeek Harness. Ingestion is automatic — there is no setup command. See the [coding agents integration](https://hindsight.vectorize.io/sdks/integrations/coding-agents).
+Supports Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, opencode, Kilo CLI, Cline CLI, Antigravity CLI, Devin CLI, pi, Prime Agent, Grok Build and DeepSeek Harness. Ingestion is automatic — there is no setup command. See the [coding agents integration](https://hindsight.vectorize.io/sdks/integrations/coding-agents).
 
 ### MCP Server
 

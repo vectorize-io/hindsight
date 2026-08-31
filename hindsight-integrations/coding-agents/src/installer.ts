@@ -268,43 +268,67 @@ const opencode: HarnessInstaller = {
 };
 
 /**
- * Prime Agent (PrimeIntellect) — a persistent plugin loaded as an extension. Register the built
- * `dist/prime-agent.js` in the `extensions` array of `~/.prime/agent/settings.json`; Prime Agent
- * loads that file's default export at session start. The entry path contains MARKER (the package is
- * `hindsight-coding-agents`), so uninstall's MARKER filter removes exactly what install added.
+ * The pi-family extension hosts: pi and its fork Prime Agent (PrimeIntellect). Both load a
+ * persistent extension by absolute path from the `extensions` array of their own `settings.json`,
+ * calling that file's default export at session start — they differ only in the config directory
+ * (`~/.pi/agent` vs `~/.prime/agent`), the executable name, and which dist bundle reports which
+ * harness. The entry path runs through the package root, which contains MARKER, so uninstall's
+ * MARKER filter removes exactly what install added and leaves every other extension alone.
  *
- * The skill goes to Prime Agent's OWN `~/.prime/agent/skills`, not the shared `~/.agents/skills`
- * root it also reads: `uninstallSkill` removes a fixed directory name, so installing to the shared
- * root would make `uninstall prime-agent` delete Codex's and dsh's copy too (#3772).
+ * Deliberately NOT routed through the `pi` key in our package.json: both hosts read that same key
+ * (`pkg.pi.extensions`) when this package is installed as a distributed pi package, so it can only
+ * ever name one bundle. It stays pointed at Prime Agent's; the explicit installs below are how each
+ * host gets the entry that reports its own harness.
+ *
+ * `skillsDir` is per-host rather than shared: both read `~/.agents/skills` too, but that is the
+ * root Codex and dsh install into, and uninstallSkill removes by a fixed directory name — so
+ * putting ours there would make uninstalling one host delete the other hosts' copy. Each writes
+ * its OWN skills directory instead.
  */
-const primeAgent: HarnessInstaller = {
-  name: "prime-agent",
-  detect: (c) => onPath("prime-agent") || existsSync(join(c.home, ".prime", "agent")),
-  install(c) {
-    const path = join(c.home, ".prime", "agent", "settings.json");
-    const cfg = readJson(path);
-    const entry = join(c.pkgRoot, "dist", "prime-agent.js");
-    const exts: string[] = Array.isArray(cfg.extensions) ? cfg.extensions : [];
-    cfg.extensions = [...exts.filter((p) => !String(p).includes(MARKER)), entry];
-    writeJson(path, cfg);
-    installSkill(c, "prime-agent", join(c.home, ".prime", "agent", "skills"));
-    c.log?.(`prime-agent: extension registered in ${path}`);
-  },
-  uninstall(c) {
-    const path = join(c.home, ".prime", "agent", "settings.json");
-    if (existsSync(path)) {
+function piFamilyInstaller(
+  harness: string,
+  configDir: string[],
+  skillsDir: string[]
+): HarnessInstaller {
+  const settings = (c: InstallCtx) => join(c.home, ...configDir, "settings.json");
+  const skills = (c: InstallCtx) => join(c.home, ...skillsDir);
+  return {
+    name: harness,
+    // Both hosts name their executable exactly as we name the harness, so the harness id doubles
+    // as the PATH probe here — unlike, say, antigravity-cli, whose binary is `agy`.
+    detect: (c) => onPath(harness) || existsSync(join(c.home, ...configDir)),
+    install(c) {
+      const path = settings(c);
+      const cfg = readJson(path);
+      const entry = join(c.pkgRoot, "dist", `${harness}.js`);
+      const exts: string[] = Array.isArray(cfg.extensions) ? cfg.extensions : [];
+      cfg.extensions = [...exts.filter((p) => !String(p).includes(MARKER)), entry];
+      writeJson(path, cfg);
+      installSkill(c, harness, skills(c));
+      c.log?.(`${harness}: extension registered in ${path}`);
+    },
+    uninstall(c) {
+      // Before the settings guard on purpose: a hand-deleted settings.json must not strand the skill.
+      uninstallSkill(c, skills(c));
+      const path = settings(c);
+      if (!existsSync(path)) return;
       const cfg = readJson(path);
       if (Array.isArray(cfg.extensions)) {
         cfg.extensions = cfg.extensions.filter((p: string) => !String(p).includes(MARKER));
         if (!cfg.extensions.length) delete cfg.extensions;
         writeJson(path, cfg);
       }
-    }
-    // Outside the settings guard on purpose: a hand-deleted settings.json must not strand the skill.
-    uninstallSkill(c, join(c.home, ".prime", "agent", "skills"));
-    c.log?.("prime-agent: extension entry + skill removed");
-  },
-};
+      c.log?.(`${harness}: extension entry + skill removed`);
+    },
+  };
+}
+
+const pi = piFamilyInstaller("pi", [".pi", "agent"], [".pi", "agent", "skills"]);
+const primeAgent = piFamilyInstaller(
+  "prime-agent",
+  [".prime", "agent"],
+  [".prime", "agent", "skills"]
+);
 
 /**
  * Kilo Code CLI — an opencode fork, so registration is opencode's: append our entry to the config's
@@ -1218,6 +1242,7 @@ const dsh: HarnessInstaller = {
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   kilo,
+  pi,
   primeAgent,
   claudeCode,
   codex,

@@ -521,37 +521,131 @@ describe("opencode installer", () => {
   });
 });
 
-describe("prime-agent installer", () => {
-  const cfgPath = (ctx: InstallCtx) => join(ctx.home, ".prime", "agent", "settings.json");
-  const entry = (ctx: InstallCtx) => join(ctx.pkgRoot, "dist", "prime-agent.js");
+// pi and Prime Agent share one installer factory but must stay independently wired: each writes
+// only its own settings.json, and each registers the bundle that reports its own harness.
+describe.each([
+  { harness: "pi", dir: [".pi", "agent"] },
+  { harness: "prime-agent", dir: [".prime", "agent"] },
+])("$harness installer", ({ harness, dir }) => {
+  const cfgPath = (ctx: InstallCtx) => join(ctx.home, ...dir, "settings.json");
+  const entry = (ctx: InstallCtx) => join(ctx.pkgRoot, "dist", `${harness}.js`);
 
   it("install adds the built extension to the extensions array exactly once, even across reinstalls", () => {
     const ctx = makeCtx();
-    expect(run(["install", "prime-agent"], ctx)).toBe(0);
-    run(["install", "prime-agent"], ctx);
+    expect(run(["install", harness], ctx)).toBe(0);
+    run(["install", harness], ctx);
     expect(readJson(cfgPath(ctx)).extensions).toEqual([entry(ctx)]);
   });
 
   it("preserves other extension entries", () => {
     const ctx = makeCtx();
     writeJsonAt(cfgPath(ctx), { extensions: ["/some/other/ext.js"] });
-    run(["install", "prime-agent"], ctx);
+    run(["install", harness], ctx);
     expect(readJson(cfgPath(ctx)).extensions).toEqual(["/some/other/ext.js", entry(ctx)]);
   });
 
   it("uninstall removes our entry and deletes the extensions key when empty", () => {
     const ctx = makeCtx();
-    run(["install", "prime-agent"], ctx);
-    run(["uninstall", "prime-agent"], ctx);
+    run(["install", harness], ctx);
+    run(["uninstall", harness], ctx);
     expect(readJson(cfgPath(ctx)).extensions).toBeUndefined();
   });
 
   it("uninstall keeps the extensions key when other entries remain", () => {
     const ctx = makeCtx();
     writeJsonAt(cfgPath(ctx), { extensions: ["/some/other/ext.js"] });
+    run(["install", harness], ctx);
+    run(["uninstall", harness], ctx);
+    expect(readJson(cfgPath(ctx)).extensions).toEqual(["/some/other/ext.js"]);
+  });
+});
+
+describe("pi-family companion skill", () => {
+  // Both hosts discover their own skills root AND the shared `~/.agents/skills`. We write the OWN
+  // directory: the shared root is where Codex and dsh install, and uninstallSkill removes by a
+  // fixed name, so installing there would make `uninstall pi` delete their copy too.
+  const HOSTS: [string, string[]][] = [
+    ["pi", [".pi", "agent", "skills"]],
+    ["prime-agent", [".prime", "agent", "skills"]],
+  ];
+
+  /** makeCtx's pkgRoot is a synthetic /opt path that does not exist, so the packaged skill can't be
+   *  staged in it. Build a real temp package root instead, like the cross-host skill test below. */
+  function ctxWithSkill(): InstallCtx {
+    const home = mkdtempSync(join(tmpdir(), "hs-inst-pi-skill-"));
+    homes.push(home);
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
+    homes.push(pkgRoot);
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(
+      join(pkgRoot, "skill", "SKILL.md"),
+      "---\nname: hindsight-coding-agent\n---\nbody"
+    );
+    return { home, pkgRoot, dist: join(pkgRoot, "dist"), claudeMcp: vi.fn(() => true) };
+  }
+
+  it.each(HOSTS)(
+    "%s installs the packaged skill into its own skills directory and removes it on uninstall",
+    (harness, dir) => {
+      const ctx = ctxWithSkill();
+      const base = join(ctx.home, ...dir);
+      run(["install", harness], ctx);
+      expect(existsSync(join(base, "hindsight-coding-agent", "SKILL.md"))).toBe(true);
+      run(["uninstall", harness], ctx);
+      expect(existsSync(join(base, "hindsight-coding-agent"))).toBe(false);
+    }
+  );
+
+  it.each(HOSTS)(
+    "uninstalling %s cannot strip Codex's copy from the shared ~/.agents/skills root",
+    (harness) => {
+      const ctx = ctxWithSkill();
+      run(["install", "codex"], ctx);
+      const shared = join(ctx.home, ".agents", "skills", "hindsight-coding-agent");
+      expect(existsSync(shared)).toBe(true);
+
+      run(["install", harness], ctx);
+      run(["uninstall", harness], ctx);
+      expect(existsSync(shared)).toBe(true);
+    }
+  );
+
+  // The two hosts write DIFFERENT roots, so one's uninstall must not touch the other's skill —
+  // the same independence the settings files already have.
+  it("installing both gives each its own copy, and uninstalling one leaves the other", () => {
+    const ctx = ctxWithSkill();
+    run(["install", "pi"], ctx);
+    run(["install", "prime-agent"], ctx);
+    const primeSkill = join(ctx.home, ".prime", "agent", "skills", "hindsight-coding-agent");
+    expect(existsSync(primeSkill)).toBe(true);
+
+    run(["uninstall", "pi"], ctx);
+    expect(existsSync(primeSkill)).toBe(true);
+  });
+});
+
+describe("pi and prime-agent do not disturb each other", () => {
+  const piCfg = (ctx: InstallCtx) => join(ctx.home, ".pi", "agent", "settings.json");
+  const primeCfg = (ctx: InstallCtx) => join(ctx.home, ".prime", "agent", "settings.json");
+
+  it("wires each host to its own bundle and leaves the other config untouched", () => {
+    const ctx = makeCtx();
+    run(["install", "pi"], ctx);
+    expect(existsSync(primeCfg(ctx))).toBe(false);
+
+    run(["install", "prime-agent"], ctx);
+    expect(readJson(piCfg(ctx)).extensions).toEqual([join(ctx.pkgRoot, "dist", "pi.js")]);
+    expect(readJson(primeCfg(ctx)).extensions).toEqual([
+      join(ctx.pkgRoot, "dist", "prime-agent.js"),
+    ]);
+  });
+
+  it("uninstalling one leaves the other wired", () => {
+    const ctx = makeCtx();
+    run(["install", "pi"], ctx);
     run(["install", "prime-agent"], ctx);
     run(["uninstall", "prime-agent"], ctx);
-    expect(readJson(cfgPath(ctx)).extensions).toEqual(["/some/other/ext.js"]);
+    expect(readJson(piCfg(ctx)).extensions).toEqual([join(ctx.pkgRoot, "dist", "pi.js")]);
   });
 });
 
@@ -703,6 +797,7 @@ describe("run() CLI behavior", () => {
     expect(INSTALLERS.map((i) => i.name)).toEqual([
       "opencode",
       "kilo",
+      "pi",
       "prime-agent",
       "claude-code",
       "codex",
@@ -736,9 +831,9 @@ describe("MCP registrations name the calling harness", () => {
   }
 
   // These hosts have no MCP registration at all: they load our plugin/extension in-process
-  // (src/kilo.ts, src/dsh.ts, src/prime-agent.ts, dist/index.js for opencode), and that entry
-  // hands its own harness name straight to RuntimeCore.
-  const IN_PROCESS = new Set(["opencode", "kilo", "prime-agent", "dsh"]);
+  // (src/kilo.ts, src/dsh.ts, src/pi.ts, src/prime-agent.ts, dist/index.js for opencode), and that
+  // entry hands its own harness name straight to RuntimeCore.
+  const IN_PROCESS = new Set(["opencode", "kilo", "pi", "prime-agent", "dsh"]);
   const MCP_HOSTS = INSTALLERS.map((i) => i.name).filter((n) => !IN_PROCESS.has(n));
 
   it.each(MCP_HOSTS)("%s", (harness) => {

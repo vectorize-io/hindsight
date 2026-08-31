@@ -125,7 +125,7 @@ what reads it:
 | host                                                                                                        | reads the file                                                      | an edit applies            |
 | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------- |
 | hook harnesses (Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, Grok Build, Antigravity CLI, Devin) | once per hook invocation — each hook is its own short-lived process | on your next prompt        |
-| persistent plugins (opencode, Kilo CLI, Cline CLI, Prime Agent, DeepSeek Harness)                           | once per workspace, when the host loads the plugin                  | after restarting the agent |
+| persistent plugins (opencode, Kilo CLI, Cline CLI, pi, Prime Agent, DeepSeek Harness)                       | once per workspace, when the host loads the plugin                  | after restarting the agent |
 | the MCP server behind the `hindsight_*` tools                                                               | once at startup                                                     | in your next session       |
 
 `apiToken` is the exception. Every host re-reads it when the server rejects a request, so enabling

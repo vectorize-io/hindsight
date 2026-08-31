@@ -191,6 +191,20 @@ export const clineDockerSetup: HarnessDockerSetup = {
 };
 
 /**
+ * pi — extension host, and the upstream Prime Agent forked from. `-p` runs one prompt
+ * non-interactively and prints the reply, and `~/.pi/agent/auth.json` carries the provider
+ * credentials on its own.
+ */
+export const piDockerSetup: HarnessDockerSetup = {
+  name: "pi",
+  hindsightHarness: "pi",
+  credentialPath: () => authPath("PI_E2E_AUTH_PATH", ".pi", "agent", "auth.json"),
+  credentialTarget: "/root/.pi/agent/auth.json",
+  installCommand: "hindsight-coding-agents install pi",
+  command: (prompt) => ["pi", "-p", prompt],
+};
+
+/**
  * Prime Agent — extension host. `-p` runs one prompt non-interactively and prints the reply.
  * Auth is the whole `~/.prime/agent` directory (auth.json plus the kernel venv it provisions on
  * first login), so the mount is the directory rather than a single credential file.
@@ -243,6 +257,7 @@ export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   grokDockerSetup,
   devinDockerSetup,
   clineDockerSetup,
+  piDockerSetup,
   primeAgentDockerSetup,
   dshDockerSetup,
 ];

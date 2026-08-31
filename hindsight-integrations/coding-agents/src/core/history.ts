@@ -38,6 +38,7 @@ import type { ChatSession } from "./types";
 import { readClaudeTranscript } from "./transcript";
 import { readCodexTranscript } from "./transcript-codex";
 import { readDshEvents, type DshSessionEvent } from "./transcript-dsh";
+import { readPiTranscript } from "./transcript-pi";
 import { zstdDecompressFrames } from "./zstd-frames";
 import type { TransportTurn } from "./chat";
 
@@ -57,6 +58,18 @@ export interface HistoryImport {
  *  `hs+odd@repo v2` -> `hs-odd-repo-v2`. */
 export function claudeProjectDir(repoDir: string, home = homedir()): string {
   return join(home, ".claude", "projects", repoDir.replace(/[^a-zA-Z0-9]/g, "-"));
+}
+
+/** pi names a session folder after the working directory it was started in: one leading separator
+ *  stripped, then `/`, `\` and `:` replaced by `-`, wrapped in `--`…`--`. Verified against pi
+ *  0.84.2, whose SessionManager builds exactly
+ *  `` `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--` ``.
+ *
+ *  Unlike Claude's encoding this keeps dots, spaces and case, but it is still NOT injective — `/a/b`
+ *  and `/a-b` both give `--a-b--` — so it only narrows the search; attribution comes from the `cwd`
+ *  recorded in each session's header line. */
+export function piSessionDir(repoDir: string): string {
+  return `--${repoDir.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
 /** Is `dir` the repo itself or somewhere inside it? */
@@ -290,6 +303,72 @@ function readDshLog(file: string): string[] {
   return text.split("\n").filter((line) => line.trim());
 }
 
+/**
+ * pi and its fork Prime Agent: a `{type:"session", id, cwd}` header line followed by
+ * `{type:"message"}` entries — the same schema from both hosts, so one body reads either.
+ *
+ * Only the file layout differs, which is why the two callers below exist:
+ *   pi           `sessions/--<encoded cwd>--/<timestamp>_<uuid>.jsonl`
+ *   Prime Agent  `sessions/<uuid>.jsonl` — flat, no per-directory folder
+ *
+ * Attribution is the header's `cwd` in both cases. pi's folder name is a lossy rendering of that
+ * same path (see piSessionDir), so it is used only to narrow the walk, never to decide ownership —
+ * exactly the rule the Claude reader follows, and for the same reason: a wrong guess files someone
+ * else's conversation into this repo's memory.
+ */
+function piFamilySessions(files: string[], repoDir: string): HistoryImport {
+  const sessions: ChatSession[] = [];
+  let unattributed = 0;
+  for (const file of files) {
+    try {
+      const head = firstLine(file);
+      if (!head) continue;
+      const meta = JSON.parse(head) as { type?: string; cwd?: string; id?: string };
+      // A file whose first line is not the session header is not a session log (pi keeps other
+      // artifacts under the same tree), not a session we failed to attribute.
+      if (meta?.type !== "session") continue;
+      if (!meta.cwd) {
+        unattributed++;
+        continue;
+      }
+      if (!withinRepo(meta.cwd, repoDir)) continue;
+      const s = toSession(meta.id ?? file, readPiTranscript(file));
+      if (s) sessions.push(s);
+    } catch {
+      /* a single unreadable transcript must not abort the import */
+    }
+  }
+  return { supported: true, sessions, unattributed };
+}
+
+function piHistory(repoDir: string, home: string): HistoryImport {
+  const root = join(home, ".pi", "agent", "sessions");
+  if (!existsSync(root)) return { supported: true, sessions: [] };
+  // Starting pi from a subdirectory gives that subdirectory its own folder, so an exact match would
+  // silently miss that history. Prefilter on the encoded name — `--<repo>--` itself plus anything
+  // nested under `--<repo>-` — then let the header cwd confirm; a sibling repo whose name merely
+  // extends this one (`repo-other`) matches the prefix and is dropped by that check.
+  const exact = piSessionDir(repoDir);
+  const nested = `${exact.slice(0, -2)}-`;
+  const files: string[] = [];
+  // listDir at both levels: a stray FILE where either `sessions` itself or one of its session
+  // folders was expected must cost that one entry, not the run — importLocalHistory promises never
+  // to throw and its caller (installer.ts importConversations) has no catch of its own.
+  for (const dir of listDir(root).filter((d) => d === exact || d.startsWith(nested))) {
+    files.push(...jsonlFiles(join(root, dir)));
+  }
+  return piFamilySessions(files, repoDir);
+}
+
+function primeAgentHistory(repoDir: string, home: string): HistoryImport {
+  // Flat storage, so there is nothing to prefilter on and every header is read. That stays cheap
+  // because the directory holds one file per SESSION, where pi's holds one folder per working
+  // directory — the scale that made pi's prefilter necessary does not arise here.
+  const root = join(home, ".prime", "agent", "sessions");
+  if (!existsSync(root)) return { supported: true, sessions: [] };
+  return piFamilySessions(jsonlFiles(root), repoDir);
+}
+
 const SQLITE_HISTORY =
   "keeps session history in an internal SQLite database, whose schema is unversioned and would " +
   "break on any upstream change";
@@ -307,6 +386,10 @@ export function importLocalHistory(
       return codexHistory(repoDir, home);
     case "dsh":
       return dshHistory(repoDir, home);
+    case "pi":
+      return piHistory(repoDir, home);
+    case "prime-agent":
+      return primeAgentHistory(repoDir, home);
     case "opencode":
     case "kilo":
     case "cursor-cli":

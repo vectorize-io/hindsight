@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
-import type { ToolSpec } from "./core/knowledge-tools";
-import { createPrimeAgentHooks, toPrimeAgentTool } from "./prime-agent";
+import type { ToolSpec } from "../core/knowledge-tools";
+import { createPiHooks, toPiTool } from "./pi-extension";
 
-describe("Prime Agent extension adapter", () => {
+describe("pi extension adapter", () => {
   it("recalls on each prompt and appends the injection to the system prompt", async () => {
     const onPrompt = vi.fn(async () => {});
     const core = {
@@ -11,17 +11,17 @@ describe("Prime Agent extension adapter", () => {
       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
       onTranscript: vi.fn(async () => {}),
     };
-    const hooks = createPrimeAgentHooks(core as never);
+    const hooks = createPiHooks(core as never, "pi");
 
     const result = await hooks.beforeAgentStart(
-      { prompt: "  plan the change  ", systemPrompt: "You are Prime Agent." },
+      { prompt: "  plan the change  ", systemPrompt: "You are pi." },
       "session-1"
     );
 
     expect(onPrompt).toHaveBeenCalledOnce();
     expect(onPrompt).toHaveBeenCalledWith("session-1", "plan the change");
     expect(result?.systemPrompt).toBe(
-      "You are Prime Agent.\n\n<hindsight_memories>remember this</hindsight_memories>"
+      "You are pi.\n\n<hindsight_memories>remember this</hindsight_memories>"
     );
   });
 
@@ -31,7 +31,7 @@ describe("Prime Agent extension adapter", () => {
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
     };
-    const hooks = createPrimeAgentHooks(core as never);
+    const hooks = createPiHooks(core as never, "pi");
     const result = await hooks.beforeAgentStart({ prompt: "hi", systemPrompt: "sys" }, "session-1");
     expect(result).toBeUndefined();
   });
@@ -46,7 +46,7 @@ describe("Prime Agent extension adapter", () => {
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
     };
-    const hooks = createPrimeAgentHooks(core as never, sessionStart);
+    const hooks = createPiHooks(core as never, "pi", sessionStart);
     const pending = hooks.beforeAgentStart(
       { prompt: "first prompt", systemPrompt: "sys" },
       "session-1"
@@ -66,7 +66,7 @@ describe("Prime Agent extension adapter", () => {
       getInjection: vi.fn(() => undefined),
       onTranscript,
     };
-    const hooks = createPrimeAgentHooks(core as never);
+    const hooks = createPiHooks(core as never, "pi");
 
     await hooks.agentEnd(
       {
@@ -98,12 +98,12 @@ describe("Prime Agent extension adapter", () => {
       getInjection: vi.fn(() => undefined),
       onTranscript,
     };
-    const hooks = createPrimeAgentHooks(core as never);
+    const hooks = createPiHooks(core as never, "pi");
     await hooks.agentEnd({ messages: [] }, "session-1");
     expect(onTranscript).not.toHaveBeenCalled();
   });
 
-  it("adapts a knowledge ToolSpec into a Prime Agent native tool with a JSON-Schema parameters object", async () => {
+  it("adapts a knowledge ToolSpec into a pi native tool with a JSON-Schema parameters object", async () => {
     const spec: ToolSpec = {
       name: "hindsight_search_knowledge_pages",
       description: "Search the knowledge pages",
@@ -111,7 +111,7 @@ describe("Prime Agent extension adapter", () => {
       handler: async () => ({ content: [{ type: "text", text: "page A\npage B" }] }),
     };
 
-    const def = toPrimeAgentTool(spec);
+    const def = toPiTool(spec);
     expect(def.name).toBe("hindsight_search_knowledge_pages");
     expect(def.label).toBe("hindsight_search_knowledge_pages");
     expect(def.parameters.type).toBe("object");
