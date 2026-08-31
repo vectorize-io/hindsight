@@ -386,9 +386,8 @@ class GitHubCopilotLLM(LLMInterface):
         timeout: float | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
+        super().__init__(provider, api_key, base_url, model, reasoning_effort, timeout=timeout, **kwargs)
         self._released = False
-        self._timeout = timeout
 
         if self.reasoning_effort == "none":
             self.reasoning_effort = None
@@ -531,7 +530,7 @@ class GitHubCopilotLLM(LLMInterface):
                     await self._runtime.invalidate(client, "transient session cleanup timed out or failed")
 
     def _timeout_seconds(self) -> float:
-        return self._timeout if self._timeout is not None else _DEFAULT_TIMEOUT_SECONDS
+        return self.timeout if self.timeout is not None else _DEFAULT_TIMEOUT_SECONDS
 
     @staticmethod
     async def _cleanup_session(

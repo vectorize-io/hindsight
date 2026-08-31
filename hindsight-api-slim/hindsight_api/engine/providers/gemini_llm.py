@@ -159,6 +159,11 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
     return _GeminiConversation(system_instruction=system_instruction, contents=gemini_contents)
 
 
+# Fallback per-request deadline when the caller resolved no timeout. A safety net
+# for network hangs; valid slow responses are well under this.
+_DEFAULT_GEMINI_TIMEOUT = 90.0
+
+
 class GeminiLLM(LLMInterface):
     """
     LLM provider for Google Gemini and Vertex AI.
@@ -183,6 +188,12 @@ class GeminiLLM(LLMInterface):
 
         self._client = None
         self._is_vertexai = self.provider == "vertexai"
+
+        # Per-request deadline, resolved by the caller from ``llm_timeout`` / the
+        # per-operation override. The literal is only the unconfigured fallback —
+        # it used to be hardcoded at every call site, so a configured timeout was
+        # silently ignored (issue #3898).
+        self._request_timeout = self.timeout or _DEFAULT_GEMINI_TIMEOUT
 
         # Safety settings: None means use Gemini's defaults
         self._safety_settings: list | None = kwargs.get("gemini_safety_settings")
@@ -436,7 +447,7 @@ class GeminiLLM(LLMInterface):
                             contents=gemini_contents,
                             config=generation_config,
                         ),
-                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                        timeout=self._request_timeout,
                     )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
@@ -815,7 +826,7 @@ class GeminiLLM(LLMInterface):
                             contents=active_contents,
                             config=config,
                         ),
-                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                        timeout=self._request_timeout,
                     )
                 stash_response_usage(_usage_from_gemini_response(response))
 

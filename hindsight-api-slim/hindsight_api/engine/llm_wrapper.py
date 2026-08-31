@@ -525,6 +525,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            timeout=timeout,
         )
 
     elif provider_lower == "claude-code":
@@ -571,6 +572,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            timeout=timeout,
             vertexai_project_id=vertexai_project_id,
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
@@ -589,6 +591,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
             default_headers=default_headers,
             extra_body=extra_body,
+            timeout=timeout,
         )
 
     elif provider_lower == "litellm":
@@ -652,6 +655,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            timeout=timeout,
             model_path=config.llamacpp_model_path,
             gpu_layers=config.llamacpp_gpu_layers,
             context_size=config.llamacpp_context_size,
@@ -673,6 +677,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             cache_affinity=cache_affinity,
+            timeout=timeout,
         )
 
     elif provider_lower == "nous":

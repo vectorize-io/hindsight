@@ -73,6 +73,7 @@ class LLMInterface(ABC):
         base_url: str,
         model: str,
         reasoning_effort: str | None = None,
+        timeout: float | None = None,
         **kwargs: Any,
     ):
         """
@@ -86,6 +87,10 @@ class LLMInterface(ABC):
             reasoning_effort: Reasoning effort level, or None when the operator
                 configured none — in which case no provider sends the parameter and
                 every model runs at its own default effort.
+            timeout: Per-request timeout in seconds, already resolved by the caller
+                from the per-operation/global config (``consolidation_llm_timeout``
+                falling back to ``llm_timeout``, etc.). ``None`` means unconfigured
+                and lets each provider apply its own default.
             **kwargs: Additional provider-specific parameters.
         """
         self.provider = provider.lower()
@@ -99,6 +104,11 @@ class LLMInterface(ABC):
         # issue #3449) and presumptuous (an unconfigured one was still transmitted).
         # An empty string is an unset environment variable, not a level.
         self.reasoning_effort: str | None = reasoning_effort or None
+        # Every provider gets the resolved per-request timeout, even the ones that
+        # do not use it: a provider that silently drops it (issue #3898 — Codex
+        # never had the attribute at all, so a runaway response was read until the
+        # backend gave up) is indistinguishable from one that honours it.
+        self.timeout: float | None = timeout
 
     def _warn_reasoning_effort_unsupported(self) -> None:
         """Report, once at startup, that this provider cannot honour a configured effort.

@@ -48,6 +48,82 @@ def test_openai_compatible_provider_impl_receives_timeout():
     assert llm._provider_impl.timeout == 250.0
 
 
+@pytest.mark.parametrize(
+    "provider,extra",
+    [
+        ("openai-codex", {}),
+        ("anthropic", {}),
+        ("gemini", {}),
+        ("github-copilot", {}),
+        ("llamacpp", {}),
+    ],
+)
+def test_every_network_provider_receives_the_resolved_timeout(provider, extra, monkeypatch):
+    """Every provider carries the resolved timeout, whether or not it uses it (#3898).
+
+    Codex had no ``timeout`` at all — the factory never passed one and the class
+    never read one — so a runaway response was read until the backend gave up.
+    Gemini hardcoded its deadline at the call site and Anthropic fell back to its
+    own 300 s default, both ignoring what the operator configured. Parametrized so
+    a provider added later cannot quietly drop the value again.
+    """
+    from unittest.mock import patch
+
+    from hindsight_api.engine.providers.codex_llm import CodexLLM
+
+    with (
+        patch.object(CodexLLM, "_load_codex_auth", return_value=("token", "account")),
+        patch.object(CodexLLM, "_load_codex_refresh_token", return_value=None),
+    ):
+        llm = LLMConfig(provider=provider, api_key="k", base_url="", model="m", timeout=222.0, **extra)
+    assert llm._provider_impl.timeout == 222.0
+
+
+def test_gemini_uses_the_resolved_timeout_at_the_call_site():
+    """Gemini's ``asyncio.wait_for`` deadline comes from config, not a literal.
+
+    The 90 s literal used to be written at both call sites, so a configured
+    timeout was carried and then ignored — the attribute check above would have
+    passed anyway.
+    """
+    llm = LLMConfig(provider="gemini", api_key="k", base_url="", model="m", timeout=45.0)
+    assert llm._provider_impl._request_timeout == 45.0
+
+
+def test_gemini_deadline_falls_back_when_unconfigured():
+    from hindsight_api.engine.providers.gemini_llm import _DEFAULT_GEMINI_TIMEOUT
+
+    llm = LLMConfig(provider="gemini", api_key="k", base_url="", model="m")
+    assert llm._provider_impl._request_timeout == _DEFAULT_GEMINI_TIMEOUT
+
+
+def test_anthropic_passes_the_resolved_timeout_to_its_sdk_client():
+    """Anthropic silently used its own 300 s default because none was threaded."""
+    llm = LLMConfig(provider="anthropic", api_key="k", base_url="", model="claude-sonnet-4-20250514", timeout=45.0)
+    assert llm._provider_impl._client.timeout == 45.0
+
+
+def test_anthropic_timeout_falls_back_when_unconfigured():
+    from hindsight_api.engine.providers.anthropic_llm import _DEFAULT_ANTHROPIC_TIMEOUT
+
+    llm = LLMConfig(provider="anthropic", api_key="k", base_url="", model="claude-sonnet-4-20250514")
+    assert llm._provider_impl._client.timeout == _DEFAULT_ANTHROPIC_TIMEOUT
+
+
+def test_codex_deadline_falls_back_when_unconfigured():
+    """An unconfigured Codex provider keeps its historical 120 s bound."""
+    from unittest.mock import patch
+
+    from hindsight_api.engine.providers.codex_llm import _DEFAULT_CODEX_TIMEOUT, CodexLLM
+
+    with (
+        patch.object(CodexLLM, "_load_codex_auth", return_value=("token", "account")),
+        patch.object(CodexLLM, "_load_codex_refresh_token", return_value=None),
+    ):
+        llm = LLMConfig(provider="openai-codex", api_key="k", base_url="", model="m")
+    assert llm._provider_impl._request_timeout == _DEFAULT_CODEX_TIMEOUT
+
+
 def test_timeout_none_falls_back_to_provider_default():
     """No timeout passed -> provider falls back to its env/DEFAULT_LLM_TIMEOUT default.
 
