@@ -67,6 +67,35 @@ def _usage_from_gemini_response(response: Any) -> LLMResponseUsage:
     )
 
 
+def _gemini_dict_schema(response_format: Any) -> dict[str, Any]:
+    """Serialize a model to a schema dict Gemini's *API* accepts, not just its SDK.
+
+    Handing the SDK a dict is not the same as handing it the pydantic class. The
+    class path quietly drops keys the backend has no field for; the dict path maps
+    them faithfully, so ``extra="forbid"`` — which every delta operation model sets
+    — arrives as ``additionalProperties: false``, becomes ``Schema.additional_properties``,
+    and Vertex rejects the whole request:
+
+        400 INVALID_ARGUMENT: Unknown name "additional_properties" at
+        'generation_config.response_schema': Cannot find field.
+
+    The SDK builds that request without complaint, which is why this needed a real
+    call to find (#3937). Strip the key on the way out: it carries no meaning for a
+    backend that has nowhere to put it, and the model still cannot invent fields —
+    the delta parser validates against the pydantic model regardless.
+    """
+    schema = provider_json_schema(response_format)
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {k: strip(v) for k, v in node.items() if k != "additionalProperties"}
+        if isinstance(node, list):
+            return [strip(item) for item in node]
+        return node
+
+    return strip(schema)
+
+
 @dataclass(frozen=True)
 class _GeminiConversation:
     """A message list converted to Gemini's request shape."""
@@ -413,7 +442,7 @@ class GeminiLLM(LLMInterface):
                 # so the SDK raises before the request leaves the process. Serializing
                 # it ourselves rewrites the union to the ``anyOf`` the SDK accepts.
                 config_kwargs["response_schema"] = (
-                    provider_json_schema(response_format) if has_tagged_union(response_format) else response_format
+                    _gemini_dict_schema(response_format) if has_tagged_union(response_format) else response_format
                 )
             if temperature is not None:
                 config_kwargs["temperature"] = temperature

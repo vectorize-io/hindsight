@@ -27,12 +27,43 @@ class UnionSafeSchemaGenerator(GenerateJsonSchema):
     safe to use wherever a schema is serialized for a provider.
     """
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._discriminator_fields: set[str] = set()
+
     def tagged_union_schema(self, schema: core_schema.TaggedUnionSchema) -> JsonSchemaValue:
         json_schema = super().tagged_union_schema(schema)
+        discriminator = schema.get("discriminator")
+        if isinstance(discriminator, str):
+            self._discriminator_fields.add(discriminator)
         variants = json_schema.pop("oneOf", None)
         if variants is not None:
             json_schema["anyOf"] = variants
         json_schema.pop("discriminator", None)
+        return json_schema
+
+    def generate(self, schema: Any, mode: Any = "validation") -> JsonSchemaValue:
+        json_schema = super().generate(schema, mode=mode)
+        if not self._discriminator_fields:
+            return json_schema
+        # Dropping the discriminator block makes the tag load-bearing rather than
+        # advisory: `anyOf` alone gives a reader nothing else to tell the variants
+        # apart. Pydantic leaves the tag out of `required` because each variant
+        # defaults it (`op: Literal["add_section"] = "add_section"`), so a
+        # grammar-constrained model is free to omit it — and an operation with no
+        # `op` matches no variant and fails validation, which is the failure this
+        # whole path exists to avoid. Require the tag wherever it appears.
+        for definition in (json_schema.get("$defs") or {}).values():
+            properties = definition.get("properties")
+            if not isinstance(properties, dict):
+                continue
+            tags = self._discriminator_fields & set(properties)
+            if not tags:
+                continue
+            required = definition.setdefault("required", [])
+            for tag in sorted(tags):
+                if tag not in required:
+                    required.append(tag)
         return json_schema
 
 

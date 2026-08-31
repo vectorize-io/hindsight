@@ -70,6 +70,19 @@ class TestUnionsAreTransportable:
         variants = schema["properties"]["operations"]["items"]["anyOf"]
         assert len(variants) == 8, "every delta operation must remain reachable"
 
+    @pytest.mark.parametrize("serialize", [provider_json_schema, strict_json_schema])
+    def test_the_discriminator_tag_is_required_on_every_variant(self, serialize):
+        """Dropping the ``discriminator`` block makes the tag load-bearing.
+
+        Pydantic leaves ``op`` out of ``required`` because each variant defaults it,
+        and ``anyOf`` alone gives a reader nothing else to tell eight near-identical
+        object shapes apart. A grammar-constrained model omitting ``op`` would emit
+        an operation matching no variant — the exact validation failure this path
+        exists to prevent.
+        """
+        for name, definition in serialize(DeltaOperationList)["$defs"].items():
+            assert "op" in definition.get("required", []), f"{name} does not require its discriminator"
+
     def test_pydantic_still_parses_what_the_schema_describes(self):
         """The rewrite is a serialization concern; validation is unchanged, so a
         payload the schema permits must still round-trip through the model."""
@@ -110,3 +123,27 @@ class TestGeminiAcceptsTheSchema:
         from google.genai import _transformers as gemini_transformers
 
         assert gemini_transformers.t_schema(None, provider_json_schema(DeltaOperationList)) is not None
+
+    def test_request_carries_no_field_the_backend_rejects(self):
+        """The SDK accepting a schema does not mean the backend will.
+
+        Every op model sets ``extra="forbid"``, so pydantic emits
+        ``additionalProperties``. The pydantic-class path drops it; the dict path
+        maps it to ``Schema.additional_properties``, and Vertex answers
+        ``400 INVALID_ARGUMENT: Unknown name "additional_properties"``. The SDK
+        builds that request happily, so asserting on ``t_schema`` alone missed it
+        — this asserts on what actually goes over the wire.
+        """
+        import json
+
+        from google.genai import _transformers as gemini_transformers
+
+        from hindsight_api.engine.providers.gemini_llm import _gemini_dict_schema
+
+        schema = _gemini_dict_schema(DeltaOperationList)
+        assert "additionalProperties" not in json.dumps(schema)
+
+        serialized = json.dumps(gemini_transformers.t_schema(None, schema).model_dump(exclude_none=True))
+        assert "additional_properties" not in serialized
+        # The rewrite must still be intact underneath the strip.
+        assert "any_of" in serialized
