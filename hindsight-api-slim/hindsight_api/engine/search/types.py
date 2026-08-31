@@ -44,6 +44,7 @@ class RetrievalResult:
     occurred_start: datetime | None = None
     occurred_end: datetime | None = None
     mentioned_at: datetime | None = None
+    updated_at: datetime | None = None
     document_id: str | None = None
     chunk_id: str | None = None
     tags: list[str] | None = None  # Visibility scope tags
@@ -96,6 +97,7 @@ class RetrievalResult:
             occurred_start=row.get("occurred_start"),
             occurred_end=row.get("occurred_end"),
             mentioned_at=row.get("mentioned_at"),
+            updated_at=row.get("updated_at"),
             document_id=row.get("document_id"),
             chunk_id=row.get("chunk_id"),
             tags=row.get("tags"),
@@ -197,6 +199,7 @@ class ScoredResult:
             "occurred_start": self.retrieval.occurred_start,
             "occurred_end": self.retrieval.occurred_end,
             "mentioned_at": self.retrieval.mentioned_at,
+            "updated_at": self.retrieval.updated_at,
             "document_id": self.retrieval.document_id,
             "chunk_id": self.retrieval.chunk_id,
             "tags": self.retrieval.tags,
