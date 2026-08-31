@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
-from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output
+from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_llm_value
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from ..structured_output import strict_json_schema
@@ -176,7 +176,26 @@ class Fact(BaseModel):
         # Structured JSON parsing turns a model's ``\udXXX`` escape into a
         # surrogate only after raw-output cleanup, so scrub the final text at
         # the shared immediate/batch extraction boundary before storage or embedding (#3729).
+        # ``LLMProvider.call`` already scrubs the response this is built from; this is the
+        # storage-side guarantee for any text that reaches ``Fact`` by another route.
         return _sanitize_text(value) or ""
+
+    @field_validator("entities")
+    @classmethod
+    def sanitize_entity_names(cls, value: list[str] | None) -> list[str] | None:
+        # Entity names are model-authored too, and they are not merely metadata: they
+        # are appended to the very string that gets embedded (``augment_texts_with_dates``)
+        # and joined into the ``text_signals`` column feeding BM25. A surrogate in a name
+        # crashes exactly where one in ``fact`` does. Names that sanitize away entirely
+        # are dropped rather than stored blank.
+        if value is None:
+            return None
+        cleaned_names = []
+        for name in value:
+            cleaned = _sanitize_text(name) or ""
+            if cleaned.strip():
+                cleaned_names.append(cleaned)
+        return cleaned_names
 
 
 class CausalRelation(BaseModel):
@@ -2371,7 +2390,10 @@ async def extract_facts_from_contents_batch_api(
     logger.info(f"Batch {batch_id} completed in {elapsed:.0f}s, retrieving results")
 
     # Step 4: Retrieve results
-    batch_results = await batch_impl.retrieve_batch_results(batch_id)
+    # Batch results are downloaded straight from the provider's output file, so they
+    # never pass through ``LLMProvider.call`` and miss the scrub it applies. Sanitize
+    # them here so the batch path gets the same guarantee as the sync one (#3729).
+    batch_results = sanitize_llm_value(await batch_impl.retrieve_batch_results(batch_id))
 
     # Map results by custom_id
     results_by_id = {result["custom_id"]: result for result in batch_results}

@@ -13,6 +13,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from json_repair import repair_json
+from pydantic import BaseModel
 
 # Vertex AI imports (conditional - for LLMProvider to pass credentials to GeminiLLM)
 try:
@@ -163,6 +164,9 @@ def _request_params(
     return params or None
 
 
+_UNSAFE_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]")
+
+
 def sanitize_text(text: str | None) -> str | None:
     """
     Sanitize text by removing characters that break downstream systems.
@@ -186,12 +190,74 @@ def sanitize_text(text: str | None) -> str | None:
         return None
     if not text:
         return text
-    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]", "", text)
+    return _UNSAFE_TEXT_RE.sub("", text)
 
 
 # Back-compat alias: this helper was originally introduced to scrub LLM *output*;
 # it now also scrubs user *input* at ingress, hence the broader name.
 sanitize_llm_output = sanitize_text
+
+
+def sanitize_llm_value(value: Any) -> Any:
+    """
+    Recursively strip UTF-8-hostile characters from every string an LLM produced.
+
+    ``sanitize_text`` guards a single field. This guards a whole response — the
+    text a provider returned, the dict a structured call parsed, the pydantic
+    model it validated into, the ``(result, usage)`` tuple ``return_usage=True``
+    hands back — so that *every* LLM call is covered at one boundary instead of
+    each consumer remembering to scrub its own fields (see issue #3729).
+
+    It matters beyond embeddings. A lone surrogate is legal in a Python ``str``
+    but cannot be UTF-8 encoded, so it also breaks the cross-encoder's Rust
+    tokenizer at rerank time, asyncpg on the way into a ``text`` column, and
+    stdout logging. Sanitizing where the text enters the process means the
+    downstream stages never have to care which field it landed in.
+
+    Only strings are touched; ints, floats, datetimes and the like pass through
+    as-is. Every container returns the *same object* when nothing inside it
+    changed, so the overwhelmingly common clean response is not copied and
+    object identity (a validated response model, an enum member) survives
+    untouched.
+    """
+    if isinstance(value, str):
+        # A str subclass (a StrEnum member, say) comes back as itself unless it
+        # actually carries a hostile character — at which point a plain str is the
+        # only safe answer, and the alternative was a crash.
+        cleaned = _UNSAFE_TEXT_RE.sub("", value)
+        return cleaned if cleaned != value else value
+
+    if isinstance(value, BaseModel):
+        updates = {}
+        for name, field_value in value.__dict__.items():
+            cleaned = sanitize_llm_value(field_value)
+            if cleaned is not field_value:
+                updates[name] = cleaned
+        # ``model_copy`` skips validation, which is what we want: the values are
+        # already sanitized, and re-validating could reject a model the provider
+        # built with ``model_construct``.
+        return value.model_copy(update=updates) if updates else value
+
+    if isinstance(value, dict):
+        cleaned_dict = {}
+        changed = False
+        for key, item in value.items():
+            # Keys are sanitized too: a surrogate in a key is just as fatal once
+            # the dict is rendered to text or bound to a query parameter.
+            cleaned_key = sanitize_llm_value(key)
+            cleaned_item = sanitize_llm_value(item)
+            changed = changed or cleaned_key is not key or cleaned_item is not item
+            cleaned_dict[cleaned_key] = cleaned_item
+        return cleaned_dict if changed else value
+
+    # ``tuple`` is here for the ``return_usage=True`` shape, ``(result, TokenUsage)``.
+    if isinstance(value, (list, tuple)):
+        cleaned_items = [sanitize_llm_value(item) for item in value]
+        if all(cleaned is original for cleaned, original in zip(cleaned_items, value)):
+            return value
+        return cleaned_items if isinstance(value, list) else tuple(cleaned_items)
+
+    return value
 
 
 # ``OutputTooLongError`` is re-exported from ``llm_interface`` (the canonical
@@ -264,11 +330,18 @@ def parse_llm_json(raw: str) -> Any:
     degenerate-but-valid JSON (repetition loops or leaked scaffolding inside
     string values) parses fine here and is out of scope for this helper.
 
+    Every successful parse is passed through ``sanitize_llm_value``. Decoding is
+    where an un-encodable surrogate is *born*: a model that writes ``"\\ud83d"``
+    emits six harmless ASCII characters, and only ``json.loads`` turns them into a
+    lone surrogate no downstream stage can UTF-8 encode (#3729). Scrubbing the raw
+    text beforehand cannot see it; scrubbing the parsed object can.
+
     Args:
         raw: Raw text returned by the LLM.
 
     Returns:
-        Parsed Python object (dict, list, etc.).
+        Parsed Python object (dict, list, etc.), with model-authored strings
+        scrubbed of surrogates and control characters.
 
     Raises:
         json.JSONDecodeError: If the text cannot be parsed even after cleanup
@@ -284,7 +357,7 @@ def parse_llm_json(raw: str) -> Any:
         text = text.strip()
 
     try:
-        return json.loads(text)
+        return sanitize_llm_value(json.loads(text))
     except json.JSONDecodeError:
         # Some models (e.g. Gemini) embed raw control characters inside JSON
         # string values. Escape them rather than blank them out: a raw newline
@@ -295,7 +368,7 @@ def parse_llm_json(raw: str) -> Any:
         cleaned = _escape_control_chars_in_json(text)
 
     try:
-        return json.loads(cleaned)
+        return sanitize_llm_value(json.loads(cleaned))
     except json.JSONDecodeError:
         # Last resort: structural repair of malformed JSON. ``repair_json`` never
         # raises — unrecoverable input yields an empty result ("" / {} / []). Keep
@@ -305,7 +378,7 @@ def parse_llm_json(raw: str) -> Any:
         repaired = repair_json(cleaned, return_objects=True)
         if not repaired:
             raise
-        return repaired
+        return sanitize_llm_value(repaired)
 
 
 _PROVIDERS_WITHOUT_API_KEY = frozenset(
@@ -1217,7 +1290,11 @@ class LLMProvider:
             reset_request_context(request_token)
             reset_response_usage(usage_token)
 
-        return result
+        # Single scrub point for every structured/text LLM response in the engine:
+        # a model can emit a lone `\udXXX` escape that JSON decoding turns into an
+        # un-encodable surrogate, and the field it lands in is not knowable here
+        # (#3729). Clean output is returned unchanged, object identity included.
+        return sanitize_llm_value(result)
 
     async def call_with_tools(
         self,
@@ -1362,7 +1439,9 @@ class LLMProvider:
             reset_request_context(request_token)
             reset_response_usage(usage_token)
 
-        return result
+        # Same scrub for the tool-calling path: the agent's text content and every
+        # tool-call argument are model-authored and flow on to storage and reranking.
+        return sanitize_llm_value(result)
 
     def set_response_callback(self, fn: Any) -> None:
         """Set a callback invoked on each call() instead of the fixed mock response."""

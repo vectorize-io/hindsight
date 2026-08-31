@@ -915,3 +915,64 @@ async def test_batch_api_via_extract_facts_from_contents(
             await memory.delete_bank(bank_id, request_context=request_context)
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+async def test_batch_api_sanitizes_model_authored_text(mock_llm_config, hindsight_config):
+    """Batch results bypass ``LLMProvider.call``, so they need their own scrub (#3729).
+
+    A model can write ``\\udXXX`` in any string field of a batch response. The raw
+    JSONL carries harmless ASCII; the surrogate is born when the batch path parses it,
+    and from there the fact text and the entity names go straight to the embedder,
+    the reranker and an asyncpg bind.
+    """
+    batch_id = "batch_surrogate"
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value={
+            "batch_id": batch_id,
+            "status": "validating",
+            "request_counts": {"total": 1, "completed": 0, "failed": 0},
+        }
+    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": (
+                                        '{"facts": [{"what": "Alex laughed \ud83d", "when": "N/A", '
+                                        '"where": "N/A", "who": "Alex", "why": "N/A", "fact_type": "world", '
+                                        '"fact_kind": "conversation", "entities": ["Al\ud83dex"]}]}'
+                                    )
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                    }
+                },
+            }
+        ]
+    )
+
+    facts, _chunks, _usage = await extract_facts_from_contents_batch_api(
+        contents=[RetainContent(content="Alex laughed at the joke.")],
+        llm_config=mock_llm_config,
+        agent_name="test_agent",
+        config=hindsight_config,
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    assert len(facts) == 1
+    assert facts[0].fact_text.encode("utf-8")  # raised UnicodeEncodeError before the fix
+    assert "Alex laughed" in facts[0].fact_text
+    assert facts[0].entities == ["Alex"]

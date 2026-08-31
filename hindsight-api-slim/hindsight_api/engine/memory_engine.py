@@ -4852,6 +4852,17 @@ class MemoryEngine(MemoryEngineInterface):
                 item["content"] = sanitize_text(item["content"]) or ""
             if item.get("context"):
                 item["context"] = sanitize_text(item["context"]) or ""
+            # Client-supplied entity names reach the same places the fact text does:
+            # they are appended to the embedded string and joined into `text_signals`
+            # for BM25, so an unpaired surrogate here crashes identically (#3729).
+            # Shape is ``[{"text": ..., "type": ...}]``; an entry whose text sanitizes
+            # away entirely is dropped rather than carried as a nameless entity.
+            if item.get("entities"):
+                item["entities"] = [
+                    {key: sanitize_text(value) or "" for key, value in entity.items()}
+                    for entity in item["entities"]
+                    if (sanitize_text(entity.get("text")) or "").strip()
+                ]
 
         # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
         if document_id:
