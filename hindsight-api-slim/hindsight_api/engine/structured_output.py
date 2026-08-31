@@ -25,9 +25,42 @@ class OpenAIStrictSchemaGenerator(GenerateJsonSchema):
         return json_schema
 
 
+# Keywords whose value is a map of *names* to subschemas, not a subschema itself.
+# Their keys are user-controlled, so a key literally called "$ref" must not be
+# mistaken for a reference node while walking the tree.
+_SUBSCHEMA_NAME_MAPS = frozenset({"$defs", "definitions", "properties", "patternProperties"})
+
+
+def _strip_ref_siblings(node: Any) -> Any:
+    """Drop every sibling keyword of a ``$ref``.
+
+    Pydantic emits ``{"$ref": ..., "description": ...}`` for a field that both
+    references a nested model and carries its own ``Field(description=...)``
+    (JSON Schema 2020-12 allows that; the dynamic ``labels`` field built for
+    entity-label banks hits it). OpenAI-compatible strict mode rejects it with
+    ``$ref cannot have keywords {'description'}``, so a reference node keeps
+    nothing but the reference.
+    """
+    if isinstance(node, dict):
+        if "$ref" in node:
+            return {"$ref": node["$ref"]}
+        return {
+            key: (
+                {name: _strip_ref_siblings(sub) for name, sub in value.items()}
+                if key in _SUBSCHEMA_NAME_MAPS and isinstance(value, dict)
+                else _strip_ref_siblings(value)
+            )
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_strip_ref_siblings(item) for item in node]
+    return node
+
+
 def strict_json_schema(response_format: type[BaseModel]) -> dict[str, Any]:
     """Serialize a typed response model directly into OpenAI's strict subset."""
-    return response_format.model_json_schema(schema_generator=OpenAIStrictSchemaGenerator)
+    schema = response_format.model_json_schema(schema_generator=OpenAIStrictSchemaGenerator)
+    return _strip_ref_siblings(schema)
 
 
 # Types the structured-output extractor knows how to build a Pydantic field for
