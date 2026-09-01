@@ -300,7 +300,7 @@ The ids are defined by that integration's HookSpecs
 registered in `src/harness/registry.ts`, whose id is their
 `createPluginEntry(...)` argument — currently `antigravity-cli`, `claude-code`,
 `cline-cli`, `codex`, `copilot-cli`, `cursor-cli`, `devin-cli`, `grok-build`,
-`kilo`, `opencode`.
+`kilo`, `opencode`, `opencode2`.
 
 The control plane resolves the value in
 `hindsight-control-plane/src/lib/harness-logo.ts` (metadata wins over the tag) and

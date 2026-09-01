@@ -315,35 +315,65 @@ function runDcodePlugin(args: string[]): boolean {
   }
 }
 
+/**
+ * Register/unregister the package root in `~/.config/opencode`'s `plugin` array. Shared verbatim by
+ * `opencode` and `opencode2`: the two CLIs read the SAME config file, and v1 REJECTS the whole file
+ * on v2's `plugins` key ("Configuration is invalid … Unrecognized key: plugins"), so a v2-specific
+ * entry is not an option. One entry serves both because they resolve a plugin directory
+ * differently — v1 follows package.json `main` (dist/index.js), v2 loads `<dir>/index.js` — and v2
+ * migrates the legacy `plugin` key to `plugins` for itself. See src/opencode2.ts.
+ *
+ * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
+ * keeps that idempotent), and uninstalling either removes the shared entry.
+ */
+function registerOpencodePlugin(c: InstallCtx, name: string): void {
+  const path = opencodeConfigPath(c);
+  let cfg: Record<string, any> = {};
+  if (existsSync(path)) {
+    const parsed = parseJsonc(readFileSync(path, "utf8"));
+    if (!parsed) {
+      c.log?.(`${name}: SKIPPED — could not parse ${path}; add the plugin entry manually`);
+      return;
+    }
+    cfg = parsed;
+  }
+  const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
+  // writeJsonc, not writeJson: this config routinely carries comments, and re-serializing the
+  // parsed object would strip every one of them even though the read succeeded.
+  writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot]);
+  c.log?.(`${name}: plugin registered in ${path}`);
+}
+
+function unregisterOpencodePlugin(c: InstallCtx, name: string): void {
+  const path = opencodeConfigPath(c);
+  if (!existsSync(path)) return;
+  const cfg = parseJsonc(readFileSync(path, "utf8"));
+  if (!cfg || !Array.isArray(cfg.plugin)) return;
+  const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
+  writeJsonc(path, "plugin", kept.length ? kept : undefined);
+  c.log?.(`${name}: plugin entry removed`);
+}
+
 const opencode: HarnessInstaller = {
   name: "opencode",
   detect: (c) => onPath("opencode") || existsSync(join(c.home, ".config", "opencode")),
-  install(c) {
-    const path = opencodeConfigPath(c);
-    let cfg: Record<string, any> = {};
-    if (existsSync(path)) {
-      const parsed = parseJsonc(readFileSync(path, "utf8"));
-      if (!parsed) {
-        c.log?.(`opencode: SKIPPED — could not parse ${path}; add the plugin entry manually`);
-        return;
-      }
-      cfg = parsed;
-    }
-    const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
-    // writeJsonc, not writeJson: this config routinely carries comments, and re-serializing the
-    // parsed object would strip every one of them even though the read succeeded.
-    writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot]);
-    c.log?.(`opencode: plugin registered in ${path}`);
-  },
-  uninstall(c) {
-    const path = opencodeConfigPath(c);
-    if (!existsSync(path)) return;
-    const cfg = parseJsonc(readFileSync(path, "utf8"));
-    if (!cfg || !Array.isArray(cfg.plugin)) return;
-    const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
-    writeJsonc(path, "plugin", kept.length ? kept : undefined);
-    c.log?.("opencode: plugin entry removed");
-  },
+  install: (c) => registerOpencodePlugin(c, "opencode"),
+  uninstall: (c) => unregisterOpencodePlugin(c, "opencode"),
+};
+
+/**
+ * opencode v2 — the `opencode2` binary (npm `@opencode-ai/cli@beta`), which installs ALONGSIDE v1
+ * rather than replacing it.
+ *
+ * Detection is the binary only, deliberately NOT `~/.config/opencode`: that directory is v1's too,
+ * so keying on it would make `install` (which wires every detected agent) claim opencode2 on every
+ * v1-only machine.
+ */
+const opencode2: HarnessInstaller = {
+  name: "opencode2",
+  detect: () => onPath("opencode2"),
+  install: (c) => registerOpencodePlugin(c, "opencode2"),
+  uninstall: (c) => unregisterOpencodePlugin(c, "opencode2"),
 };
 
 /**
@@ -758,9 +788,12 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
     const pkgJson = join(c.pkgRoot, "package.json");
     if (existsSync(pkgJson)) copyFileSync(pkgJson, join(target, "package.json"));
-    // The Dcode Agent Plugin surface: its manifest and the hooks document the manifest points at.
-    // (Both are listed in package.json#files, so they exist in a published install too.)
-    for (const resource of ["plugin.json", "hooks"]) {
+    // The Dcode Agent Plugin surface (its manifest and the hooks that manifest points at) plus the
+    // root index.js opencode2 loads a plugin directory from — see src/opencode2.ts. Without that
+    // file here, the staged copy is a v1-only plugin and opencode2 logs "configured plugin
+    // directory has no index entrypoint".
+    // (All are listed in package.json#files, so they exist in a published install too.)
+    for (const resource of ["plugin.json", "hooks", "index.js"]) {
       const source = join(c.pkgRoot, resource);
       if (existsSync(source)) cpSync(source, join(target, resource), { recursive: true });
     }
@@ -1498,6 +1531,7 @@ function defaultQwenMcp(args: string[]): boolean {
 
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
+  opencode2,
   kilo,
   primeAgent,
   claudeCode,

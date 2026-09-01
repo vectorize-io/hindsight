@@ -3,6 +3,9 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    // opencode v2 (`opencode2`) loads this via the package's root index.js, which re-exports it.
+    // Its plugin contract shares nothing with v1's, so it is a separate entry — see src/opencode2.ts.
+    opencode2: "src/opencode2.ts",
     // Kilo CLI (an opencode fork) loads this as its persistent plugin — see src/kilo.ts.
     kilo: "src/kilo.ts",
     deepen: "src/deepen.ts",

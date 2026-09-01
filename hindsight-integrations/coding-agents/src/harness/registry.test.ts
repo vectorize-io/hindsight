@@ -6,6 +6,7 @@ describe("HARNESS_NAMES", () => {
     expect(HARNESS_NAMES).toEqual(
       expect.arrayContaining([
         "opencode",
+        "opencode2",
         "kilo",
         "cline-cli",
         "prime-agent",
@@ -21,7 +22,7 @@ describe("HARNESS_NAMES", () => {
         "qwen-code",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(14);
+    expect(HARNESS_NAMES).toHaveLength(15);
   });
 });
 
@@ -51,6 +52,15 @@ describe("getHarness", () => {
     // directly, bypassing this registry. Lock it so a future change can't silently make this look
     // functional.
     expect(() => adapter.createRuntime({} as never)).toThrow();
+  });
+
+  it("resolves opencode2 as its own plugin harness, separate from v1", async () => {
+    // Same no-runtime shape as opencode above, but a DIFFERENT entrypoint: v2's plugin contract
+    // shares nothing with v1's, so handing either host the other's export loads a plugin that
+    // registers nothing and reports no error.
+    const adapter = await getHarness("opencode2");
+    expect(adapter.name).toBe("opencode2");
+    expect(() => adapter.createRuntime({} as never)).toThrow(/src\/opencode2\.ts/);
   });
 
   it("resolves Cline as a native-plugin harness rather than a hook binary", async () => {

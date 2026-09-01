@@ -404,6 +404,8 @@ export function importLocalHistory(
     case "dsh":
       return dshHistory(repoDir, home);
     case "opencode":
+    // opencode v2 keeps sessions in the SAME `opencode.db` v1 does.
+    case "opencode2":
     case "kilo":
     case "cursor-cli":
     case "cline-cli":

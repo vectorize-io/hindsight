@@ -489,6 +489,46 @@ describe("antigravity-cli installer", () => {
   });
 });
 
+/**
+ * opencode v2 (`opencode2`) is registered in the SAME `~/.config/opencode/opencode.json[c]` as v1,
+ * under the SAME `plugin` key. It has to be: the two CLIs read one file, v1 REJECTS the whole file
+ * on v2's `plugins` key, and one entry serves both because they resolve a plugin directory
+ * differently (v1 via package.json `main`, v2 via `<dir>/index.js`). See src/opencode2.ts.
+ */
+describe("opencode2 installer", () => {
+  const cfgPath = (ctx: InstallCtx) => join(ctx.home, ".config", "opencode", "opencode.json");
+
+  it("registers the package root in opencode's own config", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "opencode2"], ctx)).toBe(0);
+    expect(readJson(cfgPath(ctx)).plugin).toEqual([ctx.pkgRoot]);
+  });
+
+  it("wiring both opencode and opencode2 leaves ONE shared entry", () => {
+    // The entry is identical, so the MARKER filter has to collapse them — two copies of the same
+    // path would make opencode2 load the plugin twice.
+    const ctx = makeCtx();
+    run(["install", "opencode"], ctx);
+    run(["install", "opencode2"], ctx);
+    expect(readJson(cfgPath(ctx)).plugin).toEqual([ctx.pkgRoot]);
+  });
+
+  it("detects on the binary alone — ~/.config/opencode must not sway it", () => {
+    // That directory is v1's too. Keying on it (as the opencode installer legitimately does) would
+    // make `install` — which wires every DETECTED agent — claim opencode2 on every machine that
+    // only has v1. Asserted as "the directory changes nothing" rather than a fixed value, because
+    // whether the `opencode2` binary is on PATH is a property of the machine running the test.
+    const opencode2 = INSTALLERS.find((i) => i.name === "opencode2")!;
+    const without = makeCtx();
+    const withDir = makeCtx();
+    mkdirSync(join(withDir.home, ".config", "opencode"), { recursive: true });
+    expect(opencode2.detect(withDir)).toBe(opencode2.detect(without));
+    // …whereas v1 DOES treat the directory as a signal, which is exactly the difference.
+    const opencode = INSTALLERS.find((i) => i.name === "opencode")!;
+    expect(opencode.detect(withDir)).toBe(true);
+  });
+});
+
 /** Kilo is an opencode fork: same `plugin` array, but a JSONC-capable config that may already
  *  exist under any of several names, and it must load dist/kilo.js (not the package root, which
  *  resolves to the opencode entry and would report the wrong harness). */
@@ -1005,6 +1045,7 @@ describe("run() CLI behavior", () => {
   it("exposes the supported harnesses", () => {
     expect(INSTALLERS.map((i) => i.name)).toEqual([
       "opencode",
+      "opencode2",
       "kilo",
       "prime-agent",
       "claude-code",
@@ -1041,9 +1082,10 @@ describe("MCP registrations name the calling harness", () => {
   }
 
   // These hosts have no MCP registration at all: they load our plugin/extension in-process
-  // (src/kilo.ts, src/dsh.ts, src/prime-agent.ts, dist/index.js for opencode), and that entry
-  // hands its own harness name straight to RuntimeCore.
-  const IN_PROCESS = new Set(["opencode", "kilo", "prime-agent", "dsh", "dcode"]);
+  // (src/kilo.ts, src/dsh.ts, src/prime-agent.ts, dist/index.js for opencode, index.js ->
+  // dist/opencode2.js for opencode2), and that entry hands its own harness name straight to
+  // RuntimeCore.
+  const IN_PROCESS = new Set(["opencode", "opencode2", "kilo", "prime-agent", "dsh", "dcode"]);
   const MCP_HOSTS = INSTALLERS.map((i) => i.name).filter((n) => !IN_PROCESS.has(n));
 
   it.each(MCP_HOSTS)("%s", (harness) => {
