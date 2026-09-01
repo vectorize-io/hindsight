@@ -4,7 +4,7 @@ authors: [benfrank241]
 slug: "2026/08/31/hindsight-cloud-june-august-updates"
 date: 2026-08-31T12:00
 tags: [hindsight-cloud, release, knowledge-pages, mental-models, ui, enterprise, sso, mfa, security]
-description: "Three months of Hindsight Cloud: a client-managed knowledge base, scheduled mental model refreshes, a rebuilt console, plus enterprise SSO, MFA enforcement, audit logging, Memory Defense, and bring-your-own-cloud."
+description: "Three months of Hindsight Cloud: a client-managed knowledge base, scheduled mental model refreshes, a rebuilt console, plus enterprise SSO, MFA enforcement, audit logging, and Memory Defense."
 image: /img/blog/hindsight-cloud-june-august-updates.png
 hide_table_of_contents: true
 ---
@@ -15,7 +15,7 @@ It's been three months since the last Cloud roundup, and rather more than three 
 
 The headline is a **client-managed knowledge base** you can browse and edit in the console. Alongside it: mental models that refresh on a schedule you set, a Constellation view you can take fullscreen, background document export, and a rebuilt visual design across the whole console.
 
-There's also a substantial run of **Enterprise** work in this window: single sign-on with your own identity provider, organization-wide MFA enforcement, per-bank audit logging, a much deeper Memory Defense tier, and the ability to deploy Hindsight into your own cloud account.
+There's also a substantial run of **Enterprise** work in this window: single sign-on with your own identity provider, organization-wide MFA enforcement, per-bank audit logging, and a much deeper Memory Defense tier.
 
 <!-- truncate -->
 
@@ -28,7 +28,6 @@ There's also a substantial run of **Enterprise** work in this window: single sig
 - [**Single sign-on and MFA**](#single-sign-on-and-mfa) — bring your own IdP, and enforce MFA across an org.
 - [**Audit logging**](#audit-logging) — a queryable trail, opt-in per bank.
 - [**Memory Defense Enterprise**](#memory-defense-enterprise) — prompt injection, size anomaly, and deeper secret detection.
-- [**Bring your own cloud**](#bring-your-own-cloud) — deploy into your own AWS, GCP, or Azure account.
 
 ## A knowledge base you can edit
 
@@ -153,12 +152,6 @@ Enterprise adds detectors you can enable and tune independently:
 | **LLM screening** | Natural-language disclosures no pattern will catch, like "the password is ..." |
 
 Each carries its own action and minimum-severity threshold, so you can block on high-confidence secrets while merely flagging borderline ones. Entitlement is enforced on the server as well as in the console, so the policy can't be set around it through the API.
-
-## Bring your own cloud
-
-For teams that can't send data into a shared environment, Hindsight can now be deployed **into your own cloud account** on AWS, GCP, or Azure, with the deployment generated for your environment rather than hand-assembled.
-
-On AWS that includes an IAM role template you apply in your own account and, as of August, **PrivateLink from your application VPC**, so traffic between your application and Hindsight never crosses the public internet.
 
 ## Also shipped
 
