@@ -1135,6 +1135,21 @@ class LLMProvider:
         """Whether the underlying provider supports the OpenAI/Groq Batch API."""
         return await self._provider_impl.supports_batch_api()
 
+    def supports_vision(self) -> bool | None:
+        """Whether images may be sent to this LLM; ``None`` when unknowable.
+
+        ``HINDSIGHT_API_LLM_VISION`` wins over the provider's own answer in both
+        directions: it is the escape hatch for a vision model behind a gateway
+        the provider cannot identify, and the off switch for an operator whose
+        endpoint rejects image parts despite the model name.
+        """
+        from ..config import get_config
+
+        override = get_config().llm_vision
+        if override is not None:
+            return override
+        return self._provider_impl.supports_vision()
+
     async def batch_provider_impl(self, account_key: str | None = None) -> LLMInterface | None:
         """The implementation serving batch, or ``None`` when it cannot serve one.
 

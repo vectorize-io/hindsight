@@ -16,6 +16,19 @@ from ..response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 logger = logging.getLogger(__name__)
 
 
+def _user_text_of(content: Any) -> str:
+    """The text of a user message, whether it is a string or content parts.
+
+    A multimodal retain hands the provider an interleaved list of text and image
+    parts. The mock has no vision, so it synthesizes from the text alone — the
+    tests that care about the image assert on the message the mock recorded, not
+    on what it invented from it.
+    """
+    if not isinstance(content, list):
+        return content
+    return " ".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
+
+
 class MockLLM(LLMInterface):
     """
     Mock LLM provider for testing.
@@ -69,6 +82,14 @@ class MockLLM(LLMInterface):
         self._mock_response: Any = None
         self._mock_exception: Exception | None = None
         self._response_callback: Callable[[list[dict], str], Any] | None = None
+
+    def supports_vision(self) -> bool:
+        """True, so tests can drive the multimodal extraction path.
+
+        The mock records whatever message parts it is handed, which is exactly
+        what the prompt-assembly tests assert against.
+        """
+        return True
 
     async def verify_connection(self) -> None:
         """
@@ -369,7 +390,7 @@ class MockLLM(LLMInterface):
         user_text = ""
         for m in messages:
             if m.get("role") == "user":
-                user_text = m.get("content", "")
+                user_text = _user_text_of(m.get("content", ""))
                 break
 
         # Split on sentence boundaries: period followed by space/EOL (not mid-number), or newlines
@@ -413,7 +434,7 @@ class MockLLM(LLMInterface):
         user_text = ""
         for m in messages:
             if m.get("role") == "user":
-                user_text = m.get("content", "")
+                user_text = _user_text_of(m.get("content", ""))
                 break
 
         # Extract fact UUIDs from the prompt (format: "[<uuid>] <text>")

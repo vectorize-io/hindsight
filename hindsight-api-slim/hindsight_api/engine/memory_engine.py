@@ -413,6 +413,14 @@ class UnqualifiedTableError(Exception):
     pass
 
 
+class VisionNotSupportedError(Exception):
+    """Raised when a retain carries images but the retain LLM cannot read them.
+
+    Not a ``ValueError``: the caller's request is well-formed, the *server* is
+    configured with a model that cannot serve it. Surfaced to callers as HTTP 422.
+    """
+
+
 class RetainOperationConflictError(ValueError):
     """Raised when a caller-supplied async retain operation_id is already in use.
 
@@ -795,8 +803,20 @@ class _RetainExecutionResult:
 
 @dataclass(frozen=True)
 class _RetainChunkingConfig:
+    """Everything that decides where a document's chunk boundaries fall.
+
+    Carried as one object precisely because every caller must agree on it: the
+    producer pre-chunks a document, extraction re-chunks each piece, and the
+    append path re-chunks a reconstructed body. If any of them chunked under
+    different settings, a piece would re-split, two chunks would share a
+    ``chunk_index``, and their ``chunk_id``s would collide (issue #2301). The
+    image budget is part of that agreement, not an extra a caller may forget.
+    """
+
     chunk_size: int
     structured_chunk_size: int | None
+    image_cost_chars: int
+    max_images_per_chunk: int
 
 
 def _pack_native_chunks(chunks: Iterable[str], tokens_per_batch: int) -> Iterator[list[str]]:
@@ -884,6 +904,9 @@ def _rejoin_native_chunks(
     chunks: list[str],
     chunk_size: int,
     structured_chunk_size: int | None,
+    *,
+    image_cost_chars: int,
+    max_images_per_chunk: int,
 ) -> str | None:
     """Rebuild the sub-batch text for a run of consecutive native chunks.
 
@@ -915,7 +938,14 @@ def _rejoin_native_chunks(
     candidates.append("\n".join(chunks))
 
     for text in candidates:
-        if fact_extraction.chunk_text(text, chunk_size, structured_chunk_size=structured_chunk_size) == chunks:
+        rechunked = fact_extraction.chunk_text(
+            text,
+            chunk_size,
+            structured_chunk_size=structured_chunk_size,
+            image_cost_chars=image_cost_chars,
+            max_images_per_chunk=max_images_per_chunk,
+        )
+        if rechunked == chunks:
             return text
     return None
 
@@ -993,6 +1023,8 @@ def _iter_raw_sub_batches(
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
+    image_cost_chars: int,
+    max_images_per_chunk: int,
 ) -> Iterator[_RawSubBatch]:
     """Stream the sub-batches of ``contents`` — see ``_split_contents_into_sub_batches``.
 
@@ -1011,7 +1043,13 @@ def _iter_raw_sub_batches(
     from .retain import fact_extraction
 
     def _chunks_of(text: str) -> Iterator[str]:
-        return fact_extraction.iter_chunks(text, chunk_size, structured_chunk_size=structured_chunk_size)
+        return fact_extraction.iter_chunks(
+            text,
+            chunk_size,
+            structured_chunk_size=structured_chunk_size,
+            image_cost_chars=image_cost_chars,
+            max_images_per_chunk=max_images_per_chunk,
+        )
 
     current_batch: list[RetainContentDict] = []
     current_batch_origins: list[int] = []
@@ -1078,7 +1116,13 @@ def _iter_raw_sub_batches(
                     elif len(run) > 1 and list(_chunks_of(joined)) != run:
                         joined = None
                 if joined is None:
-                    joined = _rejoin_native_chunks(run, chunk_size, structured_chunk_size)
+                    joined = _rejoin_native_chunks(
+                        run,
+                        chunk_size,
+                        structured_chunk_size,
+                        image_cost_chars=image_cost_chars,
+                        max_images_per_chunk=max_images_per_chunk,
+                    )
                 slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]
                 for slice_text, slice_chunk_count in slices:
                     chunk_item = cast(RetainContentDict, {**item, "content": slice_text})
@@ -1131,7 +1175,12 @@ def iter_sub_batches(
     index = 0
     held: _RawSubBatch | None = None
     for raw in _iter_raw_sub_batches(
-        contents, tokens_per_batch, chunk_size=chunk_size, structured_chunk_size=structured_chunk_size
+        contents,
+        tokens_per_batch,
+        chunk_size=chunk_size,
+        structured_chunk_size=structured_chunk_size,
+        image_cost_chars=config.retain_image_chunk_cost_chars,
+        max_images_per_chunk=config.retain_max_images_per_chunk,
     ):
         if held is not None:
             index += 1
@@ -5461,6 +5510,8 @@ class MemoryEngine(MemoryEngineInterface):
         return _RetainChunkingConfig(
             chunk_size=config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
+            image_cost_chars=config.retain_image_chunk_cost_chars,
+            max_images_per_chunk=config.retain_max_images_per_chunk,
         )
 
     async def _run_retain_execution(
@@ -5613,6 +5664,8 @@ class MemoryEngine(MemoryEngineInterface):
                             existing_text,
                             chunking_config.chunk_size,
                             structured_chunk_size=chunking_config.structured_chunk_size,
+                            image_cost_chars=chunking_config.image_cost_chars,
+                            max_images_per_chunk=chunking_config.max_images_per_chunk,
                         )
                     )
 
@@ -5925,6 +5978,8 @@ class MemoryEngine(MemoryEngineInterface):
         # Apply strategy overrides: explicit strategy > bank default strategy
         from hindsight_api.config_resolver import apply_strategy
 
+        from .retain.image_store import RetainImageLoader
+
         effective_strategy = strategy or resolved_config.retain_default_strategy
         if effective_strategy:
             resolved_config = apply_strategy(resolved_config, effective_strategy)
@@ -5961,6 +6016,9 @@ class MemoryEngine(MemoryEngineInterface):
                 webhook_manager=self._webhook_manager,
                 memory_defense_extension=self._memory_defense,
                 audit_logger=self._audit_logger,
+                # One loader per retain, so a document that shows the same image in
+                # several sections fetches its bytes once rather than once per chunk.
+                image_loader=RetainImageLoader(self._file_storage, self._backend, bank_id),
             )
             # Map the created facts onto this retain's trace so the trace view can
             # show which memories the ingestion produced. result[0] is the
@@ -6128,6 +6186,47 @@ class MemoryEngine(MemoryEngineInterface):
         except FileNotFoundError:
             return None
 
+    def _require_vision_capable_retain_llm(self) -> None:
+        """Refuse an image-bearing retain the configured retain LLM cannot read.
+
+        Failing here — before a single byte is written — is deliberate. The
+        alternative, extracting from the prose and quietly ignoring the images,
+        would leave a document that *looks* retained while the information the
+        caller cared about is gone, which is the exact failure inline images
+        exist to remove. A hard error is recoverable; a silent omission is not.
+
+        ``None`` (the provider cannot tell, typically a gateway) refuses too, and
+        says how to opt in.
+        """
+        # The batch path builds provider request bodies directly rather than going
+        # through LLMProvider.call, so it never sees the interleaved content parts.
+        # Refuse explicitly instead of letting a batch retain quietly extract from
+        # the prose and ignore every image in it.
+        if get_config().retain_batch_enabled:
+            raise VisionNotSupportedError(
+                "Inline image content is not supported while the batch API is enabled "
+                "(HINDSIGHT_API_RETAIN_BATCH_ENABLED=true). Disable batch mode to retain "
+                "images, or send the content as text only."
+            )
+
+        supported = self._retain_llm_config.supports_vision()
+        if supported:
+            return
+
+        model = f"{self._retain_llm_config.provider}/{self._retain_llm_config.model}"
+        if supported is False:
+            raise VisionNotSupportedError(
+                f"The configured retain LLM ({model}) cannot read images, but this retain "
+                f"carries inline image content. Configure a vision-capable model via "
+                f"HINDSIGHT_API_RETAIN_LLM_MODEL, or send the content as text only."
+            )
+        raise VisionNotSupportedError(
+            f"Hindsight cannot tell whether the configured retain LLM ({model}) can read "
+            f"images, and this retain carries inline image content. If that model is "
+            f"vision-capable, set HINDSIGHT_API_LLM_VISION=true; otherwise send the content "
+            f"as text only."
+        )
+
     async def store_retain_images(
         self,
         bank_id: str,
@@ -6154,6 +6253,7 @@ class MemoryEngine(MemoryEngineInterface):
         if not images:
             return []
 
+        self._require_vision_capable_retain_llm()
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
         await self._ensure_bank_exists(bank_id, request_context)

@@ -166,6 +166,22 @@ class MultiLLMProvider:
                     e,
                 )
 
+    def supports_vision(self) -> bool | None:
+        """Whether EVERY member can accept images — the opposite of batch routing.
+
+        Batch capacity may live on one member because the batch path picks that
+        member deliberately. Vision cannot: any call may fail over to any member,
+        so a chain is only safe for images if none of its members would drop
+        them. One ``False`` makes the chain False; otherwise an unknown member
+        makes the whole chain unknown.
+        """
+        answers = [member.supports_vision() for member in self._members]
+        if any(answer is False for answer in answers):
+            return False
+        if any(answer is None for answer in answers):
+            return None
+        return True
+
     # ── batch routing ───────────────────────────────────────────────────────────
 
     async def supports_batch_api(self) -> bool:

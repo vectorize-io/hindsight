@@ -177,6 +177,7 @@ from hindsight_api.engine.memory_engine import (
     KEEP_PARENT,
     Budget,
     RetainOperationConflictError,
+    VisionNotSupportedError,
     _current_schema,
 )
 from hindsight_api.engine.mental_model_refresh import (
@@ -8599,6 +8600,10 @@ def _register_routes(app: FastAPI):
             # Caller reused an async retain operation_id that already belongs to
             # a different operation.
             raise HTTPException(status_code=409, detail=str(e))
+        except VisionNotSupportedError as e:
+            # The request is well-formed; the server's retain LLM cannot read the
+            # images it carries. 422 rather than 400 for that distinction.
+            raise HTTPException(status_code=422, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except ValueError as e:

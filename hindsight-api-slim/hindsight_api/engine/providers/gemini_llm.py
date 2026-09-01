@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import logging
+import re
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import ContextVar
@@ -94,6 +95,51 @@ def _gemini_dict_schema(response_format: Any) -> dict[str, Any]:
         return node
 
     return strip(schema)
+
+
+#: ``data:<media type>;base64,<payload>`` — the OpenAI-style image part's URL form.
+_DATA_URI_RE = re.compile(r"^data:(?P<media_type>[\w.+-]+/[\w.+-]+);base64,(?P<data>.*)$", re.DOTALL)
+
+
+def _to_gemini_parts(content: Any, genai_types: Any) -> list[Any]:
+    """Translate a message's content into Gemini ``Part``s.
+
+    Retain assembles multimodal messages in the OpenAI part vocabulary — one
+    canonical wire shape, converted per provider here — so an inline image
+    reaches Gemini as ``inline_data`` rather than as a data URI the model would
+    read as literal text.
+
+    A plain string, which is what every text-only call sends, becomes the single
+    text Part it always did.
+    """
+    if not isinstance(content, list):
+        return [genai_types.Part(text=content)]
+
+    parts: list[Any] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "text":
+            parts.append(genai_types.Part(text=part.get("text", "")))
+            continue
+        if part.get("type") != "image_url":
+            continue
+        url = (part.get("image_url") or {}).get("url", "")
+        match = _DATA_URI_RE.match(url)
+        if match is None:
+            # Gemini has no fetch-this-URL part; surfacing the reference as text is
+            # better than dropping the message content silently.
+            parts.append(genai_types.Part(text=f"[image at {url}]"))
+            continue
+        parts.append(
+            genai_types.Part(
+                inline_data=genai_types.Blob(
+                    mime_type=match.group("media_type"),
+                    data=base64.b64decode(match.group("data")),
+                )
+            )
+        )
+    return parts
 
 
 @dataclass(frozen=True)
@@ -416,7 +462,7 @@ class GeminiLLM(LLMInterface):
             elif role == "assistant":
                 gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
             else:
-                gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
+                gemini_contents.append(genai_types.Content(role="user", parts=_to_gemini_parts(content, genai_types)))
 
         def _system_instruction_with_schema() -> str:
             schema = provider_json_schema(response_format)
@@ -1191,6 +1237,10 @@ class GeminiLLM(LLMInterface):
     #
     # Interface contract preserved (see fact_extraction.py result handling)::
     #     result["response"]["body"]["choices"][0]["message"]["content"]
+
+    def supports_vision(self) -> bool:
+        """Gemini models are natively multimodal, on both the Gemini API and Vertex."""
+        return True
 
     async def supports_batch_api(self) -> bool:
         """True for the Gemini API; False for Vertex AI.

@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...extensions.memory_defense import (
     DefenseAction,
@@ -27,6 +27,9 @@ from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
+
+if TYPE_CHECKING:
+    from .image_store import RetainImageLoader
 
 
 @dataclass
@@ -1038,6 +1041,7 @@ async def _extract_and_embed(
     pool: Any = None,
     operation_id: str | None = None,
     schema: str | None = None,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> tuple[list, list[ProcessedFact], list[ChunkMetadata], TokenUsage]:
     """
     Shared pipeline: extract facts from contents and generate embeddings.
@@ -1056,7 +1060,7 @@ async def _extract_and_embed(
     # so in the item's `context`, which extraction already reads and which the dry-run
     # `agent_name` override is deprecated in favour of.
     extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, config, pool, operation_id, schema
+        contents, llm_config, config, pool, operation_id, schema, image_loader=image_loader
     )
     log_buffer.append(
         f"  Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks "
@@ -1190,6 +1194,7 @@ async def retain_batch(
     webhook_manager: Any = None,
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
     audit_logger: Any = None,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None]:
     """
     Process a batch of content through the retain pipeline.
@@ -1711,6 +1716,7 @@ async def retain_batch(
             document_body_override=document_body_override,
             delta_full_body=_delta_full_body,
             append_base_hash=append_base_hash,
+            image_loader=image_loader,
         )
         if delta_result is not None:
             return delta_result
@@ -1728,6 +1734,10 @@ async def retain_batch(
     # at different boundaries and makes every stored chunk look changed. Fail loud.
     chunk_size = config.retain_chunk_size
     structured_chunk_size = config.retain_structured_chunk_size
+    # Same reasoning for the image budget: it moves chunk boundaries in exactly
+    # the same way, so it must come from this resolved config too.
+    image_cost_chars = config.retain_image_chunk_cost_chars
+    max_images_per_chunk = config.retain_max_images_per_chunk
     all_pre_chunks: list[str] = []
     chunk_to_content: list[int] = []  # maps chunk index -> index into contents
     for content_idx, content in enumerate(contents):
@@ -1738,6 +1748,8 @@ async def retain_batch(
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
+            image_cost_chars=image_cost_chars,
+            max_images_per_chunk=max_images_per_chunk,
         ):
             all_pre_chunks.append(chunk)
             chunk_to_content.append(content_idx)
@@ -1790,6 +1802,7 @@ async def retain_batch(
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
         force_reextract=force_reextract,
+        image_loader=image_loader,
     )
 
 
@@ -2208,6 +2221,7 @@ async def _streaming_retain_batch(
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
     force_reextract: bool = False,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -2512,6 +2526,7 @@ async def _streaming_retain_batch(
                     pool,
                     operation_id,
                     schema,
+                    image_loader=image_loader,
                 )
             finally:
                 reset_call_metadata(meta_token)
@@ -3428,6 +3443,7 @@ async def _try_delta_retain(
     # `document_body_override`, which an append fills with only the new tail.
     delta_full_body: str | None = None,
     append_base_hash: str | None = None,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None] | None:
     """
     Attempt delta retain for a document upsert. Returns result tuple if delta
@@ -3743,6 +3759,7 @@ async def _try_delta_retain(
             pool,
             operation_id,
             schema,
+            image_loader=image_loader,
         )
     finally:
         reset_call_metadata(meta_token)
@@ -4169,6 +4186,8 @@ def _chunk_contents_for_delta(contents: list[RetainContent], config) -> dict[int
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
+            image_cost_chars=config.retain_image_chunk_cost_chars,
+            max_images_per_chunk=config.retain_max_images_per_chunk,
         )
         for chunk_text in chunks:
             result[global_chunk_idx] = chunk_text
