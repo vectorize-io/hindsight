@@ -130,3 +130,33 @@ def test_the_chunk_sequence_reconstructs_the_document_in_order() -> None:
     chunks = _chunk(text)
 
     assert "".join(chunks).replace("\n", "").replace(" ", "") == text.replace("\n", "").replace(" ", "")
+
+
+def test_an_image_costlier_than_the_whole_budget_still_fits() -> None:
+    """A small retain_chunk_size must not make images unchunkable.
+
+    The cost and the chunk size are configured independently — a bank or retain
+    strategy may lower retain_chunk_size below the image cost default for its own
+    text-only reasons. Regression for a config rule that rejected exactly that
+    (it broke `retain_chunk_size: 800` strategies on upgrade); the chunker clamps
+    instead.
+    """
+    image = _placeholder(b"big")
+
+    chunks = _chunk(f"intro\n\n{image}\n\noutro", max_chars=800, cost=5000)
+
+    assert [h for chunk in chunks for h in iter_placeholder_hashes(chunk)] == [compute_image_hash(b"big")]
+    # Still idempotent under the clamp.
+    for chunk in chunks:
+        assert _chunk(chunk, max_chars=800, cost=5000) == [chunk]
+
+
+def test_an_over_budget_image_does_not_starve_the_surrounding_text() -> None:
+    """Clamping must not drop prose — it only stops the image sharing a chunk."""
+    image = _placeholder(b"big")
+
+    chunks = _chunk(f"intro\n\n{image}\n\noutro", max_chars=800, cost=5000)
+
+    joined = "".join(chunks)
+    assert "intro" in joined
+    assert "outro" in joined

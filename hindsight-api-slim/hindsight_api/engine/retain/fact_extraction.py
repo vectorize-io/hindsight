@@ -668,6 +668,17 @@ def _iter_image_aware_chunks(
     budgets, so re-chunking one returns it unchanged and ``chunk_id`` stays stable
     across re-ingests (issue #2301).
     """
+    # An image can cost at most the whole budget, never more. The cost and the
+    # chunk size are configured independently — a bank or retain strategy may
+    # lower retain_chunk_size below the image default for reasons of its own —
+    # and without this an image would exceed a budget it could never fit in,
+    # flushing forever and yielding a chunk per placeholder with no text at all.
+    # Config validation deliberately does NOT reject that combination: doing so
+    # made text-only configs invalid because of an image default they never
+    # chose. Clamping degrades gracefully instead — the image simply leaves less
+    # room for prose beside it.
+    image_cost_chars = min(image_cost_chars, max_chars)
+
     buffered: list[str] = []
     cost = 0
     images = 0
