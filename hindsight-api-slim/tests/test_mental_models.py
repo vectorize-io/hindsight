@@ -1967,13 +1967,22 @@ class TestMentalModelRefreshTagSecurity:
         )
 
         # SECURITY CHECK: The refreshed content should ONLY include information from
-        # memories/models tagged with user:alice, NOT from user:bob or untagged
+        # memories/models tagged with user:alice, NOT from user:bob or untagged.
+        #
+        # The criteria asserts the ABSENCE half strictly and the presence half loosely,
+        # on purpose. What tag scoping guarantees is that nothing outside the scope can
+        # be reached; which of Alice's own details a refresh chooses to write up is the
+        # summariser's call. Demanding four specific ones ("frontend, React, morning
+        # preference, coffee") failed CI on a refresh that leaked nothing whatsoever and
+        # simply summarised Alice as a React frontend engineer — reported as a SECURITY
+        # VIOLATION, which it was not.
         await assert_meets_criteria(
             response=refreshed["content"],
             criteria=(
-                "The content mentions Alice and her work (frontend, React, morning preference, coffee). "
-                "It does NOT mention Bob, Python (as a programming language Bob uses), tea, "
-                "100 employees, or 'growing fast'. Minor phrasing variations are acceptable."
+                "The content is about Alice and her work. It does NOT mention Bob, "
+                "Python (as a programming language Bob uses), tea, 100 employees, or "
+                "'growing fast'. Which of Alice's own details it includes does not matter, "
+                "and minor phrasing variations are acceptable."
             ),
             context=(
                 "Alice's data: frontend React engineer, works mornings, drinks coffee, favorite color blue. "

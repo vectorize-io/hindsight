@@ -191,6 +191,14 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
 
 # Fallback per-request deadline when the caller resolved no timeout. A safety net
 # for network hangs; valid slow responses are well under this.
+#: How many times a deadline abort is retried, over and above the API-error ladder.
+#: Two, because the stall is per-request rather than sticky: CI logs have calls that
+#: stall for the whole deadline and then answer in ~3s on the very next attempt, at a
+#: rate high enough (~1 in 4) that a single retry still left ~5% of calls stalling
+#: twice. It stays a small fixed number so the worst case is bounded arithmetic —
+#: deadline x (1 + _TIMEOUT_RETRIES) — that an operation's budget can be checked against.
+_TIMEOUT_RETRIES = 2
+
 _DEFAULT_GEMINI_TIMEOUT = 90.0
 
 
@@ -474,6 +482,9 @@ class GeminiLLM(LLMInterface):
         generation_config = _build_generation_config(cache_active)
 
         last_exception = None
+        # Separate from `max_retries`, which is the API-error ladder — see
+        # _TIMEOUT_RETRIES for why a deadline abort gets its own small budget.
+        timeout_retries_left = _TIMEOUT_RETRIES
 
         for attempt in range(max_retries + 1):
             try:
@@ -694,6 +705,32 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini API error: {type(e).__name__}: {str(e)}")
                     raise
 
+            except TimeoutError as e:
+                # The per-request deadline fired: this call produced nothing at all.
+                # That is the most transient failure there is — a healthy Gemini call
+                # answers in well under a second, so a stall is the provider dropping
+                # this one request and the retry almost always lands immediately.
+                # Before this, the generic handler below re-raised it and a stall was
+                # terminal: the caller paid the whole deadline and still got an error,
+                # which is how a single hung reflect iteration cost 120s and left the
+                # agent to answer from a degraded forced pass.
+                #
+                # A small fixed budget of such retries, tracked separately from the
+                # API-error ladder, so the worst case stays bounded arithmetic the
+                # operation's wall budget can be checked against (see _TIMEOUT_RETRIES).
+                # No backoff — the server never answered, so there is nothing to give
+                # room to, and the deadline already spent the time.
+                last_exception = e
+                if timeout_retries_left > 0 and attempt < max_retries:
+                    timeout_retries_left -= 1
+                    logger.warning(
+                        f"Gemini call hit its {self._request_timeout}s deadline with no response; "
+                        f"retrying ({timeout_retries_left} left)"
+                    )
+                    continue
+                logger.error(f"Gemini call hit its {self._request_timeout}s deadline; giving up")
+                raise
+
             except Exception as e:
                 logger.error(f"Unexpected error during Gemini call: {type(e).__name__}: {str(e)}")
                 raise
@@ -850,6 +887,9 @@ class GeminiLLM(LLMInterface):
         config = _build_tools_config(cache_active)
 
         last_exception = None
+        # Separate from `max_retries`, which is the API-error ladder — see
+        # _TIMEOUT_RETRIES for why a deadline abort gets its own small budget.
+        timeout_retries_left = _TIMEOUT_RETRIES
         for attempt in range(max_retries + 1):
             try:
                 # With the cache active, send only the un-cached tail (delta);
@@ -1006,6 +1046,32 @@ class GeminiLLM(LLMInterface):
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
+                raise
+
+            except TimeoutError as e:
+                # The per-request deadline fired: this call produced nothing at all.
+                # That is the most transient failure there is — a healthy Gemini tool call
+                # answers in well under a second, so a stall is the provider dropping
+                # this one request and the retry almost always lands immediately.
+                # Before this, the generic handler below re-raised it and a stall was
+                # terminal: the caller paid the whole deadline and still got an error,
+                # which is how a single hung reflect iteration cost 120s and left the
+                # agent to answer from a degraded forced pass.
+                #
+                # A small fixed budget of such retries, tracked separately from the
+                # API-error ladder, so the worst case stays bounded arithmetic the
+                # operation's wall budget can be checked against (see _TIMEOUT_RETRIES).
+                # No backoff — the server never answered, so there is nothing to give
+                # room to, and the deadline already spent the time.
+                last_exception = e
+                if timeout_retries_left > 0 and attempt < max_retries:
+                    timeout_retries_left -= 1
+                    logger.warning(
+                        f"Gemini tool call hit its {self._request_timeout}s deadline with no response; "
+                        f"retrying ({timeout_retries_left} left)"
+                    )
+                    continue
+                logger.error(f"Gemini tool call hit its {self._request_timeout}s deadline; giving up")
                 raise
 
             except Exception as e:

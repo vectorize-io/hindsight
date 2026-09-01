@@ -1882,7 +1882,17 @@ jobs:
 
     - name: Run core LLM tests
       working-directory: ./hindsight-api-slim
-      run: uv run pytest tests -v -m "hs_llm_core" --timeout 600
+      # --reruns, and ONLY on this job. Every test here asserts what a model chose to
+      # do — a judge verdict, whether the agent called done() rather than being forced,
+      # whether a summary kept a detail — so a single run's failure does not separate a
+      # regression from the model landing differently. It shows: this job has failed on
+      # a *different* test in most recent runs (5 distinct ones across 2 runs of #3982
+      # alone), which makes a red here carry no signal at all. Two reruns keep a real
+      # regression red — it reproduces — while a coin-flip settles.
+      #
+      # Deliberately NOT applied to the deterministic shards (test-api): there a rerun
+      # would hide exactly the races those tests exist to catch.
+      run: uv run pytest tests -v -m "hs_llm_core" --timeout 600 --reruns 2 --reruns-delay 5
 
   test-api-llm-acceptance:
     needs: [detect-changes]
