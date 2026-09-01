@@ -730,8 +730,10 @@ describe("HindsightClient.configureBank — missions are seeded once (#2492)", (
     expect(body.bank.observations_mission).toBeUndefined();
   });
 
-  it("still re-applies the strategies and labels the plugin writes through", async () => {
-    // Not preferences: a bank missing `conversation` would reject the session write-back.
+  it("still adds the strategies and labels the plugin writes through", async () => {
+    // Not preferences: without `conversation` the session write-back silently extracts under the
+    // bank's own config (the server warns on an unknown strategy, it does not reject), so a
+    // transcript would get whatever a commit diff gets. A bank that has none must still get them.
     const body = await run([], routes({ retain_mission: "mine" }));
     expect(Object.keys(body.bank.retain_strategies)).toEqual(
       expect.arrayContaining(["git", "gitlog", "conversation", "document"])

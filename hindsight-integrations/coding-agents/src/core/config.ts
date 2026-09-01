@@ -151,9 +151,11 @@ export interface RawConfig {
    *  Writing is strictly ADDITIVE: the plugin adds what the bank does not already define and never
    *  overwrites an existing value, so an edit made in the control plane survives (#3927). Set false
    *  to keep it out of the bank's configuration entirely — for a bank you shape yourself, or share
-   *  with non-coding work. That bank must then define the strategies this plugin retains under
-   *  (`git`, `gitlog`, `conversation`, `document`, `survey`), since a retain naming a strategy the
-   *  bank lacks is rejected. Knowledge pages are seeded either way (see `pageTriggerType`). */
+   *  with non-coding work. That bank should then define the strategies this plugin retains under
+   *  (`git`, `gitlog`, `conversation`, `document`, `survey`): the server does not reject a retain
+   *  naming a strategy the bank lacks, it logs a warning and extracts with the bank's own config
+   *  instead — so a diff, a transcript and a survey marker all get the same generic treatment.
+   *  Knowledge pages are seeded either way (see `pageTriggerType`). */
   manageBankConfig?: boolean;
   /** How consolidation groups the observations this plugin's memories feed (default "shared" — one
    *  global scope per bank, so every agent working a repo builds ONE set of beliefs; see

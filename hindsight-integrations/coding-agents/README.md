@@ -474,9 +474,11 @@ bank silent there and seeds it again.
 
 Set `manageBankConfig: false` to keep the plugin out of the bank's configuration altogether — the
 right setting for a bank you share with non-coding work, or one you configure yourself. That bank
-must then define the five strategies above itself, because a retain naming a strategy the bank does
-not have is rejected. Knowledge pages are seeded either way; `pageTriggerType` governs what they
-cost.
+should then define the five strategies above itself. Note that the miss is **silent**: the server
+does not reject a retain naming a strategy the bank lacks, it logs a warning and extracts with the
+bank's own configuration — so a commit diff, a session transcript and a survey marker would all get
+the same generic treatment instead of the extraction each needs. Knowledge pages are seeded either
+way; `pageTriggerType` governs what they cost.
 
 Like every field here it can be set per bank, which is usually where it belongs:
 

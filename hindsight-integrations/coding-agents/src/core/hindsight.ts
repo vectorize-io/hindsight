@@ -347,8 +347,9 @@ export class HindsightClient {
    *  continue with the template-only path.
    *
    *  `manage: false` skips the config half entirely, for a bank whose owner shapes it themselves.
-   *  That bank must then define the strategies this plugin writes under (`git`, `gitlog`,
-   *  `conversation`, `document`, `survey`) — a retain naming a strategy the bank lacks is rejected. */
+   *  That bank should then define the strategies this plugin writes under (`git`, `gitlog`,
+   *  `conversation`, `document`, `survey`): an unknown strategy name is not an error server-side,
+   *  it just falls back to the bank's own config, so the miss is silent. */
   async configureBank(
     opts: { reset?: boolean; pageTrigger?: PageTrigger; manage?: boolean } = {}
   ): Promise<void> {
