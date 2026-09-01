@@ -8,6 +8,8 @@ description: "Add long-term memory to the Continue.dev coding assistant with Hin
 
 Long-term memory for the [Continue.dev](https://continue.dev) coding assistant, powered by [Hindsight](https://vectorize.io/hindsight). Recall relevant project memory directly into chat, and optionally let the agent recall and retain automatically in agent mode.
 
+[View Changelog →](/changelog/integrations/continue)
+
 ## How It Works
 
 Continue has no hook that runs before a message is sent, but it supports two native extension points that `hindsight-continue` uses:

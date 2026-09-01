@@ -14,6 +14,8 @@ It registers two components on your agent:
 
 Both are enabled by default, layer on top of elizaOS's existing memory, and fail safe — a memory-service hiccup never blocks your agent from responding.
 
+[View Changelog →](/changelog/integrations/eliza)
+
 ## Installation
 
 ```bash

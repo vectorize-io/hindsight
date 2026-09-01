@@ -8,6 +8,8 @@ description: "Add automatic long-term memory to Vercel Eve agents with Hindsight
 
 Automatic long-term memory for [Vercel Eve](https://github.com/vercel/eve) agents using [Hindsight](https://vectorize.io/hindsight). Eve is filesystem-first — an agent gains a capability by dropping a file under `agent/`. The `@vectorize-io/hindsight-eve` package wires two files that call Hindsight's REST API directly, so your agent gets memory that **just works** — relevant memory is injected before every turn and each exchange is retained after — **without the model ever choosing to call a tool.**
 
+[View Changelog →](/changelog/integrations/eve)
+
 ## Install
 
 ```bash

@@ -8,6 +8,8 @@ description: "Add persistent long-term memory to Pipecat voice AI pipelines via 
 
 Persistent long-term memory for [Pipecat](https://github.com/pipecat-ai/pipecat) voice AI pipelines via [Hindsight](https://vectorize.io/hindsight). A single `FrameProcessor` slots between your user context aggregator and LLM service — recalling relevant memories before each turn and retaining conversation content after.
 
+[View Changelog →](/changelog/integrations/pipecat)
+
 ## Quick Start
 
 :::tip Recommended: Hindsight Cloud

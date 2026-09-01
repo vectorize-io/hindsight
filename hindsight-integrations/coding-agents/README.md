@@ -12,6 +12,8 @@ tie-break policy. Those decisions live in git history and past conversations. Th
 in front of the agent at the moment it starts working, and keeps a curated set of **knowledge pages**
 (architecture, conventions, in-flight initiatives) that future sessions start from.
 
+[View Changelog →](https://hindsight.vectorize.io/changelog/integrations/coding-agents)
+
 ## Install
 
 <!-- skill:begin title="Install / update" -->

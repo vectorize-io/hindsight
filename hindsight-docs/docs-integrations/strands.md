@@ -8,6 +8,8 @@ description: "Add long-term memory to Strands Agents SDK agents with Hindsight. 
 
 Persistent memory tools for [Strands Agents SDK](https://github.com/strands-agents/sdk-python) agents via Hindsight. Give your agents long-term memory with retain, recall, and reflect — using Strands' native `@tool` pattern.
 
+[View Changelog →](/changelog/integrations/strands)
+
 ## Features
 
 - **Native `@tool` Functions** - Tools are plain Python functions, compatible with `Agent(tools=[...])`

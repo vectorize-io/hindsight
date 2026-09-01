@@ -11,6 +11,8 @@ Persistent long-term memory for [Haystack](https://haystack.deepset.ai/) agents 
 - **`create_hindsight_tools(...)`** — Returns a list of Haystack `Tool`s (`retain_memory`, `recall_memory`, `reflect_on_memory`) the model can call directly inside a turn.
 - **`HindsightMemoryWrapper`** — A Haystack `Toolset` that bundles the same tools and adds optional **auto-recall** (inject relevant memories into the system prompt before each turn) and **auto-retain** (store user + assistant messages after each turn).
 
+[View Changelog →](/changelog/integrations/haystack)
+
 ## Installation
 
 ```bash

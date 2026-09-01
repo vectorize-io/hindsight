@@ -8,6 +8,8 @@ description: "Add long-term memory to OpenAI Agents SDK agents with Hindsight. P
 
 Persistent long-term memory for [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) agents via Hindsight. Provides `FunctionTool` instances that plug directly into the OpenAI Agents SDK `Agent`.
 
+[View Changelog →](/changelog/integrations/openai-agents)
+
 ## Features
 
 - **Memory Tools** — retain, recall, and reflect as OpenAI Agents SDK `FunctionTool` instances compatible with `Agent(tools=[...])`

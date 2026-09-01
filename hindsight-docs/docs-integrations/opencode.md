@@ -25,6 +25,8 @@ Memory does not move automatically — the banks are scoped differently and this
 
 Persistent long-term memory plugin for [OpenCode](https://opencode.ai) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations, recalls relevant context on session start, and provides retain/recall/reflect tools the agent can call directly.
 
+[View Changelog →](/changelog/integrations/opencode)
+
 ## Quick Start
 
 Add to your `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):

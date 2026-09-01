@@ -9,6 +9,8 @@ Persistent long-term memory for [Google ADK](https://adk.dev/) agents via Hindsi
 > **💡 Recommended: Hindsight Cloud**
 >
 [Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key. The integration points at production by default — no local server to manage.
+[View Changelog →](../../changelog/integrations/google-adk.md)
+
 ## Installation
 
 ```bash

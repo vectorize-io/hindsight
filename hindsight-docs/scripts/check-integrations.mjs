@@ -12,6 +12,10 @@
  *      injected at render time, so it isn't covered by Docusaurus' build-time
  *      broken-link check — this is what catches a missing page.)
  *
+ *   3. Discoverable — every integration with a changelog page links to it from
+ *      its doc page. The changelog pages are written by the release script and
+ *      were otherwise reachable only by guessing the URL.
+ *
  *   2. Reverse — every *released* integration (a published git tag
  *      `integrations/<name>/vX.Y.Z`) appears in integrations.json, so a release
  *      can't silently skip the gallery/sidebar. Degrades to a skip when tags
@@ -20,7 +24,7 @@
  * Run: node scripts/check-integrations.mjs
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -29,6 +33,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const docsDir = join(__dirname, '..');
 const integrationsJson = join(docsDir, 'src', 'data', 'integrations.json');
 const integrationsDocsDir = join(docsDir, 'docs-integrations');
+const changelogDir = join(docsDir, 'src', 'pages', 'changelog', 'integrations');
 
 // Released integrations that intentionally have no gallery/doc page.
 // cloudflare-oauth-proxy is internal infrastructure (an OAuth proxy Worker,
@@ -105,6 +110,38 @@ if (released === null || released.size === 0) {
   } else {
     console.log(`[integrations] ✅ All ${released.size - EXCLUDED.size} released integrations are present in integrations.json.`);
   }
+}
+
+// ─── 3. Discoverable: a changelog page is linked from its doc page ────────────
+const changelogSlugs = readdirSync(changelogDir)
+  .filter((f) => f.endsWith('.md') && f !== 'index.md')
+  .map((f) => f.slice(0, -'.md'.length));
+
+const unlinked = [];
+let checkedChangelogs = 0;
+for (const slug of changelogSlugs) {
+  if (!documented.has(slug)) continue; // no gallery entry ⇒ not user-facing (see EXCLUDED)
+  checkedChangelogs++;
+  const docPath = ['md', 'mdx']
+    .map((ext) => join(integrationsDocsDir, `${slug}.${ext}`))
+    .find((p) => existsSync(p));
+  if (!docPath) continue; // already reported by check 1
+  if (!readFileSync(docPath, 'utf8').includes(`/changelog/integrations/${slug}`)) {
+    unlinked.push(slug);
+  }
+}
+if (unlinked.length > 0) {
+  failed = true;
+  console.error('[integrations] ❌ Changelog pages not linked from their doc page:\n');
+  for (const slug of unlinked) {
+    console.error(`  ${slug} — add [View Changelog →](/changelog/integrations/${slug})`);
+  }
+  console.error(
+    '\nThe /changelog listing finds these pages automatically, but the doc page is where ' +
+      'someone using the integration looks first.\n',
+  );
+} else {
+  console.log(`[integrations] ✅ All ${checkedChangelogs} changelog pages are linked from their doc page.`);
 }
 
 process.exit(failed ? 1 : 0);
