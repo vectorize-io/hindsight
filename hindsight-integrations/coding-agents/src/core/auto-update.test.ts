@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,10 +69,18 @@ describe("maybeAutoUpdate", () => {
 
   const opts = (
     runtime: string,
-    extra: { spawn?: ReturnType<typeof spawnMock>; fetch?: unknown; now?: number }
+    extra: {
+      spawn?: ReturnType<typeof spawnMock>;
+      fetch?: unknown;
+      now?: number;
+      lockFile?: string;
+    }
   ): AutoUpdateOptions => ({
     pkgRoot: runtime,
     runtimeDir: runtime,
+    // Per-test lock inside the throwaway runtime dir: the real one is machine-global, and tests
+    // running in parallel would otherwise block each other for LOCK_STALE_MS.
+    lockFile: extra.lockFile ?? join(runtime, "update.lock"),
     spawn: extra.spawn ? asSpawn(extra.spawn) : undefined,
     fetch: asFetch(extra.fetch),
     now: extra.now,
@@ -170,6 +178,67 @@ describe("maybeAutoUpdate", () => {
     );
     expect(offline).toHaveBeenCalledTimes(1);
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  // Several agents starting at once all read "due" before any has stamped it. Without a lock they
+  // all spawn `update`, and two concurrent stageRuntime runs (rmSync dist, then cpSync) can leave a
+  // half-written runtime with missing entry points.
+  it("lets only ONE of several simultaneous session starts spawn an updater", async () => {
+    const { runtime, fetchOk } = staged("0.4.2");
+    const lock = join(tmp(), "auto-update.lock");
+    const spawns = [spawnMock(), spawnMock(), spawnMock()];
+    const now = 1_000_000_000;
+
+    const started = await Promise.all(
+      spawns.map((spawn) =>
+        maybeAutoUpdate(
+          { autoUpdate: true },
+          opts(runtime, { spawn, fetch: fetchOk("0.4.3"), now, lockFile: lock })
+        )
+      )
+    );
+
+    expect(started.filter(Boolean)).toEqual(["0.4.3"]);
+    expect(spawns.filter((s) => s.mock.calls.length).length).toBe(1);
+  });
+
+  it("frees the lock when the check finds nothing, so the next window is not blocked", async () => {
+    const { runtime, spawn, fetchOk } = staged("0.4.2");
+    const lock = join(tmp(), "auto-update.lock");
+    const t0 = 1_000_000_000;
+
+    await maybeAutoUpdate(
+      { autoUpdate: true },
+      opts(runtime, { spawn, fetch: fetchOk("0.4.2"), now: t0, lockFile: lock })
+    );
+    expect(existsSync(lock)).toBe(false);
+
+    // A day later the next check can claim it and act.
+    expect(
+      await maybeAutoUpdate(
+        { autoUpdate: true },
+        opts(runtime, {
+          spawn,
+          fetch: fetchOk("0.4.3"),
+          now: t0 + CHECK_INTERVAL_MS,
+          lockFile: lock,
+        })
+      )
+    ).toBe("0.4.3");
+  });
+
+  it("treats a lock whose holder is gone as stale rather than waiting out the TTL", async () => {
+    const { runtime, spawn, fetchOk } = staged("0.4.2");
+    const lock = join(tmp(), "auto-update.lock");
+    // pid 2^22 is above every Linux/macOS pid_max — nothing can be running under it.
+    writeFileSync(lock, JSON.stringify({ pid: 4_194_304, ts: Date.now() }));
+
+    expect(
+      await maybeAutoUpdate(
+        { autoUpdate: true },
+        opts(runtime, { spawn, fetch: fetchOk("0.4.3"), lockFile: lock })
+      )
+    ).toBe("0.4.3");
   });
 
   it("stays out of the survey's own headless session", async () => {

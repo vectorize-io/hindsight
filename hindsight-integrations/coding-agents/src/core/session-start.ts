@@ -352,10 +352,13 @@ export async function runSessionStartHook(
     let cfg = loadConfig({ harness });
     setLogLevel(cfg.logLevel);
     syncCompanionSkill(harness); // keep the installed skill current with the package version
-    // …and keep the package itself current. Detached and rate-limited to once a day; the update
-    // lands for the NEXT session, so nothing here waits on it.
-    void maybeAutoUpdate(cfg);
     if (cfg.disabled) return;
+    // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
+    // `disabled` means an inert plugin, and a network call plus a background npm install is not
+    // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
+    // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
+    // Detached and rate-limited to once a day; the update lands for the NEXT session.
+    void maybeAutoUpdate(cfg);
 
     // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
     // same bank however far the agent navigates (#3563).

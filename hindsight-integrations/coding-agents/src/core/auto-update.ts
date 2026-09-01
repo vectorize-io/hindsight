@@ -28,8 +28,15 @@
  * worse trade than the window it closes.
  */
 import { spawn as realSpawn } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config";
@@ -123,6 +130,75 @@ function dueForCheck(file: string, now: number): boolean {
 }
 
 /**
+ * Serialise updaters across concurrent sessions.
+ *
+ * The 24h stamp is not enough on its own: several agents starting within the same second all read
+ * "due" before any of them has written it, so they all spawn an updater. Two `update` runs racing
+ * means two `stageRuntime` calls, and staging is `rmSync(dist)` then `cpSync` — one process can
+ * delete the directory the other is half way through writing, leaving a runtime with missing entry
+ * points and every hook broken until a manual re-install. That burst is not hypothetical: this is
+ * a plugin for machines that routinely run five agents at once.
+ *
+ * Same shape as deepen.ts's per-bank lock, and for the same reason — a TTL alone would wedge the
+ * updater for its whole window after a crash, so the holder's pid decides liveness. The pid stored
+ * is the detached CHILD's, because the copy happens in the child and outlives this process.
+ *
+ * In the OS temp dir, deliberately: it is scratch, and a reboot clearing it can only cost one
+ * redundant check.
+ */
+const LOCK_STALE_MS = 10 * 60 * 1000;
+
+function lockFile(): string {
+  return join(tmpdir(), "hindsight-coding-agent", "auto-update.lock");
+}
+
+function acquireUpdateLock(file: string, now: number): boolean {
+  try {
+    const held = JSON.parse(readFileSync(file, "utf8")) as { pid?: number; ts?: number };
+    if (held.ts && now - held.ts < LOCK_STALE_MS) {
+      let holderAlive = false;
+      if (held.pid) {
+        try {
+          process.kill(held.pid, 0);
+          holderAlive = true;
+        } catch {
+          /* ESRCH: the holder died — the lock is stale NOW, not in LOCK_STALE_MS */
+        }
+      }
+      if (holderAlive) return false;
+    }
+  } catch {
+    /* no/unreadable lock — free */
+  }
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ pid: process.pid, ts: now }));
+    return true;
+  } catch {
+    // Cannot claim the lock, so we cannot prove we are the only updater. Skip rather than race.
+    return false;
+  }
+}
+
+/** Hand the lock to the detached child, whose staging is what actually needs guarding. */
+function holdLockFor(file: string, pid: number | undefined, now: number): void {
+  try {
+    if (pid === undefined) return releaseUpdateLock(file);
+    writeFileSync(file, JSON.stringify({ pid, ts: now }));
+  } catch {
+    /* best-effort */
+  }
+}
+
+function releaseUpdateLock(file: string): void {
+  try {
+    unlinkSync(file);
+  } catch {
+    /* already gone */
+  }
+}
+
+/**
  * Stamp the check BEFORE acting on its result.
  *
  * The spawned update can fail — offline, a registry hiccup, a read-only home — and re-checking on
@@ -157,6 +233,8 @@ export interface AutoUpdateOptions {
   pkgRoot?: string;
   /** The staged runtime directory this may update (tests); defaults to ~/.hindsight/coding-agents. */
   runtimeDir?: string;
+  /** Cross-process updater lock (tests); defaults to one in the OS temp dir. */
+  lockFile?: string;
   spawn?: typeof realSpawn;
   fetch?: typeof fetch;
   now?: number;
@@ -190,21 +268,41 @@ export async function maybeAutoUpdate(
     const current = stagedVersion(pkgRoot);
     if (!current) return ""; // cannot tell what is installed — never guess and overwrite it
 
-    const latest = await latestVersion(opts.fetch ?? fetch);
-    stampCheck(file, now, latest);
-    if (!latest || !isNewer(latest, current)) return "";
+    // Claimed before the registry call, so a burst of simultaneous session starts makes ONE
+    // request and can only ever produce one updater.
+    const lock = opts.lockFile ?? lockFile();
+    if (!acquireUpdateLock(lock, now)) return "";
+    try {
+      const latest = await latestVersion(opts.fetch ?? fetch);
+      stampCheck(file, now, latest);
+      if (!latest || !isNewer(latest, current)) {
+        releaseUpdateLock(lock);
+        return "";
+      }
 
-    log.info("auto-update", `updating the Hindsight runtime ${current} -> ${latest}`);
-    const child = (opts.spawn ?? realSpawn)("npx", ["-y", `${PACKAGE_NAME}@${latest}`, "update"], {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    // A spawn failure (no npx on PATH, EACCES) arrives asynchronously as an 'error' event; an
-    // unhandled one would take the session start down with it.
-    child.on("error", (e) => log.warn("auto-update", `update spawn failed: ${e.message}`));
-    child.unref();
-    return latest;
+      log.info("auto-update", `updating the Hindsight runtime ${current} -> ${latest}`);
+      const child = (opts.spawn ?? realSpawn)(
+        "npx",
+        ["-y", `${PACKAGE_NAME}@${latest}`, "update"],
+        {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        }
+      );
+      // A spawn failure (no npx on PATH, EACCES) arrives asynchronously as an 'error' event; an
+      // unhandled one would take the session start down with it.
+      child.on("error", (e) => {
+        log.warn("auto-update", `update spawn failed: ${e.message}`);
+        releaseUpdateLock(lock);
+      });
+      child.unref();
+      holdLockFor(lock, child.pid, now);
+      return latest;
+    } catch (e) {
+      releaseUpdateLock(lock);
+      throw e;
+    }
   } catch {
     return ""; // an update check must never break a session
   }
