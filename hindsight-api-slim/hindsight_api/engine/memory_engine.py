@@ -10657,9 +10657,9 @@ class MemoryEngine(MemoryEngineInterface):
         Side-effect-free and idempotent.
         """
         from .response_models import ExtractedFact
-        from .retain import bank_utils, fact_extraction
+        from .retain import fact_extraction
 
-        # Resolve the tenant schema before touching any bank-scoped data (config, bank profile).
+        # Resolve the tenant schema before touching any bank-scoped data (config).
         await self._authenticate_tenant(request_context)
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
         if self._llm_config.provider == "none":
@@ -10672,14 +10672,9 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             setattr(resolved_config, key, value)
 
-        backend = await self._get_backend()
-        # Narrator primes the "Narrator:" line in the prompt. Dry-run must not
-        # create a bank just to resolve that optional display name.
-        if agent_name is None:
-            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
-            profile_name = profile["name"] if profile is not None else bank_id
-            agent_name = None if profile_name == bank_id else profile_name
-
+        # No narrator unless the caller passed one. The bank's display `name` is deliberately
+        # NOT consulted: it leaked into extracted fact text (#3962), and retain no longer
+        # derives a narrator from it either, so a dry run must mirror what retain would do.
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
         facts, _chunks, usage = await fact_extraction.extract_facts_from_text(
             text=content,
