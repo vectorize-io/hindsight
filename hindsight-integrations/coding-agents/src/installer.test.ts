@@ -1747,22 +1747,36 @@ describe("every installed companion skill is kept current by the session-start s
     });
   }
 
-  it.each(INSTALLERS.map((i) => i.name))("%s", async (harness) => {
-    const ctx = ctxWithPackagedSkill("packaged v1");
-    run(["install", harness], ctx);
-    const copies = findSkillCopies(ctx.home);
-    if (!copies.length) return; // host without a skills mechanism (opencode, Kilo) — nothing to keep current
+  /** Hosts that install no skill at all, and why — so a host that silently STOPS installing one
+   *  fails here instead of passing as "nothing to check". opencode and its Kilo fork have no
+   *  skills mechanism; Devin and Dcode read no user-level skills directory either. */
+  const NO_SKILL_MECHANISM = ["dcode", "devin-cli", "kilo", "opencode"];
 
-    // Where it landed must be the directory the shared map names, so the self-update looks there.
-    expect(copies.map((parts) => parts.slice(0, -1))).toEqual([SKILL_DIRS[harness]]);
-
-    // And the self-update must actually refresh THIS host's copy when the package moves on.
-    const installed = join(ctx.home, ...copies[0], "SKILL.md");
-    const srcDir = mkdtempSync(join(tmpdir(), "hs-pkg-newer-"));
-    homes.push(srcDir);
-    writeFileSync(join(srcDir, "SKILL.md"), "packaged v2");
+  it("lands in the mapped directory and is refreshed there, for every host that has one", async () => {
     const { syncCompanionSkill } = await import("./core/skill-sync");
-    syncCompanionSkill(harness, { home: ctx.home, srcDir });
-    expect(readFileSync(installed, "utf8")).toBe("packaged v2");
+    const withoutSkill: string[] = [];
+    for (const harness of INSTALLERS.map((i) => i.name)) {
+      const ctx = ctxWithPackagedSkill("packaged v1");
+      run(["install", harness], ctx);
+      const copies = findSkillCopies(ctx.home);
+      if (!copies.length) {
+        withoutSkill.push(harness);
+        continue;
+      }
+      // Where it landed must be the directory the shared map names, so the self-update looks there.
+      expect(
+        copies.map((parts) => parts.slice(0, -1)),
+        harness
+      ).toEqual([SKILL_DIRS[harness]]);
+
+      // And the self-update must actually refresh THIS host's copy when the package moves on.
+      const installed = join(ctx.home, ...copies[0], "SKILL.md");
+      const srcDir = mkdtempSync(join(tmpdir(), "hs-pkg-newer-"));
+      homes.push(srcDir);
+      writeFileSync(join(srcDir, "SKILL.md"), "packaged v2");
+      syncCompanionSkill(harness, { home: ctx.home, srcDir });
+      expect(readFileSync(installed, "utf8"), harness).toBe("packaged v2");
+    }
+    expect(withoutSkill.sort()).toEqual(NO_SKILL_MECHANISM);
   });
 });
