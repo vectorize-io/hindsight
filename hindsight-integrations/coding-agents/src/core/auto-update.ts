@@ -255,9 +255,14 @@ function stampCheck(file: string, now: number, latest: string): void {
 /** Ask the registry for the published version, or "" if it cannot be determined. */
 async function latestVersion(fetchImpl: typeof fetch): Promise<string> {
   try {
+    // No `application/vnd.npm.install-v1+json` accept header. That abbreviated-packument media
+    // type is only served for the PACKUMENT (`/<pkg>`); asking for it on `/<pkg>/latest` gets a
+    // hard 406, which this function turned into "" — indistinguishable from "no newer version", so
+    // the runtime silently never updated (the stub in the tests answered `ok: true` regardless of
+    // what was requested, so nothing caught it). `/latest` is the smaller response anyway: one
+    // version's metadata rather than every version's.
     const r = await fetchImpl(`https://registry.npmjs.org/${PACKAGE_NAME}/latest`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      headers: { accept: "application/vnd.npm.install-v1+json" },
     });
     if (!r.ok) return "";
     const body = (await r.json()) as { version?: string };

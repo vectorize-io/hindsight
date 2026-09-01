@@ -63,8 +63,17 @@ describe("maybeAutoUpdate", () => {
     const runtime = tmp();
     writeFileSync(join(runtime, "package.json"), JSON.stringify({ version }));
     const spawn = spawnMock();
+    // Answers like the real registry, which is the point: the previous stub returned `ok: true`
+    // whatever was asked of it, so it happily served a request npmjs.org rejects with 406 —
+    // `accept: application/vnd.npm.install-v1+json` is only valid on the packument (`/<pkg>`), not
+    // on `/<pkg>/latest`. That shipped in 0.5.0 as a silent permanent no-op: the 406 became "" and
+    // read as "no newer version". A stub that encodes the caller's assumption cannot catch that.
     const fetchOk = (latest: string) =>
-      vi.fn(async () => ({ ok: true, json: async () => ({ version: latest }) }));
+      vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
+        const accept = init?.headers?.accept ?? "";
+        if (accept.includes("vnd.npm.install-v1+json")) return { ok: false, status: 406 };
+        return { ok: true, json: async () => ({ version: latest }) };
+      });
     return { runtime, spawn, fetchOk };
   };
 
