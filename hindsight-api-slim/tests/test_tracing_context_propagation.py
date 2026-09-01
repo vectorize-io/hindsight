@@ -165,6 +165,14 @@ def _recording_app(config) -> tuple[FastAPI, "InMemorySpanExporter"]:
     def reflect(bank_id: str):
         return {}
 
+    @app.post("/v1/default/banks/{bank_id}/memories/dry-run-extract")
+    def dry_run_extract(bank_id: str):
+        return {}
+
+    @app.post("/v1/default/banks/{bank_id}/files/retain")
+    def files_retain(bank_id: str):
+        return {}
+
     @app.get("/v1/default/banks/{bank_id}")
     def get_bank(bank_id: str):
         return {}
@@ -209,6 +217,19 @@ def test_operation_endpoints_are_named_after_the_hindsight_operation(monkeypatch
     assert _span_name_for(exporter, "/v1/default/banks/bank-a/memories/recall") == "hindsight.recall"
     assert _span_name_for(exporter, "/v1/default/banks/bank-a/memories") == "hindsight.retain"
     assert _span_name_for(exporter, "/v1/default/banks/bank-a/reflect") == "hindsight.reflect"
+
+
+def test_every_mapped_route_is_matched_by_its_pattern(monkeypatch):
+    """Guards the regex table: a typo in any entry silently falls back to the URL name."""
+    monkeypatch.delenv("OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", raising=False)
+    app, exporter = _recording_app(_config())
+
+    with TestClient(app) as client:
+        client.post("/v1/default/banks/bank-a/memories/dry-run-extract")
+        client.post("/v1/default/banks/bank-a/files/retain")
+
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a/memories/dry-run-extract") == "hindsight.dry_run_extract"
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a/files/retain") == "hindsight.file_convert_retain"
 
 
 def test_renamed_span_keeps_its_http_route_and_gains_the_bank_id(monkeypatch):

@@ -3272,7 +3272,7 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
     @_bind_bank_id("task_dict", key="bank_id")
-    async def execute_task(self, task_dict: dict[str, Any]):
+    async def execute_task(self, task_dict: dict[str, Any]) -> None:
         """
         Execute a task by routing it to the appropriate handler.
 
@@ -3290,17 +3290,18 @@ class MemoryEngine(MemoryEngineInterface):
         # starting a second, unrelated trace for the same logical operation.
         parent_context = extract_task_trace_context(task_dict)
         if parent_context is None:
-            return await self._execute_task(task_dict)
+            await self._execute_task(task_dict)
+            return
 
         from opentelemetry import context as otel_context
 
         token = otel_context.attach(parent_context)
         try:
-            return await self._execute_task(task_dict)
+            await self._execute_task(task_dict)
         finally:
             otel_context.detach(token)
 
-    async def _execute_task(self, task_dict: dict[str, Any]):
+    async def _execute_task(self, task_dict: dict[str, Any]) -> None:
         """Route a task to its handler. See :meth:`execute_task`."""
         task_type = task_dict.get("type")
         operation_id = task_dict.get("operation_id")
