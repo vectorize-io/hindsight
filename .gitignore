@@ -61,6 +61,7 @@ hindsight-dev/benchmarks/locomo/results/
 hindsight-dev/benchmarks/longmemeval/results/
 hindsight-dev/benchmarks/consolidation/results/
 hindsight-dev/benchmarks/perf/results/
+hindsight-dev/benchmarks/results/
 benchmarks/results/
 hindsight-cli/target
 hindsight-clients/rust/target

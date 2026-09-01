@@ -1,0 +1,329 @@
+{
+  "build": "feat-images",
+  "api_url": "http://localhost:8917",
+  "api_version": "0.9.2",
+  "runs": [
+    {
+      "article": "vpn-reset",
+      "arms": [
+        {
+          "arm": "multimodal",
+          "bank_id": "mmbench-ee6cc768-vpn-reset-multimodal",
+          "retained": true,
+          "retain_error": "",
+          "facts": [
+            "If the VPN client hangs a second time after performing the reset and reconnect steps, the tunnel is not the problem, and the issue should be escalated.",
+            "To resolve a VPN client hanging on 'Connecting', open Network Settings, click the 'Reset VPN Tunnel' button, wait ten seconds, then reconnect. | To clear the VPN client hanging issue."
+          ],
+          "image_facts": [
+            {
+              "claim": "The button that resets the VPN is labelled 'Reset VPN Tunnel'.",
+              "present": true,
+              "reasoning": "One fact explicitly states to 'click the 'Reset VPN Tunnel' button', indicating that is its label."
+            },
+            {
+              "claim": "The VPN profile shown in Network Settings is 'corp-eu-west'.",
+              "present": false,
+              "reasoning": "The remembered facts discuss troubleshooting steps for a VPN client but do not mention the name of any specific VPN profile like 'corp-eu-west'."
+            }
+          ],
+          "questions": [
+            {
+              "question": "What exactly is the button called that resets the VPN?",
+              "answer": "The button that resets the VPN is called \"Reset VPN Tunnel\".",
+              "verdict": {
+                "question": "What exactly is the button called that resets the VPN?",
+                "correct": true,
+                "abstained": false,
+                "reasoning": "The answer accurately states the exact name of the button as provided in the reference."
+              },
+              "error": ""
+            },
+            {
+              "question": "Which VPN profile does the Network Settings screen show?",
+              "answer": "I don't have information about which specific VPN profile the Network Settings screen shows. The retrieved data describes steps to resolve a VPN client hanging on 'Connecting' by using a 'Reset VPN Tunnel' button within Network Settings, but it does not identify any particular VPN profile.",
+              "verdict": {
+                "question": "Which VPN profile does the Network Settings screen show?",
+                "correct": false,
+                "abstained": true,
+                "reasoning": "The answer explicitly states that it does not have information about the specific VPN profile, which aligns with the definition of abstaining."
+              },
+              "error": ""
+            }
+          ],
+          "retain_ms": 5638
+        },
+        {
+          "arm": "text-only",
+          "bank_id": "mmbench-ee6cc768-vpn-reset-text-only",
+          "retained": true,
+          "retain_error": "",
+          "facts": [
+            "If the VPN client hangs a second time after a reset and reconnection attempt, the tunnel is not the source of the problem, and the issue should be escalated.",
+            "To resolve a VPN client hanging on 'Connecting', open Network Settings, click the relevant button, wait ten seconds, and then attempt to reconnect."
+          ],
+          "image_facts": [
+            {
+              "claim": "The button that resets the VPN is labelled 'Reset VPN Tunnel'.",
+              "present": false,
+              "reasoning": "The remembered facts mention 'reset and reconnection attempt' and 'click the relevant button' but do not specify the label of any button, particularly not 'Reset VPN Tunnel'."
+            },
+            {
+              "claim": "The VPN profile shown in Network Settings is 'corp-eu-west'.",
+              "present": false,
+              "reasoning": "The remembered facts discuss VPN client issues and troubleshooting steps, but neither fact mentions the specific VPN profile name 'corp-eu-west'."
+            }
+          ],
+          "questions": [
+            {
+              "question": "What exactly is the button called that resets the VPN?",
+              "answer": "The exact name of the button that resets the VPN is not provided in the available information. The instructions state to open Network Settings and click \"the relevant button\" or \"the button shown below\" to perform the reset.",
+              "verdict": {
+                "question": "What exactly is the button called that resets the VPN?",
+                "correct": false,
+                "abstained": false,
+                "reasoning": "The reference explicitly states the button is labelled 'Reset VPN Tunnel', while the answer claims the exact name is not provided."
+              },
+              "error": ""
+            },
+            {
+              "question": "Which VPN profile does the Network Settings screen show?",
+              "answer": "I don't have information about which specific VPN profile the Network Settings screen shows. The retrieved data describes actions to take within Network Settings if a VPN client is hanging, such as clicking a \"relevant button\" or \"the button shown below,\" but it does not name or identify a particular VPN profile.",
+              "verdict": {
+                "question": "Which VPN profile does the Network Settings screen show?",
+                "correct": false,
+                "abstained": true,
+                "reasoning": "The answer explicitly states it does not have the information about the specific VPN profile, which aligns with the definition of abstaining."
+              },
+              "error": ""
+            }
+          ],
+          "retain_ms": 5266
+        }
+      ]
+    },
+    {
+      "article": "sync-escalation",
+      "arms": [
+        {
+          "arm": "multimodal",
+          "bank_id": "mmbench-ee6cc768-sync-escalation-multimodal",
+          "retained": true,
+          "retain_error": "",
+          "facts": [
+            "Before escalating a stuck sync, the sync ID must be recorded in the incident channel to provide necessary information for the on-call team. | Ensures the on-call team has context to address the issue efficiently.",
+            "The first step in the stuck sync escalation path is to contact Tier 3 Platform. | Specifies the initial point of contact for resolving stuck syncs.",
+            "The Data Platform Team owns the stuck sync escalation process, with a response target of 15 minutes. | Involving: Data Platform Team | Establishes responsibility and expected response time for critical issues.",
+            "When a sync is stuck, engineers should not be paged directly; instead, the defined escalation path must be followed. | Ensures proper protocol and avoids direct engineer paging.",
+            "A sync is considered stuck if it has not advanced in thirty minutes. | Defines the condition for a critical system state."
+          ],
+          "image_facts": [
+            {
+              "claim": "A stuck sync escalates to Tier 3 Platform.",
+              "present": true,
+              "reasoning": "One fact states that 'The first step in the stuck sync escalation path is to contact Tier 3 Platform,' which directly supports the claim that a stuck sync escalates to Tier 3 Platform."
+            },
+            {
+              "claim": "The Data Platform Team owns the escalation.",
+              "present": true,
+              "reasoning": "One remembered fact explicitly states, 'The Data Platform Team owns the stuck sync escalation process,' which directly supports the claim that they own the escalation."
+            },
+            {
+              "claim": "The response target is 15 minutes.",
+              "present": true,
+              "reasoning": "Fact 3 explicitly states, 'The Data Platform Team owns the stuck sync escalation process, with a response target of 15 minutes.'"
+            }
+          ],
+          "questions": [
+            {
+              "question": "Where does a stuck sync escalate to?",
+              "answer": "A stuck sync escalates to Tier 3 Platform. The Data Platform Team is responsible for managing this escalation process and aims for a 15-minute response time. Before escalating, the sync ID should be recorded in the incident channel for the on-call team.",
+              "verdict": {
+                "question": "Where does a stuck sync escalate to?",
+                "correct": true,
+                "abstained": false,
+                "reasoning": "The answer correctly states that a stuck sync escalates to Tier 3 Platform, which directly matches the reference."
+              },
+              "error": ""
+            },
+            {
+              "question": "Which team owns stuck-sync escalations, and what is the response target?",
+              "answer": "The Data Platform Team owns the stuck sync escalation process, and their response target is 15 minutes.",
+              "verdict": {
+                "question": "Which team owns stuck-sync escalations, and what is the response target?",
+                "correct": true,
+                "abstained": false,
+                "reasoning": "The answer correctly identifies both the Data Platform Team as the owner of stuck-sync escalations and a 15-minute response target, matching the reference exactly."
+              },
+              "error": ""
+            }
+          ],
+          "retain_ms": 7378
+        },
+        {
+          "arm": "text-only",
+          "bank_id": "mmbench-ee6cc768-sync-escalation-text-only",
+          "retained": true,
+          "retain_error": "",
+          "facts": [
+            "Before escalating a stuck sync, its ID must be recorded in the incident channel. | To provide the on-call engineer with information to work from.",
+            "When a sync is stuck, engineers should not be paged directly; instead, the defined escalation path must be followed.",
+            "A sync is considered stuck if it has not advanced in thirty minutes."
+          ],
+          "image_facts": [
+            {
+              "claim": "A stuck sync escalates to Tier 3 Platform.",
+              "present": false,
+              "reasoning": "The facts mention that a stuck sync escalates via a 'defined escalation path' but do not specify that this path leads to 'Tier 3 Platform'."
+            },
+            {
+              "claim": "The Data Platform Team owns the escalation.",
+              "present": false,
+              "reasoning": "The remembered facts describe steps and conditions for following an escalation path for stuck syncs, but they do not state or imply that the Data Platform Team owns the escalation process itself."
+            },
+            {
+              "claim": "The response target is 15 minutes.",
+              "present": false,
+              "reasoning": "The remembered facts define when a sync is considered stuck and how to escalate it, but do not mention any specific response target time."
+            }
+          ],
+          "questions": [
+            {
+              "question": "Where does a stuck sync escalate to?",
+              "answer": "When a sync is stuck (defined as not advancing in thirty minutes), a defined escalation path must be followed. Before escalating, the sync ID should be recorded in the incident channel to provide information to the on-call engineer. Engineers should not be paged directly. The specific details of the escalation path are referenced as being in a diagram.",
+              "verdict": {
+                "question": "Where does a stuck sync escalate to?",
+                "correct": false,
+                "abstained": false,
+                "reasoning": "The answer does not specify 'Tier 3 Platform' as the escalation point, which is the key detail from the reference."
+              },
+              "error": ""
+            },
+            {
+              "question": "Which team owns stuck-sync escalations, and what is the response target?",
+              "answer": "When a sync is considered stuck (defined as not advancing in thirty minutes), engineers should not be paged directly. Instead, a defined escalation path must be followed.\n\nBefore escalating, the sync ID needs to be recorded in the incident channel. This information is provided for the on-call engineer to work from.\n\nWhile the data indicates that the \"on-call engineer\" is the direct response target who will address the stuck sync after it's escalated, it does not specify which team owns these stuck-sync escalations. The process dictates following an \"escalation path\" rather than direct paging to reach the on-call engineer.",
+              "verdict": {
+                "question": "Which team owns stuck-sync escalations, and what is the response target?",
+                "correct": false,
+                "abstained": false,
+                "reasoning": "The answer does not identify the owning team or the response time target, and while it states it doesn't know the owning team, it confidently provides an incorrect 'response target' (on-call engineer instead of 15 minutes)."
+              },
+              "error": ""
+            }
+          ],
+          "retain_ms": 7219
+        }
+      ]
+    },
+    {
+      "article": "billing-export",
+      "arms": [
+        {
+          "arm": "multimodal",
+          "bank_id": "mmbench-ee6cc768-billing-export-multimodal",
+          "retained": true,
+          "retain_error": "",
+          "facts": [
+            "Exports of billing reports are generated asynchronously, meaning large periods can take a few minutes to appear in downloads.",
+            "The export control for billing reports displays a period of Q3 2025 with 18,420 rows, and features a 'Download CSV' button.",
+            "Billing reports are exported from the Reports tab."
+          ],
+          "image_facts": [
+            {
+              "claim": "The billing export control is labelled 'Download CSV'.",
+              "present": true,
+              "reasoning": "One remembered fact explicitly states that the export control for billing reports 'features a 'Download CSV' button', which means it is labelled 'Download CSV'."
+            },
+            {
+              "claim": "The report covers the Q3 2025 period.",
+              "present": true,
+              "reasoning": "One fact states that 'The export control for billing reports displays a period of Q3 2025', directly indicating the report covers this period."
+            },
+            {
+              "claim": "The report contains 18,420 rows.",
+              "present": true,
+              "reasoning": "A remembered fact states that the 'export control for billing reports displays a period of Q3 2025 with 18,420 rows', directly indicating the report's row count."
+            }
+          ],
+          "questions": [
+            {
+              "question": "What is the billing export button labelled, and what format does it produce?",
+              "answer": "The billing export button is labeled \"Download CSV\". This button produces reports in CSV format.\n\nBilling reports are exported from the \"Reports\" tab. The export process generates these reports asynchronously, which means that for larger periods, it may take a few minutes for the reports to become available in your downloads. For example, an export control for billing reports might show a period like Q3 2025 with 18,420 rows, ready to be downloaded as a CSV.",
+              "verdict": {
+                "question": "What is the billing export button labelled, and what format does it produce?",
+                "correct": true,
+                "abstained": false,
+                "reasoning": "The answer correctly identifies the button label as 'Download CSV' and the format as 'CSV', matching the reference exactly."
+              },
+              "error": ""
+            },
+            {
+              "question": "What period does the billing report on the Reports screen cover, and how many rows does it have?",
+              "answer": "The billing report displayed on the Reports screen covers the period of Q3 2025 and contains 18,420 rows. This information is presented by the export control for billing reports, which also features a 'Download CSV' button. Billing reports are exported from the Reports tab, and their generation is asynchronous, meaning that large reports may take a few minutes to appear in downloads.",
+              "verdict": {
+                "question": "What period does the billing report on the Reports screen cover, and how many rows does it have?",
+                "correct": true,
+                "abstained": false,
+                "reasoning": "The answer accurately states the billing report covers Q3 2025 and has 18,420 rows, matching the reference exactly."
+              },
+              "error": ""
+            }
+          ],
+          "retain_ms": 6729
+        },
+        {
+          "arm": "text-only",
+          "bank_id": "mmbench-ee6cc768-billing-export-text-only",
+          "retained": true,
+          "retain_error": "",
+          "facts": [
+            "Exports are generated asynchronously, and large periods can take a few minutes to appear in downloads.",
+            "Billing reports are exported from the Reports tab."
+          ],
+          "image_facts": [
+            {
+              "claim": "The billing export control is labelled 'Download CSV'.",
+              "present": false,
+              "reasoning": "The remembered facts discuss the generation and location of billing exports but do not specify the label of the export control."
+            },
+            {
+              "claim": "The report covers the Q3 2025 period.",
+              "present": false,
+              "reasoning": "The remembered facts discuss how reports are generated and where they are exported from, but do not mention any specific time period like Q3 2025 for any report."
+            },
+            {
+              "claim": "The report contains 18,420 rows.",
+              "present": false,
+              "reasoning": "The remembered facts discuss export generation and location, but do not mention the number of rows in any report."
+            }
+          ],
+          "questions": [
+            {
+              "question": "What is the billing export button labelled, and what format does it produce?",
+              "answer": "The retrieved information indicates that billing reports are exported from the \"Reports tab.\" While it mentions an \"export control\" from which exports are generated, the specific label of the billing export button is not provided. Additionally, the data does not specify the format in which the billing reports are produced. It only states that exports are generated asynchronously and will appear in downloads.",
+              "verdict": {
+                "question": "What is the billing export button labelled, and what format does it produce?",
+                "correct": false,
+                "abstained": false,
+                "reasoning": "The answer incorrectly states that the specific label of the billing export button and the format it produces are not provided, whereas the reference explicitly states both are 'Download CSV' and 'CSV' respectively."
+              },
+              "error": ""
+            },
+            {
+              "question": "What period does the billing report on the Reports screen cover, and how many rows does it have?",
+              "answer": "Billing reports are exported from the Reports tab. While the system notes that exports are generated asynchronously and \"large periods\" can take a few minutes to appear in downloads, the specific period that a billing report covers is not detailed in the provided information.\n\nSimilarly, the retrieved data does not specify the number of rows a billing report has.",
+              "verdict": {
+                "question": "What period does the billing report on the Reports screen cover, and how many rows does it have?",
+                "correct": false,
+                "abstained": true,
+                "reasoning": "The answer explicitly states that the requested information (billing period and number of rows) is not detailed or specified, which aligns with the definition of abstaining."
+              },
+              "error": ""
+            }
+          ],
+          "retain_ms": 4230
+        }
+      ]
+    }
+  ]
+}
