@@ -9,11 +9,12 @@ turned one stalled iteration into a 120s request answered from a degraded forced
 pass, which is what put the doc-example, TypeScript and Python client suites over
 their 120s test budgets.
 
-A deadline abort is the most transient failure there is (nothing was returned, so
-nothing about the request is implicated), and the retry lands in well under a
-second on a healthy provider. It gets exactly one, tracked separately from the
-API-error ladder: a second stall says something about the provider rather than
-about this request, and the operation's wall budget must not go on waiting.
+A deadline abort is the most transient failure there is — nothing was returned, so
+nothing about the request is implicated — and the stall really is per-request: CI
+logs have calls that burn the whole deadline and then answer in ~3s on the very next
+attempt. It gets its own small retry budget, separate from the API-error ladder, so
+the worst case stays bounded arithmetic (deadline x attempts) that an operation's
+wall budget can be checked against.
 """
 
 import asyncio
@@ -22,6 +23,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 pytest.importorskip("google.genai")
+
+from hindsight_api.engine.providers.gemini_llm import _TIMEOUT_RETRIES  # noqa: E402
 
 _TOOLS = [{"type": "function", "function": {"name": "noop", "description": "n", "parameters": {"type": "object"}}}]
 
@@ -99,8 +102,8 @@ async def test_call_retries_once_after_the_deadline():
 
 
 @pytest.mark.asyncio
-async def test_call_gives_up_after_a_second_stall():
-    """One retry, not the whole ladder — a second stall must not cost another deadline."""
+async def test_call_gives_up_once_the_timeout_budget_is_spent():
+    """The timeout budget, not the whole API-error ladder — the worst case must stay bounded."""
     provider = _make_gemini_provider()
     generate = _generate_content(_never_answers)
     provider._client.aio.models.generate_content = generate
@@ -110,7 +113,7 @@ async def test_call_gives_up_after_a_second_stall():
             messages=[{"role": "user", "content": "hi"}], scope="reflect", max_retries=5, initial_backoff=0.0
         )
 
-    assert generate.call_count == 2  # NOT 6 (1 + max_retries)
+    assert generate.call_count == 1 + _TIMEOUT_RETRIES  # NOT 6 (1 + max_retries)
 
 
 @pytest.mark.asyncio
@@ -129,7 +132,7 @@ async def test_call_with_tools_retries_once_after_the_deadline():
 
 
 @pytest.mark.asyncio
-async def test_call_with_tools_gives_up_after_a_second_stall():
+async def test_call_with_tools_gives_up_once_the_timeout_budget_is_spent():
     provider = _make_gemini_provider()
     generate = _generate_content(_never_answers)
     provider._client.aio.models.generate_content = generate
@@ -143,4 +146,4 @@ async def test_call_with_tools_gives_up_after_a_second_stall():
             initial_backoff=0.0,
         )
 
-    assert generate.call_count == 2
+    assert generate.call_count == 1 + _TIMEOUT_RETRIES

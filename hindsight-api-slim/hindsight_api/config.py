@@ -1000,7 +1000,14 @@ DEFAULT_LLM_TIMEOUT = 120.0  # seconds
 # budget lets ONE stalled call outlive the caller. Retain and consolidation run in the
 # background against a queue and keep the 120s, where the deadline is there to stop runaway
 # generation rather than to keep a request responsive.
-DEFAULT_REFLECT_LLM_TIMEOUT = 60.0  # seconds
+#
+# 30s is chosen against the *retry ladder*, not against a single call: a stalled attempt is
+# retried (see _TIMEOUT_RETRIES in providers/gemini_llm.py), so what has to fit inside a
+# caller's patience is deadline x attempts, and 30x3 = 90s does. A first pass at 60s did not:
+# CI logs showed reflect calls answering in 1-4s but stalling on roughly a quarter of
+# attempts, so two stalls in a row landed right back on 120s. The headroom over a healthy
+# call is still an order of magnitude.
+DEFAULT_REFLECT_LLM_TIMEOUT = 30.0  # seconds
 DEFAULT_LLM_SEND_BANK_AS_USER = False  # Opt-in: tag provider calls with user=<bank_id>
 
 # Vertex AI defaults
