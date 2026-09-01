@@ -52,7 +52,7 @@ from ..config import (
     LLMStrategyConfig,
     get_config,
 )
-from ..tracing import create_operation_span
+from ..tracing import create_operation_span, extract_task_trace_context, inject_task_trace_context
 from ..utils import mask_network_location
 from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
@@ -3283,6 +3283,25 @@ class MemoryEngine(MemoryEngineInterface):
             task_dict: Task dictionary with 'type' key and other payload data
                       Example: {'type': 'batch_retain', 'bank_id': '...', 'contents': [...]}
         """
+        # Continue the trace of whatever enqueued this task, when the payload
+        # carries one (see inject_task_trace_context). Attached around the whole
+        # dispatch so every span the handler opens — hindsight.retain and its
+        # GenAI children — nests under the originating request rather than
+        # starting a second, unrelated trace for the same logical operation.
+        parent_context = extract_task_trace_context(task_dict)
+        if parent_context is None:
+            return await self._execute_task(task_dict)
+
+        from opentelemetry import context as otel_context
+
+        token = otel_context.attach(parent_context)
+        try:
+            return await self._execute_task(task_dict)
+        finally:
+            otel_context.detach(token)
+
+    async def _execute_task(self, task_dict: dict[str, Any]):
+        """Route a task to its handler. See :meth:`execute_task`."""
         task_type = task_dict.get("type")
         operation_id = task_dict.get("operation_id")
 
@@ -19595,6 +19614,10 @@ class MemoryEngine(MemoryEngineInterface):
                             task_payload["_tenant_id"] = request_context.tenant_id
                         if request_context.api_key_id:
                             task_payload["_api_key_id"] = request_context.api_key_id
+                        # Carry the enqueueing request's trace context so the
+                        # worker's hindsight.retain span continues this trace
+                        # rather than starting an unrelated one.
+                        inject_task_trace_context(task_payload)
 
                         # Per-child single-document surfacing (see parent note):
                         # in a multi-document batch, each single-document child

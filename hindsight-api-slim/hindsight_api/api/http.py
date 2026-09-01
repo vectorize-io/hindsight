@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -51,6 +51,9 @@ def _parse_metadata(metadata: Any) -> dict[str, Any]:
 from collections.abc import Iterable
 from types import UnionType
 from typing import Callable, Union, get_args, get_origin
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span
 
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -4192,6 +4195,50 @@ def create_app(
     return app
 
 
+# Endpoints whose HTTP span should be renamed after the Hindsight operation it
+# performs, as (method, path pattern with the bank id captured, operation name).
+# Matched against the concrete request path, so an extension that mounts these
+# routes under a different prefix is still recognised.
+_TRACED_OPERATION_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("POST", re.compile(r"/banks/(?P<bank_id>[^/]+)/memories/recall/?$"), "recall"),
+    ("POST", re.compile(r"/banks/(?P<bank_id>[^/]+)/memories/dry-run-extract/?$"), "dry_run_extract"),
+    ("POST", re.compile(r"/banks/(?P<bank_id>[^/]+)/memories/?$"), "retain"),
+    ("POST", re.compile(r"/banks/(?P<bank_id>[^/]+)/reflect/?$"), "reflect"),
+    ("POST", re.compile(r"/banks/(?P<bank_id>[^/]+)/files/retain/?$"), "file_convert_retain"),
+)
+
+
+def _name_server_span_after_operation(span: "Span", scope: dict[str, Any]) -> None:
+    """
+    Rename the HTTP server span after the Hindsight operation the request runs.
+
+    Trace viewers name a trace after its root span, and the ASGI instrumentation's
+    root is an HTTP span named ``{method} {http.route}`` per OTel semantic
+    conventions. That makes every trace read as a URL template
+    ("POST /v1/default/banks/{bank_id}/memories") rather than as the operation it
+    performed, and buries the ``hindsight.*`` span that carries the real meaning
+    one level down where it can no longer title the trace.
+
+    Renaming only the operation endpoints keeps ordinary CRUD routes on their
+    semconv names, and ``http.route``/``http.request.method`` stay on the span
+    either way, so grouping by route is unaffected.
+    """
+    if not span.is_recording():
+        return
+    method = scope.get("method", "")
+    path = scope.get("path", "")
+    for route_method, pattern, operation in _TRACED_OPERATION_ROUTES:
+        if route_method != method:
+            continue
+        match = pattern.search(path)
+        if match is None:
+            continue
+        span.update_name(f"hindsight.{operation}")
+        span.set_attribute("hindsight.operation", operation)
+        span.set_attribute("hindsight.bank_id", match.group("bank_id"))
+        return
+
+
 def _instrument_app_for_tracing(app: FastAPI, config: HindsightConfig | StaticConfigProxy) -> None:
     """
     Make incoming requests continue the caller's trace instead of starting a new one.
@@ -4220,6 +4267,10 @@ def _instrument_app_for_tracing(app: FastAPI, config: HindsightConfig | StaticCo
         FastAPIInstrumentor.instrument_app(
             app,
             excluded_urls=excluded_urls,
+            # Fires right after the server span is created, and the ASGI
+            # instrumentation never renames it afterwards (the route is already
+            # resolved at creation), so an update_name() here is the final name.
+            server_request_hook=_name_server_span_after_operation,
             # Two reasons, both load-bearing. Per-ASGI-message spans triple the
             # span count per request while saying nothing the request span
             # doesn't. And excluding "receive" makes the instrumentation pass the
