@@ -12,11 +12,19 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SKILL_DIRS: Record<string, string[]> = {
+/**
+ * Where each host keeps the installed skill, so a session start can refresh it in place.
+ *
+ * MUST list every harness whose installer calls `installSkill` — the structural guard in
+ * skill-sync.test.ts asserts that, with an explicit exemption list for the hosts that predate it
+ * (see there). A harness missing here installs the skill once and then keeps that copy forever.
+ */
+export const SKILL_DIRS: Record<string, string[]> = {
   "claude-code": [".claude", "skills"],
   codex: [".agents", "skills"], // agentskills-standard shared dir
   "antigravity-cli": [".gemini", "config", "skills"],
   "cursor-cli": [".cursor", "skills"],
+  "qwen-code": [".qwen", "skills"], // Qwen's user-level skills root (Storage.getUserSkillsDirs)
 };
 
 /** The packaged skill dir (pkgRoot/skill, resolved relative to the built dist). */

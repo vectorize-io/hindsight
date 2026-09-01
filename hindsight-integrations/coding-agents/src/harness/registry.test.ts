@@ -21,7 +21,7 @@ describe("HARNESS_NAMES", () => {
         "qwen-code",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(13);
+    expect(HARNESS_NAMES).toHaveLength(14);
   });
 });
 

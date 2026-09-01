@@ -178,9 +178,10 @@ describe("claude-code installer", () => {
 
 describe("qwen-code installer", () => {
   it("install writes the 3 hook events with our dist commands and timeouts 30000/30000/60000", () => {
-    // NOT 30/30/60. Qwen reads this field as MILLISECONDS, so the seconds values every other
-    // harness uses would register 30ms/60ms hooks — dead before Node starts, and masked because
-    // Qwen kills only the direct child so the orphaned work still completes.
+    // NOT 30/30/60. Qwen reads this field as MILLISECONDS (hookRunner: DEFAULT_HOOK_TIMEOUT =
+    // 60_000, passed straight to setTimeout), so the seconds values every other harness uses would
+    // register 30ms/60ms hooks — dead before Node starts, and Qwen terminates the whole detached
+    // process tree on timeout, so the turn is simply never retained.
     const ctx = makeCtx();
     expect(run(["install", "qwen-code"], ctx)).toBe(0);
     const hooks = JSON.parse(readFileSync(join(ctx.home, ".qwen", "settings.json"), "utf8")).hooks;
@@ -1254,7 +1255,7 @@ describe("runtime staging", () => {
 });
 
 describe("skill install across skills-capable hosts", () => {
-  it("copies the packaged skill for claude/codex(~/.agents)/antigravity/cursor/prime-agent and uninstall removes each", () => {
+  it("copies the packaged skill for claude/codex(~/.agents)/antigravity/cursor/qwen/prime-agent and uninstall removes each", () => {
     const home = mkdtempSync(join(tmpdir(), "hs-inst-skill-"));
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
     mkdirSync(join(pkgRoot, "skill"), { recursive: true });
@@ -1262,12 +1263,19 @@ describe("skill install across skills-capable hosts", () => {
       join(pkgRoot, "skill", "SKILL.md"),
       "---\nname: hindsight-coding-agent\n---\nbody"
     );
-    const ctx = { home, pkgRoot, dist: join(pkgRoot, "dist"), claudeMcp: vi.fn(() => true) };
+    const ctx = {
+      home,
+      pkgRoot,
+      dist: join(pkgRoot, "dist"),
+      claudeMcp: vi.fn(() => true),
+      qwenMcp: vi.fn(() => true),
+    };
     const targets: [string, string][] = [
       ["claude-code", join(home, ".claude", "skills")],
       ["codex", join(home, ".agents", "skills")],
       ["antigravity-cli", join(home, ".gemini", "config", "skills")],
       ["cursor-cli", join(home, ".cursor", "skills")],
+      ["qwen-code", join(home, ".qwen", "skills")],
       // Prime Agent's OWN root, never the shared ~/.agents one it also reads: uninstall removes a
       // fixed directory name, so the shared root would take Codex's and dsh's copy with it (#3772).
       ["prime-agent", join(home, ".prime", "agent", "skills")],
@@ -1294,7 +1302,13 @@ describe("skill install across skills-capable hosts", () => {
       join(pkgRoot, "skill", "SKILL.md"),
       "---\nname: hindsight-coding-agent\n---\nbody"
     );
-    const ctx = { home, pkgRoot, dist: join(pkgRoot, "dist"), claudeMcp: vi.fn(() => true) };
+    const ctx = {
+      home,
+      pkgRoot,
+      dist: join(pkgRoot, "dist"),
+      claudeMcp: vi.fn(() => true),
+      qwenMcp: vi.fn(() => true),
+    };
 
     run(["install", "codex", "prime-agent"], ctx);
     run(["uninstall", "prime-agent"], ctx);

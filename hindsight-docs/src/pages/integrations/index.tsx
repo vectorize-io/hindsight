@@ -26,6 +26,7 @@ const CODING_AGENT_LOGOS: {id: string; name: string; file: string}[] = [
   {id: 'cursor-cli', name: 'Cursor CLI', file: 'cursor-cli.svg'},
   {id: 'copilot-cli', name: 'GitHub Copilot CLI', file: 'copilot-cli.svg'},
   {id: 'grok-build', name: 'Grok Build', file: 'grok-build.svg'},
+  {id: 'qwen-code', name: 'Qwen Code', file: 'qwen-code.svg'},
   {id: 'antigravity-cli', name: 'Antigravity CLI', file: 'antigravity-cli.png'},
   {id: 'devin-cli', name: 'Devin CLI', file: 'devin-cli.svg'},
   {id: 'cline-cli', name: 'Cline CLI', file: 'cline-cli.svg'},

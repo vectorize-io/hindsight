@@ -43,6 +43,7 @@ export const CODING_AGENT_HARNESSES: {label: string; icon: string}[] = [
   {label: 'Cursor CLI', icon: '/img/harness/cursor-cli.svg'},
   {label: 'GitHub Copilot CLI', icon: '/img/harness/copilot-cli.svg'},
   {label: 'Grok Build', icon: '/img/harness/grok-build.svg'},
+  {label: 'Qwen Code', icon: '/img/harness/qwen-code.svg'},
   {label: 'Antigravity CLI', icon: '/img/harness/antigravity-cli.png'},
   {label: 'Devin CLI', icon: '/img/harness/devin-cli.svg'},
   {label: 'Cline CLI', icon: '/img/harness/cline-cli.svg'},

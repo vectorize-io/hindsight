@@ -163,14 +163,19 @@ export const grokDockerSetup: HarnessDockerSetup = {
  * prompt no one is there to answer. Never pass `--safe-mode`: it disables hooks, which is the
  * entire thing under test.
  *
- * RETENTION-ONLY, and for a different reason than grok-build's passive hook. Qwen's prompt spec
- * keys on `submitted_prompt`, which the host attaches only to a genuine first-turn interactive TUI
- * submission — `UserPromptSubmit` also fires on tool-result continuations, where `prompt` holds
- * model-bound tool output, so keying on `prompt` would recall repeatedly against tool results.
- * Headless `-p` (the only mode this E2E can drive), `serve`, the SDK and ACP carry no
- * `submitted_prompt`, so runHook's `if (!prompt) return` suppresses recall and no memory block can
- * reach the model here. Asserting injection would keep this harness permanently red for something
- * no change on our side can fix. Session seeding, write-back and the MCP tools are still asserted.
+ * RETENTION-ONLY, and for a different reason than grok-build's passive hook.
+ *
+ * Injection itself DOES happen here: verified against qwen-code 0.22.3, headless `qwen -p` carries
+ * `submitted_prompt`, the prompt hook fires, and the resulting transcript record holds
+ * `systemPayload.hookContext` — the host's own marker that our `additionalContext` reached the
+ * model. What cannot be asserted is the ECHO: the stub model replies with the first 20 000
+ * characters of the request (stub-model.ts), and Qwen's system prompt alone exceeds that, so the
+ * injected block never reaches the echoed answer no matter how well injection worked. Asserting
+ * the seeded statuses would keep this harness permanently red for a stub-side truncation, not a
+ * wiring defect. Session seeding, write-back and the MCP tools are still asserted.
+ *
+ * (`serve`, the SDK and ACP carry no `submitted_prompt` and so genuinely never recall — that is a
+ * real limitation of keying on it, just not the reason this flag is false.)
  */
 export const qwenDockerSetup: HarnessDockerSetup = {
   name: "qwen-code",

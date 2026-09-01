@@ -418,12 +418,13 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
   "qwen-code": {
     configStyle: "nested",
     timeoutUnit: "milliseconds",
-    // TIMEOUTS ARE MILLISECONDS HERE, not seconds like every other harness in this table: Qwen
-    // passes a command hook's `timeout` straight to setTimeout ("Timeout in milliseconds, default
-    // 60000"). Writing 30/60 registers 30ms/60ms hooks, which die before a Node process starts —
-    // and the kill signals only the direct child, so the orphaned work still completes and the
-    // misconfiguration looks harmless. `retain.hostTimeoutSec` below stays SECONDS, as its name
-    // says; these two numbers are the same budget in different units for this harness alone.
+    // TIMEOUTS ARE MILLISECONDS HERE, not seconds like every other harness in this table: Qwen's
+    // hookRunner does `setTimeout(..., hookConfig.timeout ?? DEFAULT_HOOK_TIMEOUT)` with
+    // DEFAULT_HOOK_TIMEOUT = 60_000 ("Timeout in milliseconds, default 60000"). Writing 30/60
+    // registers 30ms/60ms hooks, which die before a Node process starts — and Qwen spawns hooks
+    // `detached` and terminates the whole process TREE on timeout, so the retain is genuinely lost
+    // rather than merely orphaned. `retain.hostTimeoutSec` below stays SECONDS, as its name says;
+    // these two numbers are the same budget in different units for this harness alone.
     // The prompt timeout must also stay above core/hook.ts's HOOK_REFLECT_CAP_MS (25_000).
     install: {
       sessionStart: { event: "SessionStart", entry: "qwen-sessionstart-hook.js", timeout: 30_000 },

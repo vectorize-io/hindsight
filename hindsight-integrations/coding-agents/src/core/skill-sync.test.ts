@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { syncCompanionSkill } from "./skill-sync";
+import { SKILL_DIRS, syncCompanionSkill } from "./skill-sync";
 
 describe("syncCompanionSkill", () => {
   const dirs: string[] = [];
@@ -48,5 +48,26 @@ describe("syncCompanionSkill", () => {
     expect(
       readFileSync(join(home, ".claude", "skills", "hindsight-coding-agent", "SKILL.md"), "utf8")
     ).toBe("NEW CONTENT v2");
+  });
+});
+
+/**
+ * Family-wide guard (#3524 shape): a harness whose installer copies the skill but that SKILL_DIRS
+ * does not map installs it once and then never refreshes it — `npm update -g` upgrades the package
+ * while that host keeps the old SKILL.md until someone re-installs. A per-harness test cannot catch
+ * this, because the harness that forgets is by definition the one whose test nobody wrote. So
+ * enumerate the installer's own call sites instead and assert each is mapped.
+ *
+ * KNOWN_UNMAPPED are pre-existing gaps found while adding qwen-code; they are real defects, listed
+ * so they stay visible and so a NEW harness cannot silently join them.
+ */
+describe("SKILL_DIRS covers every harness the installer copies the skill into", () => {
+  const KNOWN_UNMAPPED = new Set(["copilot-cli", "grok-build", "cline-cli", "dsh", "prime-agent"]);
+
+  it("maps every installSkill target", () => {
+    const src = readFileSync(new URL("../installer.ts", import.meta.url), "utf8");
+    const targets = [...src.matchAll(/installSkill\(c, "([^"]+)"/g)].map((m) => m[1]);
+    expect(targets.length).toBeGreaterThan(5); // the regex still matches the real call sites
+    expect(targets.filter((h) => !KNOWN_UNMAPPED.has(h) && !(h in SKILL_DIRS))).toEqual([]);
   });
 });
