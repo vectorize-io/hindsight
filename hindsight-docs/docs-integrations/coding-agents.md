@@ -169,11 +169,14 @@ npx @vectorize-io/hindsight-coding-agents install pi
 ```
 
 An extension entry in `~/.pi/agent/settings.json`, plus the companion skill in
-`~/.pi/agent/skills` — native tools, no MCP needed. Use this command
-rather than `pi install npm:@vectorize-io/hindsight-coding-agents`: pi and Prime Agent read the same
-`pi` key of a package's `package.json`, which can only name one entry, and it names Prime Agent's —
-so on the package route pi would report itself as `prime-agent`, taking that harness's config
-section and stamping its documents with the wrong agent.
+`~/.pi/agent/skills` — native tools, no MCP needed.
+
+This command is the only supported route, for pi and for Prime Agent below. Installing us as a pi
+package (`pi install npm:@vectorize-io/hindsight-coding-agents`) is deliberately not wired: both
+hosts read the same `pi` key of a package's `package.json`, and that key can only name one entry —
+whichever host it did not name would load the other's bundle and report itself as the wrong agent,
+taking that harness's config section and stamping every document it retains with it. So the package
+carries no `pi` key at all, and each host is pointed at its own bundle by the install command above.
 
 #### <img src="/img/harness/prime-agent.svg" alt="" width="20" height="20" /> Prime Agent
 

@@ -367,10 +367,13 @@ const opencode: HarnessInstaller = {
  * harness. The entry path runs through the package root, which contains MARKER, so uninstall's
  * MARKER filter removes exactly what install added and leaves every other extension alone.
  *
- * Deliberately NOT routed through the `pi` key in our package.json: both hosts read that same key
- * (`pkg.pi.extensions`) when this package is installed as a distributed pi package, so it can only
- * ever name one bundle. It stays pointed at Prime Agent's; the explicit installs below are how each
- * host gets the entry that reports its own harness.
+ * These installs are the ONLY supported route for either host, and the package deliberately carries
+ * no `pi` key. Both hosts read that same `pkg.pi.extensions` when this package is installed as a
+ * distributed pi package, so it can only ever name one bundle — and the host it did not name would
+ * load the other's, reporting the wrong harness, taking that harness's config section and stamping
+ * it on every document it retained. It used to name Prime Agent's, which is exactly how pi
+ * mis-attributed before it had an entry of its own. A key that is right for at most one of two
+ * hosts is worse than none, so there is none; installer.test.ts holds that line.
  *
  * The skills directory (SKILL_DIRS) is per-host rather than shared: both read `~/.agents/skills`
  * too, but that is the root Codex and dsh install into, and uninstallSkill removes by a fixed

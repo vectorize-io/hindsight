@@ -67,11 +67,6 @@
       }
     ]
   },
-  "pi": {
-    "extensions": [
-      "./dist/prime-agent.js"
-    ]
-  },
   "scripts": {
     "build": "tsup",
     "skill:build": "node scripts/build-skill.mjs",

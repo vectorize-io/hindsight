@@ -815,6 +815,28 @@ describe("pi-family companion skill", () => {
   });
 });
 
+/**
+ * pi and Prime Agent both read `pkg.pi.extensions` when this package is installed as a distributed
+ * pi package, so that key can only ever name one bundle — and the host it did not name loads the
+ * other's, reports the wrong harness, and stamps it on every document it retains. It named Prime
+ * Agent's until pi got an entry of its own, which is exactly how pi mis-attributed.
+ *
+ * `hindsight-coding-agents install pi|prime-agent` is the supported route for both, so the key is
+ * gone. Re-adding it would be silent: nothing in this package reads it, the wrong attribution only
+ * shows up later on retained documents, and it looks like the obvious way to support `pi install`.
+ */
+describe("the published manifest", () => {
+  it("carries no `pi` key, which could only ever be right for one of the two hosts", () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8")
+    ) as Record<string, unknown>;
+    expect(manifest.pi).toBeUndefined();
+    // The single-host manifest keys are fine and stay: exactly one harness reads each.
+    expect(manifest.dsh).toBeDefined();
+    expect(manifest.cline).toBeDefined();
+  });
+});
+
 describe("pi and prime-agent do not disturb each other", () => {
   const piCfg = (ctx: InstallCtx) => join(ctx.home, ".pi", "agent", "settings.json");
   const primeCfg = (ctx: InstallCtx) => join(ctx.home, ".prime", "agent", "settings.json");
