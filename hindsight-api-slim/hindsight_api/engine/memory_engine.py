@@ -554,6 +554,7 @@ from .response_models import (
     LLMCallTrace,
     MemoryFact,
     MinScores,
+    QueryTagGate,
     RecallScores,
     ReflectResult,
     TemporalWindow,
@@ -564,8 +565,15 @@ from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.fold import FoldMemberRef
 from .retain.types import RetainContentDict
+from .search import query_tag_gate as query_tag_gate_matching
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
-from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
+from .search.tags import (
+    TagGroup,
+    TagGroupLeaf,
+    TagsMatch,
+    build_tag_groups_where_clause,
+    build_tags_where_clause,
+)
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
 from .task_backend import TaskBackend
@@ -6372,6 +6380,7 @@ class MemoryEngine(MemoryEngineInterface):
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
+        query_tag_gate: QueryTagGate | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         min_scores: MinScores | None = None,
@@ -6576,6 +6585,7 @@ class MemoryEngine(MemoryEngineInterface):
                             tags=tags,
                             tags_match=tags_match,
                             tag_groups=tag_groups,
+                            query_tag_gate=query_tag_gate,
                             created_after=created_after,
                             created_before=created_before,
                             min_scores=min_scores,
@@ -6719,6 +6729,7 @@ class MemoryEngine(MemoryEngineInterface):
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
+        query_tag_gate: QueryTagGate | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         min_scores: MinScores | None = None,
@@ -6797,6 +6808,39 @@ class MemoryEngine(MemoryEngineInterface):
         tracer_otel = get_tracer()
 
         try:
+            # Step 0.5: query tag gate. When the caller says its memories are tagged with the
+            # names of the things they describe, restrict this recall to the names the query
+            # actually mentions — and, when it mentions none of them, return nothing rather
+            # than the best-scoring unrelated memory. Ranking cannot express either: it has no
+            # notion of what a query is *about*, and its top result is always its top result.
+            # Resolved to plain tags here so the restriction rides the normal tag filter into
+            # SQL, and unwanted memories never reach retrieval or reranking.
+            if query_tag_gate is not None:
+                gate_start = time.time()
+                vocabulary = await self._load_tag_vocabulary(bank_id, query_tag_gate, request_context=request_context)
+                matched_tags = query_tag_gate_matching.match_tags(
+                    query,
+                    vocabulary,
+                    prefix=query_tag_gate.prefix,
+                    match=query_tag_gate.match,
+                    min_token_length=query_tag_gate.min_token_length,
+                )
+                log_buffer.append(
+                    f"  [0.5] query_tag_gate(prefix={query_tag_gate.prefix!r}, "
+                    f"match={query_tag_gate.match}): {len(vocabulary)} known -> "
+                    f"{len(matched_tags)} matched {matched_tags[:5]}"
+                )
+                if matched_tags:
+                    gate_group: TagGroup = TagGroupLeaf(tags=matched_tags, match="any_strict")
+                    tag_groups = [*(tag_groups or []), gate_group]
+                elif query_tag_gate.on_no_match == "abstain":
+                    log_buffer.append(
+                        f"  [0.5] query names nothing in the vocabulary -> abstaining ({time.time() - gate_start:.3f}s)"
+                    )
+                    if not quiet:
+                        logger.info("\n".join(log_buffer))
+                    return RecallResultModel(results=[], entities={}, chunks={}, source_facts={})
+
             # Step 1: Generate query embedding (for semantic search)
             step_start = time.time()
 
@@ -13594,6 +13638,26 @@ class MemoryEngine(MemoryEngineInterface):
             "total_edges": len(edges),
             "limit": limit,
         }
+
+    async def _load_tag_vocabulary(
+        self,
+        bank_id: str,
+        gate: QueryTagGate,
+        *,
+        request_context: "RequestContext",
+    ) -> list[str]:
+        """The bank's identity tags under the gate's prefix, for query matching.
+
+        Read through list_tags so the gate sees exactly the tags recall would filter on.
+        Truncated at `max_vocabulary` rather than scanning an unbounded set — a gate over a
+        vocabulary that large is not the tool the caller wants."""
+        listing = await self.list_tags(
+            bank_id,
+            pattern=f"{gate.prefix}*",
+            limit=gate.max_vocabulary,
+            request_context=request_context,
+        )
+        return [item["tag"] for item in listing.get("items", []) if item.get("tag")]
 
     async def list_tags(
         self,

@@ -188,6 +188,7 @@ from hindsight_api.engine.response_models import (
     DryRunExtractionResult,
     MemoryFact,
     MinScores,
+    QueryTagGate,
     RecallScores,
     TemporalWindow,
     TokenUsage,
@@ -352,6 +353,16 @@ class RecallRequest(BaseModel):
         default=None,
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
         "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
+    )
+    query_tag_gate: QueryTagGate | None = Field(
+        default=None,
+        description="Restrict this recall to the tagged identities the query actually names, "
+        "and optionally return nothing when it names none of them. For banks whose memories "
+        "are tagged with what they are about (`customer:acme`, `service:auth`): ranking cannot "
+        "say which of those a query means, and never says 'none', so a query about something "
+        "the bank has no memory of still returns its best unrelated match. The matched tags "
+        "are AND-ed into the tag filter and applied in SQL, so excluded memories never enter "
+        "retrieval or ranking.",
     )
     min_scores: MinScores | None = Field(
         default=None,
@@ -4929,6 +4940,7 @@ def _register_routes(app: FastAPI):
                         tags=request.tags,
                         tags_match=request.tags_match,
                         tag_groups=request.tag_groups,
+                        query_tag_gate=request.query_tag_gate,
                         min_scores=request.min_scores,
                         temporal_window=request.temporal_window,
                     ),

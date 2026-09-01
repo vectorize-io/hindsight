@@ -13646,6 +13646,55 @@
           "total": 150
         }
       },
+      "QueryTagGate": {
+        "properties": {
+          "prefix": {
+            "type": "string",
+            "title": "Prefix",
+            "description": "Tag namespace holding the identities, e.g. 'name:'. Only tags starting with this are considered, and the prefix is stripped before matching, so `name:session-backend` is matched as 'session backend'."
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "typos"
+            ],
+            "title": "Match",
+            "description": "'exact' requires the query to name the tag verbatim (token-wise). 'typos' also accepts one insertion, deletion or transposition per token \u2014 but never a substitution, which at one edit reliably means a *different* word ('mango' is not 'mongo', 'k9s' is not 'k8s') where the other three mean a mistyped one ('eror' for 'error', 'typsecript' for 'typescript'). No distance threshold separates those cases; both sit at edit distance 1.",
+            "default": "typos"
+          },
+          "min_token_length": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Min Token Length",
+            "description": "Tokens shorter than this must match exactly. At three characters almost every identifier is one edit from another, so fuzzy matching there is noise.",
+            "default": 4
+          },
+          "on_no_match": {
+            "type": "string",
+            "enum": [
+              "abstain",
+              "ignore"
+            ],
+            "title": "On No Match",
+            "description": "What to do when the query names nothing in the vocabulary. 'abstain' returns no results \u2014 the honest answer when the caller is asking which known thing the query is about. 'ignore' drops the gate and recalls normally.",
+            "default": "abstain"
+          },
+          "max_vocabulary": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Vocabulary",
+            "description": "Cap on identity tags loaded for matching. A vocabulary larger than this is truncated rather than silently scanned in full.",
+            "default": 1000
+          }
+        },
+        "type": "object",
+        "required": [
+          "prefix"
+        ],
+        "title": "QueryTagGate",
+        "description": "Restrict recall to the tagged identities the query actually names.\n\nRanking cannot say *which* memory a query is about, and can never say \"none of\nthem\" \u2014 the top-scored memory is still the top-scored memory on a query the bank\nhas no answer for. A bank that tags memories with the names of what they describe\n(``customer:acme``, ``service:auth``) already holds what settles both questions:\nwhich of those names the query mentions.\n\nThe matched tags are AND-ed into the tag filter, so the restriction runs in SQL\nwith every other tag condition and unwanted memories never enter ranking."
+      },
       "RecallRequest": {
         "properties": {
           "query": {
@@ -13759,6 +13808,17 @@
             ],
             "title": "Tag Groups",
             "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
+          },
+          "query_tag_gate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryTagGate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Restrict this recall to the tagged identities the query actually names, and optionally return nothing when it names none of them. For banks whose memories are tagged with what they are about (`customer:acme`, `service:auth`): ranking cannot say which of those a query means, and never says 'none', so a query about something the bank has no memory of still returns its best unrelated match. The matched tags are AND-ed into the tag filter and applied in SQL, so excluded memories never enter retrieval or ranking."
           },
           "min_scores": {
             "anyOf": [

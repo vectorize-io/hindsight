@@ -7,7 +7,7 @@ API stability even if internal models change.
 """
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -245,6 +245,53 @@ class MinScores(BaseModel):
     final: float | None = Field(
         default=None,
         description="Post-query: minimum final ranking score. Applied to every returned result.",
+    )
+
+
+class QueryTagGate(BaseModel):
+    """Restrict recall to the tagged identities the query actually names.
+
+    Ranking cannot say *which* memory a query is about, and can never say "none of
+    them" — the top-scored memory is still the top-scored memory on a query the bank
+    has no answer for. A bank that tags memories with the names of what they describe
+    (``customer:acme``, ``service:auth``) already holds what settles both questions:
+    which of those names the query mentions.
+
+    The matched tags are AND-ed into the tag filter, so the restriction runs in SQL
+    with every other tag condition and unwanted memories never enter ranking.
+    """
+
+    prefix: str = Field(
+        description="Tag namespace holding the identities, e.g. 'name:'. Only tags starting "
+        "with this are considered, and the prefix is stripped before matching, so "
+        "`name:session-backend` is matched as 'session backend'.",
+    )
+    match: Literal["exact", "typos"] = Field(
+        default="typos",
+        description="'exact' requires the query to name the tag verbatim (token-wise). 'typos' "
+        "also accepts one insertion, deletion or transposition per token — but never a "
+        "substitution, which at one edit reliably means a *different* word ('mango' is not "
+        "'mongo', 'k9s' is not 'k8s') where the other three mean a mistyped one ('eror' for "
+        "'error', 'typsecript' for 'typescript'). No distance threshold separates those cases; "
+        "both sit at edit distance 1.",
+    )
+    min_token_length: int = Field(
+        default=4,
+        ge=1,
+        description="Tokens shorter than this must match exactly. At three characters almost "
+        "every identifier is one edit from another, so fuzzy matching there is noise.",
+    )
+    on_no_match: Literal["abstain", "ignore"] = Field(
+        default="abstain",
+        description="What to do when the query names nothing in the vocabulary. 'abstain' "
+        "returns no results — the honest answer when the caller is asking which known thing "
+        "the query is about. 'ignore' drops the gate and recalls normally.",
+    )
+    max_vocabulary: int = Field(
+        default=1000,
+        ge=1,
+        description="Cap on identity tags loaded for matching. A vocabulary larger than this is "
+        "truncated rather than silently scanned in full.",
     )
 
 
