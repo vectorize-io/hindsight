@@ -7926,6 +7926,30 @@
             "title": "Retain Chunk Batch Size",
             "description": "Max chunks per streaming batch (0 disables batching)"
           },
+          "retain_image_chunk_cost_chars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Image Chunk Cost Chars",
+            "description": "Chars one inline image costs against retain_chunk_size"
+          },
+          "retain_max_images_per_chunk": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Max Images Per Chunk",
+            "description": "Hard cap on inline images in a single extraction chunk"
+          },
           "mcp_enabled_tools": {
             "anyOf": [
               {

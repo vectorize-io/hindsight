@@ -39,6 +39,8 @@ type BankTemplateConfig struct {
 	RetainDefaultStrategy NullableString `json:"retain_default_strategy,omitempty"`
 	RetainStrategies map[string]interface{} `json:"retain_strategies,omitempty"`
 	RetainChunkBatchSize NullableInt32 `json:"retain_chunk_batch_size,omitempty"`
+	RetainImageChunkCostChars NullableInt32 `json:"retain_image_chunk_cost_chars,omitempty"`
+	RetainMaxImagesPerChunk NullableInt32 `json:"retain_max_images_per_chunk,omitempty"`
 	McpEnabledTools []string `json:"mcp_enabled_tools,omitempty"`
 	ConsolidationLlmBatchSize NullableInt32 `json:"consolidation_llm_batch_size,omitempty"`
 	ConsolidationSourceFactsMaxTokens NullableInt32 `json:"consolidation_source_facts_max_tokens,omitempty"`
@@ -905,6 +907,90 @@ func (o *BankTemplateConfig) SetRetainChunkBatchSizeNil() {
 // UnsetRetainChunkBatchSize ensures that no value is present for RetainChunkBatchSize, not even an explicit nil
 func (o *BankTemplateConfig) UnsetRetainChunkBatchSize() {
 	o.RetainChunkBatchSize.Unset()
+}
+
+// GetRetainImageChunkCostChars returns the RetainImageChunkCostChars field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRetainImageChunkCostChars() int32 {
+	if o == nil || IsNil(o.RetainImageChunkCostChars.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.RetainImageChunkCostChars.Get()
+}
+
+// GetRetainImageChunkCostCharsOk returns a tuple with the RetainImageChunkCostChars field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRetainImageChunkCostCharsOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetainImageChunkCostChars.Get(), o.RetainImageChunkCostChars.IsSet()
+}
+
+// HasRetainImageChunkCostChars returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRetainImageChunkCostChars() bool {
+	if o != nil && o.RetainImageChunkCostChars.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetainImageChunkCostChars gets a reference to the given NullableInt32 and assigns it to the RetainImageChunkCostChars field.
+func (o *BankTemplateConfig) SetRetainImageChunkCostChars(v int32) {
+	o.RetainImageChunkCostChars.Set(&v)
+}
+// SetRetainImageChunkCostCharsNil sets the value for RetainImageChunkCostChars to be an explicit nil
+func (o *BankTemplateConfig) SetRetainImageChunkCostCharsNil() {
+	o.RetainImageChunkCostChars.Set(nil)
+}
+
+// UnsetRetainImageChunkCostChars ensures that no value is present for RetainImageChunkCostChars, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRetainImageChunkCostChars() {
+	o.RetainImageChunkCostChars.Unset()
+}
+
+// GetRetainMaxImagesPerChunk returns the RetainMaxImagesPerChunk field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRetainMaxImagesPerChunk() int32 {
+	if o == nil || IsNil(o.RetainMaxImagesPerChunk.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.RetainMaxImagesPerChunk.Get()
+}
+
+// GetRetainMaxImagesPerChunkOk returns a tuple with the RetainMaxImagesPerChunk field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRetainMaxImagesPerChunkOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetainMaxImagesPerChunk.Get(), o.RetainMaxImagesPerChunk.IsSet()
+}
+
+// HasRetainMaxImagesPerChunk returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRetainMaxImagesPerChunk() bool {
+	if o != nil && o.RetainMaxImagesPerChunk.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetainMaxImagesPerChunk gets a reference to the given NullableInt32 and assigns it to the RetainMaxImagesPerChunk field.
+func (o *BankTemplateConfig) SetRetainMaxImagesPerChunk(v int32) {
+	o.RetainMaxImagesPerChunk.Set(&v)
+}
+// SetRetainMaxImagesPerChunkNil sets the value for RetainMaxImagesPerChunk to be an explicit nil
+func (o *BankTemplateConfig) SetRetainMaxImagesPerChunkNil() {
+	o.RetainMaxImagesPerChunk.Set(nil)
+}
+
+// UnsetRetainMaxImagesPerChunk ensures that no value is present for RetainMaxImagesPerChunk, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRetainMaxImagesPerChunk() {
+	o.RetainMaxImagesPerChunk.Unset()
 }
 
 // GetMcpEnabledTools returns the McpEnabledTools field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2074,6 +2160,12 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RetainChunkBatchSize.IsSet() {
 		toSerialize["retain_chunk_batch_size"] = o.RetainChunkBatchSize.Get()
+	}
+	if o.RetainImageChunkCostChars.IsSet() {
+		toSerialize["retain_image_chunk_cost_chars"] = o.RetainImageChunkCostChars.Get()
+	}
+	if o.RetainMaxImagesPerChunk.IsSet() {
+		toSerialize["retain_max_images_per_chunk"] = o.RetainMaxImagesPerChunk.Get()
 	}
 	if o.McpEnabledTools != nil {
 		toSerialize["mcp_enabled_tools"] = o.McpEnabledTools

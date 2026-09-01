@@ -213,7 +213,14 @@ async def test_call_with_tools_raises_permanent_error_without_retrying(monkeypat
 
 def _extraction_config() -> SimpleNamespace:
     """Only the two fields extract_facts_from_text reads before chunk dispatch."""
-    return SimpleNamespace(retain_chunk_size=1000, retain_structured_chunk_size=1000)
+    return SimpleNamespace(
+        retain_chunk_size=1000,
+        retain_structured_chunk_size=1000,
+        # Chunking budgets the image-aware splitter reads; these bodies carry no
+        # images, so the values only have to exist.
+        retain_image_chunk_cost_chars=500,
+        retain_max_images_per_chunk=8,
+    )
 
 
 async def _run_extraction(chunk_errors: dict[int, Exception]):
