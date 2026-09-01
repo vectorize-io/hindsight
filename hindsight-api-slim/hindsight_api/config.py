@@ -185,6 +185,13 @@ ENV_LLM_SUPPORTS_STRING_PATTERN = "HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN"
 # ``litellmrouter``, ``bedrock``). Off by default; see
 # DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL.
 ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = "HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL"
+# Whether the configured LLM accepts image parts in a user message. Tri-state:
+# unset lets each provider answer for itself (see LLMInterface.supports_vision),
+# while an explicit true/false overrides it in both directions. The escape hatch
+# for a vision model behind a gateway whose model catalogue the provider cannot
+# identify — and the off switch for an endpoint that rejects images despite its
+# model name.
+ENV_LLM_VISION = "HINDSIGHT_API_LLM_VISION"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
@@ -317,6 +324,23 @@ def _parse_boolean_env(env_name: str, default: bool) -> bool:
     if raw is None:
         return default
 
+    normalized = raw.strip().lower()
+    if normalized in ("true", "1"):
+        return True
+    if normalized in ("false", "0"):
+        return False
+    raise ValueError(f"Invalid {env_name} value {raw!r}: expected true, false, 1, or 0")
+
+
+def _parse_tristate_bool(env_name: str, raw: str | None) -> bool | None:
+    """Parse a boolean env var whose *absence* is meaningful, not just a default.
+
+    Unset (or empty) returns ``None``, which callers read as "no opinion" rather
+    than as False — the difference between an operator who has not configured
+    something and one who has turned it off.
+    """
+    if raw is None or not raw.strip():
+        return None
     normalized = raw.strip().lower()
     if normalized in ("true", "1"):
         return True
@@ -1400,9 +1424,14 @@ DEFAULT_RETAIN_IMAGE_MAX_COUNT = 50  # Max images in one retain item
 # What one image "costs" against retain_chunk_size. A chunk's budget is measured in
 # characters of text, but an image consumes model context too, so an image-bearing
 # chunk must carry proportionally less prose or the extraction call overflows.
-# ~1100 tokens is a typical full-page screenshot at provider tile resolution; at the
-# ~4 chars/token the chunk budget implicitly assumes, that is ~4500 characters.
-DEFAULT_RETAIN_IMAGE_CHUNK_COST_CHARS = 4500
+#
+# Deliberately well under DEFAULT_RETAIN_CHUNK_SIZE (3000) rather than at an image's
+# true token cost, which would exceed the whole budget and put every image in a chunk
+# of its own. That would defeat the point: the value of an inline image is that the
+# model sees it *with* the sentence that introduces it. Half the budget leaves room
+# for an image plus the prose either side of it, and the config validation below
+# refuses a value that could not fit at all.
+DEFAULT_RETAIN_IMAGE_CHUNK_COST_CHARS = 1500
 # Hard cap regardless of the cost budget: many small images could otherwise fit one
 # chunk and still blow past a provider's per-request image limit.
 DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK = 8
@@ -1952,18 +1981,31 @@ def validate_retain_chunking_config(
 def validate_retain_image_chunking_config(
     retain_image_chunk_cost_chars: Any,
     retain_max_images_per_chunk: Any,
+    retain_chunk_size: Any,
     *,
     retain_image_chunk_cost_chars_name: str = "retain_image_chunk_cost_chars",
     retain_max_images_per_chunk_name: str = "retain_max_images_per_chunk",
+    retain_chunk_size_name: str = "retain_chunk_size",
 ) -> None:
     """Validate the hierarchical inline-image chunking fields.
 
     Named like :func:`validate_retain_chunking_config`, and called from the same
     places, so a bank/tenant override is rejected at write time rather than
     surfacing as a broken retain later.
+
+    The cross-field rule matters more than the bounds: an image costing at least
+    the whole chunk budget could never share a chunk with the prose around it, so
+    every image would be extracted with no context — silently producing worse
+    facts rather than failing. Refuse that configuration outright.
     """
     _validate_retain_chunking_int(retain_image_chunk_cost_chars_name, retain_image_chunk_cost_chars)
     _validate_retain_chunking_int(retain_max_images_per_chunk_name, retain_max_images_per_chunk)
+    if retain_image_chunk_cost_chars >= retain_chunk_size:
+        raise ValueError(
+            f"{retain_image_chunk_cost_chars_name} ({retain_image_chunk_cost_chars}) must be less than "
+            f"{retain_chunk_size_name} ({retain_chunk_size}), so an image can share a chunk with the "
+            f"text around it."
+        )
 
 
 def validate_retain_completion_token_budget(
@@ -2584,6 +2626,9 @@ class HindsightConfig:
     # Optional native Ollama context window override. Unset lets Ollama use the
     # model/server default instead of forcing a Hindsight-wide value.
     llm_ollama_num_ctx: int | None = field(default=None, kw_only=True)
+    # Tri-state override for "can this LLM read images?". None defers to the
+    # provider's own answer; True/False overrides it. See ENV_LLM_VISION.
+    llm_vision: bool | None = field(default=None, kw_only=True)
 
     # Per-operation sampling temperature. None means the temperature parameter is
     # omitted from the call (for models that reject explicit temperatures). See
@@ -3492,8 +3537,10 @@ class HindsightConfig:
         validate_retain_image_chunking_config(
             self.retain_image_chunk_cost_chars,
             self.retain_max_images_per_chunk,
+            self.retain_chunk_size,
             retain_image_chunk_cost_chars_name=ENV_RETAIN_IMAGE_CHUNK_COST_CHARS,
             retain_max_images_per_chunk_name=ENV_RETAIN_MAX_IMAGES_PER_CHUNK,
+            retain_chunk_size_name=ENV_RETAIN_CHUNK_SIZE,
         )
 
         # The two ingress size caps are static, so they are only ever env-sourced.
@@ -3652,6 +3699,7 @@ class HindsightConfig:
             ),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
+            llm_vision=_parse_tristate_bool(ENV_LLM_VISION, os.getenv(ENV_LLM_VISION)),
             llm_ollama_num_ctx=_parse_optional_positive_int(
                 ENV_LLM_OLLAMA_NUM_CTX,
                 os.getenv(ENV_LLM_OLLAMA_NUM_CTX),

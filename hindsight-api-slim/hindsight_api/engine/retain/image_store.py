@@ -16,12 +16,13 @@ Resolving the other way — from a placeholder in some chunk's text back to byte
 is what recall provenance needs, and is served by :func:`load_bank_images`.
 """
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..memory_engine import fq_table
-from .image_content import RetainImage
+from .image_content import LoadedImage, RetainImage
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,72 @@ async def load_bank_images(conn, bank_id: str, image_hashes: Sequence[str]) -> d
         )
         for row in rows
     }
+
+
+class RetainImageLoader:
+    """Fetches image bytes back for extraction, cached for one retain operation.
+
+    Extraction runs many chunks concurrently, and a document commonly repeats one
+    image (a product screenshot referenced from several sections), so the same
+    blob would otherwise be pulled from S3 once per chunk. The cache is bounded by
+    total bytes rather than entry count because the entries are images: a hundred
+    thumbnails and a hundred full-page screenshots are three orders of magnitude
+    apart, and only the byte count predicts the memory the retain holds.
+
+    Eviction is "stop admitting", not LRU. A retain's working set is one chunk's
+    images; past the budget the loader keeps serving correctly and simply stops
+    growing, which is the behaviour worth having here — a cache miss costs a
+    fetch, while an unbounded cache costs the worker.
+    """
+
+    def __init__(self, file_storage, backend, bank_id: str, *, max_cached_bytes: int = 64 * 1024 * 1024) -> None:
+        self._file_storage = file_storage
+        self._backend = backend
+        self._bank_id = bank_id
+        self._max_cached_bytes = max_cached_bytes
+        self._cache: dict[str, LoadedImage] = {}
+        self._cached_bytes = 0
+        self._lock = asyncio.Lock()
+
+    async def load(self, image_hashes: Sequence[str]) -> dict[str, LoadedImage]:
+        """Resolve hashes to bytes. Hashes that cannot be resolved are omitted."""
+        wanted = list(dict.fromkeys(image_hashes))
+        if not wanted:
+            return {}
+
+        resolved = {h: self._cache[h] for h in wanted if h in self._cache}
+        missing = [h for h in wanted if h not in resolved]
+        if not missing:
+            return resolved
+
+        async with self._backend.acquire() as conn:
+            records = await load_bank_images(conn, self._bank_id, missing)
+
+        for image_hash in missing:
+            record = records.get(image_hash)
+            if record is None:
+                # No row: the image was never stored for this bank, or its row was
+                # reclaimed. The placeholder degrades to a note in the prompt.
+                logger.warning("No bank_images row for %s in bank %s; extracting without it", image_hash, self._bank_id)
+                continue
+            try:
+                data = await self._file_storage.retrieve(record.storage_key)
+            except FileNotFoundError:
+                logger.warning(
+                    "bank_images row for %s in bank %s points at missing key %s; extracting without it",
+                    image_hash,
+                    self._bank_id,
+                    record.storage_key,
+                )
+                continue
+            loaded = LoadedImage(media_type=record.media_type, data=data)
+            resolved[image_hash] = loaded
+            async with self._lock:
+                if image_hash not in self._cache and self._cached_bytes + len(data) <= self._max_cached_bytes:
+                    self._cache[image_hash] = loaded
+                    self._cached_bytes += len(data)
+
+        return resolved
 
 
 async def _existing_hashes(conn, bank_id: str, image_hashes: Sequence[str]) -> set[str]:

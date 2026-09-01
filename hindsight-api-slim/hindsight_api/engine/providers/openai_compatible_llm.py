@@ -1978,6 +1978,18 @@ class OpenAICompatibleLLM(LLMInterface):
             raise last_exception
         raise RuntimeError("Ollama call failed after all retries")
 
+    def supports_vision(self) -> bool | None:
+        """Known only for OpenAI itself; unknown for every other backend here.
+
+        This class serves a dozen providers, most of which are gateways or
+        proxies whose model catalogue mixes vision-capable and text-only models
+        (groq, openrouter, ollama, lmstudio, ...). Claiming support on their
+        behalf would silently drop images for the text-only half, so they return
+        ``None`` and an operator running a vision model opts in explicitly with
+        ``HINDSIGHT_API_LLM_VISION=true``.
+        """
+        return True if self.provider == "openai" else None
+
     async def supports_batch_api(self) -> bool:
         """Check if this provider supports batch API operations."""
         # Only OpenAI and Groq support batch API

@@ -266,6 +266,22 @@ class LLMInterface(ABC):
         """Whether retries can acquire concurrency permits per upstream attempt."""
         return False
 
+    def supports_vision(self) -> bool | None:
+        """Whether this provider can accept image parts in a user message.
+
+        Three-valued on purpose. ``True``/``False`` mean the provider knows;
+        ``None`` — the default — means it cannot tell, which is the honest answer
+        for a gateway (LiteLLM, Ollama, LM Studio, an OpenAI-compatible proxy)
+        that will happily forward whatever model name it is given.
+
+        Retain treats ``None`` as "refuse": an item carrying images is rejected
+        rather than sent to a model that would ignore them, because silently
+        dropping an image is exactly the lossy behaviour inline images exist to
+        remove. Operators running a vision model behind a gateway say so with
+        ``HINDSIGHT_API_LLM_VISION=true``, which overrides this.
+        """
+        return None
+
     # ── Prompt prefix caching (optional, per-provider) ─────────────────────────
 
     def supports_prompt_caching(self) -> bool:

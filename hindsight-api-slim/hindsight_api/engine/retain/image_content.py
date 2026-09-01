@@ -25,9 +25,10 @@ mapping must be perfectly deterministic — the same blocks must always produce 
 same body, or the ``content_hash`` gate would re-extract an unchanged document.
 """
 
+import base64
 import hashlib
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 # Delimiters chosen from the Unicode mathematical-brackets block: they survive
@@ -145,6 +146,63 @@ def _pad_to_blank_line(body: str) -> str:
     if not body:
         return body
     return f"{body.rstrip(chr(10))}\n\n"
+
+
+@dataclass(frozen=True)
+class LoadedImage:
+    """Image bytes fetched back out of storage, ready to put in a prompt."""
+
+    media_type: str
+    data: bytes
+
+    def as_data_uri(self) -> str:
+        return f"data:{self.media_type};base64,{base64.b64encode(self.data).decode()}"
+
+
+def build_prompt_parts(text: str, images: Mapping[str, LoadedImage]) -> list[dict[str, object]] | str:
+    """Turn placeholder text back into an interleaved multimodal user message.
+
+    Returns OpenAI-style content parts — the canonical wire shape the providers
+    convert from — with each image sitting exactly where its placeholder stood,
+    so the model reads the screenshot in the same position as the reader of the
+    original article did. That positioning is the whole feature: an image
+    appended at the end of the prompt loses the sentence that gives it meaning.
+
+    Returns the plain string unchanged when there is nothing to interleave, so a
+    text-only chunk produces byte-identical requests to before.
+
+    A placeholder with no entry in ``images`` degrades to a short textual note
+    rather than raising. The bytes can legitimately be gone — reclaimed, or a
+    storage backend swapped underneath an old document — and extracting the
+    surrounding prose is far better than failing the whole retain.
+    """
+    if not PLACEHOLDER_RE.search(text):
+        return text
+
+    parts: list[dict[str, object]] = []
+    pending: list[str] = []
+
+    def _flush_text() -> None:
+        if pending:
+            joined = "".join(pending)
+            pending.clear()
+            if joined.strip():
+                parts.append({"type": "text", "text": joined})
+
+    cursor = 0
+    for match in PLACEHOLDER_RE.finditer(text):
+        pending.append(text[cursor : match.start()])
+        image = images.get(match.group("hash"))
+        if image is None:
+            pending.append("[image unavailable]")
+        else:
+            _flush_text()
+            parts.append({"type": "image_url", "image_url": {"url": image.as_data_uri()}})
+        cursor = match.end()
+    pending.append(text[cursor:])
+    _flush_text()
+
+    return parts
 
 
 def canonicalize(blocks: Sequence[ContentBlock]) -> CanonicalContent:

@@ -58,6 +58,9 @@ _CROSS_FIELD_CONSTRAINED_FIELDS = frozenset(
         "retain_chunk_size",
         "retain_structured_chunk_size",
         "retain_strategies",
+        # retain_image_chunk_cost_chars < retain_chunk_size, so an image can share
+        # a chunk with the text around it.
+        "retain_image_chunk_cost_chars",
         # recall_budget_min <= recall_budget_max
         "recall_budget_min",
         "recall_budget_max",
@@ -101,6 +104,7 @@ def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies:
             validate_retain_image_chunking_config(
                 resolved.retain_image_chunk_cost_chars,
                 resolved.retain_max_images_per_chunk,
+                resolved.retain_chunk_size,
             )
             validate_retain_completion_token_budget(
                 llm_provider=resolved.llm_provider,
@@ -143,6 +147,7 @@ def _validate_projected_bank_config(
     validate_retain_image_chunking_config(
         base_config.retain_image_chunk_cost_chars,
         base_config.retain_max_images_per_chunk,
+        base_config.retain_chunk_size,
     )
     _validate_retain_strategy_chunking(base_config, base_config.retain_strategies)
     _validate_recall_budget_bounds(base_config.recall_budget_min, base_config.recall_budget_max)
@@ -240,6 +245,7 @@ class ConfigResolver:
         validate_retain_image_chunking_config(
             resolved_config.retain_image_chunk_cost_chars,
             resolved_config.retain_max_images_per_chunk,
+            resolved_config.retain_chunk_size,
         )
         return resolved_config
 
@@ -958,6 +964,7 @@ def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConf
     validate_retain_image_chunking_config(
         resolved.retain_image_chunk_cost_chars,
         resolved.retain_max_images_per_chunk,
+        resolved.retain_chunk_size,
     )
     validate_retain_completion_token_budget(
         llm_provider=resolved.llm_provider,

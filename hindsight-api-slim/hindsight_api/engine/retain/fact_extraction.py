@@ -11,7 +11,7 @@ import logging
 import re
 from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
@@ -20,6 +20,10 @@ from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitiz
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from ..structured_output import provider_json_schema, strict_json_schema
+from . import image_content
+
+if TYPE_CHECKING:
+    from .image_store import RetainImageLoader
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -619,7 +623,94 @@ def _iter_recursive_splits(text: str, max_chars: int, separators: list[str]) -> 
     yield from _flush()
 
 
-def iter_chunks(text: str, max_chars: int, structured_chunk_size: int | None = None) -> Iterator[str]:
+def _iter_placeholder_segments(text: str) -> Iterator[tuple[str, bool]]:
+    """Split ``text`` into ``(segment, is_image)`` runs at image-placeholder edges."""
+    cursor = 0
+    for match in image_content.PLACEHOLDER_RE.finditer(text):
+        if match.start() > cursor:
+            yield text[cursor : match.start()], False
+        yield match.group(0), True
+        cursor = match.end()
+    if cursor < len(text):
+        yield text[cursor:], False
+
+
+def _iter_image_aware_chunks(
+    text: str,
+    max_chars: int,
+    *,
+    image_cost_chars: int,
+    max_images_per_chunk: int,
+) -> Iterator[str]:
+    """Chunk text that carries image placeholders, budgeting for the images.
+
+    A chunk's budget is spent by its prose *and* by the images it references,
+    because both land in the same extraction call — an image-bearing chunk that
+    also carried a full ``max_chars`` of text would overflow the model's context.
+    A second, absolute cap bounds the image count regardless of budget, since many
+    small images could otherwise satisfy the character arithmetic and still exceed
+    a provider's per-request image limit.
+
+    Packing is greedy and left-to-right so an image stays in the same chunk as the
+    prose that introduces it wherever the budget allows — that adjacency is the
+    entire reason to accept inline images rather than retain them separately.
+
+    Idempotent, like :func:`chunk_text`: every chunk this yields is within both
+    budgets, so re-chunking one returns it unchanged and ``chunk_id`` stays stable
+    across re-ingests (issue #2301).
+    """
+    buffered: list[str] = []
+    cost = 0
+    images = 0
+
+    def _flush() -> Iterator[str]:
+        nonlocal buffered, cost, images
+        if buffered:
+            packed = "".join(buffered).strip()
+            buffered = []
+            cost = 0
+            images = 0
+            if packed:
+                yield packed
+
+    for segment, is_image in _iter_placeholder_segments(text):
+        if is_image:
+            if buffered and (cost + image_cost_chars > max_chars or images + 1 > max_images_per_chunk):
+                yield from _flush()
+            buffered.append(segment)
+            cost += image_cost_chars
+            images += 1
+            continue
+
+        if cost + len(segment) <= max_chars:
+            buffered.append(segment)
+            cost += len(segment)
+            continue
+
+        # The run does not fit alongside what is already buffered. Close the open
+        # chunk, then split the run on its own with the ordinary sentence-aware
+        # splitter, whose boundaries are the ones delta retain already matches.
+        yield from _flush()
+        pieces = list(_iter_recursive_splits(segment, max_chars, _RECURSIVE_TEXT_SEPARATORS))
+        if not pieces:
+            continue
+        # All but the last go out immediately; the last stays open so a following
+        # image can join the sentence that introduces it.
+        yield from pieces[:-1]
+        buffered.append(pieces[-1])
+        cost = len(pieces[-1])
+
+    yield from _flush()
+
+
+def iter_chunks(
+    text: str,
+    max_chars: int,
+    structured_chunk_size: int | None = None,
+    *,
+    image_cost_chars: int | None = None,
+    max_images_per_chunk: int = 1,
+) -> Iterator[str]:
     """Stream the chunks of ``text``, in order — the lazy form of :func:`chunk_text`.
 
     Yields exactly what ``chunk_text`` returns, one chunk at a time, so a caller that
@@ -630,6 +721,19 @@ def iter_chunks(text: str, max_chars: int, structured_chunk_size: int | None = N
 
     See :func:`chunk_text` for what the chunking itself guarantees.
     """
+    # Image-bearing text is budgeted differently (the images cost context too), so
+    # it takes its own path. Text with no placeholders — every document retained
+    # before inline images existed, and every text-only one after — reaches the
+    # code below unchanged, byte for byte.
+    if image_cost_chars is not None and image_content.contains_image(text):
+        yield from _iter_image_aware_chunks(
+            text,
+            max_chars,
+            image_cost_chars=image_cost_chars,
+            max_images_per_chunk=max_images_per_chunk,
+        )
+        return
+
     # If text is small enough, return as-is
     if len(text) <= max_chars:
         yield text
@@ -670,7 +774,14 @@ def iter_chunks(text: str, max_chars: int, structured_chunk_size: int | None = N
     yield from _iter_recursive_splits(text, max_chars, _RECURSIVE_TEXT_SEPARATORS)
 
 
-def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
+def chunk_text(
+    text: str,
+    max_chars: int,
+    structured_chunk_size: int | None = None,
+    *,
+    image_cost_chars: int | None = None,
+    max_images_per_chunk: int = 1,
+) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
 
@@ -693,11 +804,24 @@ def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = No
         max_chars: Target maximum characters per chunk
         structured_chunk_size: Maximum characters for a single JSONL line or
             conversation turn to keep whole. Defaults to ``max_chars``.
+        image_cost_chars: What one inline image spends against ``max_chars``.
+            ``None`` (the default) means the caller has no image budget to apply,
+            and text carrying image placeholders is chunked as ordinary text.
+        max_images_per_chunk: Absolute cap on images in one chunk, applied
+            alongside the character budget.
 
     Returns:
         List of text chunks, roughly under max_chars
     """
-    return list(iter_chunks(text, max_chars, structured_chunk_size=structured_chunk_size))
+    return list(
+        iter_chunks(
+            text,
+            max_chars,
+            structured_chunk_size=structured_chunk_size,
+            image_cost_chars=image_cost_chars,
+            max_images_per_chunk=max_images_per_chunk,
+        )
+    )
 
 
 def _iter_conversation_chunks(turns: list[dict], max_chars: int, structured_limit: int) -> Iterator[str]:
@@ -1566,6 +1690,7 @@ async def _extract_facts_from_chunk(
     config,
     agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
@@ -1597,6 +1722,15 @@ async def _extract_facts_from_chunk(
         agent_name,
         mission_preamble=_retain_mission_preamble(config),
     )
+
+    # Swap image placeholders for the images themselves, in place. Done on the
+    # fully assembled message rather than on the chunk so the surrounding prompt
+    # scaffolding is byte-identical to the text-only path, and a chunk with no
+    # images comes back as the same plain string it always was.
+    user_content: Any = user_message
+    if image_loader is not None and image_content.contains_image(user_message):
+        loaded = await image_loader.load(list(image_content.iter_placeholder_hashes(user_message)))
+        user_content = image_content.build_prompt_parts(user_message, loaded)
 
     # Opt into context caching when the provider supports it. The prompt and
     # response_schema are bank-agnostic (the mission lives in the user message),
@@ -1644,7 +1778,7 @@ async def _extract_facts_from_chunk(
             )
 
             call_kwargs: dict[str, Any] = dict(
-                messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
+                messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_content}],
                 response_format=response_schema,
                 scope="retain_extract_facts",
                 temperature=config.llm_temperature_retain,
@@ -1970,6 +2104,7 @@ async def _extract_facts_with_auto_split(
     config,
     agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
@@ -1987,6 +2122,9 @@ async def _extract_facts_with_auto_split(
         config: Resolved HindsightConfig for this bank
         agent_name: Optional agent name (memory owner)
         metadata: Optional document metadata key-value pairs
+        image_loader: Resolves the chunk's image placeholders back to bytes, or None
+            when the caller has no images to resolve. Carried through the split
+            recursion so a half-chunk keeps the images it still references.
 
     Returns:
         Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
@@ -2007,6 +2145,7 @@ async def _extract_facts_with_auto_split(
             config=config,
             agent_name=agent_name,
             metadata=metadata,
+            image_loader=image_loader,
         )
     except OutputTooLongError:
         # Output exceeded token limits - split the chunk and retry. Conversation
@@ -2042,6 +2181,7 @@ async def _extract_facts_with_auto_split(
                 config=config,
                 agent_name=agent_name,
                 metadata=metadata,
+                image_loader=image_loader,
             ),
             _extract_facts_with_auto_split(
                 chunk=second_half,
@@ -2053,6 +2193,7 @@ async def _extract_facts_with_auto_split(
                 config=config,
                 agent_name=agent_name,
                 metadata=metadata,
+                image_loader=image_loader,
             ),
         ]
 
@@ -2078,6 +2219,7 @@ async def extract_facts_from_text(
     context: str = "",
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -2098,6 +2240,10 @@ async def extract_facts_from_text(
         agent_name: Optional narrator to prime the prompt with ("Narrator: {name}").
             Retain never sets it — see the caller in retain/orchestrator.py — and the
             dry-run endpoint's field that does is deprecated in favour of ``context``.
+        image_loader: Resolves inline image placeholders back to bytes so the model
+            sees each image in position. None means the text carries no images (or
+            the caller has no store to resolve them from), and every chunk is sent
+            as plain text exactly as before.
 
     Returns:
         Tuple of (facts, chunks, usage) where:
@@ -2109,6 +2255,8 @@ async def extract_facts_from_text(
         text,
         max_chars=config.retain_chunk_size,
         structured_chunk_size=config.retain_structured_chunk_size,
+        image_cost_chars=config.retain_image_chunk_cost_chars,
+        max_images_per_chunk=config.retain_max_images_per_chunk,
     )
 
     # Log chunk count before starting LLM requests
@@ -2135,6 +2283,7 @@ async def extract_facts_from_text(
             config=config,
             agent_name=agent_name,
             metadata=metadata,
+            image_loader=image_loader,
         )
         for i, chunk in enumerate(chunks)
     ]
@@ -2369,6 +2518,8 @@ async def extract_facts_from_contents_batch_api(
             item.content,
             max_chars=config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
+            image_cost_chars=config.retain_image_chunk_cost_chars,
+            max_images_per_chunk=config.retain_max_images_per_chunk,
         )
 
         for chunk_index_in_content, chunk in enumerate(chunks):
@@ -2822,6 +2973,8 @@ def _extract_facts_chunks(
             content.content,
             config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
+            image_cost_chars=config.retain_image_chunk_cost_chars,
+            max_images_per_chunk=config.retain_max_images_per_chunk,
         )
         for chunk in chunks:
             chunks_metadata.append(
@@ -2859,6 +3012,7 @@ async def extract_facts_from_contents(
     pool=None,
     operation_id: str | None = None,
     schema: str | None = None,
+    image_loader: "RetainImageLoader | None" = None,
 ) -> ExtractionResult:
     """
     Extract facts from multiple content items in parallel.
@@ -2878,6 +3032,8 @@ async def extract_facts_from_contents(
         pool: Database connection pool (passed to batch API for state storage)
         operation_id: Async operation ID (passed to batch API for crash recovery)
         schema: Database schema (passed to batch API for multi-tenant support)
+        image_loader: Resolves inline image placeholders back to bytes for the
+            extraction prompt. None when the retain carries no images.
 
     Returns:
         An ExtractionResult carrying the facts, their chunk metadata, and token usage.
@@ -2905,6 +3061,7 @@ async def extract_facts_from_contents(
             llm_config=llm_config,
             config=config,
             metadata=item.metadata or None,
+            image_loader=image_loader,
         )
         fact_extraction_tasks.append(task)
 

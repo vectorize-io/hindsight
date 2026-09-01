@@ -36,6 +36,10 @@ class NoneLLM(LLMInterface):
         """No-op — no LLM connection to verify."""
         logger.debug("NoneLLM: no LLM connection to verify (provider=none)")
 
+    def supports_vision(self) -> bool:
+        """False, definitively: there is no model here to look at an image."""
+        return False
+
     async def call(
         self,
         messages: list[dict[str, str]],
