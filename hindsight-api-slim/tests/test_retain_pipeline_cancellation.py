@@ -92,7 +92,6 @@ async def test_consumer_failure_cancels_in_flight_extractions(monkeypatch):
             is_first_batch=True,
             fact_type_override=None,
             document_tags=None,
-            agent_name="agent",
             log_buffer=[],
             start_time=0.0,
             all_pre_chunks=list(chunks),
