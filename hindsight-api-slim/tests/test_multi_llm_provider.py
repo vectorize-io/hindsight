@@ -52,7 +52,7 @@ class FakeMember:
     async def cleanup(self):
         pass
 
-    def classify_failure(self, exc):
+    def classify_failure(self, exc: BaseException) -> None:
         return None
 
     def _resolve(self):

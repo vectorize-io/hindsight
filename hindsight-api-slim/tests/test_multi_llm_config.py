@@ -164,7 +164,9 @@ def test_parse_members_without_codex_home_defaults_none(clean_llm_env):
         ("CONSOLIDATION_", "HINDSIGHT_API_CONSOLIDATION_LLM_1_MEMBER_LABEL"),
     ],
 )
-def test_parse_members_member_label_is_prefix_scoped(clean_llm_env, prefix, env_name):
+def test_parse_members_member_label_is_prefix_scoped(
+    clean_llm_env: pytest.MonkeyPatch, prefix: str, env_name: str
+) -> None:
     clean_llm_env.setenv(f"HINDSIGHT_API_{prefix}LLM_1_PROVIDER", "ollama")
     clean_llm_env.setenv(env_name, "codex-secondary")
 
@@ -174,7 +176,7 @@ def test_parse_members_member_label_is_prefix_scoped(clean_llm_env, prefix, env_
 
 
 @pytest.mark.parametrize("label", ["x" * 65, "has\nnewline", "has\x7fcontrol"])
-def test_parse_members_rejects_unsafe_member_label(clean_llm_env, label):
+def test_parse_members_rejects_unsafe_member_label(clean_llm_env: pytest.MonkeyPatch, label: str) -> None:
     clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "ollama")
     clean_llm_env.setenv("HINDSIGHT_API_LLM_1_MEMBER_LABEL", label)
 
@@ -182,7 +184,7 @@ def test_parse_members_rejects_unsafe_member_label(clean_llm_env, label):
         _parse_llm_members("")
 
 
-def test_from_env_reads_server_only_primary_member_labels(clean_llm_env):
+def test_from_env_reads_server_only_primary_member_labels(clean_llm_env: pytest.MonkeyPatch) -> None:
     clean_llm_env.setenv("HINDSIGHT_API_LLM_MEMBER_LABEL", "primary-codex")
     clean_llm_env.setenv("HINDSIGHT_API_RETAIN_LLM_MEMBER_LABEL", "retain-codex")
     clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_MEMBER_LABEL", "reflect-codex")
@@ -297,7 +299,7 @@ def _empty_config(**overrides) -> HindsightConfig:
     return dataclasses.replace(base, **overrides)
 
 
-def _member(provider="ollama", member_label=None):
+def _member(provider: str = "ollama", member_label: str | None = None) -> LLMMemberConfig:
     return LLMMemberConfig(
         provider=provider,
         api_key=None,
@@ -312,7 +314,7 @@ def _member(provider="ollama", member_label=None):
     )
 
 
-def _base_llm(member_label=None) -> LLMProvider:
+def _base_llm(member_label: str | None = None) -> LLMProvider:
     return LLMProvider(provider="mock", api_key="", base_url="", model="m0", member_label=member_label)
 
 
@@ -347,7 +349,9 @@ def test_build_llm_per_op_inherits_global(clean_llm_env):
     assert [m.provider for m in result.members[1:]] == ["ollama"]  # inherited
 
 
-def test_build_llm_per_op_primary_label_does_not_relabel_inherited_members(clean_llm_env):
+def test_build_llm_per_op_primary_label_does_not_relabel_inherited_members(
+    clean_llm_env: pytest.MonkeyPatch,
+) -> None:
     config = _empty_config(
         llm_members=[_member("ollama", member_label="secondary")],
         llm_strategy=LLMStrategyConfig(mode="failover"),
@@ -362,7 +366,7 @@ def test_build_llm_per_op_primary_label_does_not_relabel_inherited_members(clean
     assert result.members[1].member_label == "secondary"
 
 
-def test_member_to_llm_passes_member_label(clean_llm_env):
+def test_member_to_llm_passes_member_label(clean_llm_env: pytest.MonkeyPatch) -> None:
     from hindsight_api.engine.memory_engine import _member_to_llm
 
     provider = _member_to_llm(_member("ollama", member_label="secondary"), _empty_config(), _NO_CALL_DEFAULTS)
