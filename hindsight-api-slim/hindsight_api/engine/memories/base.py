@@ -1702,15 +1702,21 @@ class MemoriesExtension(Extension, ABC):
 
     @abstractmethod
     async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
-        """Write a memory's embedding, recomputed by the caller.
+        """Write a memory's embedding, recomputed by the caller, leaving its fields as they are.
 
         Its own method because the general :meth:`update_memories` is a no-op for
-        the store whose write is the row itself — reverting or editing a memory has
-        to put a freshly computed vector back on it, so this is a real write for
-        both. ``embedding`` is a float list or the pgvector literal.
+        the store whose write is the row itself — restoring an invalidated memory has
+        to put a freshly computed vector back on it, so this is a real write.
+        ``embedding`` is a float list or the pgvector literal.
+
+        A curation edit no longer arrives here. It used to call this straight after
+        :meth:`apply_edit` — a second write of the row that call had just written, which
+        for a store whose write is a durable append is the whole cost of the edit again —
+        so the vector now rides the edit itself as ``apply_edit(embedding=...)``. What is
+        left for this method is writing a vector when no field is changing alongside it.
 
         The vector is part of the memory, so this stamps ``updated_at`` itself rather
-        than leaning on the edit statement its in-tree callers happen to pair it with
+        than leaning on a statement a caller happens to pair it with
         (see :data:`META_UPDATED_AT`).
         """
 
