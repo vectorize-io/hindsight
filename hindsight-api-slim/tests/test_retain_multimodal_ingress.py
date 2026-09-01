@@ -58,6 +58,13 @@ async def _retain(client, bank_id: str, content, **item_fields):
 
 
 async def _document_text(memory, bank_id: str, document_id: str) -> str:
+    """The exact canonical body retain stored.
+
+    Read straight from `documents` on purpose: the property under test is that
+    the placeholder text is byte-for-byte what the pipeline persists (that is
+    what content_hash idempotency keys on), and no engine read method exposes
+    the stored body verbatim.
+    """
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
         return await conn.fetchval(
@@ -68,6 +75,12 @@ async def _document_text(memory, bank_id: str, document_id: str) -> str:
 
 
 async def _bank_image_rows(memory, bank_id: str) -> list[dict]:
+    """The bank's stored image rows.
+
+    Direct SQL because the assertion is about storage-layer state the public API
+    cannot express — that an image retained N times occupies exactly one row and
+    one content-addressed key.
+    """
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
         rows = await conn.fetch(

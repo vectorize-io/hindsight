@@ -6,8 +6,8 @@ feature — storing an image nothing ever looks at would be worse than useless.
 
 Deterministic throughout: the MockLLM records the exact messages it was handed,
 so the assertions are on message structure rather than on what a model made of
-the picture. What a real vision model extracts is a separate question, judged in
-the `hs_llm_core` test at the bottom.
+the picture. What a real vision model extracts is a separate, non-deterministic
+question, judged in test_multimodal_extraction_llm.py.
 """
 
 import base64
