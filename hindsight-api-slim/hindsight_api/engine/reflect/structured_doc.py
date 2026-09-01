@@ -334,7 +334,20 @@ def document_from_sections(payload: dict) -> StructuredDocument:
     rejected. A block holding several blank-line-separated fragments is split
     into one block each, so the document keeps the granularity delta operations
     address even when the model packs a whole section into one string.
+
+    That tolerance now extends to the wrapper itself. A one-section document is
+    the shape a model most often flattens — it emits the section *as* the
+    document, ``{"heading": …, "level": …, "blocks": […]}``, with no ``sections``
+    array around it. Every fact it was asked for is present and correctly
+    structured; only the wrapper is missing. Read literally that payload has no
+    sections at all, so it rendered to an empty string and reflect raised
+    ReflectNoAnswerError — a whole refresh thrown away, and retried against the
+    same prompt, over one absent key (observed from Gemini on the mental-model
+    refresh path). Take it as the single section it plainly is.
     """
+    if "sections" not in payload and isinstance(payload.get("blocks"), list):
+        payload = {"sections": [payload]}
+
     sections: list[Section] = []
     used_ids: set[str] = set()
     block_ids: set[str] = set()
