@@ -63,7 +63,11 @@ from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
 from .db.postgresql import apply_session_settings as _apply_session_settings
 from .db_budget import budgeted_operation
-from .llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
+from .llm_interface import (
+    ProviderContentPolicyError,
+    ProviderRateLimitResetError,
+    ProviderReauthenticationRequiredError,
+)
 from .llm_trace import (
     LLMRequestEntry,
     LLMRequestListResponse,
@@ -644,6 +648,7 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults:
         gemini_safety_settings=_get_raw_config().llm_gemini_safety_settings,
         prompt_cache_enabled=config.llm_prompt_cache_enabled,
         codex_home=member.codex_home or config.llm_codex_home,
+        member_label=member.member_label,
         vertexai_project_id=member.vertexai_project_id or config.llm_vertexai_project_id,
         vertexai_region=member.vertexai_region or config.llm_vertexai_region,
         vertexai_service_account_key=member.vertexai_service_account_key or config.llm_vertexai_service_account_key,
@@ -1265,6 +1270,8 @@ def _is_non_retryable_task_error(e: Exception) -> bool:
         # the moment: re-running the task feeds the same chunk to the same model
         # and earns the same refusal (issue #3690).
         or isinstance(e, ProviderContentPolicyError)
+        # Confirmed broken credentials need operator action, not a task replay.
+        or isinstance(e, ProviderReauthenticationRequiredError)
     )
 
 
@@ -2130,6 +2137,7 @@ class MemoryEngine(MemoryEngineInterface):
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             codex_home=config.llm_codex_home,
+            member_label=config.llm_member_label,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
@@ -2178,6 +2186,7 @@ class MemoryEngine(MemoryEngineInterface):
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             codex_home=config.llm_codex_home,
+            member_label=config.retain_llm_member_label or config.llm_member_label,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
@@ -2220,6 +2229,7 @@ class MemoryEngine(MemoryEngineInterface):
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             codex_home=config.llm_codex_home,
+            member_label=config.reflect_llm_member_label or config.llm_member_label,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
@@ -2262,6 +2272,7 @@ class MemoryEngine(MemoryEngineInterface):
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             codex_home=config.llm_codex_home,
+            member_label=config.consolidation_llm_member_label or config.llm_member_label,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...cancellation import OperationCancelledError
 from ...config import get_config
-from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice, ProviderReauthenticationRequiredError
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
@@ -306,6 +306,9 @@ OUTPUT:"""
             thoughts_tokens=usage.thoughts_tokens,
         )
 
+    except ProviderReauthenticationRequiredError:
+        # Broken credentials are an operation-level stop, not optional output.
+        raise
     except Exception as e:
         logger.warning(f"[REFLECT {reflect_id}] Failed to generate structured output: {e}")
         return StructuredOutputResult()
@@ -776,17 +779,27 @@ async def _run_reflect_agent_inner(
                 f"split synthesis over {len(chunks)} chunks."
             )
             # Map: each chunk in parallel.
-            claim_sections = await asyncio.gather(
-                *(
+            map_tasks = [
+                asyncio.create_task(
                     _tracked_llm_call(
                         build_chunk_claims_prompt(query, chunk),
                         f"final_map_{i}",
                         CLAIMS_SYSTEM_PROMPT,
                         synthesis_max_completion_tokens,
                     )
-                    for i, chunk in enumerate(chunks, 1)
                 )
-            )
+                for i, chunk in enumerate(chunks, 1)
+            ]
+            try:
+                claim_sections = await asyncio.gather(*map_tasks)
+            except Exception:
+                # Finish observing already-started maps before an outer retry:
+                # a generic-first error must not mask broken credentials.
+                completed = await asyncio.gather(*map_tasks, return_exceptions=True)
+                for result in completed:
+                    if isinstance(result, ProviderReauthenticationRequiredError):
+                        raise result
+                raise
             # Reduce: one synthesis call over every chunk's claims.
             prompt = build_reduce_prompt(
                 query,
@@ -940,10 +953,12 @@ async def _run_reflect_agent_inner(
                 }
             )
 
-        except OperationCancelledError:
+        except (OperationCancelledError, ProviderReauthenticationRequiredError):
             # A cancellation is not a provider failure: never retried, never
             # synthesized around, and it must reach the HTTP layer as itself so a
             # client disconnect stays a 499 (issue #2122).
+            # Confirmed broken credentials likewise stop the operation: another
+            # iteration could otherwise rotate to a different account.
             raise
         except Exception as e:
             err_duration = int((time.time() - llm_start) * 1000)

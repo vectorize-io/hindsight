@@ -28,6 +28,7 @@ class FakeMember:
     def __init__(self, name: str, behavior):
         self.provider = name
         self.model = f"{name}-model"
+        self.member_label = None
         self._provider_impl = object()
         self.behavior = behavior
         self.calls = 0
@@ -50,6 +51,9 @@ class FakeMember:
 
     async def cleanup(self):
         pass
+
+    def classify_failure(self, exc):
+        return None
 
     def _resolve(self):
         b = self.behavior

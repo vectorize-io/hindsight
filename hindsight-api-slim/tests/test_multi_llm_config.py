@@ -155,6 +155,47 @@ def test_parse_members_without_codex_home_defaults_none(clean_llm_env):
     assert _parse_llm_members("")[0].codex_home is None
 
 
+@pytest.mark.parametrize(
+    ("prefix", "env_name"),
+    [
+        ("", "HINDSIGHT_API_LLM_1_MEMBER_LABEL"),
+        ("RETAIN_", "HINDSIGHT_API_RETAIN_LLM_1_MEMBER_LABEL"),
+        ("REFLECT_", "HINDSIGHT_API_REFLECT_LLM_1_MEMBER_LABEL"),
+        ("CONSOLIDATION_", "HINDSIGHT_API_CONSOLIDATION_LLM_1_MEMBER_LABEL"),
+    ],
+)
+def test_parse_members_member_label_is_prefix_scoped(clean_llm_env, prefix, env_name):
+    clean_llm_env.setenv(f"HINDSIGHT_API_{prefix}LLM_1_PROVIDER", "ollama")
+    clean_llm_env.setenv(env_name, "codex-secondary")
+
+    assert _parse_llm_members(prefix)[0].member_label == "codex-secondary"
+    if prefix:
+        assert _parse_llm_members("") == []
+
+
+@pytest.mark.parametrize("label", ["x" * 65, "has\nnewline", "has\x7fcontrol"])
+def test_parse_members_rejects_unsafe_member_label(clean_llm_env, label):
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "ollama")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_MEMBER_LABEL", label)
+
+    with pytest.raises(ValueError, match="MEMBER_LABEL"):
+        _parse_llm_members("")
+
+
+def test_from_env_reads_server_only_primary_member_labels(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_MEMBER_LABEL", "primary-codex")
+    clean_llm_env.setenv("HINDSIGHT_API_RETAIN_LLM_MEMBER_LABEL", "retain-codex")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_MEMBER_LABEL", "reflect-codex")
+    clean_llm_env.setenv("HINDSIGHT_API_CONSOLIDATION_LLM_MEMBER_LABEL", "consolidation-codex")
+
+    config = HindsightConfig.from_env()
+
+    assert config.llm_member_label == "primary-codex"
+    assert config.retain_llm_member_label == "retain-codex"
+    assert config.reflect_llm_member_label == "reflect-codex"
+    assert config.consolidation_llm_member_label == "consolidation-codex"
+
+
 def test_parse_members_litellmrouter_config(clean_llm_env):
     # A litellmrouter member can carry its own router config so a chain can fail
     # over between differently-routed LiteLLM routers.
@@ -256,7 +297,7 @@ def _empty_config(**overrides) -> HindsightConfig:
     return dataclasses.replace(base, **overrides)
 
 
-def _member(provider="ollama"):
+def _member(provider="ollama", member_label=None):
     return LLMMemberConfig(
         provider=provider,
         api_key=None,
@@ -267,11 +308,12 @@ def _member(provider="ollama"):
         default_headers=None,
         bedrock_service_tier=None,
         gemini_service_tier=None,
+        member_label=member_label,
     )
 
 
-def _base_llm() -> LLMProvider:
-    return LLMProvider(provider="mock", api_key="", base_url="", model="m0")
+def _base_llm(member_label=None) -> LLMProvider:
+    return LLMProvider(provider="mock", api_key="", base_url="", model="m0", member_label=member_label)
 
 
 def test_build_llm_no_chain_returns_plain_provider(clean_llm_env):
@@ -303,6 +345,29 @@ def test_build_llm_per_op_inherits_global(clean_llm_env):
     result = _build_llm(_base_llm(), config, "retain_", _NO_CALL_DEFAULTS)
     assert isinstance(result, MultiLLMProvider)
     assert [m.provider for m in result.members[1:]] == ["ollama"]  # inherited
+
+
+def test_build_llm_per_op_primary_label_does_not_relabel_inherited_members(clean_llm_env):
+    config = _empty_config(
+        llm_members=[_member("ollama", member_label="secondary")],
+        llm_strategy=LLMStrategyConfig(mode="failover"),
+        retain_llm_members=[],
+        retain_llm_strategy=None,
+    )
+
+    result = _build_llm(_base_llm(member_label="retain-preferred"), config, "retain_", _NO_CALL_DEFAULTS)
+
+    assert isinstance(result, MultiLLMProvider)
+    assert result.members[0].member_label == "retain-preferred"
+    assert result.members[1].member_label == "secondary"
+
+
+def test_member_to_llm_passes_member_label(clean_llm_env):
+    from hindsight_api.engine.memory_engine import _member_to_llm
+
+    provider = _member_to_llm(_member("ollama", member_label="secondary"), _empty_config(), _NO_CALL_DEFAULTS)
+
+    assert provider.member_label == "secondary"
 
 
 def test_build_llm_per_op_overrides_global(clean_llm_env):

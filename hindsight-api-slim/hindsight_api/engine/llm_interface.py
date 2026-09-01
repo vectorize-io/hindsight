@@ -12,11 +12,36 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Callable, Self
+from typing import Any, Callable, Literal, Self
 
 from .response_models import LLMToolCallResult
 
 logger = logging.getLogger(__name__)
+
+
+class LLMFailureCategory(StrEnum):
+    """Provider-neutral failures that change routing beyond generic failover."""
+
+    RATE_LIMIT = "rate_limit"
+    REAUTHENTICATION_REQUIRED = "reauthentication_required"
+
+
+@dataclass(frozen=True, slots=True)
+class LLMCooldownFailure:
+    """Explicit quota exhaustion; timing is advisory, never permission to replay."""
+
+    category: Literal[LLMFailureCategory.RATE_LIMIT] = LLMFailureCategory.RATE_LIMIT
+    retry_after_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LLMTerminalFailure:
+    """Confirmed broken credentials requiring operator action, not a retry."""
+
+    category: Literal[LLMFailureCategory.REAUTHENTICATION_REQUIRED] = LLMFailureCategory.REAUTHENTICATION_REQUIRED
+
+
+LLMFailureClassification = LLMCooldownFailure | LLMTerminalFailure
 
 
 class LLMToolChoiceMode(StrEnum):
@@ -109,6 +134,14 @@ class LLMInterface(ABC):
         # never had the attribute at all, so a runaway response was read until the
         # backend gave up) is indistinguishable from one that honours it.
         self.timeout: float | None = timeout
+
+    def classify_failure(self, exc: BaseException) -> LLMFailureClassification | None:
+        """Classify a completed failed call; None preserves existing generic failover.
+
+        Providers opt in narrowly. Classification creates no additional request,
+        retry or batch-routing path; the router owns cooldown state.
+        """
+        return None
 
     def _warn_reasoning_effort_unsupported(self) -> None:
         """Report, once at startup, that this provider cannot honour a configured effort.
@@ -436,3 +469,11 @@ class ProviderRateLimitResetError(Exception):
     def __init__(self, retry_at: datetime, message: str = "") -> None:
         self.retry_at = retry_at
         super().__init__(message)
+
+
+class ProviderReauthenticationRequiredError(RuntimeError):
+    """Confirmed unusable credentials: stop this operation without fallback/retry.
+
+    Distinct from an ordinary access-token rejection, which may still recover
+    through the provider's existing refresh handling.
+    """

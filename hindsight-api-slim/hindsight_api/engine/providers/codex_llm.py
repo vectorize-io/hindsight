@@ -18,16 +18,28 @@ so that future server-side changes affect both clients identically.
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 
 import httpx
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMCooldownFailure,
+    LLMFailureClassification,
+    LLMInterface,
+    LLMTerminalFailure,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+    ProviderReauthenticationRequiredError,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
@@ -42,6 +54,7 @@ from .codex_auth import (
     _CODEX_TERMINAL_REFRESH_ERROR_CODES,
     _CODEX_TOKEN_REFRESH_SKEW_SECONDS,
     CodexAuthManager,
+    CodexReauthenticationRequiredError,
     CodexRefreshExpiredError,
     default_codex_auth_file,
 )
@@ -144,6 +157,34 @@ class CodexLLM(LLMInterface):
     ``auth.json`` (``codex_home`` if given, else ``CODEX_HOME``, else
     ``~/.codex``) and makes API calls to chatgpt.com/backend-api/codex/responses.
     """
+
+    def classify_failure(self, exc: BaseException) -> LLMFailureClassification | None:
+        """Only explicit Codex quota responses establish sticky cooldown."""
+        # Follow explicit causes only, bounded even for malformed cyclic chains.
+        # An incidental exception context does not classify the active failure.
+        current: BaseException | None = exc
+        for _ in range(8):
+            if current is None:
+                break
+            if isinstance(current, CodexReauthenticationRequiredError):
+                return LLMTerminalFailure()
+            if isinstance(current, httpx.HTTPStatusError) and current.response.status_code == 429:
+                retry_after = current.response.headers.get("Retry-After", "")
+                try:
+                    seconds = float(retry_after)
+                except ValueError:
+                    try:
+                        retry_at = parsedate_to_datetime(retry_after)
+                        if retry_at.tzinfo is None:
+                            retry_at = retry_at.replace(tzinfo=timezone.utc)
+                        seconds = max(0.0, retry_at.timestamp() - time.time())
+                    except (ValueError, TypeError, OverflowError):
+                        seconds = None
+                if seconds is not None and (not math.isfinite(seconds) or seconds < 0):
+                    seconds = None
+                return LLMCooldownFailure(retry_after_seconds=seconds)
+            current = current.__cause__
+        return None
 
     def __init__(
         self,
@@ -377,6 +418,10 @@ class CodexLLM(LLMInterface):
         if self._auth_manager._token_is_stale():
             try:
                 await self._refresh_oauth_tokens(reason="proactive (token near expiry)")
+            except CodexReauthenticationRequiredError as exc:
+                raise ProviderReauthenticationRequiredError(
+                    "Codex credentials require reauthentication. Run 'codex auth login' for the configured profile."
+                ) from exc
             except CodexRefreshExpiredError:
                 raise
 
@@ -706,6 +751,11 @@ class CodexLLM(LLMInterface):
                             headers["Authorization"] = f"Bearer {self.access_token}"
                             logger.info("Codex auth refreshed after auth error; retrying request once")
                             continue
+                        except CodexReauthenticationRequiredError as refresh_err:
+                            raise ProviderReauthenticationRequiredError(
+                                "Codex credentials require reauthentication. "
+                                "Run 'codex auth login' for the configured profile."
+                            ) from refresh_err
                         except CodexRefreshExpiredError as refresh_err:
                             logger.error("Codex refresh_token is permanently invalid; cannot recover from auth error")
                             raise RuntimeError(
@@ -1013,6 +1063,10 @@ class CodexLLM(LLMInterface):
                     headers["Authorization"] = f"Bearer {self.access_token}"
                     logger.info("Codex auth refreshed after auth error; retrying tool-call request once")
                     content, tool_calls = await _request_attempt(2)
+                except CodexReauthenticationRequiredError as refresh_err:
+                    raise ProviderReauthenticationRequiredError(
+                        "Codex credentials require reauthentication. Run 'codex auth login' for the configured profile."
+                    ) from refresh_err
                 except CodexRefreshExpiredError as refresh_err:
                     logger.error(
                         "Codex refresh_token is permanently invalid; cannot recover from auth error in tool-call path"

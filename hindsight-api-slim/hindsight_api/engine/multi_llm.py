@@ -24,11 +24,21 @@ paths.
 """
 
 import logging
+import math
 import threading
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from ..config import LLM_STRATEGY_FAILOVER, LLMStrategyConfig
+from .llm_interface import (
+    LLMCooldownFailure,
+    LLMTerminalFailure,
+    ProviderRateLimitResetError,
+    ProviderReauthenticationRequiredError,
+)
 from .llm_wrapper import LLMProvider, OutputTooLongError
 
 if TYPE_CHECKING:
@@ -36,6 +46,15 @@ if TYPE_CHECKING:
     from .llm_wrapper import ConfiguredLLMProvider, LLMToolCallResult
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_COOLDOWN_SECONDS = 60.0
+
+
+@dataclass
+class _MemberState:
+    cooldown_until: float | None = None
+    probing: bool = False
+    generation: int = 0
 
 
 def _should_failover(exc: BaseException) -> bool:
@@ -47,7 +66,7 @@ def _should_failover(exc: BaseException) -> bool:
     ``KeyboardInterrupt`` and ``SystemExit`` are ``BaseException`` (not
     ``Exception``) and therefore propagate unchanged.
     """
-    if isinstance(exc, OutputTooLongError):
+    if isinstance(exc, (OutputTooLongError, ProviderReauthenticationRequiredError)):
         return False
     return isinstance(exc, Exception)
 
@@ -88,6 +107,9 @@ class MultiLLMProvider:
             raise ValueError("MultiLLMProvider requires at least one member")
         self._members = members
         self._strategy = strategy
+        # Ownership is per router instance, not per credential or process-wide.
+        self._states = [_MemberState() for _ in members]
+        self._state_lock = threading.Lock()
 
         weights = strategy.weights or [1] * len(members)
         if len(weights) != len(members):
@@ -112,23 +134,121 @@ class MultiLLMProvider:
         order = self._member_order()
         for position, idx in enumerate(order):
             member = self._members[idx]
+            label = member.member_label or ("primary" if idx == 0 else f"member-{idx}")
+            with self._state_lock:
+                state = self._states[idx]
+                if state.probing or (state.cooldown_until is not None and state.cooldown_until > monotonic()):
+                    logger.debug(
+                        "LLM member %d (%s/%s, label=%s) skipped: state=%s",
+                        idx,
+                        member.provider,
+                        member.model,
+                        label,
+                        "probing" if state.probing else "cooldown",
+                    )
+                    continue
+                probing = state.cooldown_until is not None
+                generation = state.generation
+                if probing:
+                    state.probing = True
+            if probing:
+                logger.info("LLM member %d (%s/%s, label=%s) state=probing", idx, member.provider, member.model, label)
             try:
-                return await getattr(member, method_name)(**kwargs)
+                result = await getattr(member, method_name)(**kwargs)
+                with self._state_lock:
+                    # A success started before a newer quota failure says nothing
+                    # about that cooldown; only its matching probe can reopen it.
+                    if probing and state.generation == generation:
+                        state.cooldown_until = None
+                        logger.info(
+                            "LLM member %d (%s/%s, label=%s) state=eligible after successful probe",
+                            idx,
+                            member.provider,
+                            member.model,
+                            label,
+                        )
+                return result
             except BaseException as e:  # noqa: BLE001 - re-raised unless it should fail over
+                if not isinstance(e, Exception):
+                    raise
+                # The router knows the member's position; a standalone wrapper
+                # cannot correctly name an unlabelled secondary member.
+                failure = (
+                    LLMTerminalFailure()
+                    if isinstance(e, ProviderReauthenticationRequiredError)
+                    else member.classify_failure(e)
+                )
+                if isinstance(failure, LLMTerminalFailure):
+                    logger.warning(
+                        "LLM member %d (%s/%s, label=%s) category=reauthentication_required; stopping operation",
+                        idx,
+                        member.provider,
+                        member.model,
+                        label,
+                    )
+                    raise ProviderReauthenticationRequiredError(
+                        f"LLM member {idx} ({label}) requires reauthentication. "
+                        "Refresh its configured credentials before retrying."
+                    ) from None
+                if isinstance(failure, LLMCooldownFailure) or probing:
+                    delay = failure.retry_after_seconds if isinstance(failure, LLMCooldownFailure) else None
+                    if delay is None or not math.isfinite(delay) or delay < 0:
+                        delay = _DEFAULT_COOLDOWN_SECONDS
+                    with self._state_lock:
+                        state.cooldown_until = max(state.cooldown_until or 0.0, monotonic() + delay)
+                        state.generation += 1
+                    logger.warning(
+                        "LLM member %d (%s/%s, label=%s) state=cooldown category=%s retry_after=%.3fs",
+                        idx,
+                        member.provider,
+                        member.model,
+                        label,
+                        failure.category.value if failure is not None else "probe_failed",
+                        delay,
+                    )
                 if not _should_failover(e):
                     raise
                 last_exc = e
                 remaining = len(order) - position - 1
                 logger.warning(
-                    "LLM member %d (%s/%s) failed on %s: %s%s",
+                    "LLM member %d (%s/%s, label=%s) failed on %s: %s%s",
                     idx,
                     member.provider,
                     member.model,
+                    label,
                     method_name,
-                    e,
+                    failure.category.value if failure is not None else e,
                     f"; trying next member ({remaining} left)" if remaining else "; no members left",
                 )
-        # All members failed; surface the last error (loop ran at least once).
+            finally:
+                if probing:
+                    with self._state_lock:
+                        state.probing = False
+        # No provider request is made while every member is cooling/probing.
+        # Reuse the worker's existing quota defer signal, not a router wait loop.
+        with self._state_lock:
+            if last_exc is None or all(state.cooldown_until is not None for state in self._states):
+                now = monotonic()
+                delay = min(
+                    (
+                        1.0 if state.probing else max(0.0, state.cooldown_until - now)
+                        for state in self._states
+                        if state.cooldown_until is not None
+                    ),
+                    # Another thread may have finished its probe since this
+                    # dispatch skipped it. Defer without inventing a new replay.
+                    default=1.0,
+                )
+                wall_now = datetime.now(timezone.utc)
+                # Extremely large finite Retry-After values must not overflow
+                # datetime. Saturate only the external wakeup, not eligibility.
+                max_delay = (datetime.max.replace(tzinfo=timezone.utc) - wall_now).total_seconds() - 1.0
+                retry_at = wall_now + timedelta(seconds=min(delay, max_delay))
+                raise ProviderRateLimitResetError(
+                    retry_at=retry_at,
+                    message="All LLM members are cooling down or probing; retry after the reset time.",
+                ) from None
+        # Otherwise preserve the existing final-error behavior.
         assert last_exc is not None
         raise last_exc
 

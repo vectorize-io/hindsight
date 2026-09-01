@@ -480,11 +480,16 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 ```
 
 Token refresh is coordinated per auth-file path, so the two profiles refresh
-independently and never overwrite each other's tokens. Failover is the generic
-multi-LLM behaviour: a member is tried after the previous one has exhausted its
-own retries and raised — there is no separate quota classifier or cooldown, so a
-rate-limited primary is re-tried (and fails) at the head of each request before
-the fallback serves it.
+independently and never overwrite each other's tokens. Add non-secret
+`HINDSIGHT_API_LLM_MEMBER_LABEL` / `HINDSIGHT_API_LLM_1_MEMBER_LABEL` values such
+as `preferred` and `secondary` to make routing diagnostics distinguish the
+members without exposing auth-home paths. A Codex 429 after its own retries puts
+that member into a per-router cooldown for `Retry-After` or 60 seconds, then one
+request probes it after expiry. A confirmed invalid, expired, or reused refresh
+credential is terminal for the operation: Hindsight neither falls back to another
+member nor retries the enclosing operation. Other 401s, timeouts, and 5xx errors
+retain generic retry/failover behavior. Batch retain remains bound to the member
+that submitted it and is never rerouted by cooldown state.
 
 ---
 

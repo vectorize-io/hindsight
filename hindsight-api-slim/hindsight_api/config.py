@@ -149,6 +149,10 @@ ENV_LLM_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
 ENV_LLM_API_KEY = "HINDSIGHT_API_LLM_API_KEY"
 ENV_LLM_MODEL = "HINDSIGHT_API_LLM_MODEL"
 ENV_LLM_BASE_URL = "HINDSIGHT_API_LLM_BASE_URL"
+# A server-only, non-secret name used to identify a configured member in routing
+# diagnostics. It is deliberately separate from provider/model/auth configuration:
+# labels must not reveal credential paths or profile identities.
+ENV_LLM_MEMBER_LABEL = "HINDSIGHT_API_LLM_MEMBER_LABEL"
 ENV_LLM_MAX_CONCURRENT = "HINDSIGHT_API_LLM_MAX_CONCURRENT"
 ENV_LLM_MAX_RETRIES = "HINDSIGHT_API_LLM_MAX_RETRIES"
 ENV_LLM_INITIAL_BACKOFF = "HINDSIGHT_API_LLM_INITIAL_BACKOFF"
@@ -210,6 +214,9 @@ ENV_LLM_STRATEGY = "HINDSIGHT_API_LLM_STRATEGY"
 ENV_RETAIN_LLM_STRATEGY = "HINDSIGHT_API_RETAIN_LLM_STRATEGY"
 ENV_REFLECT_LLM_STRATEGY = "HINDSIGHT_API_REFLECT_LLM_STRATEGY"
 ENV_CONSOLIDATION_LLM_STRATEGY = "HINDSIGHT_API_CONSOLIDATION_LLM_STRATEGY"
+ENV_RETAIN_LLM_MEMBER_LABEL = "HINDSIGHT_API_RETAIN_LLM_MEMBER_LABEL"
+ENV_REFLECT_LLM_MEMBER_LABEL = "HINDSIGHT_API_REFLECT_LLM_MEMBER_LABEL"
+ENV_CONSOLIDATION_LLM_MEMBER_LABEL = "HINDSIGHT_API_CONSOLIDATION_LLM_MEMBER_LABEL"
 
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
 # provider. Each entry is a deployment; the Router tries them in declared order and
@@ -2043,6 +2050,15 @@ def _parse_llm_router_config(env_var: str) -> dict | None:
         raise ValueError(f"Invalid {env_var}: invalid JSON: {e}") from e
 
 
+def _parse_llm_member_label(env_var: str, raw: str | None) -> str | None:
+    """Parse a safe, bounded non-secret label for one configured LLM member."""
+    if raw is None or raw == "":
+        return None
+    if len(raw) > 64 or not all(char.isprintable() for char in raw):
+        raise ValueError(f"{env_var} must be at most 64 printable characters")
+    return raw
+
+
 @dataclass
 class LLMMemberConfig:
     """One extra LLM in a multi-LLM chain, configured via indexed env vars.
@@ -2062,6 +2078,7 @@ class LLMMemberConfig:
     bedrock_service_tier: str | None
     gemini_service_tier: str | None
     cache_affinity: str | None = None
+    member_label: str | None = None
     codex_home: str | None = None
     vertexai_project_id: str | None = None
     vertexai_region: str | None = None
@@ -2157,6 +2174,7 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 extra_body=json.loads(os.getenv(base + "EXTRA_BODY", "null")),
                 default_headers=json.loads(os.getenv(base + "DEFAULT_HEADERS", "null")),
                 cache_affinity=os.getenv(base + "CACHE_AFFINITY") or None,
+                member_label=_parse_llm_member_label(base + "MEMBER_LABEL", os.getenv(base + "MEMBER_LABEL")),
                 bedrock_service_tier=os.getenv(base + "BEDROCK_SERVICE_TIER") or None,
                 gemini_service_tier=(
                     parse_gemini_service_tier(gemini_service_tier) if provider.lower() == "gemini" else None
@@ -2531,6 +2549,11 @@ class HindsightConfig:
     # arbitrary file.
     llm_codex_home: str | None
 
+    # Server-only, non-secret diagnostic label for the unindexed primary member.
+    # It is intentionally not bank-configurable: routing observability describes
+    # process configuration, not bank policy.
+    llm_member_label: str | None
+
     # Vertex AI configuration
     llm_vertexai_project_id: str | None
     llm_vertexai_region: str
@@ -2569,6 +2592,7 @@ class HindsightConfig:
     retain_llm_reasoning_effort: str | None
     retain_llm_extra_body: dict | None
     retain_llm_cache_affinity: str | None
+    retain_llm_member_label: str | None
 
     # Fireworks AI batch inference (static, server-level)
     fireworks_account_id: str | None
@@ -2588,6 +2612,7 @@ class HindsightConfig:
     reflect_llm_reasoning_effort: str | None
     reflect_llm_extra_body: dict | None
     reflect_llm_cache_affinity: str | None
+    reflect_llm_member_label: str | None
 
     consolidation_llm_provider: str | None
     consolidation_llm_api_key: str | None
@@ -2602,6 +2627,7 @@ class HindsightConfig:
     consolidation_llm_reasoning_effort: str | None
     consolidation_llm_extra_body: dict | None
     consolidation_llm_cache_affinity: str | None
+    consolidation_llm_member_label: str | None
 
     # Embeddings
     embeddings_provider: str
@@ -3571,6 +3597,7 @@ class HindsightConfig:
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Codex (ChatGPT OAuth) credentials directory
             llm_codex_home=os.getenv(ENV_LLM_CODEX_HOME) or DEFAULT_LLM_CODEX_HOME,
+            llm_member_label=_parse_llm_member_label(ENV_LLM_MEMBER_LABEL, os.getenv(ENV_LLM_MEMBER_LABEL)),
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
             llm_vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION, DEFAULT_LLM_VERTEXAI_REGION),
@@ -3624,6 +3651,9 @@ class HindsightConfig:
             retain_llm_reasoning_effort=os.getenv(ENV_RETAIN_LLM_REASONING_EFFORT) or None,
             retain_llm_extra_body=json.loads(os.getenv(ENV_RETAIN_LLM_EXTRA_BODY, "null")),
             retain_llm_cache_affinity=os.getenv(ENV_RETAIN_LLM_CACHE_AFFINITY) or None,
+            retain_llm_member_label=_parse_llm_member_label(
+                ENV_RETAIN_LLM_MEMBER_LABEL, os.getenv(ENV_RETAIN_LLM_MEMBER_LABEL)
+            ),
             reflect_llm_provider=os.getenv(ENV_REFLECT_LLM_PROVIDER) or None,
             reflect_llm_api_key=os.getenv(ENV_REFLECT_LLM_API_KEY) or None,
             reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL)
@@ -3650,6 +3680,9 @@ class HindsightConfig:
             reflect_llm_reasoning_effort=os.getenv(ENV_REFLECT_LLM_REASONING_EFFORT) or None,
             reflect_llm_extra_body=json.loads(os.getenv(ENV_REFLECT_LLM_EXTRA_BODY, "null")),
             reflect_llm_cache_affinity=os.getenv(ENV_REFLECT_LLM_CACHE_AFFINITY) or None,
+            reflect_llm_member_label=_parse_llm_member_label(
+                ENV_REFLECT_LLM_MEMBER_LABEL, os.getenv(ENV_REFLECT_LLM_MEMBER_LABEL)
+            ),
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
             consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)
@@ -3678,6 +3711,9 @@ class HindsightConfig:
             consolidation_llm_reasoning_effort=os.getenv(ENV_CONSOLIDATION_LLM_REASONING_EFFORT) or None,
             consolidation_llm_extra_body=json.loads(os.getenv(ENV_CONSOLIDATION_LLM_EXTRA_BODY, "null")),
             consolidation_llm_cache_affinity=os.getenv(ENV_CONSOLIDATION_LLM_CACHE_AFFINITY) or None,
+            consolidation_llm_member_label=_parse_llm_member_label(
+                ENV_CONSOLIDATION_LLM_MEMBER_LABEL, os.getenv(ENV_CONSOLIDATION_LLM_MEMBER_LABEL)
+            ),
             # Multi-LLM chains (indexed members + routing strategy)
             llm_members=_parse_llm_members(""),
             llm_strategy=_parse_llm_strategy(os.getenv(ENV_LLM_STRATEGY)),

@@ -139,6 +139,10 @@ class CodexRefreshExpiredError(RuntimeError):
     """
 
 
+class CodexReauthenticationRequiredError(CodexRefreshExpiredError):
+    """A positively identified invalid/expired/reused refresh token after reread."""
+
+
 class CodexAuthManager:
     """Sync Codex OAuth credential manager.
 
@@ -486,7 +490,7 @@ class CodexAuthManager:
                             continue
                         return
                     if error_code in _CODEX_TERMINAL_REFRESH_ERROR_CODES:
-                        raise CodexRefreshExpiredError(
+                        raise CodexReauthenticationRequiredError(
                             f"Codex refresh_token is permanently invalid (error.code={error_code}). "
                             "Run 'codex auth login' to re-authenticate."
                         )

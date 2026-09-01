@@ -36,7 +36,7 @@ from ...config import get_config
 from ...worker.stage import set_stage
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
-from ..llm_interface import OutputTooLongError, ProviderRateLimitResetError
+from ..llm_interface import OutputTooLongError, ProviderRateLimitResetError, ProviderReauthenticationRequiredError
 from ..llm_trace import (
     record_created_memory_ids,
     record_source_memory_ids,
@@ -87,18 +87,26 @@ async def _gather_or_cancel(coros: list[Any]) -> list[Any]:
     ``ExceptionGroup``, and the worker's ``_is_non_retryable_task_error`` does
     ``isinstance`` checks on the raised exception — a wrapped
     ``IntegrityConstraintViolationError`` would be misclassified as retryable
-    and retried forever. This helper re-raises the original exception unchanged.
+    and retried forever. Re-raise the original exception unless cleanup also
+    observes a terminal authentication failure that must prevent a retry.
     """
     tasks = [asyncio.ensure_future(c) for c in coros]
     try:
         return await asyncio.gather(*tasks)
-    except BaseException:
+    except BaseException as error:
         for t in tasks:
             if not t.done():
                 t.cancel()
         # Await the cancellations before propagating: returning while they are
         # still unwinding would reintroduce the very overlap this prevents.
-        await asyncio.gather(*tasks, return_exceptions=True)
+        completed = await asyncio.gather(*tasks, return_exceptions=True)
+        if isinstance(error, Exception):
+            # A sibling may already have failed before cancellation reached it.
+            # Do not let a generic-first error turn observed broken credentials
+            # into a worker retry. Cancellation still propagates unchanged.
+            for result in completed:
+                if isinstance(result, ProviderReauthenticationRequiredError):
+                    raise result
         raise
 
 
@@ -3053,7 +3061,9 @@ def _classify_batch_failure(exc: Exception) -> _BatchFailureClass:
     the input, which is what an input-shaped failure needs. It is the identical
     re-send at the same batch size that has nothing to offer.
     """
-    if isinstance(exc, ProviderRateLimitResetError):
+    # Broken credentials must escape to the worker too: FAIL_FAST still permits
+    # adaptive bisection, which would replay the request with the same account.
+    if isinstance(exc, (ProviderRateLimitResetError, ProviderReauthenticationRequiredError)):
         return _BatchFailureClass.PROPAGATE
     # Duck-typed rather than importing a provider SDK's error class: every SDK we
     # front (openai, anthropic) exposes the HTTP status this way.
