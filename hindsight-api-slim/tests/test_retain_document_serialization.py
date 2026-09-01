@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import struct
 import uuid
 from dataclasses import dataclass
@@ -287,10 +288,92 @@ def test_oversized_primary_still_runs_alone():
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="session")
+def isolated_ops_schema(pg0_db_url):
+    """A private, migrated Postgres schema for this file's queue tests.
+
+    ``ops.claim_tasks`` claims across the whole schema on the connection's
+    search_path: whatever is claimable, it takes. Sharing ``public`` with the rest
+    of the suite therefore makes these assertions unownable — another xdist worker
+    running a real poller claims this file's rows before it can (its own claim then
+    sees none of them, which reads as "the predicate excluded them"), and any test
+    that deletes pending rows queue-wide removes them outright. Filtering the result
+    to our own bank, which these tests already do, observes the shortfall but cannot
+    prevent it.
+
+    That is the same defect ``tests/test_worker.py`` and
+    ``tests/test_claim_bank_serialization.py`` were given a private schema for
+    (#3963); this file is the third one that claims queue-wide, and it flaked in CI
+    with ``expected only the oldest same-document retain, got []``. Fix it the same
+    way: one schema per worker, created + migrated once and dropped at session end,
+    so "the whole schema" is only this file's rows.
+
+    Only the queue tests take ``backend``; the end-to-end append tests build their
+    own engine on ``memory_stub_emb`` and are unaffected.
+    """
+    from hindsight_api.engine.db import create_database_backend
+    from hindsight_api.pg0 import resolve_database_url
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    schema = f"retaindoc_iso_{worker}"
+
+    async def _provision() -> str:
+        url = await resolve_database_url(pg0_db_url)
+        b = create_database_backend("postgresql")
+        await b.initialize(url, min_size=1, max_size=2)
+        try:
+            async with b.get_pool().acquire() as conn:
+                # Rebuild from scratch so a schema left by a crashed prior run
+                # can't carry stale state into this session.
+                await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                await conn.execute(f'CREATE SCHEMA "{schema}"')
+            # run_migrations is sync; call it with the loop running (as elsewhere
+            # in the suite) — it builds banks/async_operations/etc. in the schema.
+            b.run_migrations(url, schema=schema)
+        finally:
+            await b.shutdown()
+        return url
+
+    async def _drop(url: str) -> None:
+        b = create_database_backend("postgresql")
+        await b.initialize(url, min_size=1, max_size=2)
+        try:
+            async with b.get_pool().acquire() as conn:
+                await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        finally:
+            await b.shutdown()
+
+    loop = asyncio.new_event_loop()
+    try:
+        url = loop.run_until_complete(_provision())
+    finally:
+        loop.close()
+
+    yield schema
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_drop(url))
+    finally:
+        loop.close()
+
+
 @pytest_asyncio.fixture
-async def backend(pg0_db_url):
+async def backend(pg0_db_url, isolated_ops_schema):
+    """A backend whose pool is pinned to this file's private schema."""
+    from hindsight_api.pg0 import resolve_database_url
+
+    async def _use_isolated_schema(conn):
+        # init runs once per new connection and setup on every acquire (after
+        # asyncpg's release-time RESET ALL), so this pins search_path for the
+        # pool's whole lifetime: every unqualified table here resolves into the
+        # private schema, and a claim never sees the shared public one.
+        await conn.execute(f'SET search_path TO "{isolated_ops_schema}", public')
+
     pool = PostgreSQLBackend()
-    await pool.initialize(pg0_db_url, min_size=1, max_size=5)
+    await pool.initialize(
+        await resolve_database_url(pg0_db_url), min_size=1, max_size=5, init_callback=_use_isolated_schema
+    )
     yield pool
     await pool.shutdown()
 
@@ -345,19 +428,20 @@ class _Rollback(Exception):
     """Unwinds a test's claim transaction so the shared queue is left untouched."""
 
 
-# Claim limits large enough that the shared test queue's depth can never push
-# this module's rows out of the ORDER BY created_at window. What is under test
-# is which rows are *claimable*, not how many a worker takes per cycle.
+# A claim limit far above anything this file queues, so the ORDER BY created_at
+# window can never be the reason a row is missing. What is under test is which
+# rows are *claimable*, not how many a worker takes per cycle.
 _UNBOUNDED_CLAIM = 1000
 
 
 async def _claiming(backend, body):
     """Run ``body(conn)`` inside a claim transaction, then roll it back.
 
-    Claiming is queue-wide by design: ``claim_tasks`` takes whatever is
-    claimable, which in a shared test database includes operations other test
-    modules are relying on. Rolling back means these tests can exercise the real
-    claim SQL — the point of them — without actually stealing that work.
+    Claiming is queue-wide by design: ``claim_tasks`` takes whatever is claimable
+    in the schema. :func:`isolated_ops_schema` makes that only this file's rows, and
+    rolling back on top of it leaves even those untouched — so each test starts from
+    the queue it built itself while still exercising the real claim SQL, which is the
+    point of these tests.
     """
     captured = {}
     try:
