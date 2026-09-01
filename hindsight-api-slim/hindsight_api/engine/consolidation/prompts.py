@@ -1,6 +1,10 @@
 """Prompts for the consolidation engine."""
 
-from hindsight_api.engine.prompt_utils import escape_for_prompt, output_language_directive
+from hindsight_api.engine.prompt_utils import (
+    default_language_section,
+    escape_for_prompt,
+    output_language_directive,
+)
 
 # Default mission — tells the consolidator to track anything worth remembering.
 # Banks override this via `observations_mission` to scope what gets retained.
@@ -17,14 +21,13 @@ _MISSION_PRIORITY_NOTE = (
     "DECISION GUIDE, or OUTPUT FORMAT below, the MISSION takes priority."
 )
 
-# Default language rule — used only when HINDSIGHT_API_LLM_OUTPUT_LANGUAGE is
-# unset. Without it the whole prompt is English and multilingual models drift:
-# Chinese source facts intermittently produce English observations. Retain's
-# fact extraction carries the equivalent rule (see _BASE_FACT_EXTRACTION_PROMPT),
-# so this makes "preserve the source language" the pipeline-wide default. When an
-# output language IS configured, this section is omitted and
-# output_language_directive() takes over — the two must never both be present or
-# they contradict each other.
+# Consolidation's wording of the preserve-the-source-language rule; the selection
+# between it and an explicit output language belongs to default_language_section(),
+# which documents the invariant. Without this rule the whole prompt is English and
+# multilingual models drift: Chinese source facts intermittently produce English
+# observations. Retain's fact extraction carries the equivalent rule (see
+# _DEFAULT_LANGUAGE_RULE there), making "preserve the source language" the
+# pipeline-wide default.
 _DEFAULT_LANGUAGE_RULE = """## LANGUAGE
 
 Write every observation in the language of its own source facts — never translate them. Per observation, not per batch: when one merges facts of several languages, the majority wins. Proper nouns, identifiers, and units stay verbatim.
@@ -174,7 +177,7 @@ def build_consolidation_system_prompt(
     unset keeps each observation in the language of its own source facts (the
     default), set forces every observation into that one configured language.
     """
-    language_section = "" if llm_output_language else f"{_DEFAULT_LANGUAGE_RULE}\n\n"
+    language_section = default_language_section(_DEFAULT_LANGUAGE_RULE, llm_output_language)
     template = (
         "You are a memory consolidation system. Synthesize new facts into "
         "observations, merging with existing observations when appropriate.\n\n"

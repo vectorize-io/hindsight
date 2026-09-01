@@ -1,26 +1,26 @@
 """
 Daemon mode support for Hindsight API.
 
-Provides idle timeout for running as a background daemon.
+Provides process detachment for running as a background daemon.
+
+The daemon used to auto-exit after a configurable idle period.  That was
+removed: idleness was measured as "time since the last request *started*", so a
+long retain/reflect/consolidation call that outlived the timeout got SIGTERM'd
+mid-flight (#3903).  A daemon now runs until it is stopped.  ``--idle-timeout``
+is still accepted so existing launchers keep working, but it does nothing.
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
 import os
 import platform
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import IO
 
-logger = logging.getLogger(__name__)
-
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 8888
-DEFAULT_IDLE_TIMEOUT = 0  # 0 = no auto-exit (hindsight-embed passes its own timeout)
 
 # Allow override via environment variable for profile-specific logs
 DAEMON_LOG_PATH = Path(os.getenv("HINDSIGHT_API_DAEMON_LOG", str(Path.home() / ".hindsight" / "daemon.log")))
@@ -30,34 +30,6 @@ DAEMON_LOG_PATH = Path(os.getenv("HINDSIGHT_API_DAEMON_LOG", str(Path.home() / "
 # DaemonEmbedManager so the daemon launched via Popen skips re-exec entirely
 # (hindsight-embed's Popen already provides a clean, detached process).
 ENV_DAEMON_CHILD = "_HINDSIGHT_DAEMON_CHILD"
-
-
-class IdleTimeoutMiddleware:
-    """ASGI middleware that tracks activity and exits after idle timeout."""
-
-    def __init__(self, app, idle_timeout: int = DEFAULT_IDLE_TIMEOUT):
-        self.app = app
-        self.idle_timeout = idle_timeout
-        self.last_activity = time.time()
-
-    async def __call__(self, scope, receive, send):
-        self.last_activity = time.time()
-        await self.app(scope, receive, send)
-
-    async def _check_idle(self):
-        """Exit the daemon after the configured period without requests."""
-        if self.idle_timeout <= 0:
-            return
-
-        while True:
-            await asyncio.sleep(30)
-            idle_time = time.time() - self.last_activity
-            if idle_time > self.idle_timeout:
-                logger.info(f"Idle timeout reached ({self.idle_timeout}s), shutting down daemon")
-                await asyncio.sleep(1)
-                import signal
-
-                os.kill(os.getpid(), signal.SIGTERM)
 
 
 def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:

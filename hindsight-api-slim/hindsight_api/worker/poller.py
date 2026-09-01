@@ -17,12 +17,24 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from ..config import get_config
+from ..config import (
+    ENV_CONSOLIDATION_WALL_TIMEOUT,
+    ENV_RETAIN_WALL_TIMEOUT,
+    get_config,
+)
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
+from .backpressure import is_store_backpressure
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
+
+# How long to hold a task a store shed for backpressure. Long enough that a fold has a real chance
+# to drain the backlog — retrying into a still-full store just sheds again and burns the claim —
+# and short enough that a cleared backlog is not left waiting. Deferrals do not count against
+# `max_retries`, so this can afford to be patient without risking the operation.
+_BACKPRESSURE_DEFER_SECONDS = int(os.environ.get("HINDSIGHT_API_BACKPRESSURE_DEFER_SECONDS", "120"))
 from .stage import StageHolder, bind_holder
 
 # Map DB operation_type -> metric `operation` label, collapsing the retain
@@ -30,6 +42,43 @@ from .stage import StageHolder, bind_holder
 # operation="retain" series the synchronous API path emits. Unknown types
 # pass through unchanged.
 _RETAIN_OP_TYPES = {"retain", "batch_retain", "file_convert_retain"}
+
+
+@dataclass(frozen=True)
+class _WallCeiling:
+    """How one task type's wall-clock ceiling is configured and enforced.
+
+    ``config_attr``/``env_var`` are kept together in a single record so the
+    value an operator reads in the failure message can never drift from the
+    value the ceiling was actually resolved from.
+
+    ``extends_on_progress`` picks the semantics:
+
+    * ``False`` (retain) — an absolute ceiling on total runtime. A retain is one
+      document; if it is still going an hour later, something is wrong.
+    * ``True`` (consolidation) — an *idle* ceiling. A consolidation job is a loop
+      over batches, each committing its own memories, and a big backlog is
+      legitimately long. Every committed batch bumps the task's stage, which
+      restarts the clock, so the ceiling only fires on a job that has stopped
+      making progress — a stall, not a slow bank.
+    """
+
+    config_attr: str
+    env_var: str
+    extends_on_progress: bool = False
+
+
+_WALL_CEILINGS: dict[str, _WallCeiling] = {
+    **dict.fromkeys(
+        _RETAIN_OP_TYPES,
+        _WallCeiling(config_attr="retain_wall_timeout", env_var=ENV_RETAIN_WALL_TIMEOUT),
+    ),
+    "consolidation": _WallCeiling(
+        config_attr="consolidation_wall_timeout",
+        env_var=ENV_CONSOLIDATION_WALL_TIMEOUT,
+        extends_on_progress=True,
+    ),
+}
 
 
 def _current_rss_bytes() -> int | None:
@@ -73,21 +122,41 @@ def _wall_timeout_for(task_type: str) -> float | None:
     LLM call or one query, never the whole task — this is the outer backstop
     that turns "wedged until restart" into "failed and retryable".
 
-    Only retain is bounded today; reflect self-bounds inside the engine
-    (``reflect_wall_timeout``) and the remaining types have no reported wedge.
+    For consolidation the ceiling bounds time *without progress* rather than
+    total runtime — see ``_WallCeiling.extends_on_progress``.
+
+    Reflect self-bounds inside the engine (``reflect_wall_timeout``); unmapped
+    task types remain unbounded until they get an explicit ceiling.
     """
-    if task_type in _RETAIN_OP_TYPES:
-        timeout = get_config().retain_wall_timeout
-        return float(timeout) if timeout > 0 else None
-    return None
+    ceiling = _WALL_CEILINGS.get(task_type)
+    if ceiling is None:
+        return None
+    timeout = getattr(get_config(), ceiling.config_attr)
+    return float(timeout) if timeout > 0 else None
 
 
 class _WallTimeoutExceeded(Exception):
     """A task was cancelled because it blew through its wall-clock ceiling."""
 
-    def __init__(self, timeout: float) -> None:
+    def __init__(self, timeout: float, ceiling: "_WallCeiling") -> None:
         super().__init__(f"wall-clock timeout after {timeout:.0f}s")
         self.timeout = timeout
+        self.ceiling = ceiling
+
+    def describe(self, task_type: str, stage: str) -> str:
+        """The operator-facing explanation: what fired, where, and which knob moves it."""
+        if self.ceiling.extends_on_progress:
+            what = (
+                f"Task made no progress for {self.timeout:.0f}s, its wall-clock limit "
+                f"for '{task_type}' (each committed batch restarts the clock, so this is "
+                f"a stall, not a slow job)"
+            )
+        else:
+            what = f"Task exceeded the {self.timeout:.0f}s wall-clock limit for '{task_type}'"
+        return (
+            f"{what} (stage={stage}) and was cancelled. Raise {self.ceiling.env_var} "
+            f"if this is a legitimately long operation, or set it to 0 to disable the limit."
+        )
 
 
 def _updated_row_count(result: Any) -> int:
@@ -113,7 +182,7 @@ logger = logging.getLogger(__name__)
 PROGRESS_LOG_INTERVAL = 30
 
 # Stuck-task stack-dump thresholds (seconds). Each task gets one stack dump
-# per threshold it crosses (5min, 10min, 20min, 40min, 80min...).
+# per threshold its current stage crosses without making progress.
 STUCK_STACK_INITIAL_THRESHOLD_S = 300
 STUCK_STACK_MAX_THRESHOLD_S = 3600 * 6  # cap doubling at 6h
 
@@ -162,9 +231,10 @@ class ActiveTaskInfo:
     bg_task: "asyncio.Task[Any]"
     started_at: float
     stage_holder: StageHolder
-    # Largest stuck-stack threshold (seconds) for which we've already
-    # dumped a stack trace; used to suppress repeated dumps.
+    # Largest stuck-stack threshold (seconds) for the current stage. Resetting
+    # when the stage changes keeps a long, advancing task from looking wedged.
     last_stack_dump_threshold: int = 0
+    last_stack_dump_stage: str | None = None
     task_type: str = ""
 
 
@@ -227,6 +297,7 @@ class WorkerPoller:
         slot_reservations: dict[str, int] | None = None,
         consolidation_bank_priority: dict[str, int] | None = None,
         max_retries: int = 3,
+        on_wall_timeout: Callable[[dict[str, Any], str | None, str], Awaitable[None]] | None = None,
     ):
         """
         Initialize the worker poller.
@@ -251,10 +322,18 @@ class WorkerPoller:
                 pure created_at order. None or empty dict preserves current behavior.
             max_retries: Maximum retry attempts before a task is marked failed.
                 Must be >= 0. Default 3 (matches DEFAULT_WORKER_MAX_RETRIES).
+            on_wall_timeout: Optional async hook called with (task_dict, schema,
+                error_message) after a task is failed by its wall-clock ceiling.
+                The ceiling cancels the executor, so the engine's own failure
+                handling (which fires the consolidation failure webhook) never
+                runs for that outcome; this hook is how the engine still gets told.
+                Called after the operation row is already failed, and outside the
+                cancelled task, so it can safely do its own DB work.
         """
         self._backend = backend
         self._worker_id = worker_id
         self._executor = executor
+        self._on_wall_timeout = on_wall_timeout
         self._poll_interval_ms = poll_interval_ms
         self._schema = schema
         # Always set tenant extension (use DefaultTenantExtension if none provided)
@@ -295,6 +374,15 @@ class WorkerPoller:
         # Rotation offset for per-tenant fair claiming. Advances past the last
         # schema we serviced so a busy tenant can't monopolize the poll order.
         self._next_schema_idx: int = 0
+        # The same rotation one level down, per schema: the bank the claim
+        # served last, so the next one takes a row for the bank after it.
+        # Claiming is otherwise a global FIFO on created_at, which lets one bank
+        # mid-bulk-ingest hold every slot until its queue drains while other
+        # banks' writes wait behind the backlog (#3861). A cursor over the bank
+        # id space rather than a set of known banks: the starved bank is the one
+        # this worker has never claimed for, so only a range can discover it.
+        # Empty string starts a round; claim_tasks resets to it at the end of one.
+        self._next_bank_cursor: dict[str | None, str] = {}
         # Retention cleanup runs outside the claim loop. Keep one task per
         # poller so maintenance cannot overlap with itself or block slot refill.
 
@@ -590,14 +678,20 @@ class WorkerPoller:
         table = fq_table("async_operations", schema)
 
         async with conn.transaction():
-            all_rows = await self._backend.ops.claim_tasks(
+            claimed = await self._backend.ops.claim_tasks(
                 conn,
                 table,
                 self._worker_id,
                 reserved_limits,
                 shared_limit,
+                bank_cursor=self._next_bank_cursor.get(schema, ""),
                 consolidation_bank_priority=self._consolidation_bank_priority,
             )
+            # Where the rotation got to. Carried across claims per schema, the
+            # way _next_schema_idx is across tenants; the claim query itself
+            # picks the bank, so this costs no extra statement to learn.
+            self._next_bank_cursor[schema] = claimed.next_bank_cursor
+            all_rows = claimed.rows
 
             if not all_rows:
                 return []
@@ -957,25 +1051,64 @@ class WorkerPoller:
                     if self._in_flight_by_type[operation_type] == 0:
                         del self._in_flight_by_type[operation_type]
 
-    async def _run_executor(self, task: ClaimedTask, task_type: str) -> None:
+    async def _run_executor(self, task: ClaimedTask, task_type: str, holder: StageHolder | None = None) -> None:
         """Run the task executor under its type's wall-clock ceiling, if it has one."""
         wall_timeout = _wall_timeout_for(task_type)
         if wall_timeout is None:
             await self._executor(task.task_dict)
             return
 
+        ceiling = _WALL_CEILINGS[task_type]
+        # Only an idle ceiling listens for progress; retain's stays absolute.
+        progress_holder = holder if ceiling.extends_on_progress else None
+        loop = asyncio.get_running_loop()
+
         # asyncio.timeout() rather than wait_for(): `expired()` distinguishes our
         # ceiling firing from an inner TimeoutError merely bubbling out (an asyncpg
         # command timeout, say), which wait_for would surface as the same exception.
         # Reporting a task's own timeout as a wedge would send operators hunting for
-        # the wrong thing.
+        # the wrong thing. It also gives us reschedule(), which is what turns the
+        # consolidation ceiling from "total runtime" into "time without progress".
         try:
             async with asyncio.timeout(wall_timeout) as cm:
-                await self._executor(task.task_dict)
+                if progress_holder is not None:
+
+                    def _extend_deadline() -> None:
+                        # Every stage change is progress, so push the deadline out a
+                        # full ceiling from now. reschedule() raises once the timeout
+                        # has fired or the block has exited; by then there is nothing
+                        # left to extend, and set_stage must never raise into engine
+                        # code (a late breadcrumb from an unwinding task is normal).
+                        try:
+                            cm.reschedule(loop.time() + wall_timeout)
+                        except RuntimeError:
+                            pass
+
+                    progress_holder.on_progress = _extend_deadline
+                try:
+                    await self._executor(task.task_dict)
+                finally:
+                    if holder is not None:
+                        holder.on_progress = None
         except asyncio.TimeoutError as e:
             if cm.expired():
-                raise _WallTimeoutExceeded(wall_timeout) from e
+                raise _WallTimeoutExceeded(wall_timeout, ceiling) from e
             raise
+
+    async def _notify_wall_timeout(self, task: ClaimedTask, message: str) -> None:
+        """Tell the engine a task was failed by its ceiling. Never fatal.
+
+        The whole point of the ceiling is that it cancels the executor, which means
+        the engine's own ``except`` blocks — the ones that fire a consolidation
+        failure webhook — are skipped. Without this notification a timed-out
+        consolidation would be the single failure mode subscribers never hear about.
+        """
+        if self._on_wall_timeout is None:
+            return
+        try:
+            await self._on_wall_timeout(task.task_dict, task.schema, message)
+        except Exception as e:
+            logger.warning(f"Wall-timeout notification failed for task {task.operation_id}: {e}")
 
     async def _execute_task_inner(self, task: ClaimedTask, holder: StageHolder | None = None):
         """Inner task execution with retry/fail handling.
@@ -1019,7 +1152,7 @@ class WorkerPoller:
             logger.debug(f"Executing task {task.operation_id} (type={task_type}, bank={bank_id}{schema_info})")
             if task.schema:
                 task.task_dict["_schema"] = task.schema
-            await self._run_executor(task, task_type)
+            await self._run_executor(task, task_type, holder)
             logger.debug(f"Task {task.operation_id} execution finished")
             await self._mark_all_completed(task)
             terminal_success = True
@@ -1030,13 +1163,10 @@ class WorkerPoller:
             # so the stage that was current when the ceiling fired is preserved —
             # that breadcrumb is the only pointer to where the task was stuck.
             stage = holder.stage if holder is not None else "unknown"
-            message = (
-                f"Task exceeded the {e.timeout:.0f}s wall-clock limit for '{task_type}' "
-                f"(stage={stage}) and was cancelled. Raise HINDSIGHT_API_RETAIN_WALL_TIMEOUT "
-                f"if this is a legitimately long operation, or set it to 0 to disable the limit."
-            )
+            message = e.describe(task_type, stage)
             logger.error(f"Task {task.operation_id} timed out: {message}")
             await self._mark_all_failed(task, message)
+            await self._notify_wall_timeout(task, message)
             terminal_success = False
         except DeferOperation as e:
             # Deferral is not a terminal outcome — do not record a completion.
@@ -1045,6 +1175,22 @@ class WorkerPoller:
             # Retry is not a terminal outcome — do not record a completion.
             await self._schedule_retry_all(task, e.retry_at, str(e))
         except Exception as e:
+            # A store refusing the write because its own indexing is behind is backpressure, not a
+            # failure: it clears itself as the fold catches up and says nothing about the payload.
+            # Deferring is what it asked for. Failing it here is what makes a long ingest lose the
+            # documents in flight when the backlog crosses the bound — the task's small retry
+            # budget runs out while the store is still legitimately shedding. Checked before the
+            # failure path so the operation keeps its retries for things that are actually wrong.
+            if is_store_backpressure(e):
+                retry_at = datetime.now(timezone.utc) + timedelta(seconds=_BACKPRESSURE_DEFER_SECONDS)
+                logger.warning(
+                    "Task %s deferred until %s: store backpressure (%s)",
+                    task.operation_id,
+                    retry_at,
+                    str(e)[:200],
+                )
+                await self._defer_all(task, retry_at, f"store backpressure: {str(e)[:400]}")
+                return
             # exc_info rather than print_exc(): the stderr copy carries no task id
             # and is the first thing lost to log rotation (issue #3218).
             error_message = format_task_error(e)
@@ -1851,7 +1997,7 @@ class WorkerPoller:
             holder = info.stage_holder
             stage = holder.stage if holder is not None else "unknown"
             stage_age_s = (now - holder.updated_at) if holder is not None else 0.0
-            stuck_marker = "[STUCK?] " if age_s >= STUCK_STACK_INITIAL_THRESHOLD_S else ""
+            stuck_marker = "[STUCK?] " if stage_age_s >= STUCK_STACK_INITIAL_THRESHOLD_S else ""
             schema_part = f" schema={info.schema}" if info.schema else ""
             logger.info(
                 f"[WORKER_TASK] {stuck_marker}op={op_id} type={info.task_type} "
@@ -1859,22 +2005,28 @@ class WorkerPoller:
                 f"age={age_s:.0f}s stage={stage} stage_age={stage_age_s:.0f}s"
             )
 
-            self._maybe_dump_stuck_stack(op_id, info, age_s)
+            self._maybe_dump_stuck_stack(op_id, info, age_s, stage_age_s)
 
-    def _maybe_dump_stuck_stack(self, op_id: str, info: ActiveTaskInfo, age_s: float) -> None:
-        """Dump a coroutine stack for tasks that crossed a stuck threshold.
+    def _maybe_dump_stuck_stack(self, op_id: str, info: ActiveTaskInfo, age_s: float, stage_age_s: float) -> None:
+        """Dump a coroutine stack when a task's current stage stops progressing.
 
-        Each task gets one dump per threshold (5min, 10min, 20min, 40min...),
-        gated by `info.last_stack_dump_threshold` so logs don't flood for tasks
-        that legitimately take a long time (large LLM jobs, schema-retry loops).
+        Each stage gets one dump per threshold (5min, 10min, 20min, 40min...),
+        gated by `info.last_stack_dump_threshold` so logs do not flood while the
+        stalled stage remains unchanged. Total task age is retained in the log
+        for context but cannot distinguish a large, advancing job from a wedge.
         """
-        if age_s < STUCK_STACK_INITIAL_THRESHOLD_S:
+        stage = info.stage_holder.stage if info.stage_holder else "unknown"
+        if stage != info.last_stack_dump_stage:
+            info.last_stack_dump_stage = stage
+            info.last_stack_dump_threshold = 0
+
+        if stage_age_s < STUCK_STACK_INITIAL_THRESHOLD_S:
             return
 
-        # Find the largest doubling-threshold that the task has crossed.
+        # Find the largest doubling-threshold that the current stage has crossed.
         threshold = STUCK_STACK_INITIAL_THRESHOLD_S
         crossed = STUCK_STACK_INITIAL_THRESHOLD_S
-        while threshold <= age_s and threshold <= STUCK_STACK_MAX_THRESHOLD_S:
+        while threshold <= stage_age_s and threshold <= STUCK_STACK_MAX_THRESHOLD_S:
             crossed = threshold
             threshold *= 2
 
@@ -1886,10 +2038,10 @@ class WorkerPoller:
         try:
             buf = io.StringIO()
             info.bg_task.print_stack(file=buf, limit=15)
-            stage = info.stage_holder.stage if info.stage_holder else "unknown"
             logger.warning(
                 f"[STUCK_STACK] op={op_id} type={info.task_type} bank={info.bank_id} "
-                f"age={age_s:.0f}s threshold={crossed}s stage={stage}\n{buf.getvalue()}"
+                f"age={age_s:.0f}s stage_age={stage_age_s:.0f}s threshold={crossed}s "
+                f"stage={stage}\n{buf.getvalue()}"
             )
         except Exception as e:
             # Stack capture is best-effort - never crash the polling loop over it.

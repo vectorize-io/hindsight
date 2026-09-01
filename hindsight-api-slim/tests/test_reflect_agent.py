@@ -177,6 +177,27 @@ class TestReflectStructuredOutput:
         assert call_kwargs["max_completion_tokens"] == 4096
 
     @pytest.mark.asyncio
+    async def test_structured_output_uses_deterministic_temperature(self, monkeypatch):
+        """Structured extraction is deterministic even when reflect generation is not."""
+        config = MagicMock(llm_temperature_reflect=0.17, llm_strict_schema_reflect=False)
+        monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
+        llm = MagicMock()
+        llm.call = AsyncMock(side_effect=RuntimeError("stop after request capture"))
+
+        await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert llm.call.await_args.kwargs["temperature"] == 0.0
+
+    @pytest.mark.asyncio
     async def test_structured_output_omits_budget_when_unset(self):
         """With no max_tokens (default), the structured call forwards
         max_completion_tokens=None -- which LLMProvider.call omits, exactly like
@@ -284,7 +305,61 @@ class TestReflectAgentMocked:
         assert "name" not in tool_result
 
     @pytest.mark.asyncio
-    async def test_done_tool_answer_respects_max_tokens(self, mock_llm, mock_functions):
+    async def test_output_language_reaches_the_done_path(self, mock_llm, mock_functions):
+        """The tool-calling model — the one that writes done() — sees the configured
+        language: its system prompt drops the answer-in-the-question's-language rule and
+        the directive closes the user message. Forced synthesis is never reached here, so
+        fixing ``build_final_system_prompt`` alone would leave this call untouched (#3776).
+        """
+        mock_functions["search_mental_models_fn"].return_value = {
+            "mental_models": [{"id": "mm-1", "name": "User prefs", "content": "Fresh content.", "is_stale": False}]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="2", name="done", arguments={"answer": "Done.", "mental_model_ids": ["mm-1"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="张伟负责什么工作？",
+            bank_profile={"name": "Test", "mission": ""},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            llm_output_language="English",
+            **mock_functions,
+        )
+
+        assert result.text == "Done."
+        mock_llm.call.assert_not_called()  # answered via done(), not forced synthesis
+        for call in mock_llm.call_with_tools.await_args_list:
+            messages = call.kwargs["messages"]
+            assert messages[0]["role"] == "system"
+            assert "respond in that SAME language" not in messages[0]["content"]
+            assert "Respond exclusively in English" not in messages[0]["content"]
+            assert messages[1]["role"] == "user"
+            assert messages[1]["content"].startswith("张伟负责什么工作？")
+            assert "Respond exclusively in English" in messages[1]["content"]
+            # The done tool schema is the last thing the model reads before writing the
+            # answer; its own "SAME language" rule has to go too, or it wins from there.
+            done_tool = next(t for t in call.kwargs["tools"] if t["function"]["name"] == "done")
+            assert "SAME language" not in done_tool["function"]["parameters"]["properties"]["answer"]["description"]
+            assert "exclusively in English" in done_tool["function"]["description"]
+
+    @pytest.mark.asyncio
+    async def test_done_tool_answer_respects_max_tokens(self, mock_llm, mock_functions, monkeypatch):
+        config = MagicMock(
+            reflect_prompt_cache_enabled=False,
+            reflect_max_completion_tokens=None,
+            llm_temperature_reflect=0.17,
+        )
+        monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
         mock_functions["search_mental_models_fn"].return_value = {
             "mental_models": [{"id": "mm-1", "name": "User prefs", "content": "Fresh content.", "is_stale": False}]
         }
@@ -320,6 +395,8 @@ class TestReflectAgentMocked:
         # so thinking models don't truncate the rewrite mid-word (#3365), while the
         # target still reaches the model through the prompt.
         assert mock_llm.call.await_args.kwargs["max_completion_tokens"] is None
+        assert mock_llm.call.await_args.kwargs["temperature"] == 0.17
+        assert all(call.kwargs["temperature"] == 0.17 for call in mock_llm.call_with_tools.await_args_list)
         rewrite_user_msg = mock_llm.call.await_args.kwargs["messages"][1]["content"]
         assert "Target budget: 8 tokens" in rewrite_user_msg
         assert result.usage.total_tokens == 150
@@ -808,6 +885,93 @@ class TestReflectAgentMocked:
                 ),
                 timeout=0.1,  # Very short timeout to trigger quickly
             )
+
+    @pytest.mark.asyncio
+    async def test_tool_results_follow_the_models_tool_call_order(
+        self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
+    ) -> None:
+        """A mixed [allowed, hallucinated, allowed] batch serializes in the model's order.
+
+        Anthropic requires the tool_result blocks to line up with the assistant
+        tool_use blocks. Rejections for hallucinated tools used to be written
+        before the executed tools' results, so a hallucinated call in the middle
+        of a batch produced an out-of-order history the API rejects.
+        """
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="a", name="recall", arguments={"query": "q1"}),
+                    LLMToolCall(id="b", name="totally_made_up", arguments={}),
+                    LLMToolCall(id="c", name="search_observations", arguments={"query": "q2"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.call_args_list[-1].kwargs["messages"]
+        assistant = [m for m in messages if m.get("role") == "assistant" and m.get("tool_calls")][-1]
+        assert [tc["id"] for tc in assistant["tool_calls"]] == ["a", "b", "c"]
+        tool_messages = [m for m in messages if m.get("role") == "tool"]
+        assert [m["tool_call_id"] for m in tool_messages] == ["a", "b", "c"]
+        # Each slot carries its OWN payload rather than a neighbour's.
+        assert "memories" in tool_messages[0]["content"]
+        assert "totally_made_up" in tool_messages[1]["content"]
+        assert "observations" in tool_messages[2]["content"]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_tool_call_ids_keep_their_own_results(
+        self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
+    ) -> None:
+        """Results are slotted by position, so a reused tool_call_id loses nothing.
+
+        Every first-party provider mints unique ids, but a non-conforming
+        OpenAI-compatible gateway can repeat one (or send an empty string) across
+        a parallel batch. Keying the results by id would drop one tool's evidence
+        and duplicate the other's.
+        """
+        mock_functions["recall_fn"].side_effect = [
+            {"memories": [{"id": "mem-1", "content": "first"}]},
+            {"memories": [{"id": "mem-2", "content": "second"}]},
+        ]
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="dup", name="recall", arguments={"query": "q1"}),
+                    LLMToolCall(id="dup", name="recall", arguments={"query": "q2"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.call_args_list[-1].kwargs["messages"]
+        contents = [m["content"] for m in messages if m.get("role") == "tool"]
+        assert len(contents) == 2
+        assert "first" in contents[0], contents
+        assert "second" in contents[1], contents
 
 
 class TestContextOverflowHelpers:

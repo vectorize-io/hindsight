@@ -28,12 +28,18 @@ export default defineConfig({
     // into each bundle rather than a shared chunk.
     pi: "src/pi.ts",
     "prime-agent": "src/prime-agent.ts",
+    "qwen-hook": "src/qwen-hook.ts",
+    "qwen-sessionstart-hook": "src/qwen-sessionstart-hook.ts",
+    "qwen-stop-hook": "src/qwen-stop-hook.ts",
     "grok-hook": "src/grok-hook.ts",
     "grok-sessionstart-hook": "src/grok-sessionstart-hook.ts",
     "grok-stop-hook": "src/grok-stop-hook.ts",
     "codex-hook": "src/codex-hook.ts",
     "codex-sessionstart-hook": "src/codex-sessionstart-hook.ts",
     "codex-stop-hook": "src/codex-stop-hook.ts",
+    "dcode-hook": "src/dcode-hook.ts",
+    "dcode-sessionstart-hook": "src/dcode-sessionstart-hook.ts",
+    "dcode-stop-hook": "src/dcode-stop-hook.ts",
     "antigravity-hook": "src/antigravity-hook.ts",
     "antigravity-stop-hook": "src/antigravity-stop-hook.ts",
     "antigravity-statusline": "src/antigravity-statusline.ts",
@@ -61,5 +67,13 @@ export default defineConfig({
   // hindsight-all (the local-daemon lifecycle manager) is inlined for the same reason: hooks are
   // wired by absolute path to ONE dist file and never load the package's node_modules. It has zero
   // dependencies of its own, so inlining costs almost nothing.
-  noExternal: [/^@modelcontextprotocol\/sdk/, /^zod/, /^@vectorize-io\/hindsight-all/],
+  // jsonc-parser likewise: installer.js is staged to ~/.hindsight/coding-agents as dist + skill +
+  // package.json — never node_modules — so an external import there is unresolvable, and re-running
+  // `install` from the staged copy (the upgrade path) dies with ERR_MODULE_NOT_FOUND.
+  noExternal: [
+    /^@modelcontextprotocol\/sdk/,
+    /^zod/,
+    /^@vectorize-io\/hindsight-all/,
+    /^jsonc-parser/,
+  ],
 });

@@ -3,16 +3,16 @@
 keeps its memories outside SQL.
 
 Bug (introduced with per-bank store capabilities, #3350): list_banks called
-``_store.writes_memory_rows_in_sql_for(bank_id)`` with a bare ``bank_id`` name
+``not _store.store_owned_for(bank_id)`` with a bare ``bank_id`` name
 that is not in scope inside the per-row loop (the row's id is ``row["bank_id"]``).
 Because the argument is evaluated before the call, this raised
 ``NameError: name 'bank_id' is not defined`` for *every* org on the very first
 bank — i.e. GET /banks 500'd outright — regardless of the store's capability.
 
-This test swaps in a store that reports ``writes_memory_rows_in_sql_for -> False``
+This test swaps in a store that reports ``store_owned_for -> True``
 (the non-SQL branch the feature added), and asserts list_banks (a) does not raise,
-(b) calls the capability + count_memories with the correct per-bank id, and
-(c) surfaces the store's live count as fact_count.
+(b) asks the store for the page's counts with the correct per-bank ids, in ONE call rather
+than a round trip per bank, and (c) surfaces the store's live count as fact_count.
 
 Runs via: uv run pytest tests/test_list_banks_non_sql_store.py -v
 """
@@ -31,17 +31,26 @@ class _NonSqlStore:
     def __init__(self):
         self.capability_calls: list[str] = []
         self.count_calls: list[str] = []
+        self.count_many_calls: list[list[str]] = []
 
-    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
+    def store_owned_for(self, bank_id: str) -> bool:
         self.capability_calls.append(bank_id)
-        return False
+        return True
 
     # This fake is duck-typed rather than a MemoriesExtension subclass, so it answers only what the
     # paths under test reach. Bank DELETION also counts what it removed through the store now (the
     # SQL tables are empty for such a bank, so COUNT(*) reported 0 while dropping everything), and
-    # the fixture's teardown deletes the bank — hence these three.
-    def owns_document_store_for(self, bank_id: str) -> bool:
-        return False
+    # the fixture's teardown deletes the bank — hence these.
+    #
+    # It used to answer the document-store capability False while answering the memory-rows one
+    # True — a mixed combination no real store ever set, and one the single `store_owned` flag
+    # cannot express. Owning its writes means owning the bodies too, so the teardown now takes the
+    # store branch and needs the two methods below.
+    async def ensure_bank_storage(self, bank_id: str) -> None:
+        return None
+
+    async def drop_bank_storage(self, bank_id: str) -> None:
+        return None
 
     async def count_documents(self, *, bank_id: str) -> int:
         return 0
@@ -52,6 +61,13 @@ class _NonSqlStore:
     async def count_memories(self, *, conn, fq_table, bank_id: str) -> dict:
         self.count_calls.append(bank_id)
         return {"world": 7}
+
+    async def count_memories_many(self, *, bank_ids: list[str], strong: bool = False) -> dict:
+        """What the bank LIST reads. Declared here as well as ``count_memories`` because this
+        fake is duck-typed: it inherits no default, so a page that reached only the per-bank
+        method would pass while the real batched seam went untested."""
+        self.count_many_calls.append(list(bank_ids))
+        return {bank_id: {"world": 7} for bank_id in bank_ids}
 
     async def drop_bank_storage(self, bank_id: str) -> None:
         """``delete_bank`` routes the drop through the store for a non-SQL bank, so the
@@ -77,7 +93,11 @@ async def test_list_banks_counts_via_store_for_non_sql_bank(memory, monkeypatch)
 
         # The capability + count were consulted with the row's real bank id.
         assert bank_id in store.capability_calls
-        assert bank_id in store.count_calls
+        assert bank_id in store.count_many_calls[0]
+        # One call for the page, not one per bank. Asserted on the call COUNT rather than on
+        # latency: the per-bank shape is what made a full page cost a round trip each, and it is
+        # the only thing that reintroduces it.
+        assert len(store.count_many_calls) == 1
         # fact_count came from the store (sum of the per-type counts), not the empty SQL join.
         assert entry["fact_count"] == 7
     finally:

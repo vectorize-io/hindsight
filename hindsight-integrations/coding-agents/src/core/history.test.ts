@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { claudeProjectDir, importLocalHistory, piSessionDir } from "./history";
 
 let home: string;
@@ -380,5 +381,119 @@ describe("piSessionDir", () => {
     ["C:\\Users\\x\\repo", "--C--Users-x-repo--"],
   ])("encodes %s", (repo, encoded) => {
     expect(piSessionDir(repo)).toBe(encoded);
+  });
+});
+
+describe("importLocalHistory — dcode", () => {
+  const REPO = "/Users/x/dev/repo";
+
+  // The reader honours DEEPAGENTS_HOME (as the dsh reader honours DSH_HOME); a developer who has
+  // it exported must not have it steer these fixtures.
+  beforeEach(() => {
+    vi.stubEnv("DEEPAGENTS_HOME", "");
+    delete process.env.DEEPAGENTS_HOME;
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** Dcode names a transcript `<readable prefix>--<sha256 of the full thread id>.jsonl`. */
+  function writeTranscript(home: string, threadId: string, lines: object[]): void {
+    const dir = join(home, ".deepagents", "transcripts");
+    mkdirSync(dir, { recursive: true });
+    const digest = createHash("sha256").update(threadId, "utf8").digest("hex");
+    writeFileSync(
+      join(dir, `${threadId.slice(0, 32)}--${digest}.jsonl`),
+      lines.map((l) => JSON.stringify({ schema_version: 1, ...l })).join("\n")
+    );
+  }
+
+  const threadsJson = (rows: object[]): string =>
+    JSON.stringify({ schema_version: 1, command: "threads list", data: rows });
+
+  it("attributes threads to the repo via `dcode threads list --json`", () => {
+    const h = newHome();
+    writeTranscript(h, "01a05876-0764-7e33-a52f-8286acfe9e19", [
+      { role: "user", content: "fix the retry policy" },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+    ]);
+    writeTranscript(h, "01a05879-5c46-7933-b094-c2a7c8f154a6", [
+      { role: "user", content: "unrelated project work" },
+    ]);
+
+    const r = importLocalHistory("dcode", REPO, h, () =>
+      threadsJson([
+        { thread_id: "01a05876-0764-7e33-a52f-8286acfe9e19", cwd: REPO },
+        { thread_id: "01a05879-5c46-7933-b094-c2a7c8f154a6", cwd: "/Users/x/dev/other" },
+      ])
+    );
+
+    expect(r.supported).toBe(true);
+    expect(r.sessions).toHaveLength(1);
+    expect(r.sessions[0]!.id).toBe("01a05876-0764-7e33-a52f-8286acfe9e19");
+    expect(r.sessions[0]!.turns.map((t) => t.text)).toEqual(["fix the retry policy", "done"]);
+    expect(JSON.stringify(r.sessions)).not.toContain("unrelated project work");
+  });
+
+  it("includes a thread run in a SUBDIRECTORY of the repo", () => {
+    const h = newHome();
+    writeTranscript(h, "t-sub", [{ role: "user", content: "work in a subpackage" }]);
+    const r = importLocalHistory("dcode", REPO, h, () =>
+      threadsJson([{ thread_id: "t-sub", cwd: `${REPO}/packages/api` }])
+    );
+    expect(JSON.stringify(r.sessions)).toContain("work in a subpackage");
+  });
+
+  it("does not pull in a SIBLING repo whose path merely shares the prefix", () => {
+    const h = newHome();
+    writeTranscript(h, "t-sibling", [{ role: "user", content: "sibling repo work" }]);
+    const r = importLocalHistory("dcode", REPO, h, () =>
+      threadsJson([{ thread_id: "t-sibling", cwd: `${REPO}-sub` }])
+    );
+    expect(r.sessions).toHaveLength(0);
+  });
+
+  it("counts a thread the CLI could not attribute rather than guessing", () => {
+    const h = newHome();
+    writeTranscript(h, "t-nocwd", [{ role: "user", content: "orphan" }]);
+    const r = importLocalHistory("dcode", REPO, h, () => threadsJson([{ thread_id: "t-nocwd" }]));
+    expect(r.sessions).toHaveLength(0);
+    expect(r.unattributed).toBe(1);
+  });
+
+  it("skips a listed thread whose transcript was never materialized", () => {
+    const h = newHome();
+    mkdirSync(join(h, ".deepagents", "transcripts"), { recursive: true });
+    const r = importLocalHistory("dcode", REPO, h, () =>
+      threadsJson([{ thread_id: "t-missing", cwd: REPO }])
+    );
+    expect(r.supported).toBe(true);
+    expect(r.sessions).toHaveLength(0);
+  });
+
+  it("reports unsupported — with the reason — when the dcode CLI cannot be run", () => {
+    const h = newHome();
+    writeTranscript(h, "t1", [{ role: "user", content: "hi" }]);
+    const r = importLocalHistory("dcode", REPO, h, () => {
+      throw new Error("spawn dcode ENOENT");
+    });
+    expect(r.supported).toBe(false);
+    expect(r.reason).toMatch(/dcode CLI is not runnable/);
+  });
+
+  it("refuses an unrecognized threads-list schema instead of importing nothing silently", () => {
+    const h = newHome();
+    writeTranscript(h, "t1", [{ role: "user", content: "hi" }]);
+    const r = importLocalHistory("dcode", REPO, h, () =>
+      JSON.stringify({ schema_version: 2, data: [{ thread_id: "t1", cwd: REPO }] })
+    );
+    expect(r.supported).toBe(false);
+    expect(r.reason).toMatch(/schema_version 1/);
+  });
+
+  it("reports nothing to import when dcode was never used on this machine", () => {
+    const h = newHome();
+    const r = importLocalHistory("dcode", REPO, h, () => {
+      throw new Error("must not be called — there is no transcripts dir to attribute");
+    });
+    expect(r).toEqual({ supported: true, sessions: [] });
   });
 });

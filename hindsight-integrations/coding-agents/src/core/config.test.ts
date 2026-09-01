@@ -170,6 +170,22 @@ describe("loadConfig — untrusted project-local layer is sanitized (security)",
   });
 });
 
+describe("manageBankConfig (#3927)", () => {
+  it("defaults to true — a bank the plugin creates still gets the shape its ingestion needs", () => {
+    expect(resolveConfig({}).manageBankConfig).toBe(true);
+  });
+
+  it("is settable per bank, which is where a shared global bank needs it", () => {
+    // The #3927 setup: ONE bank for coding and personal-assistant work alike. The plugin keeps
+    // managing every other bank; this one is the user's to shape.
+    const cfg = resolveConfig({
+      banks: { "my-global-bank": { manageBankConfig: false } },
+    });
+    expect(applyBankConfig(cfg, "my-global-bank").cfg.manageBankConfig).toBe(false);
+    expect(applyBankConfig(cfg, "coding-agent::repo").cfg.manageBankConfig).toBe(true);
+  });
+});
+
 describe("banks.<bankId> overrides (per-repo opt-in/out, applied AFTER bank resolution)", () => {
   it("overrides behavioral fields for the matching bank only; others untouched", () => {
     const cfg = resolveConfig({
@@ -265,10 +281,12 @@ describe("environment fallback", () => {
   it("parses booleans and numbers rather than passing strings through", () => {
     writeJson(globalCfg, {});
     process.env.HINDSIGHT_AUTO_REFLECT = "false";
+    process.env.HINDSIGHT_MANAGE_BANK_CONFIG = "false";
     process.env.HINDSIGHT_DISABLED = "1";
     process.env.HINDSIGHT_SEED_LIMIT = "5";
     const cfg = loadConfig({ path: globalCfg });
     expect(cfg.autoReflect).toBe(false);
+    expect(cfg.manageBankConfig).toBe(false);
     expect(cfg.disabled).toBe(true);
     expect(cfg.seedLimit).toBe(5);
   });

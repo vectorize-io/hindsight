@@ -35,9 +35,7 @@ from .config import (
 )
 from .daemon import (
     DEFAULT_DAEMON_PORT,
-    DEFAULT_IDLE_TIMEOUT,
     ENV_DAEMON_CHILD,
-    IdleTimeoutMiddleware,
     daemonize,
 )
 
@@ -208,13 +206,14 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
     parser.add_argument(
         "--daemon",
         action="store_true",
-        help=f"Run as background daemon (uses port {DEFAULT_DAEMON_PORT}, auto-exits after idle)",
+        help=f"Run as background daemon (uses port {DEFAULT_DAEMON_PORT})",
     )
     parser.add_argument(
         "--idle-timeout",
         type=int,
-        default=DEFAULT_IDLE_TIMEOUT,
-        help=f"Idle timeout in seconds before auto-exit in daemon mode (default: {DEFAULT_IDLE_TIMEOUT})",
+        default=0,
+        help="Deprecated and ignored: the daemon no longer auto-exits when idle (accepted for "
+        "backward compatibility with existing launchers).",
     )
 
     args = parser.parse_args(argv)
@@ -245,9 +244,17 @@ def main():
     # is_daemon_child is True when we are the re-exec'd child spawned by
     # daemonize() or by hindsight-embed's DaemonEmbedManager.  The child
     # does not have --daemon in its argv, but must still behave as a daemon
-    # (resolve host/port, enable idle timeout, suppress banner, etc.).
+    # (resolve host/port, suppress banner, etc.).
     is_daemon_child = os.environ.get(ENV_DAEMON_CHILD) == "1"
     is_daemon = args.daemon or is_daemon_child
+
+    if args.idle_timeout:
+        # Kept parseable so older launchers (hindsight-embed, the coding-agent
+        # integrations) still start, but deliberately inert — see daemon.py.
+        print(
+            f"--idle-timeout {args.idle_timeout} is ignored: the daemon no longer auto-exits when idle.",
+            file=sys.stderr,
+        )
 
     if is_daemon:
         resolved_daemon_host_port = resolve_daemon_host_port(
@@ -326,7 +333,6 @@ def main():
     # with it, before uvicorn's child bootstrap even starts. See docs/plans/recall-latency.md.
     _memory = None
     app = None
-    idle_middleware = None
 
     if not use_import_string:
         # Create MemoryEngine (reads configuration from environment)
@@ -354,18 +360,6 @@ def main():
             initialize_memory=True,
         )
 
-        # Wrap with idle timeout middleware in daemon mode
-        if is_daemon:
-            idle_middleware = IdleTimeoutMiddleware(app, idle_timeout=args.idle_timeout)
-            app = idle_middleware
-    elif is_daemon:
-        # The idle-timeout middleware wraps an app OBJECT, and this mode serves an import string,
-        # so there is nothing to wrap. That was already true and already silent; say it out loud
-        # rather than let a daemon quietly never time out.
-        logging.warning(
-            "--daemon idle timeout is not applied with --workers > 1 or --reload: "
-            "those modes serve an import string, which the middleware cannot wrap."
-        )
     # Check for uvloop/winloop availability
     loop_impl = "asyncio"
     if sys.platform == "win32":
@@ -428,25 +422,6 @@ def main():
             vector_extension=config.vector_extension,
             text_search_extension=config.text_search_extension,
         )
-
-    # Start idle checker in daemon mode
-    if idle_middleware is not None:
-        # Start the idle checker in a background thread with its own event loop
-        import logging
-        import threading
-
-        def run_idle_checker():
-            import time
-
-            time.sleep(2)  # Wait for uvicorn to start
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(idle_middleware._check_idle())
-            except Exception as e:
-                logging.error(f"Idle checker error: {e}", exc_info=True)
-
-        threading.Thread(target=run_idle_checker, daemon=True).start()
 
     uvicorn.run(**uvicorn_config)
 

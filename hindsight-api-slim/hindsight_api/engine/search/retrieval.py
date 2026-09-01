@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ...config import get_config
 from ..db.ops import UpdatedWindow
-from ..memory_engine import fq_table, get_current_schema
+from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
-from .bm25_term_selection import select_selective_bm25_tokens
+from .bm25_term_selection import build_bm25_query_text
 from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import GRAPH_SEED_LIMIT, LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
@@ -278,36 +278,16 @@ async def retrieve_semantic_bm25_combined_sql(
     # --- BM25 UNION ALL arms (one per fact_type, only when tokens present) ---
     if _include_bm25:
         text_ext = config.text_search_extension
-        max_query_terms = config.bm25_max_query_terms
-        bm25_tokens = tokens
-        # Native tsvector has no IDF and ranks every `@@` match, so a long OR
-        # query over common terms scans and ranks a large fraction of the bank
-        # (the +60s prod timeout). Keep only the most selective terms — lowest
-        # tenant-wide document frequency, read for free from pg_stats — which
-        # bounds both the match set and the per-row rank cost while preserving
-        # the high-signal terms a blunt first-N cap would discard. PG-native
-        # only; best-effort (falls back to first-N when stats are unavailable).
-        # Opt out via bm25_selective_terms to cap by position instead.
-        if (
-            text_ext == "native"
-            and max_query_terms > 0
-            and len(tokens) > max_query_terms
-            and config.bm25_selective_terms
-            and getattr(conn, "backend_type", "postgresql") == "postgresql"
-        ):
-            bm25_tokens = await select_selective_bm25_tokens(
-                conn,
-                tokens,
-                schema=get_current_schema(),
-                table="memory_units",
-                language=config.text_search_extension_native_language,
-                max_terms=max_query_terms,
-            )
-        bm25_text_param: str = dialect.prepare_bm25_text(
-            bm25_tokens,
-            query_text,
-            text_search_extension=text_ext,
-            max_query_terms=max_query_terms,
+        # Shared with knowledge search (search_knowledge_pages) so the two BM25
+        # paths cannot drift apart on query shape again — see build_bm25_query_text.
+        bm25_text_param: str = await build_bm25_query_text(
+            conn,
+            dialect,
+            tokens=tokens,
+            query_text=query_text,
+            table="memory_units",
+            language=config.text_search_extension_native_language,
+            config=config,
         )
         for i, ft in enumerate(fact_types):
             arms.append(
@@ -324,6 +304,7 @@ async def retrieve_semantic_bm25_combined_sql(
                     text_search_extension=text_ext,
                     bm25_language=config.text_search_extension_native_language,
                     bm25_min_score=bm25_min,
+                    pg_search_function_schema=config.text_search_extension_pg_search_function_schema,
                     extra_where=updated_range_clause,
                 )
             )
@@ -888,6 +869,13 @@ async def retrieve_all_fact_types_parallel(
     # Step 2: Run every arm for every fact type through the store's single recall method.
     from ..memories import RecallArms, get_memories
 
+    # Time the store call itself. Without it `parallel_retrieval` is a black box: it reported 135ms
+    # while a bare store-level query measured 33ms, and there was no way to tell whether the
+    # difference was the store doing more work (this is 3 fact types x 4 arms in ONE call, not one
+    # query) or the host adding overhead around it. The nine per-arm rows below cannot answer that
+    # either -- a store-owned recall returns every arm from a single call, so their durations are
+    # literals.
+    _unified_start = time.time()
     unified = await get_memories().recall_unified(
         conn=pool,
         bank_id=bank_id,
@@ -908,6 +896,8 @@ async def retrieve_all_fact_types_parallel(
         enable_graph=enable_graph_retrieval,
     )
 
+    _unified_elapsed = time.time() - _unified_start
+
     results_by_fact_type: dict[str, ParallelRetrievalResult] = {}
     for ft in fact_types:
         arms = unified.get(ft) or RecallArms()
@@ -918,12 +908,17 @@ async def retrieve_all_fact_types_parallel(
             bm25=arms.bm25,
             graph=arms.graph,
             temporal=temporal_arm,
+            # A store-owned recall returns every arm from ONE call, so there is no per-arm
+            # split to report and these stay 0.0 -- they are "not measured", not "instant", and
+            # reading them as instant is what sent an investigation looking for the missing time
+            # outside the store. `store_recall` carries what IS measurable: the whole call.
             timings={
                 "semantic": 0.0,
                 "bm25": 0.0,
                 "graph": 0.0,
                 "temporal": 0.0,
                 "temporal_extraction": temporal_extraction_time,
+                "store_recall": _unified_elapsed,
             },
             temporal_constraint=temporal_constraint,
             graph_timings=[],

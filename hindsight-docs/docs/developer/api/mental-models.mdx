@@ -219,6 +219,7 @@ Listing does not cost one query per model — the whole page is answered togethe
 - **Only what's new, in `delta` mode.** A delta refresh scopes its retrieval to memories created since the last refresh, so the LLM reads genuinely new information rather than re-reading the whole bank.
 - **Cumulative grounding.** Even in delta mode, `reflect_response.based_on` accumulates: the facts from this refresh are merged with everything previous refreshes relied on, deduplicated by id. The document rests on all of them, not just the latest slice.
 - **Nothing, if nothing is relevant.** A refresh that finds no topic-relevant memories leaves the content alone and only advances the watermark, so the same empty window stops re-triggering.
+- **No LLM call at all, if there is nothing to read.** Before the agentic loop starts, a refresh checks whether anything is in reach under this model's own settings: an in-scope memory (`tags`/`tags_match`, `tag_groups` and `fact_types` all narrow it) inside the window it would read — the whole bank in `full` mode, everything since `last_memory_seen_at` in `delta` mode — or a sibling mental model, unless `exclude_mental_models` closed that door. When there is nothing, the refresh completes immediately, leaves the document untouched, and spends nothing. This is the common case on a bank that was just created: its pages are refreshed the moment they exist, before anything has been retained.
 
 ### Refresh Mode
 

@@ -3849,38 +3849,56 @@ export type MentalModelTriggerOutput = {
 /**
  * MinScores
  *
- * Optional per-stage score floors for recall (all inclusive, AND-ed).
+ * Optional per-stage score floors for recall. Every floor is inclusive (``>=``).
  *
- * ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
- * arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
- * config for this request), so they prune weak matches before fusion. ``reranker``
- * and ``final`` are **post-query** filters applied to the scored results after
- * reranking. Any field left None imposes no floor; all-None (the default) means
- * no score filtering.
+ * The four floors act at two different levels, and the distinction decides what a
+ * returned result is guaranteed to satisfy.
+ *
+ * ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into their own
+ * SQL arm (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
+ * config for this request), so they prune weak matches before fusion. Each one
+ * constrains **only the arm it names**. Recall fuses four arms — semantic, keyword,
+ * graph and temporal — and a result reaches the response if *any* arm surfaced it,
+ * so a returned result may legitimately carry ``null`` for a stage it was not
+ * surfaced by, and results reached through the graph or temporal arm carry neither
+ * ``semantic`` nor ``keyword``. A *non-null* score always clears its floor — the
+ * gap is only ever a ``null``. Setting both does **not** restrict the response to
+ * results that clear both: they are not a predicate over each fused result. This is
+ * deliberate — an intersection would discard the strong single-arm matches that
+ * hybrid retrieval exists to find (a paraphrase with no lexical overlap, an exact
+ * identifier the embedding scores poorly).
+ *
+ * ``reranker`` and ``final`` are **post-query** filters applied to every scored
+ * result after fusion and reranking, so these *are* per-result predicates: a
+ * returned result always clears them. Use them, not the retrieval floors, to make
+ * recall abstain on low-confidence queries.
+ *
+ * Any field left None imposes no floor; all-None (the default) means no score
+ * filtering.
  */
 export type MinScores = {
   /**
    * Semantic
    *
-   * Retrieval-level: minimum vector similarity (0-1).
+   * Retrieval-level, semantic arm only: minimum vector similarity (0-1). A result the semantic arm did not surface reports `semantic: null` and is unaffected by this floor.
    */
   semantic?: number | null;
   /**
    * Keyword
    *
-   * Retrieval-level: minimum keyword/full-text (BM25) score.
+   * Retrieval-level, keyword arm only: minimum keyword/full-text (BM25) score. A result the keyword arm did not surface reports `keyword: null` and is unaffected by this floor.
    */
   keyword?: number | null;
   /**
    * Reranker
    *
-   * Post-query: minimum normalized reranker score (0-1).
+   * Post-query: minimum normalized reranker score (0-1). Applied to every returned result.
    */
   reranker?: number | null;
   /**
    * Final
    *
-   * Post-query: minimum final ranking score.
+   * Post-query: minimum final ranking score. Applied to every returned result.
    */
   final?: number | null;
 };
@@ -4205,7 +4223,7 @@ export type RecallRequest = {
    */
   tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
   /**
-   * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
+   * Optional per-stage score floors, each inclusive (`>=`). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arm they name (overriding the global similarity/BM25 minimums for this request), and constrain only that arm: recall fuses four arms (semantic, keyword, graph, temporal) and returns a result surfaced by any of them, so a returned result reports null for a stage that did not surface it (a non-null score always clears its floor). Setting both therefore does not restrict the response to results clearing both. `reranker` and `final` are post-ranking filters applied to every scored result, so those floors *are* guaranteed by each result returned — use them for query abstention. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
    */
   min_scores?: MinScores | null;
   /**

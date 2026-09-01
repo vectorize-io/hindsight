@@ -571,7 +571,7 @@ _FRENCH_DIRECTIVE = {
 }
 
 
-def test_final_prompt_always_includes_language_rule():
+def test_final_prompt_includes_language_rule_when_no_output_language_is_set():
     prompt = build_final_system_prompt()
     assert "The current date and time is 2026-08-09 14:32 UTC." in prompt
     assert "## LANGUAGE" in prompt
@@ -596,9 +596,36 @@ def test_final_prompt_injects_directives_so_answer_obeys_them():
     assert "takes precedence over this default" in prompt
 
 
-def test_final_prompt_output_language_override_is_appended_last():
-    """HINDSIGHT_API_LLM_OUTPUT_LANGUAGE forces a language regardless of query/directive."""
+def test_tools_prompt_includes_language_rule_when_no_output_language_is_set():
+    prompt = build_system_prompt_for_tools(BANK)
+    assert "## LANGUAGE RULE (default - directives take precedence)" in prompt
+    assert "respond in that SAME language" in prompt
+
+
+def test_tools_prompt_output_language_override_replaces_the_language_rule():
+    """The reasoning loop writes most answers via done(); it needs the same treatment as
+    the forced-synthesis prompt or the setting is a no-op on every normal run (#3776)."""
+    prompt = build_system_prompt_for_tools(BANK, llm_output_language="Spanish")
+    assert "## LANGUAGE RULE" not in prompt
+    assert "respond in that SAME language" not in prompt
+    assert "Respond exclusively in Spanish" not in prompt, "the directive belongs on the user message"
+    # Everything around the dropped rule is intact.
+    assert "## CRITICAL RULES" in prompt
+    assert "## Memory Bank: TestBank" in prompt
+
+
+def test_final_prompt_output_language_override_replaces_the_language_rule():
+    """HINDSIGHT_API_LLM_OUTPUT_LANGUAGE forces a language regardless of query/directive.
+
+    This used to assert the override merely came *after* the default rule, on the theory
+    that appending it last made it win. It did not, twice over. The rule is phrased more
+    forcefully, so it had to be dropped rather than argued with — and even with the rule
+    gone, "last in the system prompt" is not last: the question and the retrieved data
+    arrive after it in the user message and out-rank it (measured 0/12 English on
+    gemini-2.5-flash-lite). So the system prompt now drops the rule and carries no
+    directive at all; ``build_final_prompt`` closes the user message with it (#3776).
+    """
     prompt = build_final_system_prompt(llm_output_language="Spanish")
-    assert "Respond exclusively in Spanish" in prompt
-    # The config override is appended after the default LANGUAGE rule so it wins.
-    assert prompt.index("Respond exclusively in Spanish") > prompt.index("## LANGUAGE")
+    assert "## LANGUAGE" not in prompt
+    assert "SAME language as the user's question" not in prompt
+    assert "Respond exclusively in Spanish" not in prompt, "the directive belongs on the user prompt"

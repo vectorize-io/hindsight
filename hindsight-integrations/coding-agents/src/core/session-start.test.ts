@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildSessionStartContext, runSessionStartHook } from "./session-start";
 import { resolveConfig } from "./config";
 import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
@@ -166,6 +170,35 @@ describe("buildSessionStartContext", () => {
     expect(out.additionalContext).toContain("- Component map (p1)");
     // banner shows on EVERY session now; non-cold paths use the "remembering" wording
     expect(out.systemMessage).toContain("is tracking the decisions");
+  });
+
+  it("does not report git in sync from another repository's same-HEAD document", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "hs-session-start-shared-bank-"));
+    try {
+      execFileSync("git", ["-C", repo, "init", "-q"]);
+      execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
+      execFileSync("git", ["-C", repo, "config", "user.name", "Test User"]);
+      execFileSync("git", ["-C", repo, "commit", "--allow-empty", "-m", "initial"]);
+      const listDocumentIds = vi.fn(async (tag: string, _match?: "all" | "all_strict") =>
+        tag === "source:git" ? new Set(["git:existing"]) : new Set(["gitlog:foreign-repo"])
+      );
+
+      const out = await buildSessionStartContext({
+        cwd: repo,
+        bankId: "shared-bank",
+        cfg: resolveConfig({ codebaseSurvey: false }),
+        client: { listDocumentIds, listPages: listPagesOk },
+        hasGit: () => true,
+        startSeed: vi.fn(),
+      });
+
+      expect(out.systemMessage).toContain("catching up on new commits");
+      expect(out.systemMessage).not.toContain("git in sync");
+      expect(listDocumentIds.mock.calls[1][0]).toMatch(/^gitlog-head:/);
+      expect(listDocumentIds.mock.calls[1][1]).toBe("all_strict");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("listDocumentIds throws (server unreachable) -> no seed, roster preamble only", async () => {

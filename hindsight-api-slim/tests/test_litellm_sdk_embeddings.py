@@ -82,6 +82,7 @@ class TestLiteLLMSDKEmbeddings:
                 model="cohere/embed-english-v3.0",
                 input=["test"],
                 api_key="test_key",
+                timeout=60.0,
                 encoding_format="float",
             )
 
@@ -218,6 +219,7 @@ class TestLiteLLMSDKEmbeddings:
             model="cohere/embed-english-v3.0",
             input=["Hello world"],
             api_key="test_key",
+            timeout=60.0,
             encoding_format="float",
         )
 

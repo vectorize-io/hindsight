@@ -161,8 +161,14 @@ class TestReleaseLocalInferenceMemory:
         assert calls == ["gc", "trim"]
         assert log == ["cuda"]
 
-    def test_release_cpu_skips_empty_cache(self):
+    def test_release_cpu_skips_gc_and_empty_cache_but_trims_heap(self):
+        calls = []
         log = []
-        with patch.dict(sys.modules, {"torch": _fake_torch(empty_cache_log=log)}):
+        with (
+            patch.dict(sys.modules, {"torch": _fake_torch(empty_cache_log=log)}),
+            patch.object(local_device.gc, "collect", lambda: calls.append("gc")),
+            patch.object(local_device, "_heap_trim", lambda: calls.append("trim")),
+        ):
             release_local_inference_memory("cpu")
+        assert calls == ["trim"]
         assert log == []

@@ -165,6 +165,38 @@ def test_load_config_file_uses_correct_profile(temp_home, monkeypatch):
     assert os.environ.get("HINDSIGHT_API_LLM_MODEL") == "llama-3.1-70b", "Should load from named profile, not default"
 
 
+def test_load_config_file_reads_utf8_profile(temp_home, monkeypatch):
+    """Profile templates should load independently of the process locale."""
+    import builtins
+    import os
+
+    from hindsight_embed.cli import load_config_file, set_cli_profile_override
+
+    set_cli_profile_override(None)
+    monkeypatch.delenv("HINDSIGHT_EMBED_PROFILE", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_LLM_PROVIDER", raising=False)
+
+    config_path = temp_home / ".hindsight" / "embed"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "# memory — retained\nHINDSIGHT_API_LLM_PROVIDER=openai\n",
+        encoding="utf-8",
+    )
+
+    original_open = builtins.open
+
+    def locale_open(file, mode="r", *args, **kwargs):
+        if file == config_path and "b" not in mode and "encoding" not in kwargs:
+            kwargs["encoding"] = "ascii"
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", locale_open)
+
+    load_config_file()
+
+    assert os.environ["HINDSIGHT_API_LLM_PROVIDER"] == "openai"
+
+
 def test_get_config_respects_profile(temp_home, monkeypatch):
     """Test that get_config() returns profile-specific values."""
     import os

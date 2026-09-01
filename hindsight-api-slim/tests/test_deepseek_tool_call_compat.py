@@ -99,6 +99,22 @@ def test_deepseek_reasoning_models_still_use_reasoning_parameters():
 
 
 @pytest.mark.asyncio
+async def test_reasoning_tool_call_omits_temperature():
+    llm = _make_deepseek_llm("deepseek-v4-pro")
+
+    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = _make_tool_call_response()
+        await llm.call_with_tools(
+            messages=[{"role": "user", "content": "Search observations."}],
+            tools=TOOLS,
+            temperature=0.9,
+            max_retries=0,
+        )
+
+    assert "temperature" not in mock_create.call_args.kwargs
+
+
+@pytest.mark.asyncio
 async def test_deepseek_named_tool_choice_filters_tools_but_omits_tool_choice():
     """DeepSeek rejects required/named tool_choice but accepts a narrowed tools list."""
     llm = _make_deepseek_llm()

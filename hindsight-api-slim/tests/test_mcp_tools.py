@@ -6,12 +6,15 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
-from hindsight_api.engine.memory_engine import DirectivePage, MentalModelPage
+from hindsight_api.engine.memory_engine import KEEP_PARENT, DirectivePage, MentalModelPage
 from hindsight_api.mcp_tools import (
     KNOWLEDGE_ROOT_PARENT,
     MCPToolsConfig,
+    MentalModelTriggerInput,
     _knowledge_tree_json,
+    _mental_model_trigger_patch,
     _validate_mental_model_inputs,
     build_content_dict,
     parse_timestamp,
@@ -277,9 +280,7 @@ def mock_memory():
     )
     memory.create_knowledge_folder = AsyncMock(return_value=dict(_KNOWLEDGE_FOLDER))
     memory.create_knowledge_page = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
-    memory.rename_knowledge_node = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
-    memory.move_knowledge_node = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
-    memory.update_knowledge_page = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
+    memory.update_knowledge_node = AsyncMock(return_value=dict(_KNOWLEDGE_PAGE_NODE))
     memory.delete_knowledge_node = AsyncMock(return_value=True)
 
     return memory
@@ -762,6 +763,24 @@ class TestGetMentalModelDetail:
 
 @pytest.mark.asyncio
 class TestCreateMentalModel:
+    async def test_create_accepts_core_trigger_policy(self, mcp_server_with_mental_models, mock_memory):
+        await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
+            name="Daily observations",
+            source_query="What changed recently?",
+            trigger=MentalModelTriggerInput(
+                mode="delta",
+                refresh_cron="0 3 * * *",
+                fact_types=["observation"],
+                tags_match="any",
+            ),
+        )
+        assert mock_memory.create_mental_model.call_args.kwargs["trigger"] == {
+            "mode": "delta",
+            "refresh_cron": "0 3 * * *",
+            "fact_types": ["observation"],
+            "tags_match": "any",
+        }
+
     async def test_create_multi_bank(self, mcp_server_with_mental_models, mock_memory):
         result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
             name="Test Model",
@@ -867,6 +886,50 @@ class TestCreateMentalModel:
 
 @pytest.mark.asyncio
 class TestUpdateMentalModel:
+    async def test_update_forwards_trigger_patch(self, mcp_server_with_mental_models, mock_memory):
+        await _tools(mcp_server_with_mental_models)["update_mental_model"].fn(
+            mental_model_id="mm-1",
+            trigger=MentalModelTriggerInput(mode="delta", fact_types=["observation"]),
+        )
+        assert mock_memory.update_mental_model.call_args.kwargs["trigger"] == {
+            "mode": "delta",
+            "fact_types": ["observation"],
+        }
+
+    async def test_update_forwards_advanced_trigger_fields(self, mcp_server_with_mental_models, mock_memory):
+        await _tools(mcp_server_with_mental_models)["update_mental_model"].fn(
+            mental_model_id="mm-1",
+            trigger=MentalModelTriggerInput(
+                exclude_mental_models=True,
+                exclude_mental_model_ids=["mm-2"],
+                recall_max_tokens=8000,
+                recall_chunks_max_tokens=4000,
+                include_chunks=True,
+                tag_groups=[{"tags": ["ops", "infra"], "match": "any"}],
+            ),
+        )
+        assert mock_memory.update_mental_model.call_args.kwargs["trigger"] == {
+            "exclude_mental_models": True,
+            "exclude_mental_model_ids": ["mm-2"],
+            "recall_max_tokens": 8000,
+            "recall_chunks_max_tokens": 4000,
+            "include_chunks": True,
+            "tag_groups": [{"tags": ["ops", "infra"], "match": "any"}],
+        }
+
+    async def test_update_sends_only_the_fields_the_caller_set(self, mcp_server_with_mental_models, mock_memory):
+        """An unset field must not reach the engine, or the merge has nothing to preserve."""
+        await _tools(mcp_server_with_mental_models)["update_mental_model"].fn(
+            mental_model_id="mm-1", trigger=MentalModelTriggerInput(mode="delta")
+        )
+        assert mock_memory.update_mental_model.call_args.kwargs["trigger"] == {"mode": "delta"}
+
+    async def test_update_explicit_null_clears_a_setting(self, mcp_server_with_mental_models, mock_memory):
+        await _tools(mcp_server_with_mental_models)["update_mental_model"].fn(
+            mental_model_id="mm-1", trigger=MentalModelTriggerInput(refresh_cron=None)
+        )
+        assert mock_memory.update_mental_model.call_args.kwargs["trigger"] == {"refresh_cron": None}
+
     async def test_update_multi_bank(self, mcp_server_with_mental_models, mock_memory):
         result = await _tools(mcp_server_with_mental_models)["update_mental_model"].fn(
             mental_model_id="mm-1", name="Updated Name"
@@ -1050,6 +1113,25 @@ class TestMentalModelInputValidation:
     async def test_create_empty_source_query_returns_error_multi_bank(self, mcp_server_with_mental_models, mock_memory):
         result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(name="Test", source_query="")
         assert "source_query cannot be empty" in result
+        mock_memory.create_mental_model.assert_not_called()
+
+    async def test_update_invalid_tags_match_returns_error_multi_bank(self, mcp_server_with_mental_models, mock_memory):
+        result = await _tools(mcp_server_with_mental_models)["update_mental_model"].fn(
+            mental_model_id="mm-1", tags_match="most"
+        )
+        assert "tags_match" in result
+        mock_memory.update_mental_model.assert_not_called()
+
+    async def test_legacy_refresh_flag_cannot_bypass_trigger_exclusivity(
+        self, mcp_server_with_mental_models, mock_memory
+    ):
+        result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
+            name="Daily observations",
+            source_query="What changed?",
+            trigger=MentalModelTriggerInput(refresh_cron="0 3 * * *"),
+            trigger_refresh_after_consolidation=True,
+        )
+        assert "mutually exclusive" in result
         mock_memory.create_mental_model.assert_not_called()
 
     async def test_create_max_tokens_too_low_multi_bank(self, mcp_server_with_mental_models, mock_memory):
@@ -2099,6 +2181,56 @@ class TestKnowledgeBaseTools:
         assert create_kwargs["tags"] == ["ops"]
         assert create_kwargs["max_tokens"] == 512
 
+    async def test_create_page_with_trigger_policy(self, mock_memory):
+        """A page can be put on a cron schedule at create time, not just HTTP."""
+        mcp = _make_mcp_server(mock_memory, {"create_knowledge_page"}, include_bank_id=True)
+        await _tools(mcp)["create_knowledge_page"].fn(
+            name="Deploys",
+            source_query="q",
+            trigger=MentalModelTriggerInput(
+                refresh_cron="0 3 * * *", fact_types=["world", "observation"], recall_max_tokens=8000
+            ),
+        )
+        # Only the stated fields go down; the engine merges them over the
+        # knowledge-page defaults, so mode/exclude_mental_models survive.
+        assert mock_memory.create_knowledge_page.call_args.kwargs["trigger"] == {
+            "refresh_cron": "0 3 * * *",
+            "fact_types": ["world", "observation"],
+            "recall_max_tokens": 8000,
+        }
+
+    async def test_create_page_rejects_contradictory_refresh_triggers(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"create_knowledge_page"}, include_bank_id=True)
+        result = await _tools(mcp)["create_knowledge_page"].fn(
+            name="Deploys",
+            source_query="q",
+            trigger=MentalModelTriggerInput(refresh_cron="0 3 * * *"),
+            refresh_after_consolidation=True,
+        )
+        assert "mutually exclusive" in result
+        mock_memory.create_knowledge_page.assert_not_called()
+
+    async def test_update_page_trigger_is_a_patch(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
+        await _tools(mcp)["update_knowledge_node"].fn(
+            node_id="kp-1", trigger=MentalModelTriggerInput(mode="full", tags_match="any")
+        )
+        assert mock_memory.update_knowledge_node.call_args.kwargs["trigger"] == {
+            "mode": "full",
+            "tags_match": "any",
+        }
+
+    async def test_update_page_trigger_alone_is_enough_to_update(self, mock_memory):
+        """A trigger-only call must not fall through to the "nothing to update" error."""
+        mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
+        result = await _tools(mcp)["update_knowledge_node"].fn(
+            node_id="kp-1", trigger=MentalModelTriggerInput(refresh_cron="0 4 * * *")
+        )
+        assert "Provide name" not in result
+        mock_memory.update_knowledge_node.assert_called_once()
+        # No source_query change, so no rebuild is scheduled.
+        mock_memory.submit_async_refresh_mental_model.assert_not_called()
+
     async def test_create_page_duplicate_name(self, mock_memory):
         mock_memory.create_knowledge_page.return_value = None
         mcp = _make_mcp_server(mock_memory, {"create_knowledge_page"}, include_bank_id=True)
@@ -2110,41 +2242,46 @@ class TestKnowledgeBaseTools:
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         result = json.loads(await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", name="Deployments"))
         assert result["id"] == "kp-1"
-        assert mock_memory.rename_knowledge_node.call_args.kwargs["name"] == "Deployments"
-        mock_memory.update_knowledge_page.assert_not_called()
-        mock_memory.move_knowledge_node.assert_not_called()
+        kwargs = mock_memory.update_knowledge_node.call_args.kwargs
+        assert kwargs["name"] == "Deployments"
+        # The one call carries the whole patch, so the fields the client left out
+        # have to reach the engine as "not supplied" or a rename would reset them.
+        assert kwargs["parent_id"] is KEEP_PARENT
+        assert kwargs["source_query"] is None
+        assert kwargs["tags"] is None
+        assert kwargs["max_tokens"] is None
+        assert kwargs["trigger"] is None
 
     async def test_update_move_to_folder(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", parent_id="kf-2")
-        assert mock_memory.move_knowledge_node.call_args.kwargs["new_parent_id"] == "kf-2"
+        assert mock_memory.update_knowledge_node.call_args.kwargs["parent_id"] == "kf-2"
 
     async def test_update_move_to_root(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", parent_id=KNOWLEDGE_ROOT_PARENT)
-        assert mock_memory.move_knowledge_node.call_args.kwargs["new_parent_id"] is None
+        assert mock_memory.update_knowledge_node.call_args.kwargs["parent_id"] is None
 
     async def test_update_source_query_triggers_refresh(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", source_query="new question?")
-        assert mock_memory.update_knowledge_page.call_args.kwargs["source_query"] == "new question?"
+        assert mock_memory.update_knowledge_node.call_args.kwargs["source_query"] == "new question?"
         assert mock_memory.submit_async_refresh_mental_model.call_args.kwargs["mental_model_id"] == "mm-page"
 
     async def test_update_tags_only_does_not_refresh(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1", tags=[])
-        assert mock_memory.update_knowledge_page.call_args.kwargs["tags"] == []
+        assert mock_memory.update_knowledge_node.call_args.kwargs["tags"] == []
         mock_memory.submit_async_refresh_mental_model.assert_not_called()
 
     async def test_update_requires_a_field(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         result = await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-1")
         assert "Provide name" in result
-        mock_memory.rename_knowledge_node.assert_not_called()
-        mock_memory.update_knowledge_page.assert_not_called()
+        mock_memory.update_knowledge_node.assert_not_called()
 
     async def test_update_not_found(self, mock_memory):
-        mock_memory.rename_knowledge_node.return_value = None
+        mock_memory.update_knowledge_node.return_value = None
         mcp = _make_mcp_server(mock_memory, {"update_knowledge_node"}, include_bank_id=True)
         result = await _tools(mcp)["update_knowledge_node"].fn(node_id="kp-missing", name="x")
         assert "not found" in result
@@ -2412,3 +2549,56 @@ class TestReflectTraceOmission:
         assert "based_on" in data
         assert "tool_trace" not in data
         assert "directives_applied" not in data
+
+
+class TestMentalModelTriggerInput:
+    """The MCP trigger input contract: HTTP parity, patch shape, merge semantics."""
+
+    def test_trigger_input_covers_every_http_trigger_field(self):
+        """An agent that read the API docs must not be rejected for naming a real setting.
+
+        ``MentalModelTriggerInput`` forbids extra keys, so a field the HTTP
+        ``MentalModelTrigger`` has and this one lacks is not "not exposed yet" — it is
+        a hard validation error on a request the HTTP API would have accepted.
+        """
+        from hindsight_api.api.http import MentalModelTrigger
+
+        assert set(MentalModelTrigger.model_fields) == set(MentalModelTriggerInput.model_fields)
+
+    def test_every_field_is_optional_and_unset_by_default(self):
+        """Defaults would defeat the patch: model_dump(exclude_unset) must stay empty."""
+        assert MentalModelTriggerInput().model_dump(exclude_unset=True) == {}
+
+    def test_rejects_unknown_field(self):
+        with pytest.raises(ValidationError):
+            MentalModelTriggerInput(refresh_evry_hour=True)
+
+    def test_rejects_invalid_cron(self):
+        with pytest.raises(ValidationError):
+            MentalModelTriggerInput(refresh_cron="every tuesday")
+
+    def test_blank_cron_reads_as_no_schedule(self):
+        """Parity with the HTTP model, which normalises a blank cron to null."""
+        assert MentalModelTriggerInput(refresh_cron="   ").refresh_cron is None
+
+    def test_rejects_empty_fact_types(self):
+        with pytest.raises(ValidationError):
+            MentalModelTriggerInput(fact_types=[])
+
+    def test_rejects_both_refresh_triggers(self):
+        with pytest.raises(ValidationError):
+            MentalModelTriggerInput(refresh_after_consolidation=True, refresh_cron="0 3 * * *")
+
+    def test_legacy_shorthand_agreeing_with_trigger_is_accepted(self):
+        patch = _mental_model_trigger_patch(
+            MentalModelTriggerInput(tags_match="any"), tags_match="any", refresh_after_consolidation=True
+        )
+        assert patch == {"tags_match": "any", "refresh_after_consolidation": True}
+
+    def test_legacy_shorthand_contradicting_trigger_is_rejected(self):
+        """One of the two would have to win silently; make the caller resolve it."""
+        with pytest.raises(ValueError, match="conflicts with"):
+            _mental_model_trigger_patch(MentalModelTriggerInput(tags_match="any"), tags_match="all")
+
+    def test_no_trigger_and_no_shorthand_is_no_patch(self):
+        assert _mental_model_trigger_patch(None) is None

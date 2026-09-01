@@ -182,6 +182,26 @@ def bank_serialization_sql(table: str, alias: str, operation_type: str | None = 
 
 
 @dataclass
+class ClaimedOperations:
+    """One claim cycle's rows, plus where the bank rotation got to.
+
+    ``claim_tasks`` picks the bank whose turn it is *inside* the claim query, so
+    the caller cannot know which bank that was from the rows alone — the
+    rotation row is not distinguishable from the ones claimed by age. Handing
+    the cursor back keeps the rotation's state in the poller (where the tenant
+    rotation already lives) without costing a second statement to ask.
+    """
+
+    rows: list[ResultRow]
+    """Claimed rows, rotation row first, then oldest-first."""
+
+    next_bank_cursor: str
+    """Bank served by the rotation, to claim past next time. Empty string starts
+    a new round — which is what an empty rotation tier means: no bank sorts after
+    the cursor any more."""
+
+
+@dataclass
 class TagListingParts:
     """Backend-specific SQL fragments for the tag listing query."""
 
@@ -791,8 +811,9 @@ class DataAccessOps(ABC):
         reserved_limits: dict[str, int],
         shared_limit: int,
         *,
+        bank_cursor: str = "",
         consolidation_bank_priority: dict[str, int] | None = None,
-    ) -> list[ResultRow]:
+    ) -> ClaimedOperations:
         """Claim pending tasks from the async_operations table.
 
         Implementations must apply :func:`bank_serialization_sql` to every query
@@ -801,7 +822,20 @@ class DataAccessOps(ABC):
         :func:`document_serialization_sql` to every query that can return a
         ``retain`` row, so at most one retain per document is ever in flight.
 
+        The shared pool must additionally be claimed with one row taken for the
+        bank after ``bank_cursor`` — deficit round robin with a quantum of one
+        slot, the rest of the pool still filled oldest-first. Without it,
+        claiming is a global FIFO and one bank mid-backfill holds every slot
+        until its queue drains, so a bank with a single queued write waits
+        behind the whole backlog (#3861). Both tiers belong in *one* statement:
+        the rotation is a bounded index seek, the backfill is the query that was
+        always there, and a separate seek would cost a round trip on every claim.
+
         Args:
+            bank_cursor: Bank the rotation served last; the claim takes one row for
+                the first bank sorting after it. The empty string starts a round
+                from the beginning, and is also what a caller with no rotation
+                state passes.
             consolidation_bank_priority: Per-bank priority for consolidation scheduling.
                 Maps bank name patterns to integer priorities (higher = claimed first).
                 Patterns support ``*`` as wildcard (converted to SQL ``%`` for LIKE).
@@ -809,9 +843,9 @@ class DataAccessOps(ABC):
                 When set, consolidation tasks are claimed in priority tiers.
                 None preserves current behavior (pure created_at ordering).
 
-        Returns claimed rows with operation_id, operation_type, task_payload,
-        retry_count, bank_id and serialization_key. The caller is responsible for
-        building ClaimedTask objects.
+        Returns the claimed rows — operation_id, operation_type, task_payload,
+        retry_count, bank_id and serialization_key — together with the rotation's
+        next cursor. The caller is responsible for building ClaimedTask objects.
         """
         ...
 

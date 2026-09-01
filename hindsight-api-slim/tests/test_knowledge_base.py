@@ -18,7 +18,13 @@ import pytest_asyncio
 
 import hindsight_api.engine.memory_engine as memory_engine_module
 from hindsight_api.engine.db import DatabaseConnection
-from hindsight_api.engine.memory_engine import MemoryEngine, _may_need_refresh
+from hindsight_api.engine.memory_engine import (
+    MENTAL_MODEL_PENDING_CONTENT,
+    MemoryEngine,
+    _may_need_refresh,
+    fq_table,
+)
+from hindsight_api.engine.retain import embedding_utils
 from hindsight_api.extensions import (
     BankReadContext,
     BankReadOperation,
@@ -116,6 +122,13 @@ class _RecordingValidator(OperationValidatorExtension):
         self._reason = reason
         self.read_ops: list[BankReadOperation] = []
         self.write_ops: list[BankWriteOperation] = []
+        # A page read is a mental model read, so it runs the metering pair
+        # too. Recorded here so tests can assert the meter fires rather than
+        # only that access was checked.
+        self.model_gets: list[str] = []
+        self.model_reads: list[str] = []
+        self.model_get_tokens: list[int] = []
+        self.reject_model_get = False
 
     async def validate_retain(self, ctx) -> ValidationResult:
         return ValidationResult.accept()
@@ -125,6 +138,19 @@ class _RecordingValidator(OperationValidatorExtension):
 
     async def validate_reflect(self, ctx) -> ValidationResult:
         return ValidationResult.accept()
+
+    async def validate_mental_model_get(self, ctx) -> ValidationResult:
+        self.model_gets.append(ctx.mental_model_id)
+        if self.reject_model_get:
+            return ValidationResult.reject("insufficient credits")
+        return ValidationResult.accept()
+
+    async def on_mental_model_get_complete(self, result) -> None:
+        # Recorded separately from `model_gets`: the gate and the completion
+        # hook do not always both fire. A single read runs both; a list reports
+        # completion for each model it delivered without gating each one.
+        self.model_reads.append(result.mental_model_id)
+        self.model_get_tokens.append(result.output_tokens)
 
     async def validate_bank_read(self, ctx: BankReadContext) -> ValidationResult:
         self.read_ops.append(ctx.operation)
@@ -282,7 +308,7 @@ class TestTree:
         which is the same policy stated a different way.)
         """
         bank_id, ids = kb_bank
-        await memory.update_knowledge_page(
+        await memory.update_knowledge_node(
             bank_id, ids.loose, trigger={"refresh_cron": "0 3 * * *"}, request_context=request_context
         )
         resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
@@ -477,6 +503,48 @@ class TestSearch:
         )
         assert len(capped.json()["results"]) <= 1
 
+    @pytest.mark.memory_backend_incompatible
+    async def test_natural_language_question_still_matches_bm25(
+        self, memory: MemoryEngine, kb_bank, request_context, monkeypatch
+    ):
+        """A multi-word question must not have to appear in a page word for word.
+
+        The BM25 arm ORs its tokens, so "billing" alone carries the match; the
+        conjunctive ``websearch_to_tsquery`` this replaced required *every* term and
+        returned nothing for ordinary questions. The embedding is suppressed so the
+        BM25 arm answers alone — otherwise the vector arm would hide the defect.
+        """
+        bank_id, ids = kb_bank
+
+        async def no_embedding(embeddings, texts, *, input_type=None):
+            return [None]
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", no_embedding)
+
+        results = await memory.search_knowledge_pages(
+            bank_id,
+            "what are the billing terms for late payments?",
+            request_context=request_context,
+        )
+
+        assert results, "the BM25 arm must still generate candidates for a question"
+        assert results[0]["id"] == ids.billing
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_query_without_word_characters_returns_nothing(
+        self, memory: MemoryEngine, kb_bank, request_context, monkeypatch
+    ):
+        """No tokens means no BM25 arm; with no embedding either there is nothing to
+        rank on, and the empty token list must not reach ``to_tsquery``."""
+        bank_id, _ = kb_bank
+
+        async def no_embedding(embeddings, texts, *, input_type=None):
+            return [None]
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", no_embedding)
+
+        assert await memory.search_knowledge_pages(bank_id, "???", request_context=request_context) == []
+
     async def test_query_is_required(self, api_client, kb_bank):
         bank_id, _ = kb_bank
         resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/search")
@@ -574,7 +642,7 @@ class TestPageDefaults:
         """
         bank_id = f"test-kb-upd-{uuid.uuid4().hex[:8]}"
         page = await memory.create_knowledge_page(bank_id, "P", "What is P?", "seed", request_context=request_context)
-        await memory.update_knowledge_page(
+        await memory.update_knowledge_node(
             bank_id,
             page["id"],
             trigger={"refresh_cron": "0 3 * * *"},
@@ -590,7 +658,7 @@ class TestPageDefaults:
         assert "refresh_after_consolidation" not in mm["trigger"]
 
         # ...and back again: the stated auto-refresh clears the stored cron.
-        await memory.update_knowledge_page(
+        await memory.update_knowledge_node(
             bank_id,
             page["id"],
             trigger={"refresh_after_consolidation": True},
@@ -612,7 +680,7 @@ class TestPageDefaults:
             trigger={"refresh_cron": "0 3 * * *"},
             request_context=request_context,
         )
-        await memory.update_knowledge_page(bank_id, page["id"], max_tokens=2048, request_context=request_context)
+        await memory.update_knowledge_node(bank_id, page["id"], max_tokens=2048, request_context=request_context)
         mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
         assert mm["max_tokens"] == 2048
         assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
@@ -635,7 +703,7 @@ class TestPageDefaults:
             captured.update(kwargs)
             return {"id": ids.orders, "kind": "page", "name": "Orders", "mental_model_id": ids.orders_mm}
 
-        monkeypatch.setattr(memory, "update_knowledge_page", fake_update)
+        monkeypatch.setattr(memory, "update_knowledge_node", fake_update)
         resp = await api_client.patch(
             f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
             json={"trigger": {"refresh_cron": "0 4 * * *"}},
@@ -871,6 +939,45 @@ class TestMoveRenameDelete:
         assert hit.status_code == 200, hit.text
         assert any(r["id"] == ids.orders for r in hit.json()["results"])
 
+    async def test_rename_page_reembeds_backing_model(
+        self, api_client, kb_bank, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """Regression for #3926: the rename reached the backing model's name and its
+        lexical projection, but not its vector, so semantic recall kept matching the
+        page on its old title."""
+        bank_id, ids = kb_bank
+
+        # No engine read exposes a model's embedding, and the stale column is the
+        # defect under test, so it has to be read directly.
+        async def stored_embedding() -> str:
+            async with memory._pool.acquire() as conn:
+                return await conn.fetchval(
+                    f"SELECT embedding::text FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    ids.orders_mm,
+                )
+
+        before = await stored_embedding()
+
+        embedded: list[str] = []
+        original_generate = embedding_utils.generate_embeddings_batch
+
+        async def recording_generate(backend, texts, *args, **kwargs):
+            embedded.extend(texts)
+            return await original_generate(backend, texts, *args, **kwargs)
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", recording_generate)
+
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Order Operations"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
+        assert embedded == [f"Order Operations {mm['content']}"]
+        assert await stored_embedding() != before
+
     async def test_update_page_options(self, api_client, kb_bank):
         bank_id, ids = kb_bank
         resp = await api_client.patch(
@@ -930,12 +1037,16 @@ class TestMoveRenameDelete:
         pauser.install(monkeypatch)
         try:
             first = asyncio.create_task(
-                memory.move_knowledge_node(bank_id, folder_a["id"], folder_b["id"], request_context=request_context)
+                memory.update_knowledge_node(
+                    bank_id, folder_a["id"], parent_id=folder_b["id"], request_context=request_context
+                )
             )
             await asyncio.wait_for(pauser.first_holds_lock.wait(), timeout=5)
 
             second = asyncio.create_task(
-                memory.move_knowledge_node(bank_id, folder_b["id"], folder_a["id"], request_context=request_context)
+                memory.update_knowledge_node(
+                    bank_id, folder_b["id"], parent_id=folder_a["id"], request_context=request_context
+                )
             )
             await asyncio.wait_for(pauser.second_reached_lock.wait(), timeout=5)
             await _assert_blocked(second, "the second move")
@@ -969,7 +1080,9 @@ class TestMoveRenameDelete:
             await asyncio.wait_for(pauser.first_holds_lock.wait(), timeout=5)
 
             moving = asyncio.create_task(
-                memory.move_knowledge_node(bank_id, folder_a["id"], folder_b["id"], request_context=request_context)
+                memory.update_knowledge_node(
+                    bank_id, folder_a["id"], parent_id=folder_b["id"], request_context=request_context
+                )
             )
             await asyncio.wait_for(pauser.second_reached_lock.wait(), timeout=5)
             await _assert_blocked(moving, "the move")
@@ -1050,8 +1163,8 @@ class TestMoveRenameDelete:
             # The ancestor walk never reaches C, so only the cycle guard ends it.
             with pytest.raises(ValueError, match="cycle"):
                 await asyncio.wait_for(
-                    memory.move_knowledge_node(
-                        bank_id, folder_c["id"], folder_a["id"], request_context=request_context
+                    memory.update_knowledge_node(
+                        bank_id, folder_c["id"], parent_id=folder_a["id"], request_context=request_context
                     ),
                     timeout=10,
                 )
@@ -1069,6 +1182,129 @@ class TestMoveRenameDelete:
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_patch_rolls_back_the_rename_when_the_move_fails(self, api_client, kb_bank, memory, request_context):
+        """One PATCH is one transaction.
+
+        A rename used to commit on its own connection before the move was even
+        attempted, so a bad parent left the node renamed but not moved: state the
+        client never asked for, and one its retry of the same PATCH could not undo.
+        """
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Renamed Orders", "parent_id": "kf-does-not-exist"},
+        )
+        assert resp.status_code == 400, resp.text
+
+        node = next(
+            n
+            for n in await memory.list_knowledge_nodes(bank_id, request_context=request_context)
+            if n["id"] == ids.orders
+        )
+        assert node["name"] == "Orders"
+        assert node["parent_id"] == ids.runbooks
+        # The backing mental model is written in the same transaction, so it has to
+        # roll back with the node rather than keep a name nothing points at.
+        mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
+        assert mm["name"] == "Orders"
+
+    async def test_patch_rolls_back_the_rename_when_the_page_options_do_not_apply(
+        self, api_client, kb_bank, memory, request_context
+    ):
+        """Same guarantee on the other ordering: page options are rejected last.
+
+        A folder has no backing mental model, so page options cannot apply to it.
+        That verdict used to arrive after the rename had already committed.
+        """
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.policies}",
+            json={"name": "Renamed Policies", "tags": ["type:policy"]},
+        )
+        assert resp.status_code == 404, resp.text
+
+        node = next(
+            n
+            for n in await memory.list_knowledge_nodes(bank_id, request_context=request_context)
+            if n["id"] == ids.policies
+        )
+        assert node["name"] == "Policies"
+
+    async def test_patch_rolls_back_the_move_when_it_would_make_a_cycle(
+        self, api_client, kb_bank, memory, request_context
+    ):
+        """The cycle guard fires mid-transaction; the rename beside it must not survive."""
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.runbooks}",
+            json={"name": "Renamed Runbooks", "parent_id": ids.sub},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "subtree" in resp.text
+
+        node = next(
+            n
+            for n in await memory.list_knowledge_nodes(bank_id, request_context=request_context)
+            if n["id"] == ids.runbooks
+        )
+        assert node["name"] == "Runbooks"
+        assert node["parent_id"] is None
+
+    async def test_patch_applies_rename_move_and_page_options_together(
+        self, api_client, kb_bank, memory, request_context
+    ):
+        """The whole patch commits as one, and each field still lands where it lives."""
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.loose}",
+            json={
+                "name": "Compliance Rules",
+                "parent_id": ids.policies,
+                "source_query": "what are the compliance rules?",
+                "tags": ["type:policy", "compliance"],
+                "max_tokens": 1024,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        node = resp.json()
+        assert node["name"] == "Compliance Rules"
+        assert node["parent_id"] == ids.policies
+        assert set(node["tags"]) == {"type:policy", "compliance"}
+
+        mm = await memory.get_mental_model(bank_id, node["mental_model_id"], request_context=request_context)
+        assert mm["name"] == "Compliance Rules"
+        assert mm["source_query"] == "what are the compliance rules?"
+        assert set(mm["tags"]) == {"type:policy", "compliance"}
+        assert mm["max_tokens"] == 1024
+
+    async def test_patch_does_not_schedule_a_refresh_it_rolled_back(self, api_client, kb_bank, memory, monkeypatch):
+        """A new source query rebuilds the page — but only if the patch committed.
+
+        The refresh is submitted after the transaction, so a move that fails beside
+        it leaves no job queued against a source query the page never took on.
+        """
+        bank_id, ids = kb_bank
+        submitted: list[str] = []
+
+        async def fake_submit(*, bank_id: str, mental_model_id: str, request_context):
+            submitted.append(mental_model_id)
+
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_submit)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"source_query": "a question the page never adopts", "parent_id": "kf-does-not-exist"},
+        )
+        assert resp.status_code == 400, resp.text
+        assert submitted == []
+
+        # The committing case still queues exactly one rebuild.
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"source_query": "a question the page does adopt"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert submitted == [ids.orders_mm]
+
     async def test_delete_folder_cascades(self, api_client, kb_bank, memory, request_context):
         bank_id, ids = kb_bank
         # deleting Runbooks removes Sub + Orders (and Orders' mental model)
@@ -1081,6 +1317,187 @@ class TestMoveRenameDelete:
         # the backing mental model is gone too
         mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
         assert mm is None
+
+
+class TestListReportsTheContentItDelivers:
+    """A list that carries content is a bulk read of that content.
+
+    A knowledge page is a mental_models row and is not excluded from
+    list_mental_models, so a list that returns content hands back every
+    page in the bank. Reporting the single-page read while leaving that
+    unreported would watch the narrow door and leave the wide one open — a
+    caller could enumerate a bank's synthesized knowledge by asking for it in
+    one page instead of one at a time.
+    """
+
+    async def test_listing_with_content_reports_each_model(self, memory, kb_bank, request_context, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        with_content = [m for m in page.items if m.get("content")]
+        assert with_content, "fixture should have at least one model with content"
+        assert sorted(validator.model_reads) == sorted(str(m["id"]) for m in with_content)
+
+    async def test_the_page_backing_model_is_among_them(self, memory, kb_bank, request_context, monkeypatch):
+        # The specific hole: pages ride in on this list.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        assert ids.orders_mm in validator.model_reads
+
+    async def test_listing_metadata_reports_nothing(self, memory, kb_bank, request_context, monkeypatch):
+        # No content delivered, nothing to report — and this is the detail
+        # level the internal template-provisioning callers now ask for.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="metadata", request_context=request_context)
+
+        assert page.items, "metadata listing should still return the models"
+        assert validator.model_reads == []
+
+    async def test_reported_size_tracks_the_content_returned(self, memory, kb_bank, request_context, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        expected = sorted(len(m["content"]) // 4 for m in page.items if m.get("content"))
+        assert sorted(validator.model_get_tokens) == expected
+
+    async def test_config_detail_carries_the_definition_without_the_body(
+        self, memory, kb_bank, request_context, monkeypatch
+    ):
+        # The level the bank-template export asks for: it copies how a model is
+        # built and never reads what it says, so it must not pull — or be
+        # reported for — content it discards.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="config", request_context=request_context)
+
+        assert page.items, "config listing should still return the models"
+        assert all("content" not in m for m in page.items)
+        # The fields a template manifest is built from survive the trim.
+        assert all(m["source_query"] and "trigger" in m and "max_tokens" in m for m in page.items)
+        assert validator.model_reads == []
+
+    async def test_a_model_still_generating_is_not_reported(self, memory, kb_bank, request_context, monkeypatch):
+        # The placeholder is not synthesized knowledge; nothing was delivered.
+        bank_id, ids = kb_bank
+        pending = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Pending",
+            source_query="Not answered yet.",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            request_context=request_context,
+        )
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        assert any(m["id"] == pending["id"] for m in page.items), "the pending model should still be listed"
+        assert pending["id"] not in validator.model_reads
+
+
+class TestExportReportsOnceNotPerPage:
+    """An export is a single named operation, not N model reads.
+
+    export_knowledge_base runs its per-page reads under
+    _authorize_nested_operations, so the whole bundle costs exactly one
+    EXPORT_KNOWLEDGE_BASE hook. Pinned here because it is the widest read of
+    model content in the engine, and the suppression that keeps it to one hook
+    is invisible at the call site.
+    """
+
+    async def test_export_reports_one_hook_for_the_whole_bundle(self, memory, kb_bank, request_context, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        export = await memory.export_knowledge_base(bank_id=bank_id, request_context=request_context)
+
+        assert len(export.pages) >= 3, "fixture seeds three pages"
+        assert _read_ops(validator) == [BankReadOperation.EXPORT_KNOWLEDGE_BASE]
+        # The nested page and list reads inside it report nothing of their own.
+        assert validator.model_gets == []
+        assert validator.model_reads == []
+
+
+class TestPageReadIsAModelRead:
+    """Reading a page runs the same validator pair as reading its mental model.
+
+    get_knowledge_page joins mental_models and returns mm.content as
+    the page body, so a page read delivers exactly what get_mental_model
+    delivers off the same row. The two endpoints are doors onto one object, and
+    a deployment that meters model reads must see both — otherwise the price of
+    the same content depends on which URL the caller picked.
+    """
+
+    async def test_reading_a_page_runs_the_model_get_validator(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+
+        assert resp.status_code == 200, resp.text
+        # Gated on the page's backing model, not on the page id.
+        assert validator.model_gets == [ids.orders_mm]
+
+    async def test_reading_a_page_reports_completion_with_the_content_size(
+        self, api_client, kb_bank, memory, monkeypatch
+    ):
+        # The post-hook is what records usage; without it a deployment could
+        # gate a read it then never bills for.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+        body = resp.json()
+
+        # The response renames the model's content to body; the hook is
+        # given the same string, so the recorded size must track it.
+        assert len(validator.model_get_tokens) == 1
+        assert validator.model_get_tokens[0] == len(body.get("body") or "") // 4
+        assert validator.model_get_tokens[0] > 0
+
+    async def test_a_refused_model_get_returns_no_page_content(self, api_client, kb_bank, memory, monkeypatch):
+        # The gate has to run before the body is handed back, or it is
+        # decoration: the caller would get the content and the refusal.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        validator.reject_model_get = True
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+
+        assert resp.status_code != 200
+        assert "Orders" not in resp.text
+        # Refused before delivery means nothing to record.
+        assert validator.model_get_tokens == []
+
+    async def test_bank_read_access_check_still_runs(self, api_client, kb_bank, memory, monkeypatch):
+        # Metering is added alongside the access check, not in place of it.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        validator.read_ops.clear()
+        await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+
+        assert _read_ops(validator) == [BankReadOperation.GET_KNOWLEDGE_PAGE]
 
 
 class TestAuthorizationReadDenied:

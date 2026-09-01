@@ -192,3 +192,24 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
             yield conn
         finally:
             await pool.release(conn)
+
+
+@asynccontextmanager
+async def use_or_acquire(backend_or_pool: Any, conn: Any | None) -> AsyncIterator[Any]:
+    """Reuse the caller's connection, or acquire one when there isn't one.
+
+    Lets a method that normally manages its own connection also run as one step
+    of a caller's transaction: pass ``conn`` and its writes commit or roll back
+    with everything else in that transaction, rather than landing on a separate
+    connection that a later failure cannot undo. A borrowed connection is left
+    open here — the caller that opened it closes it.
+
+    Usage:
+        async with use_or_acquire(backend, conn) as c:
+            await c.execute(...)
+    """
+    if conn is not None:
+        yield conn
+        return
+    async with acquire_with_retry(backend_or_pool) as owned:
+        yield owned

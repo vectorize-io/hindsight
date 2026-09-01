@@ -23,10 +23,10 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveBankId } from "./core/bank";
+import { deriveBankIdOrSkip } from "./core/bank";
 import { ingestChats } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
-import { commitsSince, gitHeadSha, ingestGitLog, repoNameOf, retainCommit } from "./core/git";
+import { commitsSince, repoNameOf, retainCommit, syncGitLog } from "./core/git";
 import { SURVEY_DOC_IDS } from "./core/survey";
 import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
@@ -50,7 +50,9 @@ function arg(name: string, def?: string): string | undefined {
 const REPO = arg("repo");
 const cfg0 = loadConfig({ harness: arg("harness") ?? undefined, path: arg("config") });
 const BANK =
-  arg("bank") ?? (REPO ? deriveBankId(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId);
+  arg("bank") ??
+  (REPO ? deriveBankIdOrSkip(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId) ??
+  undefined;
 const resolved0 = BANK
   ? applyBankConfig(cfg0, BANK, REPO ?? undefined)
   : { cfg: cfg0, bankId: BANK };
@@ -151,7 +153,10 @@ async function main() {
         sessionId,
       });
 
-    await client.configureBank({ pageTrigger: buildPageTrigger(cfg) });
+    await client.configureBank({
+      pageTrigger: buildPageTrigger(cfg),
+      manage: cfg.manageBankConfig,
+    });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
         bank: FINAL_BANK,
@@ -159,7 +164,7 @@ async function main() {
       });
     }
 
-    const gitIds = await client.listDocumentIds("source:git");
+    const gitIds = await client.listDocumentIds("source:git", "all_strict");
 
     // chats FIRST: few, and they carry the decisions that make memory necessary — never starved
     // behind the git flood. Dedup against what's already in the bank (chat:<id>).
@@ -172,7 +177,9 @@ async function main() {
     if (!cfg.retainSessions) {
       log("[chat] retainSessions: false — skipping conversation import");
     } else {
-      const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
+      const chatIds = await client
+        .listDocumentIds("source:chat", "all_strict")
+        .catch(() => new Set<string>());
       const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
       sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
       if (all.length !== sessions.length)
@@ -197,30 +204,7 @@ async function main() {
     if (GIT_INGEST === "none") {
       log("[git] gitIngest=none — git ingestion disabled");
     } else {
-      const head = gitHeadSha(REPO!);
-      const gitlogCurrent =
-        head !== null &&
-        (await client.listDocumentIds(`gitlog-head:${head}`).catch(() => new Set())).size > 0;
-      if (gitlogCurrent) {
-        log("[gitlog] current with HEAD — skipping");
-      } else {
-        gitFails += await ingestGitLog(client, REPO!, { limit: GITLOG_LIMIT, log, stampFor });
-      }
-      // Self-cleanup: earlier versions named the gitlog doc per WORKTREE (gitlog:my-repo-wt2 …),
-      // duplicating the history in the shared bank. Delete any gitlog doc that isn't the
-      // canonical (worktree-aware) id.
-      try {
-        const canonical = `gitlog:${repoNameOf(REPO!)}`;
-        const logDocs = await client.listDocumentIds("source:git-log");
-        for (const id of logDocs) {
-          if (id !== canonical) {
-            await client.deleteDocument(id);
-            log(`[gitlog] removed stale duplicate ${id} (canonical: ${canonical})`);
-          }
-        }
-      } catch {
-        /* cleanup is best-effort */
-      }
+      gitFails += await syncGitLog(client, REPO!, { limit: GITLOG_LIMIT, log, stampFor });
 
       if (GIT_INGEST === "full") {
         // progressive depth: next batch of un-ingested commits, newest first, full message + diff.
@@ -259,11 +243,13 @@ async function main() {
     // baseline marker from "researching…" to "completed" (lazy — the detached survey agent can't
     // reliably do it itself). The `survey-state:done` tag makes this a one-time upsert.
     try {
-      const uploads = await client.listDocumentIds("source:upload").catch(() => new Set<string>());
+      const uploads = await client
+        .listDocumentIds("source:upload", "all_strict")
+        .catch(() => new Set<string>());
       if (SURVEY_DOC_IDS.some((id) => uploads.has(id))) {
-        const markers = await client.listDocumentIds("source:survey-baseline");
+        const markers = await client.listDocumentIds("source:survey-baseline", "all_strict");
         const done = await client
-          .listDocumentIds("survey-state:done")
+          .listDocumentIds("survey-state:done", "all_strict")
           .catch(() => new Set<string>());
         let best: { id: string; sha: string; behind: number } | undefined;
         for (const id of markers) {

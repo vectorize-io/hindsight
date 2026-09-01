@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INSTALLERS, MARKER, run, type InstallCtx } from "./installer";
+import { INSTALLERS, MARKER, parseJsonc, run, type InstallCtx } from "./installer";
 import { SKILL_DIRS } from "./core/skill-dirs";
 
 // Every test gets a FRESH temp dir as ctx.home (never the real $HOME) and a stubbed
@@ -22,7 +22,9 @@ const homes: string[] = [];
 
 function makeCtx(): InstallCtx & {
   claudeMcp: ReturnType<typeof vi.fn>;
+  qwenMcp: ReturnType<typeof vi.fn>;
   clinePlugin: ReturnType<typeof vi.fn>;
+  dcodePlugin: ReturnType<typeof vi.fn>;
   nodeSqlite: ReturnType<typeof vi.fn>;
 } {
   const home = mkdtempSync(join(tmpdir(), "hindsight-installer-test-"));
@@ -33,7 +35,11 @@ function makeCtx(): InstallCtx & {
     pkgRoot,
     dist: join(pkgRoot, "dist"),
     claudeMcp: vi.fn(() => true),
+    // qwen-code registers through the `qwen` CLI, exactly as claude-code does through `claude`.
+    // Stub it for the same reason: the suite must never execute a real host CLI.
+    qwenMcp: vi.fn(() => true),
     clinePlugin: vi.fn(() => true),
+    dcodePlugin: vi.fn(() => true),
     // Stubbed like the CLI seams above, so the suite never depends on the Node running it.
     nodeSqlite: vi.fn(() => true),
     // Never let a developer's real ~/.hindsight/claude-code.json steer the tests.
@@ -168,6 +174,69 @@ describe("claude-code installer", () => {
     run(["install", "claude-code"], ctx);
     run(["uninstall", "claude-code"], ctx);
     expect(readJson(settingsPath(ctx)).hooks).toBeUndefined();
+  });
+});
+
+describe("qwen-code installer", () => {
+  it("install writes the 3 hook events with our dist commands and timeouts 30000/30000/60000", () => {
+    // NOT 30/30/60. Qwen reads this field as MILLISECONDS (hookRunner: DEFAULT_HOOK_TIMEOUT =
+    // 60_000, passed straight to setTimeout), so the seconds values every other harness uses would
+    // register 30ms/60ms hooks — dead before Node starts, and Qwen terminates the whole detached
+    // process tree on timeout, so the turn is simply never retained.
+    const ctx = makeCtx();
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    const hooks = JSON.parse(readFileSync(join(ctx.home, ".qwen", "settings.json"), "utf8")).hooks;
+    const entry = (ev: string) => hooks[ev][0].hooks[0];
+    expect(entry("SessionStart").timeout).toBe(30_000);
+    expect(entry("UserPromptSubmit").timeout).toBe(30_000);
+    expect(entry("Stop").timeout).toBe(60_000);
+    for (const ev of ["SessionStart", "UserPromptSubmit", "Stop"]) {
+      expect(entry(ev).command).toContain(ctx.dist);
+      expect(entry(ev).type).toBe("command");
+    }
+  });
+
+  it("registers the MCP server through the qwen CLI, user scope", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    const argv = ctx.qwenMcp.mock.calls.map((c) => c[0].join(" "));
+    expect(argv.some((a) => a.startsWith("mcp remove"))).toBe(true);
+    expect(
+      argv.some((a) => a.includes("mcp add") && a.includes("HINDSIGHT_MCP_HARNESS=qwen-code"))
+    ).toBe(true);
+  });
+
+  it("preserves pre-existing foreign hook entries and appends ours", () => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ".qwen", "settings.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "their-tool", timeout: 5000 }] }] },
+      })
+    );
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    const stop = JSON.parse(readFileSync(path, "utf8")).hooks.Stop;
+    expect(JSON.stringify(stop)).toContain("their-tool");
+    expect(JSON.stringify(stop)).toContain("qwen-stop-hook.js");
+  });
+
+  it("uninstall strips our entries and keeps foreign ones", () => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ".qwen", "settings.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "their-tool", timeout: 5000 }] }] },
+      })
+    );
+    expect(run(["install", "qwen-code"], ctx)).toBe(0);
+    expect(run(["uninstall", "qwen-code"], ctx)).toBe(0);
+    const after = readFileSync(path, "utf8");
+    expect(after).toContain("their-tool");
+    expect(after).not.toContain("qwen-stop-hook.js");
   });
 });
 
@@ -464,9 +533,13 @@ describe("kilo installer", () => {
     writeFileSync(jsonc, '{\n  // my config\n  "$schema": "https://app.kilo.ai/config.json"\n}\n');
     run(["install", "kilo"], ctx);
     expect(existsSync(join(kiloDir(ctx), "kilo.json"))).toBe(false);
-    const cfg = readJson(jsonc);
+    const text = readFileSync(jsonc, "utf8");
+    const cfg = parseJsonc(text)!;
     expect(cfg.plugin).toEqual([entryOf(ctx)]);
-    expect(cfg.$schema).toBe("https://app.kilo.ai/config.json"); // comments dropped, DATA kept
+    expect(cfg.$schema).toBe("https://app.kilo.ai/config.json");
+    // The comment used to be dropped here: the read was JSONC-aware but the write re-serialized
+    // the parsed object, so a commented config came back stripped.
+    expect(text).toContain("// my config");
   });
 
   it("refuses to clobber a config it cannot parse", () => {
@@ -489,7 +562,124 @@ describe("kilo installer", () => {
 });
 
 describe("opencode installer", () => {
-  const cfgPath = (ctx: InstallCtx) => join(ctx.home, ".config", "opencode", "opencode.json");
+  const ocDir = (ctx: InstallCtx) => join(ctx.home, ".config", "opencode");
+  const cfgPath = (ctx: InstallCtx) => join(ocDir(ctx), "opencode.json");
+
+  // opencode loads `opencode.json` OR `opencode.jsonc` from ~/.config/opencode. Creating the
+  // .json variant next to an existing .jsonc leaves the user with two configs — their settings in
+  // one, our plugin entry in the other — so the install has to edit whichever already exists.
+  it("edits an existing opencode.jsonc instead of creating a competing opencode.json", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(jsonc, '{\n  "$schema": "https://opencode.ai/config.json"\n}\n');
+    run(["install", "opencode"], ctx);
+    expect(existsSync(cfgPath(ctx))).toBe(false);
+    expect(readJson(jsonc).plugin).toEqual([ctx.pkgRoot]);
+  });
+
+  it("uninstall edits the same opencode.jsonc the install wrote to", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(jsonc, "{}\n");
+    run(["install", "opencode"], ctx);
+    run(["uninstall", "opencode"], ctx);
+    expect(readJson(jsonc).plugin).toBeUndefined();
+    expect(existsSync(cfgPath(ctx))).toBe(false);
+  });
+
+  it("creates opencode.json when neither candidate exists", () => {
+    const ctx = makeCtx();
+    run(["install", "opencode"], ctx);
+    expect(existsSync(cfgPath(ctx))).toBe(true);
+    expect(existsSync(join(ocDir(ctx), "opencode.jsonc"))).toBe(false);
+  });
+
+  // The reported data loss: a commented config went through strict JSON.parse, which threw, and
+  // readJson's {} fallback meant the whole file was rewritten as just our plugin key. Every
+  // provider, agent override and MCP entry in it was gone.
+  it("keeps the rest of a commented config instead of replacing it with just our key", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(
+      jsonc,
+      `{\n  // where memory lives\n  "share": "disabled",\n  "provider": {\n    "openai": { "name": "gw" },\n  },\n}\n`
+    );
+    run(["install", "opencode"], ctx);
+    const cfg = parseJsonc(readFileSync(jsonc, "utf8"))!;
+    expect(cfg.plugin).toEqual([ctx.pkgRoot]);
+    expect(cfg.share).toBe("disabled"); // survived — this is what used to be wiped
+    expect(cfg.provider).toEqual({ openai: { name: "gw" } });
+  });
+
+  // Reading the file correctly is only half of it: re-serializing the parsed object would drop
+  // every comment the user wrote, so a config that survived would still come back damaged.
+  it("leaves the user's comments and formatting in place", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(
+      jsonc,
+      `{\n  /** Providers **/\n  "provider": {\n    // via the gateway\n    "openai": { "name": "gw" },\n  },\n}\n`
+    );
+    run(["install", "opencode"], ctx);
+    const text = readFileSync(jsonc, "utf8");
+    expect(text).toContain("/** Providers **/");
+    expect(text).toContain("// via the gateway");
+    expect(text).toContain('"openai": { "name": "gw" },');
+  });
+
+  it("uninstall drops the plugin key without reformatting the file", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(jsonc, `{\n  /** mine **/\n  "share": "disabled",\n}\n`);
+    run(["install", "opencode"], ctx);
+    run(["uninstall", "opencode"], ctx);
+    const text = readFileSync(jsonc, "utf8");
+    expect(text).toContain("/** mine **/");
+    expect(parseJsonc(text)).toEqual({ share: "disabled" });
+  });
+
+  // Trailing commas are as common as comments in a hand-written config, and JSON.parse rejects
+  // both — so a .json file carrying them hit the very same wipe.
+  it("parses a trailing-comma opencode.json rather than clobbering it", () => {
+    const ctx = makeCtx();
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(
+      cfgPath(ctx),
+      `{\n  "model": "openai/gpt-5",\n  "plugin": [\n    "other",\n  ],\n}\n`
+    );
+    run(["install", "opencode"], ctx);
+    // Read back with the JSONC parser: the trailing commas are PRESERVED by the write, so the
+    // result is still not strict JSON — which is the point.
+    const cfg = parseJsonc(readFileSync(cfgPath(ctx), "utf8"))!;
+    expect(cfg.model).toBe("openai/gpt-5");
+    expect(cfg.plugin).toEqual(["other", ctx.pkgRoot]);
+  });
+
+  it("refuses to clobber a config it cannot parse", () => {
+    const ctx = makeCtx();
+    mkdirSync(ocDir(ctx), { recursive: true });
+    const broken = '{ "provider": { unquoted } }';
+    writeFileSync(cfgPath(ctx), broken);
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    run(["install", "opencode"], ctx);
+    expect(readFileSync(cfgPath(ctx), "utf8")).toBe(broken);
+    expect(logs.join("\n")).toContain("SKIPPED");
+  });
+
+  it("uninstall leaves an unparseable config untouched", () => {
+    const ctx = makeCtx();
+    mkdirSync(ocDir(ctx), { recursive: true });
+    const broken = '{ "provider": { unquoted } }';
+    writeFileSync(cfgPath(ctx), broken);
+    run(["uninstall", "opencode"], ctx);
+    expect(readFileSync(cfgPath(ctx), "utf8")).toBe(broken);
+  });
 
   it("install adds ctx.pkgRoot to the plugin array exactly once, even across reinstalls", () => {
     const ctx = makeCtx();
@@ -730,6 +920,119 @@ describe("grok-build installer", () => {
   });
 });
 
+describe("dcode installer", () => {
+  it("uses Dcode's native marketplace and plugin commands", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "dcode"], ctx)).toBe(0);
+    const marketplacePath = join(ctx.home, ".hindsight", ".agents", "plugins", "marketplace.json");
+    expect(readJson(marketplacePath)).toMatchObject({
+      name: "hindsight-coding-agents",
+      plugins: [
+        {
+          name: "hindsight-coding-agents",
+          source: { source: "local", path: "./coding-agents" },
+        },
+      ],
+    });
+    expect(ctx.dcodePlugin.mock.calls.map(([args]) => args)).toEqual([
+      ["plugin", "marketplace", "add", join(ctx.home, ".hindsight")],
+      ["plugin", "install", "hindsight-coding-agents@hindsight-coding-agents"],
+    ]);
+    expect(ctx.claudeMcp).not.toHaveBeenCalled();
+    expect(existsSync(join(ctx.home, ".deepagents"))).toBe(false);
+  });
+
+  it("merges the marketplace without dropping foreign entries", () => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ".hindsight", ".agents", "plugins", "marketplace.json");
+    const foreign = { name: "other-plugin", source: { source: "github", repo: "acme/other" } };
+    writeJsonAt(path, { name: "hindsight-coding-agents", plugins: [foreign] });
+    expect(run(["install", "dcode"], ctx)).toBe(0);
+    expect(readJson(path).plugins).toEqual([
+      foreign,
+      { name: "hindsight-coding-agents", source: { source: "local", path: "./coding-agents" } },
+    ]);
+  });
+
+  it("isolates from a foreign marketplace name instead of rewriting it", () => {
+    const ctx = makeCtx();
+    const conventionalPath = join(ctx.home, ".hindsight", ".agents", "plugins", "marketplace.json");
+    const foreignMarketplace = {
+      name: "team-marketplace",
+      plugins: [{ name: "other-plugin", source: { source: "github", repo: "acme/other" } }],
+    };
+    writeJsonAt(conventionalPath, foreignMarketplace);
+
+    expect(run(["install", "dcode"], ctx)).toBe(0);
+    expect(readJson(conventionalPath)).toEqual(foreignMarketplace);
+    const fallbackPath = join(ctx.home, ".hindsight", "hindsight-coding-agents-marketplace.json");
+    expect(readJson(fallbackPath)).toMatchObject({
+      name: "hindsight-coding-agents",
+      plugins: [
+        {
+          name: "hindsight-coding-agents",
+          source: { source: "local", path: "./coding-agents" },
+        },
+      ],
+    });
+    expect(ctx.dcodePlugin).toHaveBeenCalledWith(["plugin", "marketplace", "add", fallbackPath]);
+  });
+
+  it("returns failure when native Dcode installation fails", () => {
+    const ctx = makeCtx();
+    ctx.dcodePlugin.mockReturnValue(false);
+    const logs: string[] = [];
+    ctx.log = (message) => logs.push(message);
+
+    expect(run(["install", "dcode"], ctx)).toBe(1);
+    expect(logs.join("\n")).toContain("could not install the native plugin");
+  });
+
+  it("continues installing other named targets when Dcode fails", () => {
+    const ctx = makeCtx();
+    ctx.dcodePlugin.mockReturnValue(false);
+
+    expect(run(["install", "dcode", "claude-code"], ctx)).toBe(1);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(true);
+  });
+
+  it("continues a literal install all when Dcode fails", () => {
+    const ctx = makeCtx();
+    const binDir = mkdtempSync(join(tmpdir(), "hindsight-installer-bin-"));
+    homes.push(binDir);
+    writeFileSync(join(binDir, "dcode"), "", { mode: 0o755 });
+    writeFileSync(join(binDir, "claude"), "", { mode: 0o755 });
+    vi.stubEnv("PATH", `${binDir}:/usr/bin:/bin`);
+    ctx.dcodePlugin.mockReturnValue(false);
+
+    expect(run(["install", "all"], ctx)).toBe(1);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(true);
+  });
+
+  it("uninstalls the native plugin id and retires only OUR marketplace", () => {
+    const ctx = makeCtx();
+    expect(run(["uninstall", "dcode"], ctx)).toBe(0);
+    // `plugin uninstall` alone leaves the plugin listed as `disabled` and the marketplace still
+    // registered — our own leftovers in Dcode's state. Only the marketplace WE named is removed,
+    // so a foreign one at the conventional path is untouched.
+    expect(ctx.dcodePlugin.mock.calls.map(([args]) => args)).toEqual([
+      ["plugin", "uninstall", "hindsight-coding-agents@hindsight-coding-agents"],
+      ["plugin", "marketplace", "remove", "hindsight-coding-agents"],
+    ]);
+  });
+
+  it("still reports a clean uninstall when only the marketplace removal fails", () => {
+    const ctx = makeCtx();
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    ctx.dcodePlugin.mockImplementation((args: string[]) => args[1] !== "marketplace");
+    // The plugin is gone, which is what "uninstalled" means; the stale marketplace is reported
+    // with the command to clear it rather than failing the whole run.
+    expect(run(["uninstall", "dcode"], ctx)).toBe(0);
+    expect(logs.join("\n")).toContain("dcode plugin marketplace remove hindsight-coding-agents");
+  });
+});
+
 describe("run() CLI behavior", () => {
   it("returns 1 for an unknown harness name and touches nothing", () => {
     const ctx = makeCtx();
@@ -807,7 +1110,9 @@ describe("run() CLI behavior", () => {
       "cursor-cli",
       "copilot-cli",
       "grok-build",
+      "qwen-code",
       "cline-cli",
+      "dcode",
       "dsh",
     ]);
   });
@@ -834,7 +1139,7 @@ describe("MCP registrations name the calling harness", () => {
   // These hosts have no MCP registration at all: they load our plugin/extension in-process
   // (src/kilo.ts, src/dsh.ts, src/pi.ts, src/prime-agent.ts, dist/index.js for opencode), and that
   // entry hands its own harness name straight to RuntimeCore.
-  const IN_PROCESS = new Set(["opencode", "kilo", "pi", "prime-agent", "dsh"]);
+  const IN_PROCESS = new Set(["opencode", "kilo", "pi", "prime-agent", "dsh", "dcode"]);
   const MCP_HOSTS = INSTALLERS.map((i) => i.name).filter((n) => !IN_PROCESS.has(n));
 
   it.each(MCP_HOSTS)("%s", (harness) => {
@@ -843,14 +1148,51 @@ describe("MCP registrations name the calling harness", () => {
     const registrations = [
       ...filesUnder(ctx.home)
         .map((f) => readFileSync(f, "utf8"))
-        // claude-code registers through the `claude` CLI instead of a file we write, so its
-        // registration is the argv we handed the mock.
+        // claude-code and qwen-code register through their host CLI instead of a file we write,
+        // so their registration is the argv we handed the mock.
         .concat(ctx.claudeMcp.mock.calls.map((c) => c[0].join(" ")))
+        .concat(ctx.qwenMcp.mock.calls.map((c) => c[0].join(" ")))
         .filter((text) => text.includes("mcp-server.js")),
     ];
     expect(registrations.length).toBeGreaterThan(0);
     for (const text of registrations) expect(text).toContain(`HINDSIGHT_MCP_HARNESS`);
     for (const text of registrations) expect(text).toContain(harness);
+  });
+});
+
+/**
+ * A JSONC-configured host must survive the install with its comments intact.
+ *
+ * Swept over the family rather than asserted per harness: opencode and kilo each read with
+ * `parseJsonc` and then wrote with `writeJson`, which re-serializes and strips exactly what the
+ * JSONC-aware read preserved. The sibling that forgets is by construction the one nobody wrote a
+ * test for, so this drives the real install and checks the file that came out.
+ */
+describe("JSONC hosts keep their comments through an install", () => {
+  // Each entry is the config file the harness edits when it already exists, with the comment we
+  // expect to still be there afterwards. Hosts absent from this list are strict-JSON by design
+  // (claude-code's settings.json, cursor's hooks.json, …) or not JSON at all (grok/dsh: TOML/YAML).
+  const JSONC_HOSTS: { harness: string; relPath: string[] }[] = [
+    { harness: "opencode", relPath: [".config", "opencode", "opencode.jsonc"] },
+    { harness: "kilo", relPath: [".config", "kilo", "kilo.jsonc"] },
+  ];
+
+  it.each(JSONC_HOSTS)("$harness", ({ harness, relPath }) => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ...relPath);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `{\n  // keep me\n  "share": "disabled",\n}\n`);
+
+    expect(run(["install", harness], ctx)).toBe(0);
+    const afterInstall = readFileSync(path, "utf8");
+    expect(afterInstall).toContain("// keep me");
+    expect(parseJsonc(afterInstall)!.share).toBe("disabled");
+    expect(parseJsonc(afterInstall)!.plugin).toHaveLength(1);
+
+    expect(run(["uninstall", harness], ctx)).toBe(0);
+    const afterUninstall = readFileSync(path, "utf8");
+    expect(afterUninstall).toContain("// keep me");
+    expect(parseJsonc(afterUninstall)).toEqual({ share: "disabled" });
   });
 });
 
@@ -996,6 +1338,61 @@ describe("runtime staging", () => {
     expect(existsSync(join(staged, "dist", "installer.js"))).toBe(true);
   });
 
+  // `update` is what core/auto-update.ts spawns unattended, so its blast radius IS the contract:
+  // it refreshes the staged runtime and rewrites nothing a host reads.
+  it("`update` re-stages the runtime without touching any host config", () => {
+    const ctx = makeCtx();
+    const v1 = mkdtempSync(join(tmpdir(), "v1-"));
+    const v2 = mkdtempSync(join(tmpdir(), "v2-"));
+    homes.push(v1, v2);
+    fakePackage(v1);
+    fakePackage(v2);
+    writeFileSync(join(v2, "dist", "new-only.js"), "// added in the next version");
+
+    Object.assign(ctx, { pkgRoot: v1, dist: join(v1, "dist") });
+    run(["install", "claude-code"], ctx);
+    const settingsPath = join(ctx.home, ".claude", "settings.json");
+    const before = readFileSync(settingsPath, "utf8");
+
+    Object.assign(ctx, { pkgRoot: v2, dist: join(v2, "dist") });
+    expect(run(["update"], ctx)).toBe(0);
+
+    const staged = join(ctx.home, ".hindsight", "coding-agents", "dist");
+    expect(existsSync(join(staged, "new-only.js"))).toBe(true);
+    // Byte-identical: the hooks already point at the staged path, so an update has no reason to
+    // rewrite them — and rewriting is exactly what would let an unattended run wire agents the
+    // user never installed.
+    expect(readFileSync(settingsPath, "utf8")).toBe(before);
+  });
+
+  it("`update` needs no harness argument and wires nothing when nothing is installed", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    fakePackage(src);
+    Object.assign(ctx, { pkgRoot: src, dist: join(src, "dist") });
+
+    expect(run(["update"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ".hindsight", "coding-agents", "dist"))).toBe(true);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(false);
+  });
+
+  // The marker is what core/auto-update.ts reads to decide whether it may replace this runtime,
+  // so staging has to write it — an absent marker fails closed and auto-update never runs.
+  it("records where the runtime was staged from", () => {
+    const ctx = makeCtx();
+    const cache = mkdtempSync(join(tmpdir(), "npx-cache-"));
+    homes.push(cache);
+    const src = join(cache, "_npx", "abc123", "node_modules", "coding-agents");
+    Object.assign(ctx, fakePackage(src));
+
+    run(["install", "claude-code"], ctx);
+    const origin = readJson(
+      join(ctx.home, ".hindsight", "coding-agents", ".install-origin.json")
+    ) as { source: string };
+    expect(origin.source).toBe(src);
+  });
+
   // A checkout whose dist was never built has nothing to copy; wiring the source path is better
   // than pointing every hook at a directory that does not exist.
   it("wires in place when there is nothing to stage", () => {
@@ -1009,7 +1406,7 @@ describe("runtime staging", () => {
 });
 
 describe("skill install across skills-capable hosts", () => {
-  it("copies the packaged skill for claude/codex(~/.agents)/antigravity/cursor/prime-agent and uninstall removes each", () => {
+  it("copies the packaged skill for claude/codex(~/.agents)/antigravity/cursor/qwen/prime-agent and uninstall removes each", () => {
     const home = mkdtempSync(join(tmpdir(), "hs-inst-skill-"));
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
     mkdirSync(join(pkgRoot, "skill"), { recursive: true });
@@ -1017,12 +1414,19 @@ describe("skill install across skills-capable hosts", () => {
       join(pkgRoot, "skill", "SKILL.md"),
       "---\nname: hindsight-coding-agent\n---\nbody"
     );
-    const ctx = { home, pkgRoot, dist: join(pkgRoot, "dist"), claudeMcp: vi.fn(() => true) };
+    const ctx = {
+      home,
+      pkgRoot,
+      dist: join(pkgRoot, "dist"),
+      claudeMcp: vi.fn(() => true),
+      qwenMcp: vi.fn(() => true),
+    };
     const targets: [string, string][] = [
       ["claude-code", join(home, ".claude", "skills")],
       ["codex", join(home, ".agents", "skills")],
       ["antigravity-cli", join(home, ".gemini", "config", "skills")],
       ["cursor-cli", join(home, ".cursor", "skills")],
+      ["qwen-code", join(home, ".qwen", "skills")],
       // Prime Agent's OWN root, never the shared ~/.agents one it also reads: uninstall removes a
       // fixed directory name, so the shared root would take Codex's and dsh's copy with it (#3772).
       ["prime-agent", join(home, ".prime", "agent", "skills")],
@@ -1049,7 +1453,13 @@ describe("skill install across skills-capable hosts", () => {
       join(pkgRoot, "skill", "SKILL.md"),
       "---\nname: hindsight-coding-agent\n---\nbody"
     );
-    const ctx = { home, pkgRoot, dist: join(pkgRoot, "dist"), claudeMcp: vi.fn(() => true) };
+    const ctx = {
+      home,
+      pkgRoot,
+      dist: join(pkgRoot, "dist"),
+      claudeMcp: vi.fn(() => true),
+      qwenMcp: vi.fn(() => true),
+    };
 
     run(["install", "codex", "prime-agent"], ctx);
     run(["uninstall", "prime-agent"], ctx);

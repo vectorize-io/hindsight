@@ -163,10 +163,14 @@ def _empty_gpu_cache(device_type: str | None) -> None:
 def release_local_inference_memory(device_type: str | None = None) -> None:
     """Release transient heap (and GPU allocator) memory after a local inference batch.
 
-    Frees Python objects, returns freed native pages to the OS, and empties the GPU
-    allocator pool when the model ran on a GPU. Safe to call on every platform and
-    device; the pieces that don't apply are cheap no-ops.
+    Returns freed native pages to the OS, and empties the GPU allocator pool when
+    the model ran on a GPU. Python's normal reference counting already releases
+    the short-lived CPU inference buffers; a full cyclic-GC scan on every batch is
+    needlessly expensive on that hot path, so CPU callers leave cyclic GC to its
+    normal threshold-based schedule. GPU callers retain the existing full cleanup
+    because allocator release is part of the opt-in accelerator memory policy.
     """
-    gc.collect()
+    if device_type != "cpu":
+        gc.collect()
     _heap_trim()
     _empty_gpu_cache(device_type)

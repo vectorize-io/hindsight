@@ -12,7 +12,6 @@ from typing import Any, Literal
 from .trace import (
     EntryPoint,
     NodeVisit,
-    PruningDecision,
     QueryInfo,
     RerankedResult,
     RetrievalMethodResults,
@@ -38,7 +37,6 @@ class SearchTracer:
         tracer.record_query_embedding(embedding)
         tracer.add_entry_point(node_id, text, similarity, rank)
         tracer.visit_node(...)
-        tracer.prune_node(...)
 
         # After search...
         trace = tracer.finalize(final_results)
@@ -53,6 +51,12 @@ class SearchTracer:
         tags: list[str] | None = None,
         tags_match: str | None = None,
     ):
+        # `phases_only` keeps the timings and drops everything expensive. Phase metrics are a
+        # handful of floats; the rest of a trace is every candidate's text, the query embedding and
+        # the full visit list, which is why tracing is opt-in. Separating them lets the phase
+        # timings be ALWAYS on: without them a recall log accounts for 58% of its own duration and
+        # the reader goes hunting for the rest in the wrong layer.
+        self.phases_only = False
         """
         Initialize tracer.
 
@@ -74,7 +78,6 @@ class SearchTracer:
         self.start_time: float | None = None
         self.entry_points: list[EntryPoint] = []
         self.visits: list[NodeVisit] = []
-        self.pruned: list[PruningDecision] = []
         self.phase_metrics: list[SearchPhaseMetrics] = []
 
         # Temporal constraint detected from query
@@ -89,17 +92,14 @@ class SearchTracer:
         self.current_step = 0
         self.nodes_visited_set = set()  # For quick lookups
 
-        # Link statistics
-        self.temporal_links_followed = 0
-        self.semantic_links_followed = 0
-        self.entity_links_followed = 0
-
     def start(self):
         """Start timing the search."""
         self.start_time = time.time()
 
     def record_query_embedding(self, embedding: list[float]):
         """Record the query embedding."""
+        if self.phases_only:
+            return
         self.query_embedding = embedding
 
     def record_temporal_constraint(self, start: datetime | None, end: datetime | None):
@@ -117,6 +117,8 @@ class SearchTracer:
             similarity: Cosine similarity to query
             rank: Rank among entry points (1-based)
         """
+        if self.phases_only:
+            return
         # Clamp similarity to [0.0, 1.0] to handle floating-point precision
         similarity = min(1.0, max(0.0, similarity))
 
@@ -136,9 +138,6 @@ class SearchTracer:
         context: str,
         event_date: datetime | None,
         is_entry_point: bool,
-        parent_node_id: str | None,
-        link_type: Literal["temporal", "semantic", "entity"] | None,
-        link_weight: float | None,
         activation: float,
         semantic_similarity: float,
         recency: float,
@@ -154,9 +153,6 @@ class SearchTracer:
             context: Memory unit context
             event_date: When the memory occurred
             is_entry_point: Whether this is an entry point
-            parent_node_id: Node that led here (None for entry points)
-            link_type: Type of link from parent
-            link_weight: Weight of link from parent
             activation: Activation score
             semantic_similarity: Semantic similarity to query
             recency: Recency weight
@@ -165,6 +161,12 @@ class SearchTracer:
         """
         self.current_step += 1
         self.nodes_visited_set.add(node_id)
+
+        # The counters above are cheap and feed the summary totals, so they stay. Everything below
+        # constructs per-node trace records and is skipped unless a trace was actually asked for --
+        # see the note in `add_retrieval_results`.
+        if self.phases_only:
+            return
 
         # Clamp values to handle floating-point precision issues
         # (sometimes normalization produces values like 1.0000005 instead of 1.0)
@@ -192,46 +194,11 @@ class SearchTracer:
             context=context,
             event_date=event_date,
             is_entry_point=is_entry_point,
-            parent_node_id=parent_node_id,
-            link_type=link_type,
-            link_weight=link_weight,
             weights=weights,
-            neighbors_explored=[],
             final_rank=None,  # Will be set later
         )
 
         self.visits.append(visit)
-
-        # Track link statistics
-        if link_type == "temporal":
-            self.temporal_links_followed += 1
-        elif link_type == "semantic":
-            self.semantic_links_followed += 1
-        elif link_type == "entity":
-            self.entity_links_followed += 1
-
-    def prune_node(
-        self,
-        node_id: str,
-        reason: Literal["already_visited", "activation_too_low", "budget_exhausted"],
-        activation: float,
-    ):
-        """
-        Record a node being pruned (not visited).
-
-        Args:
-            node_id: Node that was pruned
-            reason: Why it was pruned
-            activation: Activation value when pruned
-        """
-        self.pruned.append(
-            PruningDecision(
-                node_id=node_id,
-                reason=reason,
-                activation=activation,
-                would_have_been_step=self.current_step + 1,
-            )
-        )
 
     def add_phase_metric(self, phase_name: str, duration_seconds: float, details: dict[str, Any] | None = None):
         """
@@ -270,6 +237,14 @@ class SearchTracer:
             metadata: Optional metadata about this retrieval method
             fact_type: Fact type this retrieval was for (world, experience)
         """
+        # Builds one object per retrieval hit, and a recall's arms carry hundreds. Profiled under
+        # load this and `visit_node` were ~7% of the api process's loop thread, entirely for a
+        # trace nobody requested -- the tracer is constructed for EVERY recall now so the phase
+        # metrics have somewhere to live, so a method without this guard runs on every request.
+        # Its siblings (`record_query_embedding`, `add_entry_point`, `add_rrf_merged`, ...) all
+        # have it; these two were missed.
+        if self.phases_only:
+            return
         retrieval_results = []
         for rank, (doc_id, data) in enumerate(results, start=1):
             score = data.get(score_field)
@@ -305,6 +280,8 @@ class SearchTracer:
         Args:
             merged_results: List of (doc_id, data, rrf_meta) tuples from RRF merge
         """
+        if self.phases_only:
+            return
         self.rrf_merged = []
         for rank, (doc_id, data, rrf_meta) in enumerate(merged_results, start=1):
             source_ranks = rrf_meta.get("source_ranks")
@@ -328,6 +305,8 @@ class SearchTracer:
             reranked_results: List of result dicts after reranking
             rrf_merged: Original RRF merged results for comparison
         """
+        if self.phases_only:
+            return
         # Build map of node_id -> rrf_rank
         rrf_rank_map = {}
         for item in self.rrf_merged:
@@ -406,15 +385,11 @@ class SearchTracer:
         # Create summary
         summary = SearchSummary(
             total_nodes_visited=len(self.visits),
-            total_nodes_pruned=len(self.pruned),
             entry_points_found=len(self.entry_points),
             budget_used=len(self.visits),
             budget_remaining=self.budget - len(self.visits),
             total_duration_seconds=total_duration,
             results_returned=len(final_results),
-            temporal_links_followed=self.temporal_links_followed,
-            semantic_links_followed=self.semantic_links_followed,
-            entity_links_followed=self.entity_links_followed,
             phase_metrics=self.phase_metrics,
         )
 
@@ -426,7 +401,6 @@ class SearchTracer:
             reranked=self.reranked,
             entry_points=self.entry_points,
             visits=self.visits,
-            pruned=self.pruned,
             summary=summary,
             final_results=final_results,
         )

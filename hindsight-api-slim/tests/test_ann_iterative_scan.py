@@ -30,6 +30,7 @@ import pytest
 
 from hindsight_api._vector_index import ann_max_scan_tuples, ann_search_tuning_settings
 from hindsight_api.engine.memories.postgres import PostgresMemories
+from hindsight_api.engine.search import bm25_term_selection as bm25_mod
 from hindsight_api.engine.search import retrieval as retrieval_mod
 from hindsight_api.engine.search.link_expansion_retrieval import GRAPH_SEED_LIMIT
 
@@ -120,7 +121,7 @@ def search_path(monkeypatch):
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: dialect)
     monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
     monkeypatch.setattr(retrieval_mod, "fq_table", lambda name: name)
-    monkeypatch.setattr(retrieval_mod, "get_current_schema", lambda: None)
+    monkeypatch.setattr(bm25_mod, "get_current_schema", lambda: None)
     return dialect
 
 
@@ -200,9 +201,18 @@ async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_contex
     index are built directly: the property belongs to the index scan, and going through
     retain would drag in extraction and consolidation.
     """
+    from hindsight_api._vector_index import uses_per_bank_vector_indexes
+    from hindsight_api.config import get_config
     from hindsight_api.engine.search.retrieval import retrieve_semantic_bm25_combined_sql
-    from hindsight_api.engine.retain.bank_utils import get_or_create_bank_profile
+    from hindsight_api.engine.retain.bank_utils import (
+        _bank_index_name,
+        create_bank_vector_indexes,
+        get_or_create_bank_profile,
+    )
     from hindsight_api.engine.task_backend import fq_table
+
+    if not uses_per_bank_vector_indexes(get_config().vector_extension):
+        pytest.skip("backend uses a global vector index, so there is no per-bank ANN index to name")
 
     bank_id = f"test_iter_scan_{uuid.uuid4().hex[:8]}"
     budget = 400  # deliberately above the standing ef_search of 200
@@ -214,6 +224,27 @@ async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_contex
     table = fq_table("memory_units")
     try:
         async with pool.acquire() as conn:
+            internal_id = await conn.fetchval(
+                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
+            )
+            assert internal_id is not None, f"bank {bank_id} was created without an internal_id"
+            # The plan is asserted against this exact name below. "Index Scan" alone is
+            # not enough: memory_units carries ~19 btrees, any of which can feed a scan
+            # plus a Sort and satisfy the substring while returning every row regardless
+            # of the candidate list — the very plan this test exists to exclude (#3619).
+            index_name = _bank_index_name("world", str(internal_id))
+            # Unqualified, like the table names above: resolved through the session's
+            # search_path, so it names the same index the query below would plan against.
+            if not await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", index_name):
+                # Only reachable with HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS set, where a
+                # fresh bank has not earned its indexes and vector_index_maintenance owns
+                # them. Build them here so the assertion measures the plan rather than the
+                # threshold. Deliberately not unconditional: at the default of 0 this
+                # branch does not run, so the test still fails if bank creation ever stops
+                # building the index recall depends on.
+                ann_config("vector_index_min_rows", 0)
+                await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=memory._backend.ops)
+
             await conn.executemany(
                 f"INSERT INTO {table} (bank_id, text, fact_type, embedding) VALUES ($1, $2, 'world', $3::vector)",
                 [(bank_id, f"filler fact {i}", _near_query_vector(i)) for i in range(_ROWS)],
@@ -241,11 +272,10 @@ async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_contex
                         probe,
                     )
                 )
-                # "Index Scan" alone is not enough — a btree scan plus a Sort also
-                # matches, and it returns every row regardless of the candidate list,
-                # which would make this quietly measure nothing. An ANN scan emits rows
-                # already ordered, so the giveaway is the absence of a Sort node.
-                assert "Index Scan" in plan and "Sort" not in plan, f"expected an ANN scan, got:\n{plan}"
+                # An ANN scan emits rows already ordered, so a Sort node means the
+                # planner fell back to a btree plus a top-N sort.
+                assert index_name in plan, f"expected an ANN scan using {index_name}, got:\n{plan}"
+                assert "Sort" not in plan, f"expected an ANN scan without a Sort, got:\n{plan}"
                 result = await retrieve_semantic_bm25_combined_sql(
                     conn, probe, "", bank_id, ["world"], budget, min_semantic=0.0
                 )

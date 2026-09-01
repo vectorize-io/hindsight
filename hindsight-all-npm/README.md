@@ -28,7 +28,6 @@ const server = new HindsightServer({
     HINDSIGHT_API_LLM_PROVIDER: "anthropic",
     HINDSIGHT_API_LLM_API_KEY: process.env.ANTHROPIC_API_KEY,
     HINDSIGHT_API_LLM_MODEL: "claude-sonnet-4-20250514",
-    HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: "0",
   },
   logger: consoleLogger,
 });

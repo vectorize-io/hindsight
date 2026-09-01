@@ -7,11 +7,14 @@ from content input to fact storage.
 
 import logging
 from array import array
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import UUID
+
+import numpy as np
+import orjson
 
 from ..metadata_utils import drop_null_values
 
@@ -41,17 +44,42 @@ def pack_embedding(values: Sequence[float]) -> PackedEmbedding:
 EmbeddingLike = PackedEmbedding | Sequence[float] | str
 
 
+def _repr_literal(values: Iterable[object]) -> str:
+    """The pre-orjson formatting, kept as the fallback for non-finite and non-float inputs."""
+    return "[" + ",".join(repr(float(v)) for v in values) + "]"  # type: ignore[arg-type]
+
+
+def _dumps_or_repr_fallback(payload: np.ndarray | list | tuple) -> str:
+    """Serialize with orjson; fall back to repr() when the vector is non-finite.
+
+    Finite-float JSON output consists only of [0-9.eE+-,[]], so the substring
+    "null" can only mean orjson encoded a NaN/Inf element as JSON null.
+    """
+    try:
+        rendered = orjson.dumps(payload, option=orjson.OPT_SERIALIZE_NUMPY).decode("ascii")
+    except (orjson.JSONEncodeError, TypeError):
+        return _repr_literal(payload)
+    return _repr_literal(payload) if "null" in rendered else rendered
+
+
 def embedding_to_pgvector(embedding: EmbeddingLike) -> str:
     """Render an embedding as the ``'[0.1,0.2,...]'`` literal asyncpg binds to ``vector``.
 
     Handles every form a caller may hold: the packed array retain carries, a plain float
-    list (imports, re-embeds), or a literal that was already rendered. ``str()`` on the
-    packed form would produce ``array('f', [...])``, which is not a vector literal — this
-    exists so no call site has to remember that.
+    list (imports, re-embeds), or a literal that was already rendered. Uses orjson's SIMD
+    float serializer for fast formatting without per-element Python allocations.
+
+    Note: The formatted string uses float32 shortest representation when serialized via
+    the PackedEmbedding/NumPy fast-path (e.g. ``0.1`` vs legacy ``0.10000000149011612``).
+    When parsed back by PostgreSQL as a 32-bit float vector, the stored bytes are bit-identical.
     """
     if isinstance(embedding, str):
         return embedding
-    return "[" + ",".join(repr(float(value)) for value in embedding) + "]"
+    if isinstance(embedding, array) and embedding.typecode == "f":
+        return _dumps_or_repr_fallback(np.frombuffer(embedding, dtype=np.float32))
+    if isinstance(embedding, (np.ndarray, list, tuple)):
+        return _dumps_or_repr_fallback(embedding)
+    return _repr_literal(embedding)
 
 
 class RetainContentDict(TypedDict, total=False):
@@ -75,6 +103,10 @@ class RetainContentDict(TypedDict, total=False):
         update_mode: How to handle existing documents with the same document_id (optional).
             "replace" (default) deletes old data and reprocesses. "append" concatenates
             new content to the existing document and reprocesses.
+        force_reextract: Re-run extraction even when the content is byte-identical to what
+            is already stored (optional, default False). Internal — set by
+            ``reprocess_document``, not accepted on the public retain API. See
+            ``retain_batch`` for the two skips it suppresses.
     """
 
     content: str  # Required
@@ -89,6 +121,7 @@ class RetainContentDict(TypedDict, total=False):
         Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
     )  # Observation scopes for consolidation
     update_mode: Literal["replace", "append"]
+    force_reextract: bool
 
 
 @dataclass

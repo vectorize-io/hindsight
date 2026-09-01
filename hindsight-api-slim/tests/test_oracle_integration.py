@@ -20,6 +20,7 @@ import pytest_asyncio
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.db import DatabaseConnection
 from hindsight_api.engine.memory_engine import Budget
+from tests import consolidation_actions
 from tests.test_bank_config_atomicity import (
     assert_one_sided_budget_update_sees_stored_state,
     assert_recall_budget_race_is_serialized,
@@ -1223,8 +1224,6 @@ class TestOracleSpecific:
         """
         from hindsight_api.config import _get_raw_config
         from hindsight_api.engine.consolidation.consolidator import (
-            _execute_create_action,
-            _execute_update_action,
             _TemporalBounds,
         )
         from hindsight_api.engine.response_models import MemoryFact
@@ -1253,7 +1252,7 @@ class TestOracleSpecific:
 
             # An observation built from an undated fact: event_date/mentioned_at are stamped at
             # creation time, occurred_start/occurred_end stay NULL.
-            action = await _execute_create_action(
+            action = await consolidation_actions.execute_create_action(
                 pool=backend,
                 memory_engine=oracle_memory,
                 bank_id=bank_id,
@@ -1269,7 +1268,7 @@ class TestOracleSpecific:
                 )
             assert seeded["occurred_start"] is None and seeded["occurred_end"] is None
 
-            await _execute_update_action(
+            await consolidation_actions.execute_update_action(
                 pool=backend,
                 memory_engine=oracle_memory,
                 bank_id=bank_id,

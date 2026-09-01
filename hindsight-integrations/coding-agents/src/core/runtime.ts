@@ -14,6 +14,7 @@
  * No opencode/claude specifics live here — only the memory logic.
  */
 import type { Config } from "./config";
+import { maybeAutoUpdate } from "./auto-update";
 import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
@@ -112,6 +113,10 @@ export class RuntimeCore {
     // `runSessionStartHook` is a hook-only wrapper, so calling `buildSessionStartContext` directly
     // (as every plugin harness does) skipped the ensure entirely.
     await ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
+    // Same session-start housekeeping the hook harnesses do in `runSessionStartHook`: a persistent
+    // plugin host is a session start too, and leaving it out would mean opencode/Kilo/Cline users
+    // never got an update — the parity gap `ensureDaemon` above already had to be fixed for.
+    void maybeAutoUpdate(this.cfg);
     try {
       const out = await buildSessionStartContext({
         cwd: repoPath || process.cwd(),
@@ -265,8 +270,8 @@ export class RuntimeCore {
   ): void {
     const t0 = Date.now();
     // Daemon mode: the write path is the last chance to get a daemon up — the Stop-hook role, for
-    // hosts that have no Stop hook. A daemon that idled out mid-session (daemonIdleTimeout) would
-    // otherwise take the whole exchange with it. The wait sits INSIDE the fire-and-forget chain, so
+    // hosts that have no Stop hook. A daemon that died mid-session would otherwise take the whole
+    // exchange with it. The wait sits INSIDE the fire-and-forget chain, so
     // unlike the Stop hook it costs the host nothing: this call already returns before the retain
     // does. Deliberately not gated on the result — retain proceeds either way, so an unreachable
     // daemon produces the same `retain_failed` diagnostic as an unreachable Cloud server.

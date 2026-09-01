@@ -578,6 +578,46 @@ def test_pg_search_bm25_columns_apply_tokenizer():
     assert pg_search_bm25_columns("id", ("text",), "edge_ngram(2, 5)") == "id, (text::pdb.edge_ngram(2,5))"
 
 
+def test_pg_search_function_schema_defaults_to_paradedb(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.text_search_extension_pg_search_function_schema == "paradedb"
+
+    # Empty string or whitespace also falls back to paradedb
+    monkeypatch.setenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA", "")
+    config = HindsightConfig.from_env()
+    assert config.text_search_extension_pg_search_function_schema == "paradedb"
+
+    monkeypatch.setenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA", "   ")
+    config = HindsightConfig.from_env()
+    assert config.text_search_extension_pg_search_function_schema == "paradedb"
+
+
+def test_pg_search_function_schema_loaded_from_env(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA", "PgSearch")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.text_search_extension_pg_search_function_schema == "pgsearch"
+
+
+@pytest.mark.parametrize("bad_schema", ["pgsearch;DROP TABLE", "123schema", "pg-search", "pg search"])
+def test_pg_search_function_schema_rejects_invalid_identifiers(monkeypatch, bad_schema):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA", bad_schema)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match="Invalid text_search_extension_pg_search_function_schema"):
+        HindsightConfig.from_env()
+
+
 def test_llm_output_language_defaults_to_none(monkeypatch):
     from hindsight_api.config import HindsightConfig
 

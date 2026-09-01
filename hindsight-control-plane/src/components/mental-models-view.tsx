@@ -232,7 +232,7 @@ export function MentalModelsView() {
       const updated = await client.clearMentalModel(currentBank, clearTarget.id);
       setMentalModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
       if (selectedMentalModel?.id === updated.id) setSelectedMentalModel(updated);
-      toast.success("Mental model content cleared");
+      toast.success(t("toastContentCleared"));
       setClearTarget(null);
     } catch {
       // Error toast handled by API client interceptor
@@ -1829,7 +1829,7 @@ function FilesView({
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <Button variant="outline" size="sm" onClick={() => onOpenDetail(selected)}>
-                    Open
+                    {t("actionOpenDetail")}
                   </Button>
                   <RowActionsMenu
                     m={selected}

@@ -13,6 +13,7 @@ without any setup.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -23,6 +24,13 @@ class StageHolder:
 
     stage: str = "init"
     updated_at: float = field(default_factory=time.monotonic)
+    #: Optional callback fired on every stage change, used by the poller to push
+    #: back an *idle* wall-clock ceiling (see ``_WallCeiling.extends_on_progress``).
+    #: Push, not polling: a stage change is exactly the progress signal, so there
+    #: is no interval to tune and no window in which a task looks stalled because
+    #: nobody has looked at it yet. Must not raise — it runs on the engine's hot
+    #: path, and a stage breadcrumb is never worth failing a task over.
+    on_progress: Callable[[], None] | None = None
 
 
 _current_holder: ContextVar[StageHolder | None] = ContextVar("hindsight_stage_holder", default=None)
@@ -51,6 +59,8 @@ def set_stage(name: str) -> None:
         return
     holder.stage = name
     holder.updated_at = time.monotonic()
+    if holder.on_progress is not None:
+        holder.on_progress()
 
 
 def get_stage() -> str | None:

@@ -15,6 +15,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+# These patch the ENGINE's cross-encoder and expect recall to surface its failure. A store that
+# answers a whole recall reranks inside itself and never calls that collaborator, so the error
+# these pin cannot arise -- the store's own rerank failure path is covered by its suite.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 @pytest.mark.asyncio
 async def test_recall_reranker_error_does_not_raise_unbound_local(memory, request_context):

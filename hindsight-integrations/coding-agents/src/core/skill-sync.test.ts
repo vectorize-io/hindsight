@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { SKILL_DIRS } from "./skill-dirs";
 import { syncCompanionSkill } from "./skill-sync";
 
 describe("syncCompanionSkill", () => {
@@ -48,5 +49,27 @@ describe("syncCompanionSkill", () => {
     expect(
       readFileSync(join(home, ".claude", "skills", "hindsight-coding-agent", "SKILL.md"), "utf8")
     ).toBe("NEW CONTENT v2");
+  });
+});
+
+/**
+ * Family-wide guard (#3524 shape): a harness whose installer copies the skill but that SKILL_DIRS
+ * does not map installs it once and then never refreshes it — `npm update -g` upgrades the package
+ * while that host keeps the old SKILL.md until someone re-installs. A per-harness test cannot catch
+ * this, because the harness that forgets is by definition the one whose test nobody wrote. So
+ * enumerate the installer's own call sites instead and assert each is mapped.
+ *
+ * The exemption list this once carried (copilot-cli, grok-build, cline-cli, dsh, prime-agent) is
+ * gone: the installer now derives every skills directory from SKILL_DIRS itself, so those five —
+ * and pi, which would have joined them — are mapped. installer.test.ts checks the same contract by
+ * behaviour (install, then require the self-update to refresh the copy that actually landed); this
+ * stays as the cheap statement of the rule.
+ */
+describe("SKILL_DIRS covers every harness the installer copies the skill into", () => {
+  it("maps every installSkill target", () => {
+    const src = readFileSync(new URL("../installer.ts", import.meta.url), "utf8");
+    const targets = [...src.matchAll(/installSkill\(c, "([^"]+)"/g)].map((m) => m[1]);
+    expect(targets.length).toBeGreaterThan(5); // the regex still matches the real call sites
+    expect(targets.filter((h) => !(h in SKILL_DIRS))).toEqual([]);
   });
 });

@@ -57,6 +57,7 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
     invertOnDark: true,
   },
   codex: { id: "codex", label: "Codex", src: "/img/harness/codex.svg", invertOnDark: true },
+  dcode: { id: "dcode", label: "DeepAgents Dcode", src: "/img/harness/dcode.svg" },
   "copilot-cli": {
     id: "copilot-cli",
     label: "GitHub Copilot CLI",
@@ -93,6 +94,7 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
   // for, drawn in the same monochrome style as the Prime Agent mark below (the
   // fork of pi) rather than a logo invented for it.
   pi: { id: "pi", label: "pi", src: "/img/harness/pi.svg", invertOnDark: true },
+  "qwen-code": { id: "qwen-code", label: "Qwen Code", src: "/img/harness/qwen-code.svg" },
   "prime-agent": {
     id: "prime-agent",
     label: "Prime Agent",

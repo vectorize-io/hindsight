@@ -230,11 +230,19 @@ echo ""
 # config.yaml and the Hindsight provider config under $HERMES_HOME. Keep this in
 # sync with plugins/memory/hindsight/__init__.py::post_setup if Hermes changes
 # the shape.
+#
+# memory_enabled/user_profile_enabled are the flags our docs tell users to set
+# so Hindsight is the only memory path (they silence the built-in MEMORY.md and
+# USER.md stores). They are set here so the status assertion below covers the
+# configuration we actually document: turning the flat-file stores off must not
+# take the Hindsight provider down with it.
 echo "--- [3/5] Configuring Hermes for local_embedded Hindsight ---"
 mkdir -p "$HERMES_HOME/hindsight"
 cat > "$HERMES_HOME/config.yaml" <<EOF
 memory:
   provider: hindsight
+  memory_enabled: false
+  user_profile_enabled: false
 EOF
 cat > "$HERMES_HOME/hindsight/config.json" <<EOF
 {

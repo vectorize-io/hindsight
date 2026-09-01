@@ -131,13 +131,14 @@ If neither `HINDSIGHT_API_URL` nor `HINDSIGHT_API_KEY` is set, the plugin silent
 
 ### Disable Hermes's built-in memory
 
-This is the step people miss. Hermes has its own `memory` tool that saves to `~/.hermes/`. If both are active, **the LLM defaults to the built-in one** — it's a single tool it already recognizes. Your Hindsight tools will sit unused.
+This is the step people miss. Hermes has its own memory store that saves to `~/.hermes/`. If both are active, **the LLM defaults to the built-in one** — it's a single tool it already recognizes. Your Hindsight tools will sit unused.
 
 ```bash
-hermes tools disable memory
+hermes config set memory.memory_enabled false        # MEMORY.md
+hermes config set memory.user_profile_enabled false  # USER.md (optional)
 ```
 
-This persists across sessions. Re-enable later with `hermes tools enable memory`.
+This persists across sessions. Re-enable later by setting the same flags back to `true`.
 
 ## Using the memory tools
 
@@ -215,7 +216,7 @@ curl -s http://localhost:8888/v1/default/banks/my-agent/memories/recall \
 
 1. **Plugin not in `/tools`.** The most common cause: `hindsight-hermes` is installed in a different Python environment than Hermes. Entry points are per-environment. Run `python -c "import importlib.metadata; print(list(importlib.metadata.entry_points(group='hermes_agent.plugins')))"` from the Hermes venv to verify.
 
-2. **LLM picks built-in memory.** Even with the plugin loaded, if both `memory` and `hindsight_retain` exist, the LLM chooses `memory`. Run `hermes tools disable memory`.
+2. **LLM picks built-in memory.** Even with the plugin loaded, if both `memory` and `hindsight_retain` exist, the LLM chooses `memory`. Run `hermes config set memory.memory_enabled false`.
 
 3. **Retain is asynchronous.** The API returns immediately; fact extraction happens in the background. If you retain and immediately recall in the same turn, the new facts may not be indexed yet. Design so recall happens on subsequent turns.
 

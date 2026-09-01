@@ -19,6 +19,8 @@ from types import SimpleNamespace
 import pytest
 
 from hindsight_api.config import ENV_ENABLE_TEXT_SEARCH, HindsightConfig, _get_raw_config
+from hindsight_api.engine.retain import orchestrator as retain_orchestrator
+from hindsight_api.engine.search import bm25_term_selection as bm25_mod
 from hindsight_api.engine.search import retrieval as retrieval_mod
 
 
@@ -62,6 +64,7 @@ def _config() -> SimpleNamespace:
         bm25_min_score=0.0,
         text_search_extension="native",
         text_search_extension_native_language="english",
+        text_search_extension_pg_search_function_schema="paradedb",
         bm25_max_query_terms=16,
         bm25_selective_terms=True,
     )
@@ -87,8 +90,8 @@ def harness(monkeypatch):
 
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: dialect)
     monkeypatch.setattr(retrieval_mod, "tokenize_query", counting_tokenize)
-    monkeypatch.setattr(retrieval_mod, "select_selective_bm25_tokens", fake_select_selective)
-    monkeypatch.setattr(retrieval_mod, "get_current_schema", lambda: "public")
+    monkeypatch.setattr(bm25_mod, "select_selective_bm25_tokens", fake_select_selective)
+    monkeypatch.setattr(bm25_mod, "get_current_schema", lambda: "public")
     monkeypatch.setattr(retrieval_mod, "fq_table", lambda name: name)
 
     return SimpleNamespace(
@@ -193,3 +196,31 @@ def test_real_config_carries_the_field():
     """``HindsightConfig`` is a dataclass, so the field is always present."""
     config = dataclasses.replace(_get_raw_config(), enable_text_search=False)
     assert config.enable_text_search is False
+
+
+@pytest.mark.parametrize("field", ["enable_text_search", "enable_graph_retrieval"])
+def test_the_write_path_carries_the_flag_to_a_store_that_owns_its_index(field):
+    """A store-owned retain is told what the bank currently wants.
+
+    For a store that keeps its own index these are not only read-time settings: an arm the bank has
+    switched off needs no index BUILT for it, and building one is work and bytes spent for a query
+    that will not run. Postgres ignores them — its columns are maintained by the insert itself, so
+    there is nothing separable to skip — which is why the interface defaults them to True.
+
+    Asserted on the interface rather than by driving a retain: the value has to be a parameter a
+    store can act on, and the orchestrator has to be the thing that reads it off the bank's config
+    (so a bank that changes its mind is followed on the next write, with no out-of-band call).
+    """
+    import inspect
+
+    from hindsight_api.engine.memories.base import MemoriesExtension
+
+    sig = inspect.signature(MemoriesExtension.retain)
+    assert field in sig.parameters, f"the store-owned write seam cannot see {field}"
+    assert sig.parameters[field].default is True, "a store that ignores it must keep working"
+
+    src = inspect.getsource(retain_orchestrator)
+    assert f'{field}=bool(getattr(config, "{field}", True))' in src, (
+        f"the orchestrator must pass the BANK's {field} on every retain — a value read once at "
+        f"bank creation would not follow a bank that changes it"
+    )

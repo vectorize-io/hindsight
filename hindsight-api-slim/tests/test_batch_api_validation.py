@@ -73,7 +73,6 @@ async def test_runtime_raises_if_batch_unsupported() -> None:
         await extract_facts_from_contents_batch_api(
             contents=[RetainContent(content="Alice moved to Paris in 2023.")],
             llm_config=_provider("mock"),
-            agent_name="test_agent",
             config=_config(batch_enabled=True),
             pool=None,
             operation_id=None,

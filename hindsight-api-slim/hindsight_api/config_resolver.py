@@ -176,7 +176,9 @@ class ConfigResolver:
 
         return config_dict
 
-    async def resolve_full_config(self, bank_id: str, context: RequestContext | None = None) -> HindsightConfig:
+    async def resolve_full_config(
+        self, bank_id: str, context: RequestContext | None = None, *, cached: bool = True
+    ) -> HindsightConfig:
         """
         Resolve full HindsightConfig for a bank with hierarchical overrides applied.
 
@@ -198,7 +200,7 @@ class ConfigResolver:
         config_dict = await self._resolve_parent_config_dict(bank_id, context)
 
         # Load bank config overrides
-        bank_overrides = await self._load_bank_config(bank_id)
+        bank_overrides = await self._load_bank_config(bank_id, cached=cached)
         if bank_overrides:
             config_dict.update(bank_overrides)
             logger.debug(f"Applied bank config overrides for bank {bank_id}: {list(bank_overrides.keys())}")
@@ -228,7 +230,9 @@ class ConfigResolver:
         )
         return resolved_config
 
-    async def get_bank_config(self, bank_id: str, context: RequestContext | None = None) -> dict[str, Any]:
+    async def get_bank_config(
+        self, bank_id: str, context: RequestContext | None = None, *, cached: bool = True
+    ) -> dict[str, Any]:
         """
         Get fully resolved config for a bank (filtered by permissions).
 
@@ -237,8 +241,15 @@ class ConfigResolver:
         2. Tenant config overrides (from TenantExtension.get_tenant_config())
         3. Bank config overrides (from banks.config JSONB)
 
-        Note: Config is resolved on every call (not cached) to ensure consistency
-        across multiple API servers.
+        ``cached`` defaults to True because this is ALSO on the hot path: ``recall_async`` and
+        ``retain_batch_async`` call it per request, and forcing a read there costs a pool acquire
+        each time — which is more than the query it carries, since the pool runs five
+        ``set_config`` calls on checkout and a ``RESET ALL`` on release.
+
+        The endpoint a user reads a bank's config back through passes ``cached=False``, and must:
+        the cache is per PROCESS, so a cached read there answers a successful write with the
+        values it just replaced, on whichever pod did not serve the write. Freshness is a property
+        of THAT caller, not of this method.
 
         SECURITY:
         - Only returns configurable fields (excludes static/infrastructure fields)
@@ -253,7 +264,7 @@ class ConfigResolver:
             Dict of allowed configurable fields only (never includes credentials or static fields)
         """
         # Resolve full config with all hierarchical overrides
-        resolved_config = await self.resolve_full_config(bank_id, context)
+        resolved_config = await self.resolve_full_config(bank_id, context, cached=cached)
         config_dict = asdict(resolved_config)
 
         # SECURITY: drop static/infrastructure + credential fields, then permission-filter.
@@ -334,29 +345,58 @@ class ConfigResolver:
         )
         return dict(zip(bank_ids, permission_filtered, strict=True))
 
-    async def _load_bank_config(self, bank_id: str) -> dict[str, Any]:
+    async def _load_bank_config(self, bank_id: str, *, cached: bool = True) -> dict[str, Any]:
         """
         Load bank config overrides from banks.config JSONB column.
 
         Args:
             bank_id: Bank identifier
+            cached: read through the per-process cache. True on the RETAIN path, where this runs
+                once per sub-batch and a bank config that lags by one TTL changes nothing a caller
+                can see. False for anything that answers a reader about the bank's own config: the
+                cache is per PROCESS, so a write served by one pod is invisible to the others until
+                their entry expires, and a deployment runs several. Read-your-writes on a config
+                edit is not a race a user should have to lose.
 
         Returns:
             Dict of config overrides (only configurable fields, normalized keys)
         """
-        try:
-            async with self._backend.acquire() as conn:
-                row = await conn.fetchrow(
-                    f"""
-                    SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
-                    """,
-                    bank_id,
-                )
+        # Cached per process (see engine/bank_info_cache). This is read on the WRITE path -- once
+        # per sub-batch of every retain -- and each read takes a pooled connection, whose checkout
+        # and release cost more statements than the query itself. Caching it is what lets a retain
+        # into a store-owned bank, which writes nothing to Postgres, avoid the pool entirely.
+        #
+        # The RAW column is cached, not the resolved overrides: `_active_bank_overrides` filters
+        # by what is configurable and permitted, and that answer can differ between callers of the
+        # same bank. Caching the resolved form would serve one caller's permissions to another.
+        from .engine import bank_info_cache
 
-                if row and row["config"]:
-                    return self._active_bank_overrides(bank_id, row["config"])
-        except Exception as e:
-            logger.error(f"Failed to load bank config for {bank_id}: {e}")
+        async def _read_config_row() -> dict:
+            try:
+                async with self._backend.acquire() as conn:
+                    row = await conn.fetchrow(
+                        f"""
+                        SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
+                        """,
+                        bank_id,
+                    )
+                # Wrapped in a dict because the cache stores dicts; `{}` means "no row, or no
+                # config", which is also what this function returns for that case anyway.
+                return {"config": row["config"]} if row and row["config"] else {}
+            except Exception as e:
+                logger.error(f"Failed to load bank config for {bank_id}: {e}")
+                # Re-raise nothing: the original swallowed this and returned {}. Returning the
+                # empty dict keeps that behaviour, but it must NOT be cached as if it were an
+                # answer -- bank_info_cache drops empty values for exactly this reason.
+                return {}
+
+        row = (
+            await bank_info_cache.get_or_load(bank_id, "config", _read_config_row)
+            if cached
+            else await _read_config_row()
+        )
+        if row.get("config"):
+            return self._active_bank_overrides(bank_id, row["config"])
 
         return {}
 
@@ -609,6 +649,11 @@ class ConfigResolver:
                 bank_id,
             )
 
+        # The config column just changed; the next read must not serve the entry loaded before it.
+        from .engine import bank_info_cache
+
+        await bank_info_cache.invalidate(bank_id, "config")
+
         logger.info(f"Updated bank config for {bank_id}: {list(validated.updates.keys())}")
 
     async def reset_bank_config(self, bank_id: str) -> None:
@@ -633,6 +678,11 @@ class ConfigResolver:
                 """,
                 bank_id,
             )
+
+        # The config column just changed; the next read must not serve the entry loaded before it.
+        from .engine import bank_info_cache
+
+        await bank_info_cache.invalidate(bank_id, "config")
 
         logger.info(f"Reset bank config for {bank_id} to defaults")
 

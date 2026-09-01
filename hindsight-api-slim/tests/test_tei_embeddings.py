@@ -1,5 +1,7 @@
 """Regression tests for transient HTTP handling in the remote TEI embeddings client."""
 
+import errno
+
 import httpx
 import pytest
 
@@ -24,6 +26,27 @@ def test_connect_timeout_retries_then_succeeds() -> None:
     embeddings._client = httpx.Client(transport=httpx.MockTransport(handler))
 
     assert embeddings.encode(["text"]) == [[0.1, 0.2]]
+    assert attempts == 2
+
+
+def test_bad_file_descriptor_retries_then_succeeds() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        return httpx.Response(200, json=[[0.3, 0.4]])
+
+    embeddings = RemoteTEIEmbeddings(
+        base_url="http://localhost:8080",
+        max_retries=3,
+        retry_delay=0,
+    )
+    embeddings._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    assert embeddings.encode(["text"]) == [[0.3, 0.4]]
     assert attempts == 2
 
 

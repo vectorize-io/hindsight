@@ -302,6 +302,7 @@ class LlamaCppLLM(LLMInterface):
         chat_format: str | None = None,
         no_grammar: bool = False,
         extra_args: str | None = None,
+        timeout: float | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -310,6 +311,7 @@ class LlamaCppLLM(LLMInterface):
             base_url=base_url or "",
             model=model or DEFAULT_LLAMACPP_MODEL_ALIAS,
             reasoning_effort=reasoning_effort,
+            timeout=timeout,
         )
         self._extra_body = extra_body
         self._model_path_str = model_path
@@ -379,6 +381,7 @@ class LlamaCppLLM(LLMInterface):
             # rather than inventing a level for the local model.
             reasoning_effort=self.reasoning_effort,
             extra_body=self._extra_body,
+            timeout=self.timeout,
         )
 
         self._initialized = True

@@ -153,6 +153,12 @@ describe("toDshParameters", () => {
     name: "hindsight_capture_initiative",
     description: "…",
     inputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async () => ({ content: [] }),
   });
 

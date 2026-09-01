@@ -73,7 +73,7 @@ export async function syncGit(
   const shas = (revs ? revs.split("\n") : []).filter(Boolean);
   if (!shas.length) return { ref, total: 0, ingested: 0, failures: 0, inSync: true };
 
-  const ingestedIds = await client.listDocumentIds("source:git"); // Set of `git:<sha>` already in the bank
+  const ingestedIds = await client.listDocumentIds("source:git", "all_strict"); // Set of `git:<sha>` already in the bank
   const missing = shas.filter((sha) => !ingestedIds.has(`git:${sha}`));
   if (!missing.length) {
     log(`[sync] in sync — all ${shas.length} commits on ${ref} already ingested`);

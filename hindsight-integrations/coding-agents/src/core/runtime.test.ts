@@ -145,8 +145,8 @@ describe("RuntimeCore daemon lifecycle", () => {
     expect(daemonSpy).toHaveBeenCalledWith(daemonCfg, "dsh", { waitMs: 12_000 });
   });
 
-  // The daemon retires itself after daemonIdleTimeout (300s), so a session that thinks longer than
-  // that would lose its whole exchange with no second chance to start one.
+  // A daemon that is gone by write-back time — crashed, or stopped by the user between turns —
+  // would lose the whole exchange with no second chance to start one.
   it("starts the daemon again on write-back — the Stop hook these hosts don't have", async () => {
     const core = new RuntimeCore(client, "bank-1", daemonCfg, "dsh", "/repos/one");
     core.setTranscriptSource(async () => [{ role: "user", content: "hi" }] as never);

@@ -91,6 +91,30 @@ class TestService:
         # raw edit is reflected in the structured view
         assert service.get_profile_config("").provider == "groq"
 
+    def test_raw_env_io_is_utf8_regardless_of_locale(self, temp_hindsight_dir, monkeypatch):
+        """The control center touches the same profile .env as the CLI (#3837).
+
+        The generated template carries em dashes, so on a legacy Windows
+        codepage (cp936/cp1252) a locale-default read raises UnicodeDecodeError
+        and a locale-default write raises or mojibakes the user's edits. Force a
+        narrow codec as the process default and assert the round trip survives.
+        """
+        import io
+
+        real_open = io.open
+
+        def narrow_open(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, *args, **kwargs):
+            # pathlib passes the sentinel "locale" when the caller gave no encoding.
+            if "b" not in mode and encoding in (None, "locale"):
+                encoding = "ascii"
+            return real_open(file, mode, buffering, encoding, errors, newline, *args, **kwargs)
+
+        monkeypatch.setattr(io, "open", narrow_open)
+
+        service.write_env_file("", "# \u4fdd\u5b58 \u2014 keep this comment\nHINDSIGHT_API_LLM_PROVIDER=groq\n")
+        assert "\u2014" in service.read_env_file("").content
+        assert service._read_raw_env("")["HINDSIGHT_API_LLM_PROVIDER"] == "groq"
+
     def test_write_env_adds_trailing_newline(self, temp_hindsight_dir):
         view = service.write_env_file("", "HINDSIGHT_API_LLM_PROVIDER=openai")
         assert view.content.endswith("\n")
@@ -112,6 +136,24 @@ class TestService:
         ui = service.tail_log("", 10, "ui")
         assert daemon.path.endswith(".log") and not daemon.path.endswith(".ui.log")
         assert ui.path.endswith(".ui.log")
+
+    def test_tail_log_reads_utf8_regardless_of_locale(self, temp_hindsight_dir, monkeypatch):
+        import io
+
+        from hindsight_embed.profile_manager import ProfileManager
+
+        path = ProfileManager().resolve_profile_paths("").log
+        path.write_bytes("retained — 保存\n".encode())
+        real_open = io.open
+
+        def narrow_open(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, *args, **kwargs):
+            if "b" not in mode and encoding in (None, "locale"):
+                encoding = "ascii"
+            return real_open(file, mode, buffering, encoding, errors, newline, *args, **kwargs)
+
+        monkeypatch.setattr(io, "open", narrow_open)
+
+        assert service.tail_log("", 10).content == "retained — 保存"
 
     def test_delete_named_profile(self, temp_hindsight_dir):
         service.save_llm_config("scratch", "openai", "sk-key1234567890", "", "")

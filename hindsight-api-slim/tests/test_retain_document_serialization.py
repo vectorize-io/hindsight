@@ -381,6 +381,17 @@ async def bank(backend):
         await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
 
 
+async def _claim_rows(backend, conn, worker_id):
+    """Claim, and hand back just the rows.
+
+    ``claim_tasks`` also reports where the per-bank rotation got to (#3861);
+    these tests are about per-document serialisation, which the rotation does
+    not touch, so they only look at the rows.
+    """
+    claimed = await backend.ops.claim_tasks(conn, "async_operations", worker_id, {}, _UNBOUNDED_CLAIM)
+    return claimed.rows
+
+
 @pytest.mark.asyncio
 async def test_claim_takes_only_one_retain_per_document(backend, bank):
     """Three queued appends to one document: only the oldest is claimable."""
@@ -388,9 +399,7 @@ async def test_claim_takes_only_one_retain_per_document(backend, bank):
     await _insert_retain_op(backend, bank, "doc-a", contents=[{"content": "two"}])
     await _insert_retain_op(backend, bank, "doc-a", contents=[{"content": "three"}])
 
-    rows = await _claiming(
-        backend, lambda conn: backend.ops.claim_tasks(conn, "async_operations", "w1", {}, _UNBOUNDED_CLAIM)
-    )
+    rows = await _claiming(backend, lambda conn: _claim_rows(backend, conn, "w1"))
 
     claimed = _own(rows, bank)
     assert claimed == [first], f"expected only the oldest same-document retain, got {claimed}"
@@ -403,9 +412,7 @@ async def test_claim_does_not_serialize_across_documents(backend, bank):
     b = await _insert_retain_op(backend, bank, "doc-b", contents=[{"content": "b1"}])
     c = await _insert_retain_op(backend, bank, None, contents=[{"content": "c1"}])
 
-    rows = await _claiming(
-        backend, lambda conn: backend.ops.claim_tasks(conn, "async_operations", "w1", {}, _UNBOUNDED_CLAIM)
-    )
+    rows = await _claiming(backend, lambda conn: _claim_rows(backend, conn, "w1"))
 
     assert set(_own(rows, bank)) == {a, b, c}
 
@@ -421,9 +428,7 @@ async def test_claim_waits_for_a_processing_peer(backend, bank):
             uuid.UUID(first),
         )
 
-    rows = await _claiming(
-        backend, lambda conn: backend.ops.claim_tasks(conn, "async_operations", "w2", {}, _UNBOUNDED_CLAIM)
-    )
+    rows = await _claiming(backend, lambda conn: _claim_rows(backend, conn, "w2"))
 
     assert _own(rows, bank) == [], "a document with a retain in flight must yield nothing"
 
@@ -485,7 +490,7 @@ async def _claim_own(backend, bank_id: str, worker_id: str) -> "_ClaimOutcome":
     observed: dict = {}
 
     async def _body(conn):
-        rows = await backend.ops.claim_tasks(conn, "async_operations", worker_id, {}, _UNBOUNDED_CLAIM)
+        rows = await _claim_rows(backend, conn, worker_id)
         tasks = []
         for row in rows:
             if row["bank_id"] != bank_id:

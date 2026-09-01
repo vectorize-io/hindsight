@@ -72,15 +72,22 @@ async def apply_session_settings(conn: asyncpg.Connection, settings: list[tuple[
     for name, value in settings:
         try:
             await conn.execute("SELECT set_config($1, $2, false)", name, value)
-        except asyncpg.exceptions.UndefinedObjectError:
+        except (asyncpg.exceptions.UndefinedObjectError, asyncpg.exceptions.InvalidNameError):
             # The server does not define this GUC — an extension we tune for is absent
-            # or predates it (hnsw.iterative_scan needs pgvector 0.8+, and pgvector
-            # reserves the "hnsw." prefix, so an older one rejects it rather than
-            # accepting a placeholder). Remember it: otherwise every acquire from here
-            # on re-pays a failed batch plus one statement per setting, which behind a
-            # transaction-mode pooler is a server-side transaction each — the burn
-            # #3499 removed. Narrow to UndefinedObjectError so a transient failure
-            # does not disable a setting the server does support.
+            # or predates it (hnsw.iterative_scan needs pgvector 0.8+). Which error
+            # that raises depends on the extension: a plain unknown name is 42704
+            # UndefinedObjectError ("unrecognized configuration parameter"), while a
+            # name under a prefix the loaded extension has reserved is 42602
+            # InvalidNameError ("invalid configuration parameter name") — pgvector
+            # 0.6.0 answers the latter for hnsw.iterative_scan. Both verdicts are
+            # permanent for this server, so remember either: otherwise every acquire
+            # from here on re-pays a failed batch plus one statement per setting,
+            # which behind a transaction-mode pooler is a server-side transaction
+            # each — the burn #3499 removed — and, worse, setting_rejected_by_server
+            # keeps answering False, so retain's link probing SET LOCALs the GUC
+            # inside its own transaction and aborts the whole link computation.
+            # Still narrow (no bare PostgresError) so a transient failure does not
+            # disable a setting the server does support.
             logger.info("Server does not know %s — not sending it again on this process", name)
             _unsupported_settings.add(name)
         except asyncpg.exceptions.PostgresError:

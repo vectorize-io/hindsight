@@ -4,7 +4,7 @@ A DB failure inside one tag group's recall aborts the consolidation operation,
 which the worker retries with a 5s base backoff. Plain ``asyncio.gather`` does
 not cancel the sibling groups when it re-raises, so before this was fixed those
 groups kept running detached — still calling the LLM, still stamping
-``mark_consolidated`` and committing write-groups — while the retry was already
+``mark_consolidated`` — while the retry was already
 under way. The per-scope ``scope_locks`` are local to one dispatch, so nothing
 serialised an orphan against the retry and two consolidators could write the
 same observation scope concurrently.
@@ -16,8 +16,6 @@ These tests pin:
    ``_is_non_retryable_task_error`` classification still works.
 2. End to end: a failing recall in one tag group cancels the other groups
    before they write, and the job does not wait for them.
-3. A batch that fails between ``mint_txn`` and the witness commit discards its
-   write-group instead of leaving it pending for the recovery sweep.
 """
 
 from __future__ import annotations
@@ -173,21 +171,6 @@ async def _count_observations(memory: MemoryEngine, bank_id: str, request_contex
     )["total"]
 
 
-class _TxnSpy:
-    """Delegates to the real memories store while recording txn decisions."""
-
-    def __init__(self, inner):
-        self._inner = inner
-        self.decisions: list[bool] = []
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
-
-    async def decide_txn(self, txn, *, commit: bool):
-        self.decisions.append(commit)
-        return await self._inner.decide_txn(txn, commit=commit)
-
-
 # ---------------------------------------------------------------------------
 # End-to-end tests
 # ---------------------------------------------------------------------------
@@ -253,70 +236,5 @@ async def test_recall_failure_cancels_sibling_tag_groups(memory: MemoryEngine, r
         # and no orphan lands a write after the operation has already failed.
         await asyncio.sleep(0.2)
         assert await _count_observations(memory, bank_id, request_context) == 0
-    finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
-
-
-@pytest.mark.asyncio
-@pytest.mark.memory_backend_incompatible
-async def test_failed_batch_aborts_its_write_group(memory: MemoryEngine, request_context):
-    """A batch that raises before its witness commit decides its write-group
-    abort, rather than leaving it pending for the recovery sweep."""
-    bank_id = f"test-abort-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
-    try:
-        async with memory._pool.acquire() as conn:
-            await _insert_memory(conn, bank_id, "Alice likes tea", ["user:alice"])
-
-        async def fake_recall(**_kwargs):
-            raise _RecallTimeout("simulated DB command timeout")
-
-        spy = _TxnSpy(consolidator_module.get_memories())
-        original_llm = memory._consolidation_llm_config
-        memory._consolidation_llm_config = _mock_llm_one_obs_per_fact()
-        try:
-            with (
-                _override_config(memory, consolidation_llm_parallelism=1, consolidation_llm_batch_size=1),
-                patch.object(memory, "submit_async_consolidation"),
-                patch.object(consolidator_module, "get_memories", return_value=spy),
-                patch.object(consolidator_module, "_find_related_observations", fake_recall),
-            ):
-                with pytest.raises(_RecallTimeout):
-                    await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
-        finally:
-            memory._consolidation_llm_config = original_llm
-
-        assert spy.decisions == [False]
-    finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
-
-
-@pytest.mark.asyncio
-@pytest.mark.memory_backend_incompatible
-async def test_successful_batch_still_commits_its_write_group(memory: MemoryEngine, request_context):
-    """Guard on the abort path: the happy path must still decide commit=True."""
-    bank_id = f"test-commit-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
-    try:
-        async with memory._pool.acquire() as conn:
-            await _insert_memory(conn, bank_id, "Alice likes tea", ["user:alice"])
-
-        spy = _TxnSpy(consolidator_module.get_memories())
-        original_llm = memory._consolidation_llm_config
-        memory._consolidation_llm_config = _mock_llm_one_obs_per_fact()
-        try:
-            with (
-                _override_config(memory, consolidation_llm_parallelism=1, consolidation_llm_batch_size=1),
-                patch.object(memory, "submit_async_consolidation"),
-                patch.object(consolidator_module, "get_memories", return_value=spy),
-            ):
-                result = await run_consolidation_job(
-                    memory_engine=memory, bank_id=bank_id, request_context=request_context
-                )
-        finally:
-            memory._consolidation_llm_config = original_llm
-
-        assert result["status"] == "completed"
-        assert spy.decisions == [True]
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

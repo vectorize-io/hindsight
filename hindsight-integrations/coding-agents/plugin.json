@@ -1,0 +1,16 @@
+{
+  "name": "hindsight-coding-agents",
+  "version": "0.4.3",
+  "description": "Long-term project memory for coding agents",
+  "skills": "./skill",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": {
+    "hindsight": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/dist/mcp-server.js"],
+      "env": {
+        "HINDSIGHT_MCP_HARNESS": "dcode"
+      }
+    }
+  }
+}

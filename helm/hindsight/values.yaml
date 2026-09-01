@@ -103,6 +103,24 @@ api:
   #       name: my-configmap
   extraVolumes: []
 
+  # Extra sidecar containers for the api pod
+  # e.g.
+  # extraContainers:
+  #   - name: cloud-sql-proxy
+  #     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.24.1
+  #     args:
+  #       - --port=5432
+  #       - my-project:us-west1:my-instance
+  extraContainers: []
+
+  # Extra init containers for the api pod
+  # e.g.
+  # extraInitContainers:
+  #   - name: wait-for-db
+  #     image: busybox:1.37
+  #     command: ["sh", "-c", "until nc -z postgresql 5432; do sleep 1; done"]
+  extraInitContainers: []
+
   # Environment variables
   env:
     #HINDSIGHT_API_LLM_PROVIDER: "groq"
@@ -210,6 +228,24 @@ worker:
   #       name: my-configmap
   extraVolumes: []
 
+  # Extra sidecar containers for the worker pod
+  # e.g.
+  # extraContainers:
+  #   - name: cloud-sql-proxy
+  #     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.24.1
+  #     args:
+  #       - --port=5432
+  #       - my-project:us-west1:my-instance
+  extraContainers: []
+
+  # Extra init containers for the worker pod
+  # e.g.
+  # extraInitContainers:
+  #   - name: wait-for-db
+  #     image: busybox:1.37
+  #     command: ["sh", "-c", "until nc -z postgresql 5432; do sleep 1; done"]
+  extraInitContainers: []
+
   # Secret environment variables (inherited from api.secrets if not specified)
   secrets: {}
 
@@ -261,6 +297,23 @@ controlPlane:
 
   # Pod affinity/anti-affinity (overrides global affinity for this component)
   # affinity: {}
+
+  # Extra sidecar containers for the control plane pod
+  # e.g.
+  # extraContainers:
+  #   - name: oauth2-proxy
+  #     image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+  #     args:
+  #       - --upstream=http://127.0.0.1:3000
+  extraContainers: []
+
+  # Extra init containers for the control plane pod
+  # e.g.
+  # extraInitContainers:
+  #   - name: wait-for-api
+  #     image: busybox:1.37
+  #     command: ["sh", "-c", "until nc -z hindsight-api 8888; do sleep 1; done"]
+  extraInitContainers: []
 
   # Environment variables
   env:
@@ -448,3 +501,20 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: 80
+
+# Metrics scraping via Prometheus Operator ServiceMonitors.
+# Requires the prometheus-operator CRDs (monitoring.coreos.com/v1) and a
+# Prometheus instance whose serviceMonitorSelector matches the labels below —
+# e.g. kube-prometheus-stack selects release: <stack-release-name> by default.
+# The api and worker containers serve Prometheus format at /metrics on their
+# service ports; the control plane (Next.js) does not expose metrics.
+metrics:
+  serviceMonitor:
+    enabled: false
+    # Labels added to the ServiceMonitor for Prometheus operator selection,
+    # e.g. { release: kube-prometheus-stack }
+    labels: {}
+    # Endpoints shared by the api and worker monitors
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s

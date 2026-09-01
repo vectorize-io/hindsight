@@ -1,10 +1,12 @@
 /**
- * Knowledge-page MCP tool specs — SDK-free so this stays unit-testable without a real MCP host.
+ * Knowledge-page MCP tool specs — runtime SDK-free so this stays unit-testable without a real MCP
+ * host.
  *
- * `src/mcp-server.ts` is the only file that imports the MCP SDK; it wires the specs returned here
- * into an `McpServer`. Each tool wraps one `HindsightClient` knowledge-page/recall method: it never
- * throws — a thrown client error is caught and turned into an `isError:true` text result so the
- * calling LLM sees the failure instead of the process crashing.
+ * `src/mcp-server.ts` is the only file with a runtime MCP SDK import; this module uses only its
+ * `ToolAnnotations` type. The server wires the specs returned here into an `McpServer`. Each tool
+ * wraps one `HindsightClient` knowledge-page/recall method: it never throws — a thrown client error
+ * is caught and turned into an `isError:true` text result so the calling LLM sees the failure
+ * instead of the process crashing.
  *
  * The agent-facing surface is intentionally curated: grounding + capture only. Raw page CRUD
  * (create/update/delete) is deliberately NOT exposed — agents never author page structure; they
@@ -16,6 +18,7 @@ import { z } from "zod";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
@@ -33,10 +36,39 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+type ToolSafetyAnnotations = Required<
+  Pick<ToolAnnotations, "readOnlyHint" | "destructiveHint" | "idempotentHint" | "openWorldHint">
+>;
+
+const READ_ONLY_ANNOTATIONS: ToolSafetyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
+const NON_DESTRUCTIVE_WRITE_ANNOTATIONS: ToolSafetyAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+};
+
 export interface ToolSpec {
   name: string;
   description: string;
   inputSchema: ZodRawShape;
+  /**
+   * Safety metadata published verbatim as the tool's MCP annotations (src/mcp-server.ts).
+   *
+   * Required, not optional: it is not cosmetic. Dcode gates every MCP tool lacking a coherent
+   * read-only annotation behind an approval prompt, so in its headless (`dcode -n`) runtime an
+   * unannotated tool is REJECTED outright — "This MCP action requires approval, but the current
+   * headless runtime has no approval UI." Codex Auto-review likewise treats an unannotated call as
+   * unverified external access. Reads get READ_ONLY_ANNOTATIONS; the two writes get
+   * NON_DESTRUCTIVE_WRITE_ANNOTATIONS so clients still gate them, but for the right reason.
+   */
+  annotations: ToolSafetyAnnotations;
   handler: (args: any) => Promise<ToolResult>;
 }
 
@@ -88,6 +120,7 @@ export function buildKnowledgeTools(
         "queryable. Ingestion is automatic and background — if not synced, it is in progress; " +
         "nothing to run.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: async () => {
         try {
           return ok(await syncStatus(client, bankId, opts.repoDir ?? process.cwd()));
@@ -104,6 +137,7 @@ export function buildKnowledgeTools(
         "Use this when memory, hooks, MCP tools, or configuration appear not to work. Tokens and " +
         "other secret values are never returned.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: async (_args: Record<string, never>) => {
         const configPath =
           process.env.HINDSIGHT_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
@@ -157,6 +191,7 @@ export function buildKnowledgeTools(
         "credit it visibly: start that part with a markdown blockquote header " +
         '"> 🧠 **From Hindsight memory (<page name>)** — <the facts you drew on>".',
       inputSchema: { query: z.string().describe("what to look for") },
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: async (args: { query: string }) => {
         try {
           const hits = await client.searchKnowledgePages(args.query, 3);
@@ -183,6 +218,7 @@ export function buildKnowledgeTools(
         "periodically in long sessions, to see what the project already knows before you read code " +
         "or ask the user. The list changes as work is captured, so re-check it occasionally.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: guarded(async () => client.listPages()),
     },
     {
@@ -195,6 +231,7 @@ export function buildKnowledgeTools(
         "contain [[page:<id>]] links to related pages; follow one by calling this tool again with " +
         "that id. Prefer reading a page over re-deriving the same understanding from source.",
       inputSchema: { page_id: z.string() },
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: guarded(async ({ page_id }) => client.getPage(page_id)),
     },
     {
@@ -207,6 +244,7 @@ export function buildKnowledgeTools(
         "shallow and you need the root cause or the decided literals. When the answer informs " +
         'your reply, credit it visibly with a blockquote header: "> 🧠 **From Hindsight memory** — <summary>".',
       inputSchema: { query: z.string().describe("the question to reason over memory about") },
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: guarded(async ({ query }: { query: string }) =>
         client.reflect(query, {
           budget: opts.reflectBudget ?? "high",
@@ -243,6 +281,7 @@ export function buildKnowledgeTools(
         summary: z.string(),
         relates_to_page_id: z.string().optional(),
       },
+      annotations: NON_DESTRUCTIVE_WRITE_ANNOTATIONS,
       handler: guarded(async ({ title, summary, relates_to_page_id }) =>
         client.captureInitiative({
           title,
@@ -264,6 +303,7 @@ export function buildKnowledgeTools(
         "'Correction: <topic>' stating what memory claimed, what is actually true, and the " +
         "evidence — the newer fact supersedes the stale one in future retrieval.",
       inputSchema: { title: z.string(), content: z.string() },
+      annotations: NON_DESTRUCTIVE_WRITE_ANNOTATIONS,
       handler: guarded(async ({ title, content }) => {
         const docId =
           title

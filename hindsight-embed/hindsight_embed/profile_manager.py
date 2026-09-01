@@ -488,7 +488,7 @@ class ProfileManager:
 
         active_file = self._get_active_profile_file()
         if name:
-            active_file.write_text(name)
+            active_file.write_text(name, encoding="utf-8")
         else:
             # Clear active profile
             if active_file.exists():
@@ -502,7 +502,7 @@ class ProfileManager:
         """
         active_file = self._get_active_profile_file()
         if active_file.exists():
-            return active_file.read_text().strip()
+            return active_file.read_text(encoding="utf-8").strip()
         return ""
 
     def resolve_profile_paths(self, name: str) -> ProfilePaths:

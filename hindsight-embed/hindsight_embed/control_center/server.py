@@ -214,7 +214,7 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
         if not index.exists():
             self._send_html(500, "<h1>Control center UI not found</h1>")
             return
-        self._send_html(200, index.read_text())
+        self._send_html(200, index.read_text(encoding="utf-8"))
 
     _CONTENT_TYPES = {
         ".png": "image/png",

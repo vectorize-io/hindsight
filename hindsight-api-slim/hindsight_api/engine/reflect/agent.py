@@ -20,6 +20,7 @@ from .prompts import (
     _SPLIT_SYNTHESIS_WARN_CHUNKS,
     CLAIMS_SYSTEM_PROMPT,
     _extract_directive_rules,
+    build_agent_user_prompt,
     build_chunk_claims_prompt,
     build_final_prompt,
     build_final_system_prompt,
@@ -246,6 +247,9 @@ OUTPUT:"""
             response_format=DynamicModel,
             scope="reflect_structured",
             strict_schema=get_config().llm_strict_schema_reflect,
+            # Schema extraction should be deterministic. The configured reflect
+            # temperature applies to answer generation, not this parsing pass.
+            temperature=0.0,
             max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,
@@ -522,6 +526,7 @@ async def _run_reflect_agent_inner(
         include_recall=include_recall,
         include_expand=include_expand,
         answer_as_document=answer_as_document,
+        llm_output_language=llm_output_language,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -535,10 +540,11 @@ async def _run_reflect_agent_inner(
         include_observations=include_observations,
         budget=budget,
         answer_as_document=answer_as_document,
+        llm_output_language=llm_output_language,
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query},
+        {"role": "user", "content": build_agent_user_prompt(query, llm_output_language)},
     ]
 
     # Step-by-step context caching for the agentic tool loop.
@@ -684,6 +690,7 @@ async def _run_reflect_agent_inner(
                 {"role": "user", "content": prompt},
             ],
             scope="reflect",
+            temperature=get_config().llm_temperature_reflect,
             max_completion_tokens=completion_cap,
             return_usage=True,
         )
@@ -729,6 +736,7 @@ async def _run_reflect_agent_inner(
                 context,
                 max_context_tokens=max_context_tokens,
                 max_tokens=max_tokens,
+                llm_output_language=llm_output_language,
             )
             answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
         else:
@@ -750,7 +758,14 @@ async def _run_reflect_agent_inner(
                 )
             )
             # Reduce: one synthesis call over every chunk's claims.
-            prompt = build_reduce_prompt(query, list(claim_sections), bank_profile, context, max_tokens=max_tokens)
+            prompt = build_reduce_prompt(
+                query,
+                list(claim_sections),
+                bank_profile,
+                context,
+                max_tokens=max_tokens,
+                llm_output_language=llm_output_language,
+            )
             answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
 
         if not (answer or "").strip():
@@ -867,6 +882,7 @@ async def _run_reflect_agent_inner(
                 tools=tools,
                 scope="reflect_tool_call",
                 tool_choice=iter_tool_choice,
+                temperature=get_config().llm_temperature_reflect,
             )
             if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
                 ct_kwargs["cached_prefix"] = rolling_cache_name
@@ -995,17 +1011,23 @@ async def _run_reflect_agent_inner(
         # Execute other tools in parallel (exclude done tool in all its format variants)
         other_tools = [tc for tc in result.tool_calls if not _is_done_tool(tc.name)]
         if other_tools:
-            # Partition into enabled vs hallucinated (not in enabled_tools set)
+            # Partition into enabled vs hallucinated (not in enabled_tools set),
+            # carrying each call's position in the model's original batch so the
+            # results can be re-emitted in that order below.
             allowed_tools = []
+            allowed_positions: list[int] = []
             hallucinated_tools = []
-            for tc in other_tools:
+            hallucinated_positions: list[int] = []
+            for position, tc in enumerate(other_tools):
                 norm = _normalize_tool_name(tc.name)
                 # "done" is always available. "expand" is governed by enabled_tools
                 # (it is excluded when text storage is disabled), so it is not hardcoded here.
                 if enabled_tools is not None and norm not in enabled_tools and norm != "done":
                     hallucinated_tools.append(tc)
+                    hallucinated_positions.append(position)
                 else:
                     allowed_tools.append(tc)
+                    allowed_positions.append(position)
 
             # Build assistant message with all tool calls (LLM requires them for history)
             messages.append(
@@ -1015,19 +1037,23 @@ async def _run_reflect_agent_inner(
                 }
             )
 
-            # Immediately reject hallucinated tool calls without adding to trace
-            for tc in hallucinated_tools:
-                messages.append(
+            # Serialize tool results in the ORIGINAL tool_calls order. Anthropic
+            # requires tool_result blocks to match the assistant tool_use order,
+            # so collect every result first and emit them in the model's order
+            # after execution (execution order may differ).
+            #
+            # Slots are indexed by POSITION, never by tool_call_id: a
+            # non-conforming OpenAI-compatible gateway can hand back duplicate or
+            # empty ids for a parallel batch, and an id-keyed map would silently
+            # drop one tool's evidence and duplicate another's.
+            ordered_tool_calls = list(other_tools)
+            tool_outputs: list[str] = [""] * len(ordered_tool_calls)
+            for position, tc in zip(hallucinated_positions, hallucinated_tools):
+                tool_outputs[position] = json.dumps(
                     {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(
-                            {
-                                "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
+                        "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
+                    },
+                    ensure_ascii=False,
                 )
 
             other_tools = allowed_tools
@@ -1058,7 +1084,7 @@ async def _run_reflect_agent_inner(
             total_tools_called += len(other_tools)
 
             # Process results and add to messages
-            for tc, result_data in zip(other_tools, tool_results):
+            for position, tc, result_data in zip(allowed_positions, other_tools, tool_results):
                 if isinstance(result_data, Exception):
                     # Tool execution failed - send error back to LLM so it can try again
                     logger.warning(f"[REFLECT {reflect_id}] Tool {tc.name} failed with exception: {result_data}")
@@ -1119,14 +1145,8 @@ async def _run_reflect_agent_inner(
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
 
-                # Add tool result message
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(output, default=str, ensure_ascii=False),
-                    }
-                )
+                # Record the serialized result; emitted in original order below.
+                tool_outputs[position] = json.dumps(output, default=str, ensure_ascii=False)
 
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
@@ -1162,6 +1182,18 @@ async def _run_reflect_agent_inner(
 
                 # Keep context history for fallback final prompt
                 context_history.append({"tool": tc.name, "input": input_dict, "output": output})
+
+            # Emit tool_result messages in the assistant tool_calls order so the
+            # serialized history matches the tool_use blocks (Anthropic requires
+            # tool_result blocks in the same order as the corresponding tool_use).
+            for tc, tool_output in zip(ordered_tool_calls, tool_outputs):
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_output,
+                    }
+                )
 
     # Unreachable in practice: the last iteration returns the forced synthesis
     # above, so the loop cannot fall out of the bottom. Kept as a hard failure
@@ -1296,6 +1328,7 @@ async def _process_done_tool(
                 {"role": "user", "content": rewrite_user},
             ],
             scope="reflect",
+            temperature=get_config().llm_temperature_reflect,
             max_completion_tokens=get_config().reflect_max_completion_tokens,
             return_usage=True,
         )

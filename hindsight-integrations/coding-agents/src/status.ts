@@ -6,7 +6,7 @@
  *
  * usage: node status.js --repo <path> [--bank <id>] [--harness <name>] [--api-url U] [--api-token X] [--config path]
  */
-import { deriveBankId } from "./core/bank";
+import { deriveBankIdOrSkip } from "./core/bank";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { HindsightClient } from "./core/hindsight";
 import { syncStatus } from "./core/status";
@@ -20,7 +20,9 @@ function arg(name: string): string | undefined {
 const REPO = arg("repo");
 const cfg0 = loadConfig({ harness: arg("harness") ?? undefined, path: arg("config") });
 const BANK =
-  arg("bank") ?? (REPO ? deriveBankId(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId);
+  arg("bank") ??
+  (REPO ? deriveBankIdOrSkip(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId) ??
+  undefined;
 if (!BANK) {
   console.error("usage: node status.js --repo <path> [--bank <id>] [--api-url U]");
   process.exit(1);

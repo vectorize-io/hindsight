@@ -52,9 +52,10 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
-from hindsight_api.engine.structured_output import strict_json_schema
+from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -275,6 +276,22 @@ def _summarize_provider_error_payload(error: Any, max_len: int = 400) -> str:
     return summary
 
 
+# Finish reasons that positively say a generation ran to its own end. Repair is
+# gated on one of these because json_repair closes an unterminated string or list
+# by inventing the terminator, so repairing a body that may have been cut turns a
+# loud failure into a short answer reported as a complete one. A missing or
+# unrecognised reason is not evidence of completion.
+#
+# This is deliberately stricter than litellm_llm.py:367, which repairs whatever it
+# has left once the retry budget is spent. An explicit "length" raises before either
+# path reaches repair, so the gate's only remaining effect is to withhold repair from
+# a provider that omits or renames finish_reason — and those are exactly the proxies
+# and gateways this provider fronts. Losing the repair there is the cheaper mistake:
+# a JSONDecodeError is loud and the caller can split, while a silently short answer
+# is indistinguishable from a complete one. Same reasoning as #3827.
+_COMPLETED_FINISH_REASONS = frozenset({"stop", "tool_calls", "function_call", "end_turn"})
+
+
 def _finish_reason_for_choice(choice: Any) -> Any:
     return _response_get(choice, "finish_reason")
 
@@ -317,7 +334,11 @@ def _first_choice_or_error(response: Any, *, provider: str, model: str, scope: s
 
 
 def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -> tuple[str, Any]:
-    """Extract message.content while turning provider shape issues into useful errors."""
+    """Extract message.content, turning provider shape issues into useful errors.
+
+    Raises ``OutputTooLongError`` on a token-limit truncation and
+    ``ProviderResponseError`` on every other unusable success shape.
+    """
 
     choice = _first_choice_or_error(response, provider=provider, model=model, scope=scope)
     message = _message_for_choice(choice)
@@ -327,6 +348,26 @@ def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -
             f"Provider returned a choice without message ({provider}/{model}, scope={scope}, "
             f"finish_reason={finish_reason})",
             retryable=True,
+        )
+
+    # chat.completions.create() signals truncation only through finish_reason; unlike
+    # .parse(), it never raises LengthFinishReasonError for the handler in call() to convert.
+    # Checked before the content branch below: an empty response can still be a truncation,
+    # and reading it as empty content instead raises a *retryable* ProviderResponseError,
+    # which re-sends the same request against the same limit (#3811).
+    #
+    # Raised for every scope, not just the ones that recover from it. That matches the
+    # sibling OpenAI-shaped providers (litellm_llm, openai_responses_llm), and it means
+    # a truncated free-form answer — reflect synthesis, a mental-model page — now fails
+    # the call instead of being returned as if complete. Note this is the opposite of
+    # what gemini_llm does for the same signal (it logs a warning and returns the cut
+    # text, see #3365): there the truncation is common because reasoning tokens eat the
+    # visible budget, so failing every such call would be worse than surfacing it. The
+    # two can diverge only until one of them is shown wrong by a real workload.
+    if finish_reason == "length":
+        raise OutputTooLongError(
+            f"LLM output exceeded token limits ({provider}/{model}, scope={scope}). "
+            "Input may need to be split into smaller chunks."
         )
 
     content = _message_content(message)
@@ -355,6 +396,63 @@ def _usage_from_openai_response(response: Any) -> LLMResponseUsage:
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cached_tokens=cached_tokens,
+    )
+
+
+def _visible_token_usage(response: Any) -> TokenUsage:
+    """Normalize an OpenAI-shaped usage block into visible-only output plus reasoning.
+
+    The ``TokenUsage`` contract — and the Gemini provider — treat
+    ``output_tokens``/``total_tokens`` as *visible* output, with reasoning
+    surfaced separately in ``thoughts_tokens``. OpenAI-compatible upstreams do
+    not agree on where reasoning lives in the wire format:
+
+    * folded (OpenAI's own reasoning models): ``total = prompt + completion``
+      and ``completion`` already includes ``reasoning``;
+    * unfolded (several gateways and proxies): ``total = prompt + completion +
+      reasoning`` and ``completion`` is already visible-only.
+
+    Subtracting ``reasoning`` from ``completion`` unconditionally clamps a real,
+    non-empty completion to 0 on the unfolded shape whenever reasoning exceeds
+    visible output — routine for high-effort model variants (#3851). Detecting
+    the shape by comparing ``prompt + completion`` against ``total`` is no
+    better: proxies are a token or two off on ``total``, and near-miss drift on
+    the unfolded shape lands back on the clamp.
+
+    ``total`` reads as ``prompt + visible + reasoning`` under *both* shapes, so
+    visible output is derived from it and never needs the shape to be known.
+    The result is then clamped to the only two admissible readings —
+    ``completion`` (unfolded) and ``completion - reasoning`` (folded) — so an
+    upstream whose ``total`` is drifted or outright unusable degrades to the
+    nearer of those instead of to a bogus count. A missing or zero ``total``
+    leaves nothing to derive from and falls back to the folded reading.
+    """
+    usage = getattr(response, "usage", None)
+    input_tokens = (getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+    completion_tokens = (getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+    reported_total = (getattr(usage, "total_tokens", 0) or 0) if usage else 0
+    cached_tokens = 0
+    if usage and getattr(usage, "prompt_tokens_details", None):
+        cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
+    thoughts_tokens = 0
+    if usage and getattr(usage, "completion_tokens_details", None):
+        thoughts_tokens = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
+
+    folded_reading = max(0, completion_tokens - thoughts_tokens)
+    if not thoughts_tokens:
+        output_tokens = completion_tokens
+    elif reported_total > 0:
+        derived = (reported_total - thoughts_tokens) - input_tokens
+        output_tokens = min(completion_tokens, max(folded_reading, derived))
+    else:
+        output_tokens = folded_reading
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        cached_tokens=cached_tokens,
+        thoughts_tokens=thoughts_tokens,
     )
 
 
@@ -1001,7 +1099,7 @@ class OpenAICompatibleLLM(LLMInterface):
         if response_format is not None:
             schema = None
             if hasattr(response_format, "model_json_schema"):
-                schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
+                schema = strict_json_schema(response_format) if strict_schema else provider_json_schema(response_format)
 
             if strict_schema and schema is not None:
                 # Use OpenAI's strict JSON schema enforcement
@@ -1097,14 +1195,36 @@ class OpenAICompatibleLLM(LLMInterface):
                                 f"  Content preview: {content_preview!r}\n"
                                 f"  Finish reason: {_finish_reason_for_choice(first_choice)}"
                             )
-                            # Retry on JSON parse errors
+                            # Retry on JSON parse errors for the whole
+                            # configured budget. Two identical bodies are not
+                            # proof the next one repeats: temperature is set by
+                            # the caller and not read here, so there is nothing
+                            # on this path that establishes a deterministic
+                            # generation.
                             if attempt < max_retries:
                                 backoff = min(initial_backoff * (2**attempt), max_backoff)
                                 await asyncio.sleep(backoff)
                                 last_exception = json_err
                                 continue
-                            else:
-                                logger.error(f"JSON parse error after {max_retries + 1} attempts, giving up")
+                            # Retry budget spent. Repair structurally as a
+                            # last resort, the way litellm_llm.py has since
+                            # #2547/#2544, but only for a generation that
+                            # reported reaching its own end. Without that,
+                            # a provider that omits finish_reason would have a
+                            # truncated body repaired into schema-valid partial
+                            # data.
+                            if _finish_reason_for_choice(first_choice) not in _COMPLETED_FINISH_REASONS:
+                                logger.error(
+                                    f"JSON parse error after {attempt + 1} attempts and no "
+                                    f"completion signal (finish_reason="
+                                    f"{_finish_reason_for_choice(first_choice)!r}); "
+                                    "not repairing, the body may be truncated"
+                                )
+                                raise
+                            try:
+                                json_data = parse_llm_json(content)
+                            except json.JSONDecodeError:
+                                logger.error(f"JSON parse error after {attempt + 1} attempts, giving up")
                                 raise
 
                     if skip_validation:
@@ -1133,23 +1253,15 @@ class OpenAICompatibleLLM(LLMInterface):
                 # Record token usage metrics
                 duration = time.time() - start_time
                 usage = response.usage
-                response_usage = _usage_from_openai_response(response)
-                input_tokens = response_usage.input_tokens
-                output_tokens = response_usage.output_tokens
-                total_tokens = usage.total_tokens or 0 if usage else 0
-                cached_tokens = response_usage.cached_tokens
-                thoughts_tokens = 0
-                if usage and getattr(usage, "completion_tokens_details", None):
-                    thoughts_tokens = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
-                # OpenAI-compatible providers fold reasoning tokens into
-                # ``completion_tokens`` (and thus ``total_tokens``), but the
-                # TokenUsage contract — and the Gemini provider — treat
-                # ``output_tokens``/``total_tokens`` as visible-only, surfacing
-                # reasoning separately in ``thoughts_tokens``. Subtract so the
-                # two fields don't double-count reasoning (cost over-attribution).
-                if thoughts_tokens:
-                    output_tokens = max(0, output_tokens - thoughts_tokens)
-                    total_tokens = max(0, total_tokens - thoughts_tokens)
+                # ``output_tokens``/``total_tokens`` are visible-only past this
+                # point, with reasoning surfaced separately in
+                # ``thoughts_tokens`` — see ``_visible_token_usage``.
+                token_counts = _visible_token_usage(response)
+                input_tokens = token_counts.input_tokens
+                output_tokens = token_counts.output_tokens
+                total_tokens = token_counts.total_tokens
+                cached_tokens = token_counts.cached_tokens
+                thoughts_tokens = token_counts.thoughts_tokens
 
                 # Record LLM metrics. ``output_tokens`` is visible-only by now, so
                 # ``thoughts_tokens`` has to be recorded alongside it or the reasoning
@@ -1190,21 +1302,18 @@ class OpenAICompatibleLLM(LLMInterface):
                 if duration > 10.0 and usage:
                     ratio = max(1, output_tokens) / max(1, input_tokens)
                     cache_info = f", cached_tokens={cached_tokens}" if cached_tokens > 0 else ""
+                    # Without the reasoning count a high-effort call reads as a
+                    # slow, near-empty completion (#3851).
+                    thoughts_info = f", thoughts_tokens={thoughts_tokens}" if thoughts_tokens > 0 else ""
                     logger.info(
                         f"slow llm call: scope={scope}, model={self.provider}/{self.model}, "
                         f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
-                        f"total_tokens={total_tokens}{cache_info}, time={duration:.3f}s, ratio out/in={ratio:.2f}"
+                        f"total_tokens={total_tokens}{cache_info}{thoughts_info}, "
+                        f"time={duration:.3f}s, ratio out/in={ratio:.2f}"
                     )
 
                 if return_usage:
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=total_tokens,
-                        cached_tokens=cached_tokens,
-                        thoughts_tokens=thoughts_tokens,
-                    )
-                    return result, token_usage
+                    return result, token_counts
                 return result
 
             except LengthFinishReasonError as e:
@@ -1406,7 +1515,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         if max_completion_tokens is not None:
             call_params[self._max_tokens_param_name()] = max_completion_tokens
-        if temperature is not None:
+        if temperature is not None and not self._supports_reasoning_model():
             # MiniMax requires temperature in (0.0, 1.0] — clamp accordingly
             if self.provider == "minimax":
                 temperature = max(0.01, min(temperature, 1.0))
@@ -1460,20 +1569,13 @@ class OpenAICompatibleLLM(LLMInterface):
 
                 # Record metrics
                 duration = time.time() - start_time
-                usage = response.usage
-                input_tokens = usage.prompt_tokens or 0 if usage else 0
-                output_tokens = usage.completion_tokens or 0 if usage else 0
-                cached_tokens = 0
-                if usage and getattr(usage, "prompt_tokens_details", None):
-                    cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
-                thoughts_tokens = 0
-                if usage and getattr(usage, "completion_tokens_details", None):
-                    thoughts_tokens = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
-                # See ``call()``: OpenAI-compatible ``completion_tokens`` includes
-                # reasoning, so make ``output_tokens`` visible-only to avoid
-                # double-counting it against ``thoughts_tokens``.
-                if thoughts_tokens:
-                    output_tokens = max(0, output_tokens - thoughts_tokens)
+                # See ``_visible_token_usage``: ``output_tokens`` is visible-only,
+                # with reasoning surfaced separately in ``thoughts_tokens``.
+                token_counts = _visible_token_usage(response)
+                input_tokens = token_counts.input_tokens
+                output_tokens = token_counts.output_tokens
+                cached_tokens = token_counts.cached_tokens
+                thoughts_tokens = token_counts.thoughts_tokens
 
                 # See ``call()``: record the reasoning and cached counts too, so no
                 # billed token is dropped from the metrics counters.
@@ -1603,7 +1705,7 @@ class OpenAICompatibleLLM(LLMInterface):
         start_time = time.time()
 
         # Get the JSON schema from the Pydantic model
-        schema = response_format.model_json_schema() if hasattr(response_format, "model_json_schema") else None
+        schema = provider_json_schema(response_format) if hasattr(response_format, "model_json_schema") else None
 
         # Build the base URL for Ollama's native API
         # Default OpenAI-compatible URL is http://localhost:11434/v1
@@ -1657,7 +1759,20 @@ class OpenAICompatibleLLM(LLMInterface):
         if self.api_key and self.api_key != "local":
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # The native path must honour the configured timeout like every other
+        # path does. The literal 300.0 that used to be here silently capped
+        # ENV_LLM_TIMEOUT: on a CPU ollama host a single fact-extraction prompt
+        # can need longer than 300 s just to be ingested, and the call was
+        # aborted mid-prompt with a bare "Ollama connection error" that no
+        # configuration could fix.
+        #
+        # NOTE the other direction too: `self.timeout` is always set (see
+        # __init__ — ENV_LLM_TIMEOUT or DEFAULT_LLM_TIMEOUT, currently 120 s),
+        # so for a deployment that never set ENV_LLM_TIMEOUT this LOWERS the
+        # native timeout from the old 300 s literal to 120 s. That is the point
+        # — one knob, honoured everywhere — but it is a behaviour change, not
+        # a pure bug fix, and such a deployment must raise ENV_LLM_TIMEOUT.
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(max_retries + 1):
                 try:
                     async with attempt_context() if attempt_context is not None else nullcontext():
@@ -1666,7 +1781,39 @@ class OpenAICompatibleLLM(LLMInterface):
                     response.raise_for_status()
 
                     result = response.json()
+                    # Stash usage before the guards below, which can raise on a
+                    # capped response. Ollama charges for those tokens and the
+                    # capped calls are the expensive ones, so raising first would
+                    # drop exactly the calls worth accounting for.
+                    stash_response_usage(
+                        LLMResponseUsage(
+                            input_tokens=result.get("prompt_eval_count", 0) or 0,
+                            output_tokens=result.get("eval_count", 0) or 0,
+                        )
+                    )
                     content = result.get("message", {}).get("content", "")
+
+                    # Same case as the OpenAI-compatible path, different key: Ollama
+                    # reports a token cap as done_reason "length". Raised ahead of the
+                    # free-form/structured split, and ahead of reading the content, for
+                    # the two reasons _content_or_error gives:
+                    #
+                    #   - a cap that lands on a closing brace still parses and still
+                    #     validates, so the structured path would return a short answer
+                    #     as a complete one;
+                    #   - a cap reached before the first visible token leaves content
+                    #     empty, and the free-form branch below reads that as a
+                    #     *retryable* ProviderResponseError, which re-sends the same
+                    #     request against the same limit (#3811).
+                    #
+                    # Free-form calls raise too, matching the sibling path since #3827:
+                    # a truncated reflect synthesis or mental-model page fails rather
+                    # than being returned as if it were complete.
+                    if result.get("done_reason") == "length":
+                        raise OutputTooLongError(
+                            f"LLM output exceeded token limits (ollama/{self.model}, scope={scope}). "
+                            "Input may need to be split into smaller chunks."
+                        )
 
                     if response_format is None:
                         # Free-form output: no schema, nothing to parse. Reasoning
@@ -1706,7 +1853,21 @@ class OpenAICompatibleLLM(LLMInterface):
                                     await asyncio.sleep(backoff)
                                     last_exception = json_err
                                     continue
-                                else:
+                                # Same last-resort repair as the
+                                # OpenAI-compatible path above, gated the same
+                                # way: only a generation that reported reaching
+                                # its own end gets structurally repaired.
+                                if result.get("done_reason") not in _COMPLETED_FINISH_REASONS:
+                                    logger.error(
+                                        f"Ollama JSON parse error after {attempt + 1} attempts and no "
+                                        f"completion signal (done_reason={result.get('done_reason')!r}); "
+                                        "not repairing, the body may be truncated"
+                                    )
+                                    raise
+                                try:
+                                    json_data = parse_llm_json(content)
+                                except json.JSONDecodeError:
+                                    logger.error(f"Ollama JSON parse error after {attempt + 1} attempts, giving up")
                                     raise
 
                     # Extract token usage from Ollama response
@@ -1795,6 +1956,11 @@ class OpenAICompatibleLLM(LLMInterface):
                     else:
                         logger.error(f"Ollama connection error after {max_retries + 1} attempts: {e}")
                         raise
+
+                except OutputTooLongError:
+                    # Expected and handled upstream by splitting the input, so it
+                    # does not belong in the unexpected-error log below.
+                    raise
 
                 except Exception as e:
                     logger.error(f"Unexpected error during Ollama call: {type(e).__name__}: {e}")

@@ -50,6 +50,17 @@ async def _refresh_with_trigger(
         trigger={"mode": "delta", **trigger},
         request_context=request_context,
     )
+    # A real memory in the model's scope, retained after it: a refresh with nothing to
+    # read skips the reflect loop entirely (#3875), and every assertion here is about
+    # what reaches that call. Tagged to match, and written after the model's creation
+    # timestamp, so it falls inside the delta window these tests run in.
+    await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[{"content": "The recall endpoint accepts a tags_match parameter."}],
+        document_tags=["team:core"],
+        request_context=request_context,
+    )
+    await memory.wait_for_background_tasks()
     reflect_calls = patch_reflect(memory, text="## Ops\n\nCandidate.\n", facts=_FACTS)
     llm_calls = patch_llm_call(memory, returns=_APPEND_OP)
 
@@ -258,4 +269,114 @@ class TestTriggerRoundTrip:
         for key, value in trigger.items():
             assert stored["trigger"].get(key) == value, f"{key} did not survive create"
 
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_update_patches_the_trigger_instead_of_replacing_it(self, memory, request_context):
+        """Changing when a model refreshes must not reset how it refreshes.
+
+        ``update_mental_model`` overwrites the whole trigger column, so a caller that
+        sends only the field it wants used to strip every flag it did not mention —
+        the defect #3506 fixed for knowledge pages, on the endpoint every MCP agent
+        goes through.
+        """
+        bank_id = f"test-trigger-patch-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="API Reference",
+            source_query="Document the API",
+            content="## Ops\n\nOriginal.\n",
+            trigger={
+                "mode": "delta",
+                "fact_types": ["observation"],
+                "recall_max_tokens": 1234,
+                "refresh_after_consolidation": True,
+            },
+            request_context=request_context,
+        )
+
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            trigger={"refresh_cron": "0 3 * * *"},
+            request_context=request_context,
+        )
+        stored = await memory.get_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        assert stored["trigger"]["refresh_cron"] == "0 3 * * *"
+        assert stored["trigger"]["mode"] == "delta"
+        assert stored["trigger"]["fact_types"] == ["observation"]
+        assert stored["trigger"]["recall_max_tokens"] == 1234
+        # Moving onto a schedule clears the auto-refresh: storing both would be a pair
+        # the API itself rejects.
+        assert "refresh_after_consolidation" not in stored["trigger"]
+
+        # ...and back again.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+        stored = await memory.get_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        assert stored["trigger"]["refresh_after_consolidation"] is True
+        assert "refresh_cron" not in stored["trigger"]
+        assert stored["trigger"]["recall_max_tokens"] == 1234
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_http_style_full_trigger_still_replaces(self, memory, request_context):
+        """The merge must not turn the HTTP contract into a patch by accident.
+
+        HTTP routes serialize the whole ``MentalModelTrigger``, defaults included, so
+        every key is present and the merge is a replacement. A flag cleared through
+        the API has to actually clear.
+        """
+        bank_id = f"test-trigger-replace-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="API Reference",
+            source_query="Document the API",
+            content="## Ops\n\nOriginal.\n",
+            trigger={"mode": "delta", "recall_max_tokens": 1234, "keep_trace": True},
+            request_context=request_context,
+        )
+        from hindsight_api.api.http import MentalModelTrigger
+
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            trigger=MentalModelTrigger(mode="full").model_dump(),
+            request_context=request_context,
+        )
+        stored = await memory.get_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        assert stored["trigger"]["mode"] == "full"
+        assert stored["trigger"]["recall_max_tokens"] is None
+        assert stored["trigger"]["keep_trace"] is False
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_patch_stating_both_refresh_triggers_is_rejected(self, memory, request_context):
+        bank_id = f"test-trigger-excl-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="API Reference",
+            source_query="Document the API",
+            content="## Ops\n\nOriginal.\n",
+            request_context=request_context,
+        )
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            await memory.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                trigger={"refresh_after_consolidation": True, "refresh_cron": "0 3 * * *"},
+                request_context=request_context,
+            )
         await memory.delete_bank(bank_id, request_context=request_context)

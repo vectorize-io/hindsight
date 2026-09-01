@@ -45,15 +45,75 @@ def test_pgvector_literal_round_trips_through_float32():
     assert len(parsed) == len(_VECTOR)
     # float32 is what the column holds, so the comparison is against the float32 image of
     # the original — not against the float64 the embedding model handed us.
-    assert parsed == list(array("f", _VECTOR))
+    assert array("f", parsed) == array("f", _VECTOR)
 
 
 def test_pgvector_literal_accepts_every_form_a_caller_may_hold():
-    """Packed, plain list, or an already-rendered literal — one helper covers all three."""
-    packed = embedding_to_pgvector(pack_embedding(_VECTOR))
+    """Packed, plain list, tuple, NumPy array, or an already-rendered literal — all parse to the same float32 vector."""
+    # Use arbitrary floats where float32 and float64 representations differ in string representation
+    arbitrary_vector = [0.123456789, -0.25, 3.5, 0.0, -1.0, 1e-7, 123.456]
 
-    assert embedding_to_pgvector(list(array("f", _VECTOR))) == packed
-    assert embedding_to_pgvector(packed) == packed
+    def _parse(rendered: str) -> array:
+        assert rendered.startswith("[") and rendered.endswith("]")
+        return array("f", [float(part) for part in rendered.strip("[]").split(",")])
+
+    expected_f32 = array("f", arbitrary_vector)
+
+    # 1. PackedEmbedding (array('f'))
+    rendered_packed = embedding_to_pgvector(pack_embedding(arbitrary_vector))
+    assert _parse(rendered_packed) == expected_f32
+
+    # 2. Plain Python float list (float64)
+    rendered_list = embedding_to_pgvector(arbitrary_vector)
+    assert _parse(rendered_list) == expected_f32
+
+    # 3. Tuple
+    rendered_tuple = embedding_to_pgvector(tuple(arbitrary_vector))
+    assert _parse(rendered_tuple) == expected_f32
+
+    # 4. NumPy arrays (float32 and float64)
+    rendered_np32 = embedding_to_pgvector(np.array(arbitrary_vector, dtype=np.float32))
+    assert _parse(rendered_np32) == expected_f32
+    rendered_np64 = embedding_to_pgvector(np.array(arbitrary_vector, dtype=np.float64))
+    assert _parse(rendered_np64) == expected_f32
+
+    # 5. String literal passthrough (idempotency)
+    assert embedding_to_pgvector(rendered_packed) == rendered_packed
+
+
+def test_pgvector_literal_handles_mixed_and_edge_inputs():
+    """Mixed batches, empty arrays, subnormals, and non-finite numbers."""
+    assert embedding_to_pgvector([]) == "[]"
+    assert embedding_to_pgvector(array("f", [])) == "[]"
+
+    # Non-finite numbers fall back safely, matching baseline behavior byte-identically
+    # (Note: non-finite vectors are rejected by pgvector, matching old behavior where they are filtered in link steps)
+    non_finite = [float("nan"), float("inf"), -float("inf"), 1.0]
+    rendered_nf = embedding_to_pgvector(array("f", non_finite))
+    assert rendered_nf == "[nan,inf,-inf,1.0]"
+    assert embedding_to_pgvector(non_finite) == "[nan,inf,-inf,1.0]"
+
+    # Subnormal and scientific notations
+    small = [1e-15, -1e-20, 1e-35]
+    rendered_small = embedding_to_pgvector(array("f", small))
+    assert rendered_small.startswith("[") and rendered_small.endswith("]")
+    parsed_small = [float(p) for p in rendered_small.strip("[]").split(",")]
+    assert array("f", parsed_small) == array("f", small)
+
+    # Custom objects with __float__() but not natively serializable by orjson
+    class CustomScalar:
+        def __init__(self, value: float):
+            self._value = value
+
+        def __float__(self) -> float:
+            return float(self._value)
+
+    custom_vector = [CustomScalar(0.1), CustomScalar(-0.25), CustomScalar(3.5)]
+    assert embedding_to_pgvector(custom_vector) == "[0.1,-0.25,3.5]"
+
+    # Non-'f' typecode array fallthrough to _repr_literal
+    double_array = array("d", [0.1, -0.25, 3.5])
+    assert embedding_to_pgvector(double_array) == "[0.1,-0.25,3.5]"
 
 
 def test_processed_fact_packs_what_it_is_given():

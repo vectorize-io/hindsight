@@ -1622,28 +1622,39 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
+        # `smoke` decides which legs are loaded into the daemon and actually
+        # started. The full variants are skipped to save runner disk; cp-only
+        # is smoke tested despite being a full variant because the alpine
+        # image is small and it is the only leg that exercises the alpine Node
+        # runtime at all (it needs no LLM credentials - see NEEDS_LLM in
+        # docker/test-image.sh).
         include:
           - target: api-only
             name: api
             variant: full
+            smoke: false
             build_args: ""
           - target: api-only
             name: api-slim
             variant: slim
+            smoke: true
             build_args: |
               INCLUDE_LOCAL_MODELS=false
               PRELOAD_ML_MODELS=false
           - target: cp-only
             name: control-plane
             variant: full
+            smoke: true
             build_args: ""
           - target: standalone
             name: standalone
             variant: full
+            smoke: false
             build_args: ""
           - target: standalone
             name: standalone-slim
             variant: slim
+            smoke: true
             build_args: |
               INCLUDE_LOCAL_MODELS=false
               PRELOAD_ML_MODELS=false
@@ -1675,23 +1686,24 @@ jobs:
         target: ${{ matrix.target }}
         build-args: ${{ matrix.build_args }}
         push: false
-        load: ${{ matrix.variant == 'slim' }}
+        load: ${{ matrix.smoke }}
         tags: hindsight-${{ matrix.name }}:test
         # Removed GitHub Actions cache (type=gha) - it frequently returns 502 errors
         # causing buildx to fail with "failed to parse error response 502"
         # Build will be slower but more reliable
 
-    # Only test slim variants to save disk space (they're much smaller)
-    # Slim variants require external embedding providers
+    # Slim variants require external embedding providers; cp-only needs no
+    # credentials at all, so the credential step stays gated on the variant
+    # while the smoke test itself is gated on `smoke`.
     - name: Setup GCP credentials for smoke test
-      if: matrix.variant == 'slim'
+      if: matrix.variant == 'slim' && matrix.smoke
       run: |
         printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
         PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Smoke test - verify container starts
-      if: matrix.variant == 'slim'
+      if: matrix.smoke
       env:
         HINDSIGHT_API_LLM_PROVIDER: vertexai
         HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
@@ -1818,6 +1830,11 @@ jobs:
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # The real-LLM delta/retraction/cache evals gate on this flag *and* a key. The
+      # key was already set here, so they sat skipped and the mental-model delta path —
+      # the one that hands a provider a schema it has to accept — had no end-to-end
+      # coverage anywhere. Found while landing the structured-output change (#3937).
+      HINDSIGHT_RUN_GEMINI_EVALS: "1"
 
     steps:
     - uses: actions/checkout@v6

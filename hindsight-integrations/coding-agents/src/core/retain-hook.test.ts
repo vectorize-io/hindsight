@@ -8,6 +8,7 @@ import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { buildRetain, runRetainHook } from "./retain-hook";
 import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import { dcodeAssistantText } from "./transcript-dcode";
 
 /** The Stop event `runRetainHook` reads from fd 0; every other read stays real. */
 let stdin = "";
@@ -41,6 +42,86 @@ afterEach(() => {
 });
 
 describe("buildRetain", () => {
+  /** Turns retained by one buildRetain call, in order. */
+  async function retainedTurns(
+    args: Parameters<typeof buildRetain>[0] & { retainSpy: ReturnType<typeof vi.fn> }
+  ): Promise<Array<{ role: string; content: string }>> {
+    const { retainSpy, ...rest } = args;
+    await buildRetain({ ...rest, client: { retain: retainSpy } as unknown as HindsightClient });
+    const [content] = retainSpy.mock.calls[0];
+    return (content as string).split("\n").map((line) => JSON.parse(line));
+  }
+
+  it("recovers Dcode's final assistant message when the materialized transcript lags", async () => {
+    writeFileSync(file, JSON.stringify({ role: "user", content: "make the change" }));
+    const parsed = await retainedTurns({
+      harness: "dcode",
+      sessionId: "sess-dcode",
+      transcriptPath: file,
+      client: undefined as never,
+      retainSpy: vi.fn().mockResolvedValue(undefined),
+      readTranscript: () => [{ role: "user", content: "make the change" }],
+      lastAssistantMessage: "done <hindsight_memories>injected</hindsight_memories>",
+    });
+    expect(parsed.at(-1)).toMatchObject({ role: "assistant", content: "done" });
+  });
+
+  it("does not duplicate the final reply when Dcode's transcript already flushed it", async () => {
+    // The branch the lag recovery has to not break: on runs where the store flushed in time the
+    // reply is in BOTH the transcript and the Stop event, and must be retained exactly once.
+    writeFileSync(file, JSON.stringify({ role: "user", content: "make the change" }));
+    const parsed = await retainedTurns({
+      harness: "dcode",
+      sessionId: "sess-dcode",
+      transcriptPath: file,
+      client: undefined as never,
+      retainSpy: vi.fn().mockResolvedValue(undefined),
+      readTranscript: () => [
+        { role: "user", content: "make the change" },
+        { role: "assistant", content: "done" },
+      ],
+      lastAssistantMessage: "done",
+    });
+    expect(parsed.filter((t) => t.role === "assistant")).toHaveLength(1);
+  });
+
+  it("dedupes a flushed reply the harness serialized as content blocks", async () => {
+    // Regression: Dcode sends `str(content)`, so without readLastMessage the Stop event's copy can
+    // never compare equal to the transcript's clean text and a duplicate is appended every turn.
+    writeFileSync(file, JSON.stringify({ role: "user", content: "make the change" }));
+    const parsed = await retainedTurns({
+      harness: "dcode",
+      sessionId: "sess-dcode",
+      transcriptPath: file,
+      client: undefined as never,
+      retainSpy: vi.fn().mockResolvedValue(undefined),
+      readTranscript: () => [
+        { role: "user", content: "make the change" },
+        { role: "assistant", content: "done" },
+      ],
+      lastAssistantMessage: "[{'type': 'text', 'text': 'done'}]",
+      readLastMessage: dcodeAssistantText,
+    });
+    expect(parsed.filter((t) => t.role === "assistant")).toHaveLength(1);
+  });
+
+  it("retains the recovered reply as text, not as a serialized block list", async () => {
+    writeFileSync(file, JSON.stringify({ role: "user", content: "make the change" }));
+    const parsed = await retainedTurns({
+      harness: "dcode",
+      sessionId: "sess-dcode",
+      transcriptPath: file,
+      client: undefined as never,
+      retainSpy: vi.fn().mockResolvedValue(undefined),
+      readTranscript: () => [{ role: "user", content: "make the change" }],
+      lastAssistantMessage:
+        "[{'type': 'reasoning', 'encrypted_content': 'gAAAAAsecret'}, " +
+        "{'type': 'text', 'text': 'done'}]",
+      readLastMessage: dcodeAssistantText,
+    });
+    expect(parsed.at(-1)).toMatchObject({ role: "assistant", content: "done" });
+  });
+
   it("retains parsed turns", async () => {
     const lines = [
       JSON.stringify({

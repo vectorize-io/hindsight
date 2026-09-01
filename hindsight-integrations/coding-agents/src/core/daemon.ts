@@ -33,8 +33,8 @@
  * made daemon mode behave differently from the other two for no benefit.
  *
  * There is no stop. One daemon serves every agent and repo on the machine, so ending one session
- * must not cut memory out from under another. Nothing retires it either, unless the user sets
- * `daemonIdleTimeout` — see daemonEnv.
+ * must not cut memory out from under another. Nothing retires it either: the server's idle timeout
+ * was removed after it killed in-flight requests (#3903), so `daemonIdleTimeout` is inert.
  */
 import { execFileSync, spawn as realSpawn } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -170,11 +170,11 @@ export function daemonEnv(
   env: NodeJS.ProcessEnv = process.env
 ): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
-  // Only forward an idle timeout the user actually asked for. This used to default to 300s, which
-  // made the plugin the one thing on the machine opting a SHARED daemon into an auto-exit — every
-  // other Hindsight integration ships 0, and `hindsight-embed`'s own default is 0 (never exits).
-  // Unset means the daemon keeps its own default, so nothing retires it out from under an idle
-  // session.
+  // Forwarded only when set, and inert either way: the server dropped its idle timeout in #3903
+  // (it measured idleness from the request *start*, so a long retain killed its own daemon). Kept
+  // so an existing config still starts — the daemon ignores the value.
+  // It used to default to 300s here, which made the plugin the one thing on the machine opting a
+  // SHARED daemon into an auto-exit; every other integration shipped 0.
   if (cfg.daemonIdleTimeout !== undefined) {
     out.HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT = String(cfg.daemonIdleTimeout);
   }

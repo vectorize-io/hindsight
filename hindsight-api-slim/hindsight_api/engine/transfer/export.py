@@ -197,7 +197,7 @@ def _is_store_owned(memories: Any, bank_id: str) -> bool:
     if memories is None:
         return False
     try:
-        return not memories.writes_memory_rows_in_sql_for(bank_id)
+        return memories.store_owned_for(bank_id)
     except Exception:  # noqa: BLE001 - a store that cannot answer is treated as SQL-backed
         return False
 

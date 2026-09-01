@@ -76,7 +76,14 @@ def pg_search_bm25_columns(
     text_fields: Sequence[str],
     tokenizer: str | None,
 ) -> str:
-    """Build a ParadeDB BM25 column list for CREATE INDEX."""
+    """Build a ParadeDB BM25 column list for CREATE INDEX.
+
+    The tokenizer pseudo-types stay in ``pdb`` even on distributions that install
+    the pg_search *functions* under a custom schema (see
+    ``text_search_extension_pg_search_function_schema``): ``pdb`` is created by
+    ParadeDB's own install DDL and is independent of the extension's target
+    schema, so it is not configurable alongside the function schema.
+    """
 
     normalized = normalize_pg_search_tokenizer(tokenizer)
     if not normalized:

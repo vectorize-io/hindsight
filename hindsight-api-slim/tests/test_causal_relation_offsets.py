@@ -36,7 +36,6 @@ async def test_causal_targets_are_offset_from_extraction_group_start(monkeypatch
     facts, _, _ = await fact_extraction.extract_facts_from_contents(
         [RetainContent(content="preceding"), RetainContent(content="causal group")],
         llm_config=None,
-        agent_name="test",
         config=config,
     )
 
@@ -70,7 +69,6 @@ async def test_each_chunk_uses_its_own_causal_index_base(monkeypatch):
     facts, _, _ = await fact_extraction.extract_facts_from_contents(
         [RetainContent(content="two chunks")],
         llm_config=None,
-        agent_name="test",
         config=config,
     )
 
@@ -170,7 +168,6 @@ async def test_batch_causal_targets_use_each_chunk_start(monkeypatch):
     facts, _, _ = await fact_extraction.extract_facts_from_contents_batch_api(
         [RetainContent(content="preceding"), RetainContent(content="first|second")],
         llm_config=llm_config,
-        agent_name="test",
         config=config,
     )
 

@@ -16,11 +16,14 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.consolidation.consolidator import _create_observation_directly
+from hindsight_api.engine.consolidation.consolidator import (
+    _apply_create_observation,
+    _embed_observation_text,
+)
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.schema import fq_table
 from hindsight_api.engine.transfer import import_documents
-from hindsight_api.engine.transfer.importer import parse_archive
+from hindsight_api.engine.transfer.importer import _EMBED_BATCH_SIZE, _embed_in_batches, parse_archive
 from hindsight_api.engine.transfer.schema import (
     SCHEMA_VERSION,
     TransferCausalRelation,
@@ -63,6 +66,26 @@ class _RetainResultCapture(OperationValidatorExtension):
 
     async def on_retain_complete(self, result: RetainResult) -> None:
         self.results.append(result)
+
+
+async def _seed_observation(*, pool, memory, bank_id, source_memory_ids, observation_text):
+    """Insert one observation the way consolidation does: embed off-connection, write in a txn.
+
+    The consolidator itself only exposes the two halves — it batches every write from one LLM
+    response into a single transaction (#3876) — so this seeds a fixture observation with the
+    same pair of calls.
+    """
+    embedding_str = await _embed_observation_text(memory, observation_text)
+    async with acquire_with_retry(pool) as conn:
+        async with conn.transaction():
+            return await _apply_create_observation(
+                conn=conn,
+                memory_engine=memory,
+                bank_id=bank_id,
+                source_memory_ids=source_memory_ids,
+                observation_text=observation_text,
+                embedding_str=embedding_str,
+            )
 
 
 @pytest_asyncio.fixture
@@ -226,7 +249,13 @@ def test_export_bank_covers_schema():
 
 
 def test_remap_mental_model_evidence_updates_current_and_history():
-    """Transfer remapping changes only known memory-unit ids in both payloads."""
+    """Transfer remapping changes only known memory-unit ids in both payloads.
+
+    The two rows carry the two real shapes. A ``mental_models`` row has its own
+    ``reflect_response`` column; a ``mental_model_history`` row stores the whole
+    snapshot in a JSONB ``content`` blob, so its evidence is nested one level
+    down and there is no top-level ``previous_reflect_response`` to find.
+    """
     from hindsight_api.engine.transfer.importer import _remap_mental_model_evidence
 
     rows = [
@@ -234,14 +263,22 @@ def test_remap_mental_model_evidence_updates_current_and_history():
             "reflect_response": {"based_on": {"world": [{"id": "old", "text": "fact"}]}},
         },
         {
-            "previous_reflect_response": json.dumps({"based_on": {"observation": [{"id": "obs-old"}]}}),
+            "content": json.dumps(
+                {
+                    "previous_content": "an earlier draft",
+                    "previous_reflect_response": {"based_on": {"observation": [{"id": "obs-old"}]}},
+                }
+            ),
         },
     ]
 
     _remap_mental_model_evidence(rows, {"old": "new", "obs-old": "obs-new"})
 
     assert rows[0]["reflect_response"]["based_on"]["world"][0]["id"] == "new"
-    assert rows[1]["previous_reflect_response"]["based_on"]["observation"][0]["id"] == "obs-new"
+    history_content = rows[1]["content"]
+    assert history_content["previous_reflect_response"]["based_on"]["observation"][0]["id"] == "obs-new"
+    # The rest of the snapshot is copied through untouched.
+    assert history_content["previous_content"] == "an earlier draft"
 
 
 def test_topological_page_order_is_parent_first():
@@ -583,12 +620,11 @@ async def test_bank_import_preserves_consolidation_lifecycle(memory, request_con
             ]
         assert len(wf_ids) >= 3, "need enough facts to exercise the lineage gap"
 
-        # One surviving observation over the first two facts. The helper now self-acquires a
-        # short-lived connection (the embed runs off-connection), so pass the backend, not a conn.
+        # One surviving observation over the first two facts.
         obs_source_ids = [uuid.UUID(str(i)) for i in wf_ids[:2]]
-        await _create_observation_directly(
+        await _seed_observation(
             pool=backend,
-            memory_engine=memory,
+            memory=memory,
             bank_id=bank,
             source_memory_ids=obs_source_ids,
             observation_text="Alice and Bob are colleagues.",
@@ -1239,9 +1275,9 @@ async def test_export_import_observations(memory, request_context):
         # short-lived connection now (the embed runs off-connection), so pass the backend.
         backend = await memory._get_backend()
         archived_event_date = datetime(2001, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
-        await _create_observation_directly(
+        await _seed_observation(
             pool=backend,
-            memory_engine=memory,
+            memory=memory,
             bank_id=src,
             source_memory_ids=source_ids,
             observation_text="Alice and Bob are colleagues.",
@@ -2007,8 +2043,8 @@ async def test_download_route_rejects_unauthorized_keys(api_client, memory, requ
 class _StoreOwnedMemories:
     """A memories store that keeps memories outside SQL, like an external store extension."""
 
-    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
-        return False
+    def store_owned_for(self, bank_id: str) -> bool:
+        return True
 
 
 @pytest.mark.asyncio
@@ -2076,7 +2112,7 @@ class _RecordingStoreOwned(_StoreOwnedMemories):
     def __init__(self):
         self.documents: dict[str, dict] = {}
 
-    def owns_document_store_for(self, bank_id: str) -> bool:
+    def store_owned_for(self, bank_id: str) -> bool:
         return True
 
     async def get_document_record(self, *, bank_id, document_id, include_text=False):
@@ -2170,8 +2206,8 @@ class _FakeStoreOwned(_StoreOwnedMemories):
 
 
 class _SqlMemories:
-    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
-        return True
+    def store_owned_for(self, bank_id: str) -> bool:
+        return False
 
 
 @pytest.mark.asyncio
@@ -2243,3 +2279,40 @@ async def test_a_sql_backed_bank_is_not_read_through_the_store():
     with pytest.raises(Exception) as ei:  # noqa: PT011 - backend=None fails once SQL is reached
         await export_documents(None, "bank-x", None, memories=_SqlMemories())
     assert "list_documents" not in str(ei.value), "a SQL bank must not be read through the store"
+
+
+class _RecordingEmbedder:
+    """Minimal embeddings backend that records the size of every encode call."""
+
+    dimension = 2
+
+    def __init__(self):
+        self.batch_sizes: list[int] = []
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        self.batch_sizes.append(len(texts))
+        return [[float(len(text)), 0.0] for text in texts]
+
+
+@pytest.mark.asyncio
+async def test_embed_in_batches_bounds_call_size_and_keeps_order():
+    """Import embeds bank-sized lists; nothing below it bounds an in-process provider.
+
+    Without this slice, ``_import_observations`` hands the embedder every observation in
+    the bank in a single call and peak memory scales with the bank (issue #3891).
+    """
+    embedder = _RecordingEmbedder()
+    texts = [f"observation {index}" for index in range(_EMBED_BATCH_SIZE * 2 + 5)]
+
+    vectors = await _embed_in_batches(embedder, texts)
+
+    assert embedder.batch_sizes == [_EMBED_BATCH_SIZE, _EMBED_BATCH_SIZE, 5]
+    assert vectors == [[float(len(text)), 0.0] for text in texts]
+
+
+@pytest.mark.asyncio
+async def test_embed_in_batches_handles_empty_input():
+    embedder = _RecordingEmbedder()
+
+    assert await _embed_in_batches(embedder, []) == []
+    assert embedder.batch_sizes == []

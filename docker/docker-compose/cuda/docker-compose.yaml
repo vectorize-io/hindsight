@@ -1,0 +1,53 @@
+name: hindsight-cuda
+# Example: run Hindsight with CUDA GPU acceleration for in-process
+# local embedding and reranker models.
+#
+# Requirements on the host:
+# - NVIDIA GPU & compatible driver (>= 525.60.13)
+# - NVIDIA Container Toolkit installed & configured
+#
+# Quick start:
+#   export HINDSIGHT_API_LLM_API_KEY=sk-xxx
+#   docker compose -f docker/docker-compose/cuda/docker-compose.yaml up --build
+#
+# Required environment variables:
+# - HINDSIGHT_API_LLM_API_KEY (pair it with HINDSIGHT_API_LLM_PROVIDER to use
+#   a provider other than the default openai)
+
+services:
+  hindsight:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Pin to a released tag (e.g. 0.9.2) instead of latest for reproducible builds.
+        HINDSIGHT_VERSION: ${HINDSIGHT_VERSION:-latest}
+        PYTORCH_CUDA_FLAVOR: cu126
+        PYTORCH_CUDA_INDEX: https://download.pytorch.org/whl/cu126
+    container_name: hindsight-cuda
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_API_LLM_API_KEY:-}
+
+      # Local embeddings & reranker will automatically detect and use CUDA.
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: local
+      HINDSIGHT_API_RERANKER_PROVIDER: local
+
+      # Half-precision reranking: measurably faster on GPU, quality-identical.
+      # Off by default because some CPUs lack native FP16 support.
+      HINDSIGHT_API_RERANKER_LOCAL_FP16: "true"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - pg_data:/home/hindsight/.pg0
+
+volumes:
+  pg_data:

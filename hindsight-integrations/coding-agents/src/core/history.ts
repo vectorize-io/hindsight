@@ -19,6 +19,7 @@
  * reading them would break on any upstream change, so they report as unsupported rather than
  * silently importing nothing.
  */
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -28,6 +29,7 @@ import {
   readSync,
   statSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 // Namespace import on purpose: `zstdDecompressSync` only exists on Node 22.15+, and a NAMED import
@@ -37,6 +39,7 @@ import * as zlib from "node:zlib";
 import type { ChatSession } from "./types";
 import { readClaudeTranscript } from "./transcript";
 import { readCodexTranscript } from "./transcript-codex";
+import { readDcodeTranscript } from "./transcript-dcode";
 import { readDshEvents, type DshSessionEvent } from "./transcript-dsh";
 import { readPiTranscript } from "./transcript-pi";
 import { zstdDecompressFrames } from "./zstd-frames";
@@ -236,6 +239,89 @@ function codexHistory(repoDir: string, home: string): HistoryImport {
 }
 
 /**
+ * Dcode: transcripts are named for their THREAD, and carry no cwd of their own — the working
+ * directory lives only in the LangGraph checkpoint store (`.state/sessions.db`), whose schema is
+ * exactly the internal, unversioned kind this module refuses to read.
+ *
+ * `dcode threads list --json` is the supported way to ask the same question. It is a declared
+ * contract, not a schema leak: the payload is `{schema_version, command, data:[…]}` and each row
+ * carries `thread_id` and `cwd`. Verified against deepagents-code 0.1.65.
+ */
+export const DCODE_THREADS_SCHEMA_VERSION = 1;
+
+interface DcodeThread {
+  thread_id?: unknown;
+  cwd?: unknown;
+}
+
+/** Path Dcode materializes a thread's transcript at: a truncated readable prefix, `--`, and the
+ *  sha256 of the FULL thread id (`hooks/transcript.py:_safe_component`). Only the digest is
+ *  load-bearing, so match on it and let the prefix vary. */
+function dcodeTranscriptPath(root: string, threadId: string): string | undefined {
+  const digest = createHash("sha256").update(threadId, "utf8").digest("hex");
+  const suffix = `--${digest}.jsonl`;
+  try {
+    const match = readdirSync(root).find((entry) => entry.endsWith(suffix));
+    return match ? join(root, match) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function dcodeHistory(
+  repoDir: string,
+  home: string,
+  runCli: (args: string[]) => string
+): HistoryImport {
+  const root = join(process.env.DEEPAGENTS_HOME || join(home, ".deepagents"), "transcripts");
+  if (!existsSync(root)) return { supported: true, sessions: [] };
+
+  let listed: unknown;
+  try {
+    listed = JSON.parse(runCli(["threads", "list", "--json"]));
+  } catch {
+    // No dcode on PATH (or it failed): the transcripts are unattributable without it.
+    return {
+      supported: false,
+      reason:
+        "dcode transcripts record no working directory, so `dcode threads list --json` is the " +
+        "only way to tell which sessions belong to this repo — and the dcode CLI is not runnable " +
+        "here",
+      sessions: [],
+    };
+  }
+  const payload = listed as { schema_version?: unknown; data?: unknown };
+  if (payload?.schema_version !== DCODE_THREADS_SCHEMA_VERSION || !Array.isArray(payload.data)) {
+    return {
+      supported: false,
+      reason: `unrecognized \`dcode threads list --json\` schema (expected schema_version ${DCODE_THREADS_SCHEMA_VERSION})`,
+      sessions: [],
+    };
+  }
+
+  const sessions: ChatSession[] = [];
+  let unattributed = 0;
+  for (const row of payload.data as DcodeThread[]) {
+    const threadId = typeof row?.thread_id === "string" ? row.thread_id : undefined;
+    if (!threadId) continue;
+    if (typeof row.cwd !== "string") {
+      unattributed++;
+      continue;
+    }
+    if (!withinRepo(row.cwd, repoDir)) continue;
+    const file = dcodeTranscriptPath(root, threadId);
+    if (!file) continue; // listed thread whose projection was never materialized
+    try {
+      const session = toSession(threadId, readDcodeTranscript(file));
+      if (session) sessions.push(session);
+    } catch {
+      /* a single unreadable transcript must not abort the import */
+    }
+  }
+  return { supported: true, sessions, ...(unattributed ? { unattributed } : {}) };
+}
+
+/**
  * DeepSeek Harness: `$DSH_HOME/sessions/<project>/<encoded-id>/session.jsonl(.zstd)`.
  *
  * The project directory is a lossy, truncated rendering of the session's cwd, so it is used only to
@@ -377,13 +463,23 @@ const SQLITE_HISTORY =
 export function importLocalHistory(
   harness: string,
   repoDir: string,
-  home = homedir()
+  home = homedir(),
+  /** Seam for tests: runs `dcode <args>` and returns stdout. */
+  runDcodeCli?: (args: string[]) => string
 ): HistoryImport {
   switch (harness) {
     case "claude-code":
       return claudeHistory(repoDir, home);
     case "codex":
       return codexHistory(repoDir, home);
+    case "dcode":
+      return dcodeHistory(
+        repoDir,
+        home,
+        runDcodeCli ??
+          ((args) =>
+            execFileSync("dcode", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }))
+      );
     case "dsh":
       return dshHistory(repoDir, home);
     case "pi":

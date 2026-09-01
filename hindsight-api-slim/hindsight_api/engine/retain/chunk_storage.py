@@ -58,7 +58,7 @@ async def load_existing_chunks(conn, bank_id: str, document_id: str) -> list[Exi
     ]
 
 
-async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> list[str]:
+async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str], *, store=None) -> list[str]:
     """Ids of the facts these chunks own, asked of whichever store holds them.
 
     The SQL store keeps ``chunk_id`` as a column; a store that keeps memories outside SQL
@@ -67,11 +67,17 @@ async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> lis
     observations are not chunk-scoped, and feeding one back as a *source* id would be
     meaningless. Paged to exhaustion — every id is about to be deleted, and a chunk whose
     facts overflow one page must not keep half of them.
+
+    ``store`` is the provider the caller already resolved for this bank. A caller inside a
+    store-owned path has it in hand, and passing it is what keeps this from re-deciding ownership
+    against the global registry: that registry answers for the PROCESS, and a router serving both
+    kinds of bank would send a store-owned delta down the SQL branch -- reading with the connection
+    that path deliberately never acquired.
     """
     from ..memories import META_CHUNK_ID, get_memories
 
-    store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    store = get_memories() if store is None else store
+    if not store.store_owned_for(bank_id):
         rows = await conn.fetch(
             f"""
             SELECT id
@@ -105,17 +111,12 @@ async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> lis
     return unit_ids
 
 
-async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None, txn=None, ops=None) -> int:
+async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None, ops=None) -> int:
     """
     Delete specific chunks by their IDs.
 
     This cascades to memory_units (via FK with CASCADE delete)
     and their links.
-
-    ``txn`` carries a cross-store write-group handle when this delete is part of a re-ingest:
-    the store's tombstones must ride the same txn as the replacement writes so they commit
-    (become visible) together — otherwise an aborted re-ingest could drop the old memories
-    without landing the new ones.
 
     ``ops`` is the backend-specific DataAccessOps the observation sweep below needs to choose
     the PG (native array) vs Oracle (junction table) read path — pass ``pool.ops``.
@@ -163,15 +164,15 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     from ..memories import META_CHUNK_ID, DeletePredicate, get_memories
 
     _store = get_memories()
-    if bank_id and not _store.writes_memory_rows_in_sql_for(bank_id):
+    if bank_id and _store.store_owned_for(bank_id):
         for _cid in chunk_ids:
-            await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}), txn=txn)
+            await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}))
 
     # PostgreSQL's FK cascade deletes child memory_links in executor-chosen
     # order. Concurrent chunk deletes for the same bank can then lock overlapping
     # memory_links in opposite orders and deadlock. Delete links explicitly in a
     # total order before deleting chunks so every writer takes row locks the same
-    # way; the FK cascade still handles anything inserted later in this txn.
+    # way; the FK cascade still handles anything inserted later in this transaction.
     #
     # ``matched_links`` collects the endpoints as a UNION of two single-column joins
     # rather than the one ``tu.id = ml.from_unit_id OR tu.id = ml.to_unit_id`` predicate
@@ -274,7 +275,7 @@ async def store_chunks_batch(
     # same shape as store_document_text=False, and idempotency is unaffected (content_hash stays).
     from ..memories import get_memories
 
-    if get_memories().owns_document_store_for(bank_id):
+    if get_memories().store_owned_for(bank_id):
         store_text = False
 
     # Prepare chunk data for batch insert

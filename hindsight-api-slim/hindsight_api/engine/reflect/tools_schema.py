@@ -136,6 +136,18 @@ TOOL_EXPAND = {
     },
 }
 
+# The done tool's own source-language rule, read at the moment the model writes the
+# answer. Mutually exclusive with a configured output language, like the rule in every
+# prompt (see prompt_utils.default_language_section): with a language set it is removed by
+# _done_tool_for_output_language, and the directive takes its place on the tool. Left in,
+# it out-ranked the directive from the very last position in the model's context — and it
+# pointed at "a language directive in the system prompt", where the directive no longer
+# lives (#3776).
+_DONE_ANSWER_DEFAULT_LANGUAGE = (
+    " LANGUAGE: By default, write in the SAME language as the user's question. However, if a "
+    "language directive in the system prompt specifies a different language, follow that directive instead."
+)
+
 TOOL_DONE_ANSWER = {
     "type": "function",
     "function": {
@@ -146,7 +158,11 @@ TOOL_DONE_ANSWER = {
             "properties": {
                 "answer": {
                     "type": "string",
-                    "description": "Your response as well-formatted markdown. Use headers, lists, bold/italic, and code blocks for clarity. NEVER include memory IDs, UUIDs, or 'Memory references' in this text - put IDs only in memory_ids array. LANGUAGE: By default, write in the SAME language as the user's question. However, if a language directive in the system prompt specifies a different language, follow that directive instead.",
+                    "description": (
+                        "Your response as well-formatted markdown. Use headers, lists, bold/italic, and code blocks "
+                        "for clarity. NEVER include memory IDs, UUIDs, or 'Memory references' in this text - put IDs "
+                        f"only in memory_ids array.{_DONE_ANSWER_DEFAULT_LANGUAGE}"
+                    ),
                 },
                 "memory_ids": {
                     "type": "array",
@@ -242,6 +258,24 @@ def _done_tool_for_document(base: dict) -> dict:
 TOOL_DONE_DOCUMENT = _done_tool_for_document(TOOL_DONE_ANSWER)
 
 
+def _done_tool_for_output_language(base: dict, language: str) -> dict:
+    """Replace a done tool's default source-language rule with the configured language.
+
+    The directive goes on the tool's own description rather than the ``answer`` field so it
+    reaches every variant the same way — the document variant has no ``answer`` field and
+    the directive-aware variant's ``answer`` carries the compliance rules instead.
+    """
+    tool = copy.deepcopy(base)
+    answer = tool["function"]["parameters"]["properties"].get("answer")
+    if answer is not None:
+        answer["description"] = answer["description"].replace(_DONE_ANSWER_DEFAULT_LANGUAGE, "")
+    tool["function"]["description"] += (
+        f" LANGUAGE: Write the answer exclusively in {language}, whatever language the question "
+        "and the retrieved memories are in."
+    )
+    return tool
+
+
 def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
     """
     Build the done tool schema with directive compliance field.
@@ -308,6 +342,7 @@ def get_reflect_tools(
     include_recall: bool = True,
     include_expand: bool = True,
     answer_as_document: bool = False,
+    llm_output_language: str | None = None,
 ) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
@@ -330,6 +365,8 @@ def get_reflect_tools(
             of a markdown ``answer``. Used when the answer is stored as a
             document (mental-model refresh) so the model never writes the
             markdown that gets persisted.
+        llm_output_language: Configured output language. Swaps ``done``'s default
+            answer-in-the-question's-language rule for a directive to write in it.
 
     Returns:
         List of tool definitions in OpenAI format
@@ -351,6 +388,11 @@ def get_reflect_tools(
         done_tool = _build_done_tool_with_directives(directive_rules)
     else:
         done_tool = TOOL_DONE_ANSWER
-    tools.append(_done_tool_for_document(done_tool) if answer_as_document else done_tool)
+    if answer_as_document:
+        done_tool = _done_tool_for_document(done_tool)
+    # After the document swap: that replaces the tool description this appends to.
+    if llm_output_language:
+        done_tool = _done_tool_for_output_language(done_tool, llm_output_language)
+    tools.append(done_tool)
 
     return tools

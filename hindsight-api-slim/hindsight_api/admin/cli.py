@@ -225,6 +225,66 @@ async def _validate_restore_schema(
     return plans
 
 
+def _quote_identifier(identifier: str) -> str:
+    """Quote a PostgreSQL identifier for catalog-derived dynamic SQL."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+async def _sync_owned_sequences(conn: asyncpg.Connection, schema: str, tables: list[str]) -> None:
+    """Advance non-cyclic identity sequences past restored column values."""
+    sequences = await conn.fetch(
+        """
+        SELECT tbl.relname AS table_name,
+               attr.attname AS column_name,
+               seq_ns.nspname AS sequence_schema,
+               seq.relname AS sequence_name,
+               pg_seq.seqstart AS sequence_start,
+               pg_seq.seqincrement AS sequence_increment,
+               pg_seq.seqmin AS sequence_min,
+               pg_seq.seqmax AS sequence_max
+        FROM pg_catalog.pg_class AS tbl
+        JOIN pg_catalog.pg_namespace AS tbl_ns ON tbl_ns.oid = tbl.relnamespace
+        JOIN pg_catalog.pg_attribute AS attr
+          ON attr.attrelid = tbl.oid AND attr.attnum > 0 AND NOT attr.attisdropped
+        JOIN pg_catalog.pg_depend AS dep
+          ON dep.refobjid = tbl.oid
+         AND dep.refobjsubid = attr.attnum
+         AND dep.classid = 'pg_catalog.pg_class'::regclass
+         AND dep.refclassid = 'pg_catalog.pg_class'::regclass
+         AND dep.deptype = 'i'
+        JOIN pg_catalog.pg_class AS seq ON seq.oid = dep.objid AND seq.relkind = 'S'
+        JOIN pg_catalog.pg_namespace AS seq_ns ON seq_ns.oid = seq.relnamespace
+        JOIN pg_catalog.pg_sequence AS pg_seq ON pg_seq.seqrelid = seq.oid
+        WHERE tbl_ns.nspname = $1
+          AND tbl.relname = ANY($2::text[])
+          AND attr.attidentity <> ''
+          AND NOT pg_seq.seqcycle
+        ORDER BY tbl.relname, attr.attnum
+        """,
+        schema,
+        tables,
+    )
+
+    for sequence in sequences:
+        aggregate = "MAX" if sequence["sequence_increment"] > 0 else "MIN"
+        qualified_table = f"{_quote_identifier(schema)}.{_quote_identifier(sequence['table_name'])}"
+        column = _quote_identifier(sequence["column_name"])
+        restored_edge = await conn.fetchval(
+            f"SELECT {aggregate}({column}) FROM {qualified_table} "
+            f"WHERE {column} BETWEEN {int(sequence['sequence_min'])} AND {int(sequence['sequence_max'])}"
+        )
+        qualified_sequence = (
+            f"{_quote_identifier(sequence['sequence_schema'])}.{_quote_identifier(sequence['sequence_name'])}"
+        )
+        restart_value = sequence["sequence_start"] if restored_edge is None else restored_edge
+        await conn.execute(f"ALTER SEQUENCE {qualified_sequence} RESTART WITH {int(restart_value)}")
+        if restored_edge is not None:
+            # RESTART is transactional; consuming the restored edge gives the
+            # sequence setval(edge, true) semantics without calculating a value
+            # beyond a finite sequence's min/max bound.
+            await conn.fetchval("SELECT nextval($1::regclass)", qualified_sequence)
+
+
 def _effective_backup_tables() -> list[str]:
     """Core backup tables plus any bank-scoped tables a loaded extension declares.
 
@@ -394,6 +454,9 @@ async def _restore(
                 # Refresh materialized view
                 typer.echo("  Refreshing materialized views...")
                 await conn.execute(f"REFRESH MATERIALIZED VIEW {_fq_table('memory_units_bm25', schema)}")
+
+                typer.echo("  Synchronizing identity sequences...")
+                await _sync_owned_sequences(conn, schema, backup_tables)
 
         return manifest
     finally:

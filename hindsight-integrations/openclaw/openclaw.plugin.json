@@ -33,7 +33,7 @@
     "properties": {
       "daemonIdleTimeout": {
         "type": "number",
-        "description": "Seconds before daemon shuts down from inactivity (0 = never)",
+        "description": "Deprecated and ignored: the daemon no longer shuts down from inactivity",
         "default": 0
       },
       "embedPort": {
@@ -354,7 +354,7 @@
   "uiHints": {
     "daemonIdleTimeout": {
       "label": "Daemon Idle Timeout",
-      "placeholder": "0 (never timeout)"
+      "placeholder": "deprecated, ignored"
     },
     "embedPort": {
       "label": "Embed Server Port",

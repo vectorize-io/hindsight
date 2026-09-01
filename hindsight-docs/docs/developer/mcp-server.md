@@ -278,8 +278,14 @@ Create a mental model — a living document that stays current with your memorie
 | `mental_model_id` | string | No | Custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided |
 | `tags` | list[string] | No | Tags for organizing and filtering models |
 | `tags_match` | string | No | How the model's tags are matched against memories on refresh: `any`, `all`, `any_strict`, `all_strict`, or `exact`. See the note below on the default |
+| `trigger` | object | No | Refresh policy — see [Trigger settings](#trigger-settings) |
 | `max_tokens` | integer | No | Maximum tokens for model content (default: 2048) |
-| `trigger_refresh_after_consolidation` | boolean | No | Auto-refresh this model after memory consolidation (default: `false`) |
+| `trigger_refresh_after_consolidation` | boolean | No | Legacy shorthand for `trigger.refresh_after_consolidation` |
+
+`trigger` is the preferred form for refresh settings; `tags_match` and
+`trigger_refresh_after_consolidation` remain as shorthands for existing
+integrations. Setting the same field both ways is an error rather than one
+silently winning.
 
 :::warning Tagged models default to `all_strict`
 When a mental model has `tags` but no explicit `tags_match`, its refresh matches memories with **`all_strict`** — a memory must carry **every** one of the model's tags to be included. If your memories use narrow, single-topic tags (e.g. `["project:status"]`) while the model is tagged broadly (e.g. `["projects", "mental-model"]`), the refresh filters out everything and the content comes back empty.
@@ -347,7 +353,59 @@ Update a mental model's metadata or settings.
 | `source_query` | string | No | New source query |
 | `tags` | list[string] | No | New tags |
 | `max_tokens` | integer | No | New max tokens |
+| `trigger` | object | No | Refresh-policy fields to change — see [Trigger settings](#trigger-settings). This is a patch: omitted fields keep their current values |
+| `tags_match` | string | No | Legacy shorthand for `trigger.tags_match` |
 | `trigger_refresh_after_consolidation` | boolean | No | Auto-refresh after consolidation. Only set when you want to change this setting |
+
+---
+
+### Trigger settings
+
+`trigger` carries a mental model's (or knowledge page's) refresh policy: **when**
+it rebuilds itself and **what** it rebuilds from. It accepts every field the HTTP
+API accepts, so anything you can configure through `PATCH /mental_models/{id}`
+you can also configure from an agent over MCP.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mode` | string | `full` regenerates the content from scratch on each refresh; `delta` makes surgical edits, preserving unchanged sections byte-for-byte. Delta falls back to full when there is no existing content or the source query changed |
+| `refresh_after_consolidation` | boolean | Rebuild after each memory consolidation |
+| `refresh_cron` | string | UTC five-field cron, e.g. `0 3 * * *` for daily at 03:00 UTC. Only runs when the model is stale, so an unchanged scope costs no LLM call |
+| `min_refresh_interval_seconds` | integer | Floor between two *automatic* refreshes. Triggers arriving sooner fold into one queued refresh, so a burst of retains costs one rebuild. Explicit refreshes ignore it |
+| `fact_types` | list[string] | Which of `world`, `experience`, `observation` the refresh retrieves. Omit for all three |
+| `exclude_mental_models` | boolean | Exclude **all** mental models from the refresh, so a model never reflects on its siblings |
+| `exclude_mental_model_ids` | list[string] | Exclude specific mental models by ID |
+| `tags_match` | string | How the model's tags select memories: `any`, `all`, `any_strict`, `all_strict`, `exact` |
+| `tag_groups` | list[object] | Compound boolean tag expressions used *instead of* the model's flat tags |
+| `include_chunks` | boolean | Whether the refresh's internal recall returns raw chunk text |
+| `recall_max_tokens` | integer | Token budget for facts from the refresh's internal recall |
+| `recall_chunks_max_tokens` | integer | Token budget for raw chunks from the refresh's internal recall |
+| `response_schema` | object | JSON Schema for structured output, stored alongside the markdown under `reflect_response.structured_output` |
+| `keep_trace` | boolean | Record how each refresh reached its result under `reflect_response.trace`. The only way to diagnose a cron- or consolidation-driven refresh after the fact |
+
+`refresh_after_consolidation` and `refresh_cron` are **mutually exclusive** — a
+model refreshes either after consolidation or on a schedule, never both. Setting
+one clears the other.
+
+**On create**, omitted fields take the engine defaults (`mode: full`, no
+schedule, all fact types); for a knowledge page they take the page defaults
+(`mode: delta`, observation-only, auto-refresh, siblings excluded).
+
+**On update, `trigger` is a patch**: only the fields you send change, so putting
+a model on a cron schedule keeps its `fact_types` and `mode`. Send an explicit
+`null` to clear a nullable setting. Read the current policy back with
+`get_mental_model` (detail `content` or `full`) if you want to inspect before
+changing.
+
+```json
+{
+  "name": "update_mental_model",
+  "arguments": {
+    "mental_model_id": "team-conventions",
+    "trigger": { "refresh_cron": "0 3 * * *", "fact_types": ["observation"] }
+  }
+}
+```
 
 ---
 
@@ -649,7 +707,12 @@ Create a page — a living document whose content is synthesized from the bank's
 | `parent_id` | string | No | Parent folder id (a `kf-...` node id). Omit to create at the top level |
 | `tags` | array | No | Tags scoping which memories the page is built from |
 | `max_tokens` | integer | No | Maximum tokens for the generated content (default: 4096) |
-| `refresh_after_consolidation` | boolean | No | Whether the page rebuilds after each consolidation. Omit to keep the knowledge-page default (`true`) |
+| `trigger` | object | No | Refresh policy — see [Trigger settings](#trigger-settings). Omitted fields keep the knowledge-page defaults: `delta` rebuilds from consolidated observations after each consolidation, ignoring sibling pages |
+| `refresh_after_consolidation` | boolean | No | Legacy shorthand for `trigger.refresh_after_consolidation` |
+
+Set `trigger.refresh_cron` to move a page off consolidation-driven rebuilds and
+onto a fixed UTC schedule — the two are mutually exclusive, so the cron clears
+the auto-refresh while leaving the page's `mode` and `fact_types` alone.
 
 ---
 
@@ -665,7 +728,8 @@ Rename or move a folder/page, and/or update a page's options. Only the arguments
 | `source_query` | string | No | Pages only — the new question the page answers |
 | `tags` | array | No | Pages only — replacement tag list (pass `[]` to clear) |
 | `max_tokens` | integer | No | Pages only — new maximum tokens for the generated content |
-| `refresh_after_consolidation` | boolean | No | Pages only — whether the page rebuilds after each consolidation |
+| `trigger` | object | No | Pages only — refresh-policy fields to change; see [Trigger settings](#trigger-settings). This is a patch: omitted fields keep their current values |
+| `refresh_after_consolidation` | boolean | No | Pages only — legacy shorthand for `trigger.refresh_after_consolidation` |
 
 ---
 

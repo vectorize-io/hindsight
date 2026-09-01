@@ -7,6 +7,25 @@ Business logic calls these methods instead of embedding raw SQL fragments.
 from abc import ABC, abstractmethod
 
 
+def bm25_score_gate(bm25_min_score: float) -> str:
+    """Return the comparison a BM25 arm applies to its relevance score.
+
+    Two different jobs share one number. With no caller floor (the default,
+    ``0.0``) the gate is structural — ``> 0`` keeps only genuine term matches on
+    backends whose operator ranks every document instead of pre-filtering. With a
+    caller floor (recall's ``min_scores.keyword``) the gate becomes that floor,
+    **inclusive**, matching the documented contract and the semantic arm's
+    ``>= min_similarity``. A positive floor subsumes the structural gate, so the
+    two never need to be applied together.
+    """
+    if bm25_min_score <= 0:
+        return "> 0"
+    # `!r` (shortest round-tripping repr), not `:g` — `:g` truncates to 6
+    # significant digits, so a caller echoing a `scores.keyword` value back as a
+    # floor could get a literal that rounds up past its own row and drops it.
+    return f">= {bm25_min_score!r}"
+
+
 class SQLDialect(ABC):
     """SQL dialect interface for portable query construction.
 
@@ -399,6 +418,7 @@ class SQLDialect(ABC):
         text_search_extension: str = "native",
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
+        pg_search_function_schema: str = "paradedb",
         extra_where: str = "",
     ) -> str:
         """Build a BM25/full-text search subquery arm.
@@ -418,14 +438,21 @@ class SQLDialect(ABC):
             arm_index: Index of this arm in the UNION ALL (used by Oracle for
                        unique SCORE labels).
             text_search_extension: Full-text search backend ("native", "vchord",
-                                   "pg_textsearch", "pgroonga"). Only relevant for PostgreSQL.
+                                   "pg_textsearch", "pgroonga", "pg_search"). Only relevant for PostgreSQL.
             bm25_language: PostgreSQL text search dictionary used by the native
                            backend (e.g. "english", "french"). Ignored by other backends.
-            bm25_min_score: Minimum BM25 relevance score a row must exceed to be
-                            returned. Gates out non-matching rows on backends whose
-                            operator (e.g. VectorChord) ranks every document instead
-                            of pre-filtering to query-term matches. Backends that
-                            already apply a boolean match gate ignore this.
+            bm25_min_score: Inclusive minimum BM25 relevance score a row must
+                            reach to be returned (recall's ``min_scores.keyword``,
+                            or the ``bm25_min_score`` config default). Every
+                            backend must honour it. At the ``0.0`` default it
+                            degrades to a structural ``> 0`` match gate, which
+                            matters for backends whose operator (e.g. VectorChord)
+                            ranks every document instead of pre-filtering to
+                            query-term matches; backends with their own boolean
+                            match gate (`@@`, `&@~`, `@@@`) need no extra
+                            predicate at that default.
+            pg_search_function_schema: Schema containing pg_search functions (e.g. "paradedb",
+                                       "pgsearch"). Only used by the pg_search backend.
             extra_where: Optional additional WHERE clause fragment (e.g. time range filter).
         """
         ...

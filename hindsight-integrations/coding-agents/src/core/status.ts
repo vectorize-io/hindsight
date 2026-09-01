@@ -21,7 +21,7 @@ import { SURVEY_DOC_IDS } from "./survey";
 
 /** Minimal client shape (HindsightClient satisfies it structurally). */
 export interface StatusClient {
-  listDocumentIds(tag: string): Promise<Set<string>>;
+  listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
   activeOperations(): Promise<number>;
@@ -61,11 +61,15 @@ export async function syncStatus(
   bank: string,
   repoDir?: string
 ): Promise<SyncStatus> {
-  const gitIds = await client.listDocumentIds("source:git");
-  const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
+  const gitIds = await client.listDocumentIds("source:git", "all_strict");
+  const chatIds = await client
+    .listDocumentIds("source:chat", "all_strict")
+    .catch(() => new Set<string>());
   const pages = parsePageList(await client.listPages().catch(() => null));
   const activeOps = await client.activeOperations().catch(() => null);
-  const uploads = await client.listDocumentIds("source:upload").catch(() => new Set<string>());
+  const uploads = await client
+    .listDocumentIds("source:upload", "all_strict")
+    .catch(() => new Set<string>());
   const surveyDocs = SURVEY_DOC_IDS.filter((id) => uploads.has(id)).length;
 
   // Survey observability: the survey-baseline:<sha> markers Chris's re-survey mechanism writes.
@@ -74,7 +78,7 @@ export async function syncStatus(
   let surveyCommitsBehind: number | null = null;
   if (repoDir) {
     try {
-      const markers = await client.listDocumentIds("source:survey-baseline");
+      const markers = await client.listDocumentIds("source:survey-baseline", "all_strict");
       let best: { sha: string; behind: number } | undefined;
       for (const id of markers) {
         const sha = id.replace(/^survey-baseline:/, "");

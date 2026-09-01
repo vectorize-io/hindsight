@@ -5,7 +5,7 @@ vector distance (VECTOR_DISTANCE), full-text search (Oracle Text), and
 other non-portable patterns.
 """
 
-from .base import SQLDialect
+from .base import SQLDialect, bm25_score_gate
 
 
 class OracleDialect(SQLDialect):
@@ -269,6 +269,7 @@ class OracleDialect(SQLDialect):
         text_search_extension: str = "native",
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
+        pg_search_function_schema: str = "paradedb",
         extra_where: str = "",
     ) -> str:
         # Oracle Text: CONTAINS() / SCORE() with the CTXSYS.CONTEXT index.
@@ -283,9 +284,10 @@ class OracleDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
-            # CONTAINS already gates to genuine matches; the configurable floor
-            # (default 0) keeps the threshold semantics uniform across backends.
-            f"   AND CONTAINS(text, {text_param}, {label}) > {bm25_min_score:g}"
+            # CONTAINS already gates to genuine matches, so at the 0.0 default the
+            # gate is the structural `> 0`; a caller's `min_scores.keyword` floor
+            # replaces it with an inclusive `>=`, uniform across backends.
+            f"   AND CONTAINS(text, {text_param}, {label}) {bm25_score_gate(bm25_min_score)}"
             f"   {tags_clause}"
             f"   {groups_clause}"
             f"   {extra_where}"

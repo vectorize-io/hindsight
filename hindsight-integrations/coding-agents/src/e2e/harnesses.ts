@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HarnessDockerSetup } from "./harness";
 import { codexDockerSetup } from "./codex";
+import { dcodeDockerSetup } from "./dcode";
 
 const home = (...parts: string[]) => join(homedir(), ...parts);
 
@@ -155,6 +156,42 @@ export const grokDockerSetup: HarnessDockerSetup = {
 };
 
 /**
+ * Qwen Code — `-p` runs one prompt and exits.
+ *
+ * Driven through the stub model: Qwen honours the OpenAI-compatible env triple, so no vendor
+ * account has to reach the container. `APPROVAL_MODE=yolo` keeps a tool call from blocking on a
+ * prompt no one is there to answer. Never pass `--safe-mode`: it disables hooks, which is the
+ * entire thing under test.
+ *
+ * RETENTION-ONLY, and for a different reason than grok-build's passive hook.
+ *
+ * Injection itself DOES happen here: verified against qwen-code 0.22.3, headless `qwen -p` carries
+ * `submitted_prompt`, the prompt hook fires, and the resulting transcript record holds
+ * `systemPayload.hookContext` — the host's own marker that our `additionalContext` reached the
+ * model. What cannot be asserted is the ECHO: the stub model replies with the first 20 000
+ * characters of the request (stub-model.ts), and Qwen's system prompt alone exceeds that, so the
+ * injected block never reaches the echoed answer no matter how well injection worked. Asserting
+ * the seeded statuses would keep this harness permanently red for a stub-side truncation, not a
+ * wiring defect. Session seeding, write-back and the MCP tools are still asserted.
+ *
+ * (`serve`, the SDK and ACP carry no `submitted_prompt` and so genuinely never recall — that is a
+ * real limitation of keying on it, just not the reason this flag is false.)
+ */
+export const qwenDockerSetup: HarnessDockerSetup = {
+  name: "qwen-code",
+  hindsightHarness: "qwen-code",
+  installCommand: "hindsight-coding-agents install qwen-code",
+  stubModelEnv: (baseUrl) => ({
+    OPENAI_BASE_URL: `${baseUrl}/v1`,
+    OPENAI_API_KEY: "hindsight-e2e",
+    OPENAI_MODEL: "hindsight-e2e-stub",
+    APPROVAL_MODE: "yolo",
+  }),
+  injectsIntoModel: false,
+  command: (prompt) => ["qwen", "-p", prompt],
+};
+
+/**
  * Devin CLI — `-p` takes the prompt inline and exits.
  *
  * Credentials live in `~/.local/share/devin/credentials.toml`, NOT the `~/.config/devin/config.json`
@@ -249,12 +286,14 @@ export const dshDockerSetup: HarnessDockerSetup = {
 /** Every harness the unified Docker E2E can drive, in a stable order. */
 export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   codexDockerSetup,
+  dcodeDockerSetup,
   opencodeDockerSetup,
   kiloDockerSetup,
   claudeCodeDockerSetup,
   cursorDockerSetup,
   copilotDockerSetup,
   grokDockerSetup,
+  qwenDockerSetup,
   devinDockerSetup,
   clineDockerSetup,
   piDockerSetup,

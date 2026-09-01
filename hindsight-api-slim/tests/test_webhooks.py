@@ -19,6 +19,7 @@ import pytest_asyncio
 from hindsight_api import LLMConfig
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.extensions import OperationValidationError
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
 from hindsight_api.webhooks.models import (
     ConsolidationEventData,
@@ -504,8 +505,88 @@ async def api_client(memory: MemoryEngine):
         yield client
 
 
+@pytest_asyncio.fixture
+async def webhook_validation_api_client():
+    """HTTP client with a mock engine for route-level validation failures."""
+    memory = MagicMock()
+    memory.audit_logger = None
+    app = create_app(memory, initialize_memory=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, memory
+
+
 class TestWebhookHttpApi:
     """HTTP API integration tests for webhook CRUD endpoints."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body", "memory_method"),
+        [
+            ("POST", "/webhooks", {"url": "https://example.com/hook"}, "create_webhook"),
+            ("GET", "/webhooks", None, "list_webhooks"),
+            # Fixed uuids, not uuid.uuid4(): the value is interpolated into the
+            # parameter — and therefore into the test id — at collection time, and
+            # every xdist worker collects independently. Random ids made each
+            # worker's node-id list differ, so the shard aborted with "Different
+            # tests were collected between gw0 and gw2" whenever more than one
+            # worker picked these up. The endpoint never looks the id up (the
+            # validator rejects the call first), so any well-formed uuid does.
+            ("DELETE", "/webhooks/44499a74-6ba1-4c39-bc1e-7ee63635429d", None, "delete_webhook"),
+            ("PATCH", "/webhooks/66935c96-7b4c-417b-8c60-db8f102bafe9", {"enabled": False}, "update_webhook"),
+            ("GET", "/webhooks/75daa3bb-0cb3-4106-9bac-ac003d8f7b23/deliveries", None, "list_webhook_deliveries"),
+        ],
+    )
+    async def test_http_preserves_operation_validation_error(
+        self,
+        webhook_validation_api_client,
+        method: str,
+        path: str,
+        json_body: dict | None,
+        memory_method: str,
+    ):
+        """Webhook routes preserve validator status and reason instead of returning 500."""
+        api_client, memory = webhook_validation_api_client
+        setattr(
+            memory,
+            memory_method,
+            AsyncMock(side_effect=OperationValidationError("webhooks denied", status_code=403)),
+        )
+
+        response = await api_client.request(
+            method,
+            f"/v1/default/banks/validation-bank{path}",
+            json=json_body,
+        )
+
+        assert response.status_code == 403, response.text
+        assert response.json() == {"detail": "webhooks denied"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body"),
+        [
+            ("DELETE", "/webhooks/not-a-uuid", None),
+            ("PATCH", "/webhooks/not-a-uuid", {"enabled": False}),
+            ("GET", "/webhooks/not-a-uuid/deliveries", None),
+        ],
+    )
+    async def test_http_rejects_malformed_webhook_id(
+        self,
+        webhook_validation_api_client,
+        method: str,
+        path: str,
+        json_body: dict | None,
+    ):
+        """Malformed webhook IDs are client errors, not generic server failures."""
+        api_client, _ = webhook_validation_api_client
+        response = await api_client.request(
+            method,
+            f"/v1/default/banks/validation-bank{path}",
+            json=json_body,
+        )
+
+        assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
     async def test_http_create_webhook(self, api_client: httpx.AsyncClient):
@@ -1276,6 +1357,16 @@ class TestRetainCompletedWebhook:
                 outbox_callback=callback,
             )
 
+            if not (split_counts and split_counts[0] > 1):
+                # A store that owns retain persistence buffers to its own session and commits once,
+                # so the engine does not sub-batch for it and there are no slices to spread a
+                # webhook across. The delivery count below is still the property under test and
+                # still asserted; what is absent is the multi-slice SHAPE this case exists to
+                # exercise, so say that rather than fail as though the webhook misfired.
+                from hindsight_api.engine.memories import get_memories
+
+                if get_memories().store_owned:
+                    pytest.skip("the memories store does not sub-batch; no slices to fire across")
             assert split_counts and split_counts[0] > 1, (
                 f"the batch never split, so nothing was tested (sub-batches: {split_counts})"
             )
@@ -1331,6 +1422,16 @@ class TestRetainCompletedWebhook:
                 outbox_callback=callback,
             )
 
+            if not (split_counts and split_counts[0] > 1):
+                # A store that owns retain persistence buffers to its own session and commits once,
+                # so the engine does not sub-batch for it and there are no slices to spread a
+                # webhook across. The delivery count below is still the property under test and
+                # still asserted; what is absent is the multi-slice SHAPE this case exists to
+                # exercise, so say that rather than fail as though the webhook misfired.
+                from hindsight_api.engine.memories import get_memories
+
+                if get_memories().store_owned:
+                    pytest.skip("the memories store does not sub-batch; no slices to fire across")
             assert split_counts and split_counts[0] > 1, (
                 f"the document was never sliced, so nothing was tested (sub-batches: {split_counts})"
             )

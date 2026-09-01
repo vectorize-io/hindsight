@@ -231,12 +231,12 @@ async def test_a_store_without_a_document_store_does_not_accumulate(monkeypatch)
     import hindsight_api.engine.retain.orchestrator as orch
 
     store = MagicMock()
-    store.owns_document_store_for.return_value = False
+    store.store_owned_for.return_value = False
     monkeypatch.setattr("hindsight_api.engine.memories.get_memories", lambda: store)
 
     # The gate is what the accumulating branch is chosen by; assert the store is consulted and
     # answers no, which routes to the direct per-sub-batch write instead.
     from hindsight_api.engine.memories import get_memories
 
-    assert get_memories().owns_document_store_for("bank") is False
+    assert get_memories().store_owned_for("bank") is False
     assert orch._contiguous_prefix({}) == []

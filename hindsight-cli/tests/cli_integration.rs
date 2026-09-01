@@ -763,6 +763,186 @@ fn test_mental_model_update() {
 }
 
 #[test]
+fn test_mental_model_update_trigger_settings() {
+    skip_if_no_server!();
+
+    let bank_id = test_bank_id("mm-trigger-mode");
+
+    // Create the bank first
+    let output = run_hindsight(&["bank", "create", &bank_id, "--name", "Test Bank"]);
+    assert!(
+        output.status.success(),
+        "bank create failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Create a delta mental model that also refreshes after consolidation, so
+    // the update below has non-default trigger settings to preserve.
+    let output = run_hindsight(&[
+        "mental-model",
+        "create",
+        &bank_id,
+        "Test Trigger Mode Model",
+        "What are the key facts?",
+        "--trigger-refresh-after-consolidation",
+        "--trigger-mode",
+        "delta",
+    ]);
+    assert!(
+        output.status.success(),
+        "mental-model create failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // List to get the ID
+    let output = run_hindsight(&["mental-model", "list", &bank_id, "-o", "json"]);
+    assert!(
+        output.status.success(),
+        "mental-model list failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+        .expect("list output is valid JSON");
+    let id = result
+        .get("items")
+        .and_then(|v| v.as_array())
+        .expect("list response has items")
+        .iter()
+        .find(|item| item.get("name").and_then(|v| v.as_str()) == Some("Test Trigger Mode Model"))
+        .expect("created mental model appears in list")
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("mental model has an id")
+        .to_string();
+
+    // Read the trigger the server currently stores via `get -o json`.
+    let stored_trigger = || {
+        let output = run_hindsight(&["mental-model", "get", &bank_id, &id, "-o", "json"]);
+        assert!(
+            output.status.success(),
+            "mental-model get failed: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value =
+            serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+                .expect("get output is valid JSON");
+        result
+            .get("trigger")
+            .cloned()
+            .expect("mental model has a trigger")
+    };
+
+    let update = |args: &[&str]| {
+        let mut argv = vec!["mental-model", "update", &bank_id, &id];
+        argv.extend_from_slice(args);
+        run_hindsight(&argv)
+    };
+
+    let trigger = stored_trigger();
+    assert_eq!(trigger["refresh_after_consolidation"], true);
+    assert_eq!(trigger["mode"], "delta", "create honours --trigger-mode");
+
+    // Switch the trigger back to full. The settings not named on the command
+    // line must survive: sending a freshly-built trigger used to reset them.
+    let output = update(&["--trigger-mode", "full"]);
+    assert!(
+        output.status.success(),
+        "update --trigger-mode full failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let trigger = stored_trigger();
+    assert_eq!(trigger["mode"], "full");
+    assert_eq!(
+        trigger["refresh_after_consolidation"], true,
+        "changing the mode must not reset refresh_after_consolidation: {trigger}"
+    );
+
+    // The other exposed settings round-trip, and leave the mode alone.
+    let output = update(&[
+        "--trigger-keep-trace",
+        "true",
+        "--trigger-min-refresh-interval-seconds",
+        "900",
+        "--trigger-tags-match",
+        "any_strict",
+    ]);
+    assert!(
+        output.status.success(),
+        "update trigger settings failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let trigger = stored_trigger();
+    assert_eq!(trigger["keep_trace"], true);
+    assert_eq!(trigger["min_refresh_interval_seconds"], 900);
+    assert_eq!(trigger["tags_match"], "any_strict");
+    assert_eq!(trigger["mode"], "full", "mode must survive: {trigger}");
+
+    // Moving the model onto a schedule clears the auto-refresh it was created
+    // with — the two are mutually exclusive — and keeps everything else.
+    let output = update(&["--trigger-refresh-cron", "0 3 * * *"]);
+    assert!(
+        output.status.success(),
+        "update --trigger-refresh-cron failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let trigger = stored_trigger();
+    assert_eq!(trigger["refresh_cron"], "0 3 * * *");
+    assert_eq!(trigger["refresh_after_consolidation"], false);
+    assert_eq!(trigger["keep_trace"], true, "keep_trace must survive");
+
+    // Asking for both at once is the one contradiction only the user can settle.
+    let output = update(&[
+        "--trigger-refresh-cron",
+        "0 4 * * *",
+        "--trigger-refresh-after-consolidation",
+        "true",
+    ]);
+    assert!(
+        !output.status.success(),
+        "both refresh flags at once should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("mutually exclusive"),
+        "unexpected stderr: {stderr}"
+    );
+
+    // An empty string clears the schedule again.
+    let output = update(&["--trigger-refresh-cron", ""]);
+    assert!(
+        output.status.success(),
+        "clearing --trigger-refresh-cron failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stored_trigger()["refresh_cron"].is_null());
+
+    // Unknown modes must fail loudly.
+    let output = update(&["--trigger-mode", "incremental"]);
+    assert!(
+        !output.status.success(),
+        "update --trigger-mode incremental should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid --trigger-mode 'incremental'"),
+        "unexpected stderr: {stderr}"
+    );
+
+    // Clean up
+    let output = run_hindsight(&["bank", "delete", &bank_id, "-y"]);
+    assert!(
+        output.status.success(),
+        "bank delete failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn test_mental_model_refresh() {
     skip_if_no_server!();
 

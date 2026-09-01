@@ -108,6 +108,12 @@ describe("pi extension adapter", () => {
       name: "hindsight_search_knowledge_pages",
       description: "Search the knowledge pages",
       inputSchema: { query: z.string(), limit: z.number().optional() },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       handler: async () => ({ content: [{ type: "text", text: "page A\npage B" }] }),
     };
 

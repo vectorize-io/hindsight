@@ -17,15 +17,18 @@ import pytest
 
 from hindsight_api.engine.consolidation.consolidator import (
     _DEDUP_PROMPT,
+    _apply_dedup_create_fold,
+    _apply_dedup_update_fold,
     _dedup_active,
+    _dedup_adjudicate,
     _dedup_decision_from_response,
-    _dedup_reconcile_create,
-    _dedup_reconcile_update,
     _DedupDecision,
+    _DedupOutcome,
     _duplicate_create_target,
     _norm_obs_text,
     _TemporalBounds,
 )
+from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memories import RecallArms
 from hindsight_api.engine.search.types import RetrievalResult
 
@@ -36,6 +39,46 @@ _SOURCE_BOUNDS = _TemporalBounds(
     occurred_end=datetime(2024, 1, 3, tzinfo=timezone.utc),
     mentioned_at=datetime(2024, 1, 4, tzinfo=timezone.utc),
 )
+
+
+# Consolidation prepares an action (probe + adjudicate, connection-free) and applies it
+# (the fold) in separate phases, so that every write from one LLM response shares one
+# transaction (#3876). These helpers compose the two halves the way the batch executor
+# does, so the tests below still cover the whole decision -> write path.
+
+
+async def _dedup_reconcile_create(
+    *, pool, memory_engine, bank_id, config, dedup_llm_config, create_text, create_source_ids, tags, source_bounds
+):
+    outcome = await _dedup_adjudicate(
+        pool, memory_engine, bank_id, config, dedup_llm_config, create_text, None, tags, exclude_id=None
+    )
+    async with acquire_with_retry(pool) as conn:
+        async with conn.transaction():
+            return await _apply_dedup_create_fold(
+                conn, memory_engine, bank_id, config, outcome, create_source_ids, source_bounds
+            )
+
+
+async def _dedup_reconcile_update(
+    *, pool, memory_engine, bank_id, config, dedup_llm_config, updated_id, updated_text, updated_emb_str, tags
+):
+    outcome = await _dedup_adjudicate(
+        pool,
+        memory_engine,
+        bank_id,
+        config,
+        dedup_llm_config,
+        updated_text,
+        updated_emb_str,
+        tags,
+        exclude_id=updated_id,
+    )
+    async with acquire_with_retry(pool) as conn:
+        async with conn.transaction():
+            return await _apply_dedup_update_fold(
+                conn, memory_engine, bank_id, config, outcome, updated_id, updated_text
+            )
 
 
 @dataclass
@@ -81,7 +124,7 @@ def test_novel_create_is_not_duplicate() -> None:
     assert _duplicate_create_target("", {}, set()) is None
 
 
-# ── semantic dedup (_dedup_reconcile_create) ──────────────────────────────────
+# ── semantic dedup (create path: adjudicate + fold) ──────────────────────────────────
 #
 # Mocks the embedder, the obs-anchored ANN probe, and the LLM so the decision logic is
 # tested without a DB or a real model.
@@ -187,7 +230,7 @@ def _make_dedup_llm(conn):
 
 
 def _ctx(threshold: float = 0.97):
-    """Return (kwargs, conn_mock, llm_mock) for a _dedup_reconcile_create call."""
+    """Return (kwargs, conn_mock, llm_mock) for a create-path adjudicate + fold."""
     conn = _DedupConn()
     llm = _make_dedup_llm(conn)
     kwargs = dict(
@@ -395,7 +438,7 @@ async def test_dedup_picks_highest_above_threshold_skips_below() -> None:
     assert "near but distinct" not in sent
 
 
-# ── UPDATE-path dedup (_dedup_reconcile_update) ───────────────────────────────
+# ── UPDATE-path dedup (adjudicate + fold) ───────────────────────────────
 #
 # An UPDATE rewrites+re-embeds an observation, which can drift it into a near-twin of a
 # DIFFERENT existing observation. These cover the fold-and-delete reconciliation (unlike
@@ -405,7 +448,7 @@ _UPDATED_ID = "44444444-4444-4444-8444-444444444444"
 
 
 def _update_ctx(threshold: float = 0.97):
-    """Return (kwargs, conn_mock, llm_mock) for a _dedup_reconcile_update call."""
+    """Return (kwargs, conn_mock, llm_mock) for an update-path adjudicate + fold."""
     conn = _DedupConn()
     conn.fetchrow_result = {"source_memory_ids": [uuid.uuid4(), uuid.uuid4()]}
     llm = _make_dedup_llm(conn)
@@ -424,7 +467,7 @@ def _update_ctx(threshold: float = 0.97):
         dedup_llm_config=llm,
         updated_id=_UPDATED_ID,
         updated_text="Uzbek content on YouTube is very rich and growing.",
-        updated_emb_str="[0.1, 0.2, 0.3]",  # already embedded by _execute_update_action
+        updated_emb_str="[0.1, 0.2, 0.3]",  # already embedded by the prepare phase
         tags=["t1"],
     )
     return kwargs, conn, llm
@@ -645,11 +688,19 @@ async def _run_create_batch(create_action_result: str):
         patch.object(C, "_consolidate_batch_with_llm", new=AsyncMock(return_value=llm_result)),
         patch.object(C, "_effective_scope_limit", return_value=-1),
         patch.object(C, "_dedup_active", return_value=True),
-        patch.object(C, "_dedup_reconcile_create", new=AsyncMock(return_value=None)),
-        patch.object(C, "_execute_create_action", new=AsyncMock(return_value=create_action_result)) as create_action,
+        patch.object(C, "_any_live_source_memory", new=AsyncMock(return_value=True)),
+        patch.object(C, "_embed_observation_text", new=AsyncMock(return_value="[0.1, 0.2, 0.3]")),
+        # No twin above threshold: the adjudicator's no-merge verdict is what makes the
+        # batch fall through to the CREATE.
+        patch.object(
+            C,
+            "_dedup_adjudicate",
+            new=AsyncMock(return_value=_DedupOutcome(best_id=None, merged_text="", should_merge=False)),
+        ),
+        patch.object(C, "_apply_create_action", new=AsyncMock(return_value=create_action_result)) as create_action,
     ):
         result = await C._process_memory_batch(
-            pool=object(),
+            pool=_DedupBackend(_DedupConn()),
             memory_engine=_batch_engine(),
             llm_config=object(),
             bank_id="bank1",
@@ -661,23 +712,24 @@ async def _run_create_batch(create_action_result: str):
 
 
 async def test_process_batch_creates_when_dedup_target_vanished() -> None:
-    # Caller contract: when _dedup_reconcile_create returns None (twin vanished mid-window),
-    # _process_memory_batch must still CREATE the observation instead of dropping it.
+    # Caller contract: when the adjudicator finds no twin to fold into, _process_memory_batch
+    # must still CREATE the observation instead of dropping it.
     result, create_action, mem_id = await _run_create_batch("created")
     create_action.assert_awaited_once()
-    assert create_action.await_args.kwargs["text"] == "Uzbek YouTube content is very rich."
-    assert create_action.await_args.kwargs["source_memory_ids"] == [mem_id]
+    prepared = create_action.await_args.kwargs["prepared"]
+    assert prepared.text == "Uzbek YouTube content is very rich."
+    assert prepared.source_memory_ids == [mem_id]
     assert result == ([{"action": "created"}], 0, False)
 
 
 async def test_process_batch_reports_skipped_when_create_skipped() -> None:
-    # _execute_create_action returns "skipped" (all sources deleted in the write txn) ->
+    # _apply_create_action returns "skipped" (all sources deleted in the write txn) ->
     # _process_memory_batch must NOT mark the memory created; it falls through to skipped.
     result, _create_action, _mem_id = await _run_create_batch("skipped")
     assert result == ([{"action": "skipped", "reason": "no_durable_knowledge"}], 0, False)
 
 
 async def test_process_batch_reports_created_when_create_created() -> None:
-    # _execute_create_action returns "created" -> the memory is marked created.
+    # _apply_create_action returns "created" -> the memory is marked created.
     result, _create_action, _mem_id = await _run_create_batch("created")
     assert result == ([{"action": "created"}], 0, False)

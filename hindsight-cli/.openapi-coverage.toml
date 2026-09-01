@@ -152,7 +152,7 @@ trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the
 trigger = "Changing an existing page's refresh policy (cron vs after-consolidation) is page-level tuning done via the API, SDKs, or control plane; `knowledge-base update-node` leaves the page's current trigger alone."
 
 [fields.create_mental_model]
-trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
+trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation and --tags-match on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
 
 [fields.update_mental_model]
-trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model update` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
+trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation, --trigger-refresh-cron, --trigger-min-refresh-interval-seconds, --trigger-tags-match, --trigger-keep-trace and --trigger-exclude-mental-models on `mental-model update`; the update merges these over the model's stored trigger, so the remaining nested fields (fact_types, tag_groups, response_schema, recall_* budgets) are left untouched and stay API-only."

@@ -80,6 +80,10 @@ if [ -z "$IMAGE" ]; then
 fi
 
 # Determine health endpoint based on target
+# CP_PORT is set only when the image also serves the control plane on its own
+# port: cp-only is checked through HEALTH_PORT already, standalone runs both
+# processes and would otherwise be declared healthy on the API alone.
+CP_PORT=""
 if [ "$TARGET" = "cp-only" ]; then
     HEALTH_PORT=9999
     HEALTH_PATH="/api/health"
@@ -88,6 +92,9 @@ else
     HEALTH_PORT=8888
     HEALTH_PATH="/health"
     NEEDS_LLM=true
+    if [ "$TARGET" = "standalone" ]; then
+        CP_PORT=9999
+    fi
 fi
 
 # Check for required environment variables
@@ -162,6 +169,9 @@ else
     fi
 
     DOCKER_CMD="$DOCKER_CMD -p ${HEALTH_PORT}:${HEALTH_PORT}"
+    if [ -n "$CP_PORT" ]; then
+        DOCKER_CMD="$DOCKER_CMD -p ${CP_PORT}:${CP_PORT}"
+    fi
     DOCKER_CMD="$DOCKER_CMD $IMAGE"
 
     eval $DOCKER_CMD
@@ -181,6 +191,32 @@ for i in $(seq 1 "$TIMEOUT"); do
         echo "=== Health Response ==="
         curl -s "http://localhost:${HEALTH_PORT}${HEALTH_PATH}" | python3 -m json.tool 2>/dev/null || curl -s "http://localhost:${HEALTH_PORT}${HEALTH_PATH}"
         echo ""
+
+        # Verify the control plane too when the image serves both. It is a
+        # separate process from the API, so an API-only probe would pass on an
+        # image whose control plane never came up.
+        if [ -n "$CP_PORT" ]; then
+            echo ""
+            echo "=== Control Plane Health (port ${CP_PORT}) ==="
+            cp_healthy=false
+            for j in $(seq 1 "$TIMEOUT"); do
+                if curl -sf "http://localhost:${CP_PORT}/api/health" > /dev/null 2>&1; then
+                    cp_healthy=true
+                    break
+                fi
+                sleep 1
+            done
+            if [ "$cp_healthy" != true ]; then
+                echo ""
+                echo "=== Container Logs (last 50 lines) ==="
+                docker logs "$CONTAINER_NAME" 2>&1 | tail -50
+                echo ""
+                echo -e "${RED}Control plane never became healthy on port ${CP_PORT}${NC}"
+                exit 1
+            fi
+            curl -s "http://localhost:${CP_PORT}/api/health"
+            echo ""
+        fi
 
         # Run retain/recall smoke test for API targets
         if [ "$TARGET" != "cp-only" ]; then

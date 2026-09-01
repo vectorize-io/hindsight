@@ -179,7 +179,7 @@ def _read_raw_env(name: str) -> dict[str, str]:
     env: dict[str, str] = {}
     if not path.exists():
         return env
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -206,7 +206,7 @@ def _write_raw_env(name: str, env: dict[str, str]) -> None:
     else:
         path = pm.resolve_profile_paths("").config
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
+        path.write_text("".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8")
     # The .env holds the API key — keep it owner-only.
     path.chmod(0o600)
 
@@ -423,7 +423,7 @@ def read_env_file(name: str) -> EnvFileView:
     """
     name = normalize_profile(name)
     path = ProfileManager().resolve_profile_paths(name).config
-    content = path.read_text() if path.exists() else ""
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
     return EnvFileView(
         name=name,
         display_name=_display_name(name),
@@ -441,7 +441,7 @@ def write_env_file(name: str, content: str) -> EnvFileView:
     # Normalize to a trailing newline so the file stays POSIX-clean.
     if content and not content.endswith("\n"):
         content += "\n"
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     path.chmod(0o600)
     return read_env_file(name)
 
@@ -493,7 +493,7 @@ def tail_log(name: str, lines: int = 200, source: str = "daemon") -> LogTailView
         return LogTailView(path=str(path), exists=False, content="")
     # Small logs — reading then slicing is simpler than seeking and is fine for
     # the interactive tail in the UI.
-    tail = path.read_text(errors="replace").splitlines()[-max(lines, 1) :]
+    tail = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(lines, 1) :]
     return LogTailView(path=str(path), exists=True, content="\n".join(tail))
 
 

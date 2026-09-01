@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -390,6 +391,14 @@ class LLMTraceRecorder:
         # post-operation UPDATE (otherwise the UPDATE could race ahead of the
         # INSERTs it patches — but it must not block on unrelated operations).
         self._pending: dict[str | None, set[asyncio.Task]] = {}
+        # Trace ids that have actually produced a row. `_pending` cannot answer this: it is
+        # emptied as writes complete, so an absent entry means "nothing in flight", not "nothing
+        # was ever written". Without the distinction, `attach_memory_ids` issues an UPDATE for
+        # every operation that created memories -- including a retain in an extraction mode that
+        # makes no LLM call at all, where it matches zero rows and its only effect is to take a
+        # pooled connection per sub-batch. Bounded, and only ever holds ids: a trace id is ~36
+        # bytes and this is capped, so it cannot grow with traffic.
+        self._rows_written: OrderedDict[str, None] = OrderedDict()
 
     def _writable(self) -> Any | None:
         """Return the pool to write through, or None if writing isn't possible.
@@ -500,6 +509,18 @@ class LLMTraceRecorder:
         key = record.trace_id
         self._pending.setdefault(key, set()).add(task)
         task.add_done_callback(lambda t, k=key: self._discard_pending(k, t))
+        if key:
+            self._mark_rows_written(key)
+
+    _ROWS_WRITTEN_MAX = 4096
+
+    def _mark_rows_written(self, trace_id: str) -> None:
+        self._rows_written[trace_id] = None
+        self._rows_written.move_to_end(trace_id)
+        while len(self._rows_written) > self._ROWS_WRITTEN_MAX:
+            # Evicting the oldest can only cause a MISSED patch on a very long-lived trace, never
+            # a wrong one -- and the patch is best-effort metadata either way.
+            self._rows_written.popitem(last=False)
 
     def _discard_pending(self, key: str | None, task: asyncio.Task) -> None:
         bucket = self._pending.get(key)
@@ -593,6 +614,11 @@ class LLMTraceRecorder:
         if source_ids:
             patch["source_memory_ids"] = source_ids
         if not patch:
+            return
+        # Nothing was traced, so there is no row to patch. This is the ordinary case for an
+        # extraction mode that calls no LLM: memories are created, so `patch` is non-empty, but
+        # the UPDATE would match zero rows.
+        if trace_ctx.trace_id not in self._rows_written:
             return
         try:
             asyncio.create_task(self._attach_memory_ids(trace_ctx.bank_id, trace_ctx.trace_id, patch))

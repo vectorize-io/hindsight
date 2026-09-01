@@ -145,20 +145,59 @@ async def tool_search_mental_models(
         params.append(exclude_ids)
         next_param += 1
 
-    # Search mental models by embedding similarity
-    rows = await conn.fetch(
-        f"""
-        SELECT
-            id, name, content,
-            tags, created_at, last_refreshed_at, last_memory_seen_at, trigger,
-            1 - (embedding <=> $2::vector) as relevance
-        FROM {fq_table("mental_models")}
-        WHERE bank_id = $1 AND embedding IS NOT NULL {filters}
-        ORDER BY embedding <=> $2::vector
-        LIMIT $3
-        """,
-        *params,
-    )
+    # Search mental models by embedding similarity.
+    #
+    # A store that indexes pages answers the ranking and the relevance; Postgres still hydrates the
+    # rows, because the store holds only the searchable half. The tag scope and `exclude_ids` are
+    # pushed down rather than applied afterwards: a hit that gets discarded here has already taken a
+    # top-k slot from a page that would have qualified.
+    from ..memories import get_memories
+
+    store = get_memories()
+    if store.store_owned_for(bank_id):
+        matches = await store.search_knowledge_pages_semantic(
+            bank_id,
+            embedding=list(query_embedding),
+            limit=max_results,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+            exclude_ids=exclude_ids,
+        )
+        relevance_by_id = {m.page_id: m.score for m in matches}
+        rows = (
+            await conn.fetch(
+                f"""
+                SELECT
+                    id, name, content,
+                    tags, created_at, last_refreshed_at, last_memory_seen_at, trigger
+                FROM {fq_table("mental_models")}
+                WHERE bank_id = $1 AND id = ANY($2::text[])
+                """,
+                bank_id,
+                list(relevance_by_id),
+            )
+            if relevance_by_id
+            else []
+        )
+        # The store ranked them; the SELECT did not preserve that, so restore it here rather than
+        # returning whatever order the planner produced.
+        rows = sorted(rows, key=lambda r: -relevance_by_id.get(str(r["id"]), 0.0))
+    else:
+        relevance_by_id = None
+        rows = await conn.fetch(
+            f"""
+            SELECT
+                id, name, content,
+                tags, created_at, last_refreshed_at, last_memory_seen_at, trigger,
+                1 - (embedding <=> $2::vector) as relevance
+            FROM {fq_table("mental_models")}
+            WHERE bank_id = $1 AND embedding IS NOT NULL {filters}
+            ORDER BY embedding <=> $2::vector
+            LIMIT $3
+            """,
+            *params,
+        )
 
     # Per-MM staleness: new in-scope memories since last refresh (includes pending).
     # Every model gets the exact, scoped answer — the agent trusts a model without a
@@ -189,7 +228,12 @@ async def tool_search_mental_models(
                 "name": row["name"],
                 "content": row["content"],
                 "tags": row["tags"] or [],
-                "relevance": round(row["relevance"], 4),
+                # The store path carries relevance beside the rows (its SELECT hydrates only what
+                # the store does not hold); the SQL path has it as a computed column.
+                "relevance": round(
+                    relevance_by_id[str(row["id"])] if relevance_by_id is not None else row["relevance"],
+                    4,
+                ),
                 "updated_at": last_refreshed_at.isoformat() if last_refreshed_at else None,
                 "is_stale": is_stale,
                 "staleness_reason": staleness_reason,
@@ -409,7 +453,7 @@ async def tool_expand(
     from ..memories import get_memories
 
     _store = get_memories()
-    if _store.writes_memory_rows_in_sql_for(bank_id):
+    if not _store.store_owned_for(bank_id):
         memories = await conn.fetch(
             f"""
             SELECT id, text, chunk_id, document_id, fact_type, context
@@ -445,7 +489,7 @@ async def tool_expand(
     # `documents` tables empty, so the SQL below would return nothing and `expand` would answer
     # without the chunk or document it was asked for — the memories read above was routed to the
     # store but these two were not.
-    _docs_in_store = _store.owns_document_store_for(bank_id)
+    _docs_in_store = _store.store_owned_for(bank_id)
     chunk_map: dict[str, Any] = {}
     if chunk_ids and _docs_in_store:
         # The store addresses a chunk by (document_id, index), and `chunk_id` is

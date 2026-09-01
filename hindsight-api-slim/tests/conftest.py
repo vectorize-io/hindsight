@@ -111,6 +111,28 @@ def _cleanup_leaked_span_recorders():
             recorders.remove(recorder)
 
 
+@pytest.fixture(autouse=True)
+def _restore_global_metrics_collector():
+    """Fail-safe for the process-global metrics collector (#3780).
+
+    ``create_metrics_collector()`` swaps the module-global collector in
+    ``hindsight_api.metrics`` for a real ``MetricsCollector``. The API lifespan
+    now restores it on shutdown, but a test that starts the app and never runs
+    shutdown (or calls ``create_metrics_collector()`` itself) still leaves the
+    real collector installed for every test that follows in the same xdist
+    worker. ``NoOpMetricsCollector`` ignores its arguments while the real one
+    compares them, so provider tests that pass a bare ``MagicMock`` usage object
+    then blow up with "'>' not supported between instances of 'MagicMock' and
+    'int'" — in whichever files the worker happened to be given, which is why
+    the failure count moved every time someone added a test.
+    """
+    from hindsight_api import metrics as metrics_module
+
+    before = metrics_module.get_metrics_collector()
+    yield
+    metrics_module.reset_metrics_collector(before)
+
+
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
@@ -646,6 +668,27 @@ async def api_client(memory):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
+
+def stub_refresh_has_sources(monkeypatch, memory) -> None:
+    """Tell a mental-model refresh that its bank holds something to read.
+
+    A refresh whose scope is empty skips the reflect loop outright (#3875): running
+    the agent over nothing is its worst case, not a cheap one. Tests that stub
+    ``reflect_async`` almost always do so on a bank with no memories, where that
+    short-circuit would pre-empt the stub instead of the test exercising it — so any
+    test that fakes retrieval has to say the bank is not empty. Tests that are about
+    the short-circuit itself let the real check run (``TestRefreshSkipsEmptyScope``).
+
+    Answered on the sibling-documents leg, which is the one that runs when no memory
+    is in scope: that is the state these tests are in, and it needs no fake timestamps
+    to line up against a delta window.
+    """
+
+    async def _has_document(*args, **kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(memory, "_bank_has_readable_document", _has_document)
 
 
 def enable_audit_default(memory, enabled: bool) -> None:

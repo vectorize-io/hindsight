@@ -33,6 +33,46 @@ describe("HindsightClient.maxParallelRetains", () => {
   });
 });
 
+describe("HindsightClient document-list safety", () => {
+  it("uses strict strategy-tag matching on every page", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "shared-bank" });
+    const firstPage = Array.from({ length: 500 }, (_, i) => ({ id: `git:${i}` }));
+    const fetchMock = vi.fn(async (_url: string | URL | Request) => {
+      const offset = String(_url).includes("offset=500") ? 500 : 0;
+      return jsonResponse(200, {
+        items: offset === 0 ? firstPage : [{ id: "git:500" }],
+        total: 501,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ids = await client.listDocumentIds("source:git", "all_strict");
+
+    expect(ids.size).toBe(501);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://x/v1/default/banks/shared-bank/documents?tags=source%3Agit&tags_match=all_strict&limit=500&offset=0"
+    );
+    expect(String(fetchMock.mock.calls[1][0])).toBe(
+      "http://x/v1/default/banks/shared-bank/documents?tags=source%3Agit&tags_match=all_strict&limit=500&offset=500"
+    );
+  });
+
+  it("preserves the inclusive all mode for existing callers that do not opt into strict matching", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "shared-bank" });
+    const fetchMock = vi.fn(async (_url: string | URL | Request) =>
+      jsonResponse(200, { items: [], total: 0 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.listDocumentIds("custom:scope");
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "tags=custom%3Ascope&tags_match=all&limit=500&offset=0"
+    );
+  });
+});
+
 describe("HindsightClient.drain", () => {
   it("polls at most maxParallelRetains ops concurrently", async () => {
     const cap = 2;

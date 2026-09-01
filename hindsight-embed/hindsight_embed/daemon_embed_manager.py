@@ -830,7 +830,7 @@ class DaemonEmbedManager(EmbedManager):
                     # Tail daemon logs
                     if daemon_log.exists():
                         try:
-                            with open(daemon_log, "r") as f:
+                            with open(daemon_log, "r", encoding="utf-8", errors="replace") as f:
                                 f.seek(last_log_position)
                                 new_lines = f.readlines()
                                 last_log_position = f.tell()

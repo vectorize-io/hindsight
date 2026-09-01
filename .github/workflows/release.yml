@@ -643,12 +643,21 @@ jobs:
         cp artifacts/helm-chart/*.tgz release-assets/ || true
         ls -la release-assets/
 
-    - name: Create GitHub Release
+    # Created as a draft so every asset is attached BEFORE the release is
+    # published. With immutable releases enabled a published release is sealed,
+    # and assets uploaded after publication are rejected.
+    - name: Create GitHub Release (draft)
       uses: softprops/action-gh-release@v3
       with:
         files: release-assets/*
         generate_release_notes: true
-        draft: false
+        draft: true
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish GitHub Release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: v${{ steps.get_version.outputs.VERSION }}
+      run: gh release edit "$TAG" --draft=false --latest

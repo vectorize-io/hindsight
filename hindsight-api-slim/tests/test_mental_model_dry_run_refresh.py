@@ -24,6 +24,7 @@ import pytest_asyncio
 
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.response_models import ReflectResult
+from tests.conftest import stub_refresh_has_sources
 
 
 def _reflect_result(
@@ -80,6 +81,7 @@ def patch_reflect(monkeypatch):
             return _reflect_result(text, facts=facts, retrieved=retrieved)
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        stub_refresh_has_sources(monkeypatch, memory)
         return calls
 
     return _install
