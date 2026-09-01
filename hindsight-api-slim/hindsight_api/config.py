@@ -604,6 +604,11 @@ ENV_LOOP_WATCHDOG_STALL_THRESHOLD_MS = "HINDSIGHT_API_LOOP_WATCHDOG_STALL_THRESH
 ENV_LOOP_WATCHDOG_POLL_INTERVAL_MS = "HINDSIGHT_API_LOOP_WATCHDOG_POLL_INTERVAL_MS"
 ENV_DB_ACQUIRE_WARN_THRESHOLD_MS = "HINDSIGHT_API_DB_ACQUIRE_WARN_THRESHOLD_MS"
 
+# Codex (ChatGPT OAuth) credentials directory. Overrides the process-wide
+# CODEX_HOME for the primary LLM; indexed members set their own
+# (HINDSIGHT_API_<OP>LLM_<n>_CODEX_HOME) so a chain can span two profiles.
+ENV_LLM_CODEX_HOME = "HINDSIGHT_API_LLM_CODEX_HOME"
+
 # Vertex AI configuration
 ENV_LLM_VERTEXAI_PROJECT_ID = "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"
 ENV_LLM_VERTEXAI_REGION = "HINDSIGHT_API_LLM_VERTEXAI_REGION"
@@ -994,6 +999,9 @@ DEFAULT_LLM_INITIAL_BACKOFF = 1.0  # Initial backoff in seconds for retry expone
 DEFAULT_LLM_MAX_BACKOFF = 60.0  # Max backoff cap in seconds for retry exponential backoff
 DEFAULT_LLM_TIMEOUT = 120.0  # seconds
 DEFAULT_LLM_SEND_BANK_AS_USER = False  # Opt-in: tag provider calls with user=<bank_id>
+
+# Codex credentials directory (None = CODEX_HOME, else ~/.codex)
+DEFAULT_LLM_CODEX_HOME = None
 
 # Vertex AI defaults
 DEFAULT_LLM_VERTEXAI_PROJECT_ID = None  # Required for Vertex AI
@@ -2003,6 +2011,7 @@ class LLMMemberConfig:
     bedrock_service_tier: str | None
     gemini_service_tier: str | None
     cache_affinity: str | None = None
+    codex_home: str | None = None
     vertexai_project_id: str | None = None
     vertexai_region: str | None = None
     vertexai_service_account_key: str | None = None
@@ -2101,6 +2110,7 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 gemini_service_tier=(
                     parse_gemini_service_tier(gemini_service_tier) if provider.lower() == "gemini" else None
                 ),
+                codex_home=os.getenv(base + "CODEX_HOME") or None,
                 vertexai_project_id=os.getenv(base + "VERTEXAI_PROJECT_ID") or None,
                 vertexai_region=os.getenv(base + "VERTEXAI_REGION") or None,
                 vertexai_service_account_key=os.getenv(base + "VERTEXAI_SERVICE_ACCOUNT_KEY") or None,
@@ -2461,6 +2471,12 @@ class HindsightConfig:
     # Each entry: {"provider": str, "model": str, "api_key": str | None, "base_url": str | None}.
     # Treated as a credential field because entries embed api keys.
     llm_litellmrouter_config: dict | None
+
+    # Codex credentials directory for the primary LLM. Server-level only (not
+    # bank-configurable): it is a filesystem path to a credential store, so
+    # accepting it over the config API would let a bank point the server at an
+    # arbitrary file.
+    llm_codex_home: str | None
 
     # Vertex AI configuration
     llm_vertexai_project_id: str | None
@@ -3498,6 +3514,8 @@ class HindsightConfig:
                 ENV_LLM_TEMPERATURE_CONSOLIDATION, DEFAULT_LLM_TEMPERATURE_CONSOLIDATION
             ),
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
+            # Codex (ChatGPT OAuth) credentials directory
+            llm_codex_home=os.getenv(ENV_LLM_CODEX_HOME) or DEFAULT_LLM_CODEX_HOME,
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
             llm_vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION, DEFAULT_LLM_VERTEXAI_REGION),

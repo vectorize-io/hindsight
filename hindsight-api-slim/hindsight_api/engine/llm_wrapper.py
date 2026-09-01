@@ -428,6 +428,7 @@ def create_llm_provider(
     bedrock_service_tier: str | None = None,
     extra_body: dict[str, Any] | None = None,
     default_headers: dict[str, str] | None = None,
+    codex_home: str | None = None,
     vertexai_project_id: str | None = None,
     vertexai_region: str | None = None,
     vertexai_credentials: Any = None,
@@ -478,6 +479,8 @@ def create_llm_provider(
             instead of ``response_format``. For backends that reject the response_format
             route — see ``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``. Other
             providers ignore it.
+        codex_home: Codex credentials directory (for the openai-codex provider); overrides
+            the process-wide ``CODEX_HOME``.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
@@ -525,6 +528,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            codex_home=codex_home,
             timeout=timeout,
         )
 
@@ -790,6 +794,7 @@ class LLMProvider:
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
         gemini_service_tier: str | None = None,
+        codex_home: str | None = None,
         vertexai_project_id: str | None = None,
         vertexai_region: str | None = None,
         vertexai_service_account_key: str | None = None,
@@ -830,6 +835,11 @@ class LLMProvider:
             litellmrouter_config: Provider-specific config for ``provider="litellmrouter"``.
                 JSON object passed verbatim to ``litellm.Router(**config)`` — see
                 https://docs.litellm.ai/docs/routing. Ignored unless ``provider == "litellmrouter"``.
+            codex_home: Codex credentials directory for ``provider="openai-codex"`` — the
+                directory holding the ``auth.json`` this provider authenticates with. ``None``
+                uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
+                multi-LLM chain to run two independently authorized ChatGPT profiles, so that
+                failover away from a rate-limited profile actually reaches a different account.
             vertexai_project_id: Vertex AI project ID for ``provider="vertexai"`` (required for
                 that provider).
             vertexai_region: Vertex AI region for ``provider="vertexai"`` (defaults to
@@ -873,6 +883,9 @@ class LLMProvider:
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
         self.litellmrouter_config = litellmrouter_config
+        # Codex credentials directory (openai-codex only). Used verbatim — the caller
+        # resolves the server-level default, like the fields around it.
+        self.codex_home = codex_home
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = openai_service_tier
@@ -1026,6 +1039,7 @@ class LLMProvider:
             openai_service_tier=self.openai_service_tier,
             bedrock_service_tier=self.bedrock_service_tier,
             gemini_service_tier=self.gemini_service_tier,
+            codex_home=self.codex_home,
             extra_body=self.extra_body,
             default_headers=self.default_headers,
             vertexai_project_id=vertexai_project_id,
@@ -1490,7 +1504,8 @@ class LLMProvider:
         """
         Load OAuth credentials from the Codex ``auth.json``.
 
-        Honors ``CODEX_HOME`` (falling back to ``~/.codex``).
+        Honors this provider's ``codex_home``, then ``CODEX_HOME`` (falling back
+        to ``~/.codex``).
 
         Returns:
             Tuple of (access_token, account_id).
@@ -1501,7 +1516,7 @@ class LLMProvider:
         """
         from .providers.codex_auth import default_codex_auth_file
 
-        auth_file = default_codex_auth_file()
+        auth_file = default_codex_auth_file(self.codex_home)
 
         if not auth_file.exists():
             raise FileNotFoundError(
@@ -1619,6 +1634,7 @@ class LLMProvider:
             ENV_LLM_BASE_URL,
             ENV_LLM_BEDROCK_SERVICE_TIER,
             ENV_LLM_CACHE_AFFINITY,
+            ENV_LLM_CODEX_HOME,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_GEMINI_SAFETY_SETTINGS,
@@ -1688,6 +1704,7 @@ class LLMProvider:
             prompt_cache_enabled=prompt_cache_enabled,
             ollama_num_ctx=_parse_optional_positive_int(ENV_LLM_OLLAMA_NUM_CTX, os.getenv(ENV_LLM_OLLAMA_NUM_CTX)),
             litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
+            codex_home=os.getenv(ENV_LLM_CODEX_HOME) or None,
             vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or None,
             vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,
             vertexai_service_account_key=os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY) or None,
