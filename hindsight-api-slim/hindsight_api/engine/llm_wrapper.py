@@ -428,7 +428,6 @@ def create_llm_provider(
     bedrock_service_tier: str | None = None,
     extra_body: dict[str, Any] | None = None,
     default_headers: dict[str, str] | None = None,
-    codex_home: str | None = None,
     vertexai_project_id: str | None = None,
     vertexai_region: str | None = None,
     vertexai_credentials: Any = None,
@@ -440,6 +439,11 @@ def create_llm_provider(
     ollama_num_ctx: int | None = None,
     cache_affinity: str | None = None,
     structured_output_forced_tool: bool = False,
+    # Appended rather than inserted: some callers still pass the older settings
+    # positionally (guarded by the positional-compatibility tests in
+    # tests/test_llm_wrapper.py), so a parameter added mid-list silently steals
+    # another one's slot. New parameters go at the end.
+    codex_home: str | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -479,8 +483,6 @@ def create_llm_provider(
             instead of ``response_format``. For backends that reject the response_format
             route — see ``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``. Other
             providers ignore it.
-        codex_home: Codex credentials directory (for the openai-codex provider); overrides
-            the process-wide ``CODEX_HOME``.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
@@ -490,6 +492,8 @@ def create_llm_provider(
             Nous). ``None`` lets each provider fall back to its own default
             (``HINDSIGHT_API_LLM_TIMEOUT`` / ``DEFAULT_LLM_TIMEOUT`` for those four;
             Anthropic and Gemini keep their provider-specific defaults).
+        codex_home: Codex credentials directory (for the openai-codex provider); overrides
+            the process-wide ``CODEX_HOME``.
 
     Returns:
         LLMInterface implementation for the specified provider.
@@ -794,7 +798,6 @@ class LLMProvider:
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
         gemini_service_tier: str | None = None,
-        codex_home: str | None = None,
         vertexai_project_id: str | None = None,
         vertexai_region: str | None = None,
         vertexai_service_account_key: str | None = None,
@@ -805,6 +808,10 @@ class LLMProvider:
         ollama_num_ctx: int | None = None,
         cache_affinity: str | None = None,
         structured_output_forced_tool: bool = False,
+        # Appended rather than inserted — see the note on ``create_llm_provider``:
+        # callers that pass these positionally would otherwise have one argument
+        # land in the wrong slot.
+        codex_home: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -835,11 +842,6 @@ class LLMProvider:
             litellmrouter_config: Provider-specific config for ``provider="litellmrouter"``.
                 JSON object passed verbatim to ``litellm.Router(**config)`` — see
                 https://docs.litellm.ai/docs/routing. Ignored unless ``provider == "litellmrouter"``.
-            codex_home: Codex credentials directory for ``provider="openai-codex"`` — the
-                directory holding the ``auth.json`` this provider authenticates with. ``None``
-                uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
-                multi-LLM chain to run two independently authorized ChatGPT profiles, so that
-                failover away from a rate-limited profile actually reaches a different account.
             vertexai_project_id: Vertex AI project ID for ``provider="vertexai"`` (required for
                 that provider).
             vertexai_region: Vertex AI region for ``provider="vertexai"`` (defaults to
@@ -860,6 +862,11 @@ class LLMProvider:
             structured_output_forced_tool: Structured output via a forced tool call
                 instead of ``response_format``, for the LiteLLM-backed providers - from
                 config (``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``).
+            codex_home: Codex credentials directory for ``provider="openai-codex"`` — the
+                directory holding the ``auth.json`` this provider authenticates with. ``None``
+                uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
+                multi-LLM chain to run two independently authorized ChatGPT profiles, so that
+                failover away from a rate-limited profile actually reaches a different account.
 
         This constructor uses every argument as passed and does not read global
         ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
