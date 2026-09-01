@@ -1818,6 +1818,99 @@ jobs:
       # composes cleanly with the `-n 8 --dist loadgroup` baked into addopts.
       run: uv run --with pytest-split pytest tests -v -m "not hs_llm_mat and not hs_llm_core" --splits 3 --group ${{ matrix.shard }}
 
+  test-api-free-threaded:
+    needs: [detect-changes]
+    # Deliberately NOT gated on `has_secrets`: this job runs the mock LLM and a
+    # deterministic embedder, so it needs no provider credentials and therefore also
+    # runs on fork PRs — which skip every secret-gated test-api job entirely.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    name: test-api (free-threaded 3.14)
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: mock
+      # strict is the default on a free-threaded build; set explicitly so the intent
+      # of this job is visible in the workflow rather than only in the code.
+      HINDSIGHT_API_FREE_THREADING: strict
+      # SQLAlchemy's Cython extensions do not declare free-threading support. They
+      # currently have no cp314t wheel so the pure-Python fallback is automatic, but
+      # pin it: the day a cp314t wheel ships, this job would otherwise start running
+      # with the GIL quietly re-enabled.
+      DISABLE_SQLALCHEMY_CEXT_RUNTIME: "1"
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up free-threaded Python 3.14
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.14t'
+
+    - name: Create the virtualenv
+      working-directory: ./hindsight-api-slim
+      run: uv venv --python "$(which python)" .venv-ft
+
+    - name: Install dependencies
+      working-directory: ./hindsight-api-slim
+      # `uv pip install` rather than `uv sync --frozen`: the resolution needs
+      # --override to drop orjson, which publishes no cp3XXt wheel and whose build
+      # refuses free-threading outright. See overrides-freethreaded.txt.
+      #
+      # local-ml is deliberately excluded. Importing sentence_transformers re-enables
+      # the GIL, so a process that installs it cannot stay free-threaded; the tests
+      # that need local models skip themselves (see tests/conftest.py).
+      env:
+        VIRTUAL_ENV: .venv-ft
+      run: |
+        uv pip install --override overrides-freethreaded.txt \
+          -e ".[embedded-db]" --group dev
+
+    - name: Build a free-threaded quicktok wheel
+      working-directory: ./hindsight-api-slim
+      # quicktok is on the recall hot path and publishes no cp3XXt wheel. Building the
+      # published sdist unmodified is not enough — the extension would not declare
+      # Py_MOD_GIL_NOT_USED and would re-enable the GIL on import. The script adds that
+      # declaration; drop this step once the change is upstream and released.
+      env:
+        VIRTUAL_ENV: .venv-ft
+      run: PYTHON_BIN="$PWD/.venv-ft/bin/python" ../scripts/ci/build-freethreaded-quicktok.sh
+
+    - name: Assert the interpreter is genuinely free-threaded
+      working-directory: ./hindsight-api-slim
+      # Fails the job before a single test runs if the build is not free-threaded or a
+      # dependency has already taken the GIL back, so that shows up as its own red step
+      # rather than as a confusing mass of downstream failures.
+      run: |
+        ./.venv-ft/bin/python -c "
+        import sys, sysconfig
+        assert sysconfig.get_config_var('Py_GIL_DISABLED'), 'not a free-threaded build'
+        assert not sys._is_gil_enabled(), 'the GIL is already enabled at startup'
+        import hindsight_api.api.http
+        assert not sys._is_gil_enabled(), 'importing the API re-enabled the GIL'
+        print('free-threaded:', sys.version)
+        "
+
+    - name: Run tests
+      working-directory: ./hindsight-api-slim
+      # PYTHONWARNINGS makes the GIL re-enable warning fatal at the offending import,
+      # so a regression names the module instead of surfacing as an unrelated failure.
+      env:
+        PYTHONWARNINGS: "error:The global interpreter lock:RuntimeWarning"
+      run: |
+        ./.venv-ft/bin/python -m pytest tests -v \
+          -m "not hs_llm_mat and not hs_llm_core"
+
   test-api-llm-core:
     needs: [detect-changes]
     if: >-

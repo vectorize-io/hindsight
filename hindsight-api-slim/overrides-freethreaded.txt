@@ -1,0 +1,12 @@
+# Dependency overrides for a free-threaded (cp3XXt) CPython build.
+#
+# uv/pip resolve this file with `--override`. A never-true marker is how a
+# requirement is dropped: PEP 508 has no marker for "free-threaded build", so the
+# alternative would be forking pyproject.toml for one interpreter.
+#
+# orjson publishes no cp3XXt wheel and its build script refuses outright
+# ("orjson vX does not support free-threaded Python"). hindsight uses it in exactly
+# one place -- rendering pgvector literals in engine/retain/types.py -- which falls
+# back to the pre-orjson formatting when the import fails. PostgreSQL parses either
+# spelling into the same float32 bytes.
+orjson; python_version < "0"

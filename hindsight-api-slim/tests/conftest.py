@@ -3,6 +3,7 @@ Pytest configuration and shared fixtures.
 """
 
 import asyncio
+import importlib.util
 import os
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from dotenv import load_dotenv
 # (single-threaded, before any concurrency) makes that registration happen once
 # per worker process. Guarded so slim/no-torch environments still collect.
 try:
+    import sentence_transformers  # noqa: F401
     import torch  # noqa: F401  # eager one-time init; see comment above
 
     # Same class of problem, different torch module. transformers' lazy loader
@@ -50,7 +52,6 @@ try:
     # Importing the whole chain here (single-threaded, at collection time) puts
     # every submodule in sys.modules so later imports are cache hits.
     import transformers  # noqa: F401  # seeds safetensors/tokenizers once
-    import sentence_transformers  # noqa: F401
 except ImportError:
     pass
 
@@ -500,6 +501,28 @@ def llm_config():
     return LLMConfig.from_env()
 
 
+def _skip_without_local_ml(what: str) -> None:
+    """Skip rather than error when the local ML stack is not installed.
+
+    The ``local-ml`` extra (sentence-transformers, transformers, torch) is optional: a
+    deployment using TEI/OpenAI/Cohere for embeddings and reranking never installs it,
+    and a free-threaded build may deliberately leave it out -- importing
+    ``sentence_transformers`` re-enables the GIL, so a process that wants to stay
+    free-threaded cannot load the local models. (torch, tokenizers, safetensors and
+    transformers are all fine on their own; see ``hindsight_api/_free_threading.py``.)
+
+    Without this, every DB-backed test collapses into an ImportError from deep inside
+    fixture setup ("sentence-transformers is required for LocalSTEmbeddings"), which
+    reads as 1495 broken tests rather than one absent optional dependency.
+    """
+    if importlib.util.find_spec("sentence_transformers") is None:
+        pytest.skip(
+            f"local ML stack not installed; {what} fixture needs the 'local-ml' extra "
+            "(pip install 'hindsight-api-slim[local-ml]')",
+            allow_module_level=False,
+        )
+
+
 @pytest.fixture(scope="session")
 def embeddings(tmp_path_factory, worker_id):
     """
@@ -518,6 +541,7 @@ def embeddings(tmp_path_factory, worker_id):
 
     lock_file = root_tmp_dir / "embeddings_init.lock"
 
+    _skip_without_local_ml("embeddings")
     emb = LocalSTEmbeddings()
 
     # Serialize model initialization across workers
@@ -549,6 +573,7 @@ def cross_encoder(tmp_path_factory, worker_id):
 
     lock_file = root_tmp_dir / "cross_encoder_init.lock"
 
+    _skip_without_local_ml("cross_encoder")
     ce = LocalSTCrossEncoder()
 
     # Serialize model initialization across workers
