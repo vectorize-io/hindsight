@@ -1,6 +1,7 @@
 """Routing behavior at call/call_with_tools; time and provider adapters are controlled."""
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -205,6 +206,41 @@ async def test_cooldown_logs_only_safe_classification_fields(caplog: pytest.LogC
     assert await router.call(messages=[]) == "fallback"
     assert "synthetic-sensitive-body" not in caplog.text
     assert "work" in caplog.text and "rate_limit" in caplog.text and "cooldown" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("delay", "cooldown_source"),
+    [(None, "default"), (60.0, "provider_retry_after")],
+)
+async def test_cooldown_log_distinguishes_default_from_provider_retry_after(
+    caplog: pytest.LogCaptureFixture, delay: float | None, cooldown_source: str
+) -> None:
+    primary, fallback = Member("primary", QuotaError()), Member("fallback", "fallback")
+    primary.delay = delay
+    router = MultiLLMProvider([primary, fallback], LLMStrategyConfig(mode="failover"))
+
+    assert await router.call(messages=[]) == "fallback"
+
+    assert f"cooldown_source={cooldown_source}" in caplog.text
+    assert "retry_after=60.000s" in caplog.text
+
+
+async def test_cooldown_skip_log_includes_remaining_monotonic_seconds(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    now = 100.0
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.monotonic", lambda: now)
+    caplog.set_level(logging.DEBUG, logger="hindsight_api.engine.multi_llm")
+    primary, fallback = Member("primary", QuotaError()), Member("fallback", "fallback")
+    router = MultiLLMProvider([primary, fallback], LLMStrategyConfig(mode="failover"))
+    assert await router.call(messages=[]) == "fallback"
+
+    caplog.clear()
+    primary.result = "primary"
+    now = 103.0
+    assert await router.call(messages=[]) == "fallback"
+
+    assert "state=cooldown remaining=7.000s" in caplog.text
 
 
 async def test_non_replayable_probe_failure_recools_but_does_not_fail_over(monkeypatch: pytest.MonkeyPatch) -> None:

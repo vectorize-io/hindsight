@@ -137,16 +137,28 @@ class MultiLLMProvider:
             label = member.member_label or ("primary" if idx == 0 else f"member-{idx}")
             with self._state_lock:
                 state = self._states[idx]
-                if state.probing or (state.cooldown_until is not None and state.cooldown_until > monotonic()):
+                if state.probing:
                     logger.debug(
                         "LLM member %d (%s/%s, label=%s) skipped: state=%s",
                         idx,
                         member.provider,
                         member.model,
                         label,
-                        "probing" if state.probing else "cooldown",
+                        "probing",
                     )
                     continue
+                if state.cooldown_until is not None:
+                    remaining_seconds = state.cooldown_until - monotonic()
+                    if remaining_seconds > 0:
+                        logger.debug(
+                            "LLM member %d (%s/%s, label=%s) skipped: state=cooldown remaining=%.3fs",
+                            idx,
+                            member.provider,
+                            member.model,
+                            label,
+                            remaining_seconds,
+                        )
+                        continue
                 probing = state.cooldown_until is not None
                 generation = state.generation
                 if probing:
@@ -192,18 +204,22 @@ class MultiLLMProvider:
                     ) from None
                 if isinstance(failure, LLMCooldownFailure) or probing:
                     delay = failure.retry_after_seconds if isinstance(failure, LLMCooldownFailure) else None
+                    cooldown_source = "provider_retry_after"
                     if delay is None or not math.isfinite(delay) or delay < 0:
                         delay = _DEFAULT_COOLDOWN_SECONDS
+                        cooldown_source = "default"
                     with self._state_lock:
                         state.cooldown_until = max(state.cooldown_until or 0.0, monotonic() + delay)
                         state.generation += 1
                     logger.warning(
-                        "LLM member %d (%s/%s, label=%s) state=cooldown category=%s retry_after=%.3fs",
+                        "LLM member %d (%s/%s, label=%s) state=cooldown category=%s "
+                        "cooldown_source=%s retry_after=%.3fs",
                         idx,
                         member.provider,
                         member.model,
                         label,
                         failure.category.value if failure is not None else "probe_failed",
+                        cooldown_source,
                         delay,
                     )
                 if not _should_failover(e):

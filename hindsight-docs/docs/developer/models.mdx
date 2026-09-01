@@ -418,7 +418,9 @@ independently and never overwrite each other's tokens. Add non-secret
 as `preferred` and `secondary` to make routing diagnostics distinguish the
 members without exposing auth-home paths. A Codex 429 after its own retries puts
 that member into a per-router cooldown for `Retry-After` or 60 seconds, then one
-request probes it after expiry. A confirmed invalid, expired, or reused refresh
+request probes it after expiry. Cooldown state is process-local to each
+`MultiLLMProvider` instance: restarting clears it, and each instance admits its
+own probe. A confirmed invalid, expired, or reused refresh
 credential is terminal for the operation: Hindsight neither falls back to another
 member nor retries the enclosing operation. Other 401s, timeouts, and 5xx errors
 retain generic retry/failover behavior. Batch retain remains bound to the member

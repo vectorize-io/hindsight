@@ -576,7 +576,9 @@ bank configuration. Each operation can override its primary label and indexed me
 
 For Codex members, a 429 after the provider's own retries places that member in a per-router
 cooldown for a valid `Retry-After` duration or 60 seconds; one request probes it after expiry.
-A positively confirmed invalid, expired, or reused refresh credential is terminal: Hindsight does
+Cooldown state is process-local to each `MultiLLMProvider` instance, so a restart clears it and
+each instance admits its own probe. A positively confirmed invalid, expired, or reused refresh
+credential is terminal: Hindsight does
 not try another member or retry the enclosing operation. Other 401s, timeouts, and 5xx errors keep
 the existing generic retry/failover behavior. Batch retain stays bound to its submitting member and
 is never rerouted by cooldown state.
