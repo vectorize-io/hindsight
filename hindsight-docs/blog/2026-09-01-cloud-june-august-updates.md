@@ -1,8 +1,8 @@
 ---
 title: "What's New in Hindsight Cloud: June–August Updates"
 authors: [benfrank241]
-slug: "2026/08/31/hindsight-cloud-june-august-updates"
-date: 2026-08-31T12:00
+slug: "2026/09/01/hindsight-cloud-june-august-updates"
+date: 2026-09-01T12:00
 tags: [hindsight-cloud, release, knowledge-pages, mental-models, ui, enterprise, sso, mfa, security]
 description: "Three months of Hindsight Cloud: a client-managed knowledge base, scheduled mental model refreshes, a rebuilt console, plus enterprise SSO, MFA enforcement, audit logging, and Memory Defense."
 image: /img/blog/hindsight-cloud-june-august-updates.png
