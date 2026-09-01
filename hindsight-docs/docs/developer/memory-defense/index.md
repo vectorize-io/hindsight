@@ -46,6 +46,19 @@ Enabling Memory Defense on a bank only affects future retain calls. Memories alr
 
 Memory Defense is off on every bank until you set a policy. A bank with no `memory_defense` field, with `enabled: false`, or with no `sensitive_data` rule is treated identically: the extension returns ALLOW and content passes through unchanged. To stop redacting on a bank that has it on, set `enabled: false` or remove the policy.
 
+### Detectors this build does not implement
+
+A policy may name any detector. The config API does not gate `on` against a fixed list, so a policy written for a build with more detectors than yours is accepted and stored as-is rather than rejected.
+
+A rule naming a detector the running build does not implement has no effect: nothing is screened for it. Because that is easy to mistake for a protection being active, the API logs a warning the first time it screens under such a policy, naming the detector and the roster it does implement:
+
+```
+Memory Defense policy names detector 'prompt_injection', which this build does not implement.
+The rule is ignored and nothing is screened for it. Detectors implemented here: ['sensitive_data'].
+```
+
+The line is emitted once per detector name per process, not once per retained item.
+
 ## Notifications
 
 When an item is redacted or blocked, Hindsight fires a [`memory_defense.triggered` webhook](../api/webhooks.mdx#memory_defensetriggered) if a webhook on the bank is subscribed to that event type. The payload reports the action taken, the document ID, and which redaction patterns matched — useful for routing security alerts to a SIEM or Slack. Clean items fire no event.
