@@ -2378,3 +2378,63 @@ async def test_retain_application_tags_extract_complete_pairs(memory_real_llm, r
         )
     finally:
         await memory_real_llm.delete_bank(bank_id, request_context=request_context)
+
+
+# ─── multi-text: open vocabulary, many values ─────────────────────────────────
+
+
+def test_build_labels_model_multi_text_is_an_unconstrained_list():
+    """multi-text → list[str] with no enum.
+
+    The distinction from multi-values is the point: the values cannot be enumerated in
+    advance (the names something goes by, ticket references, product codes), so there is
+    nothing to constrain them to.
+    """
+    labels_cfg = EntityLabelsConfig(
+        attributes=[LabelGroup(key="name", type="multi-text", description="names it goes by")]
+    )
+    Model = build_labels_model(labels_cfg)
+    assert Model is not None
+
+    props = Model.model_json_schema()["properties"]
+    assert props["name"]["type"] == "array"
+    assert props["name"]["items"] == {"type": "string"}
+    assert "enum" not in props["name"]["items"]
+
+    assert Model().name == []  # type: ignore[attr-defined]
+    assert Model(name=["Kubernetes", "k8s", "kube"]).name == ["Kubernetes", "k8s", "kube"]  # type: ignore[attr-defined]
+
+
+def test_multi_text_needs_no_declared_values():
+    """An enum group with no values is skipped; multi-text is still built."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(key="empty_enum", type="multi-values", values=[]),
+            LabelGroup(key="name", type="multi-text"),
+        ]
+    )
+    Model = build_labels_model(labels_cfg)
+    assert Model is not None
+    assert set(Model.model_json_schema()["properties"]) == {"name"}
+
+
+def test_multi_text_contributes_no_fixed_vocabulary():
+    """Like text, its values are unknown up front, so the lookup set stays empty."""
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="name", type="multi-text")])
+    assert build_labels_lookup(labels_cfg) == set()
+
+
+def test_multi_text_entities_are_recognised_by_prefix():
+    """Any `name:<anything>` belongs to the group — there is no value list to check against."""
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="name", type="multi-text")])
+    lookup = build_labels_lookup(labels_cfg)
+    assert is_label_entity("name:kubernetes", labels_cfg, lookup)
+    assert is_label_entity("name:some-thing-never-seen-before", labels_cfg, lookup)
+    assert not is_label_entity("kubernetes", labels_cfg, lookup)
+
+
+def test_multi_text_parses_from_raw_config():
+    labels_cfg = parse_entity_labels([{"key": "name", "type": "multi-text", "tag": True}])
+    assert labels_cfg is not None
+    assert labels_cfg.attributes[0].type == "multi-text"
+    assert labels_cfg.attributes[0].tag is True

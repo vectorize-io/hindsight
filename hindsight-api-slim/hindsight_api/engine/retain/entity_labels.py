@@ -21,7 +21,7 @@ class LabelValue(BaseModel):
 class MapField(BaseModel):
     """A field within a map-type entity label group. Supports recursion via type='map'."""
 
-    type: Literal["text", "value", "multi-values", "map"] = "text"
+    type: Literal["text", "multi-text", "value", "multi-values", "map"] = "text"
     description: str = ""
     values: list[LabelValue] = []
     fields: dict[str, "MapField"] = {}
@@ -35,7 +35,7 @@ class LabelGroup(BaseModel):
 
     key: str
     description: str = ""
-    type: Literal["value", "multi-values", "text", "map"] = "value"
+    type: Literal["value", "multi-values", "text", "multi-text", "map"] = "value"
     optional: bool = True
     tag: bool = False
     values: list[LabelValue] = []
@@ -175,6 +175,7 @@ def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None
 
     Each LabelGroup becomes a typed field based on its type:
     - type="text"                        → str | None  (always optional)
+    - type="multi-text"                  → list[str]   (open vocabulary, many values)
     - type="value",   optional=True      → Literal["v1","v2"] | None
     - type="value",   optional=False     → Literal["v1","v2"]  (required)
     - type="multi-values"                → list[Literal["v1","v2"]]
@@ -202,6 +203,11 @@ def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None
         elif group.type == "text":
             # Free-form: any string value accepted, always optional
             fields[group.key] = (str | None, Field(default=None, description=description))
+        elif group.type == "multi-text":
+            # Open vocabulary, many values per fact — the values cannot be enumerated in
+            # advance (names something goes by, ticket references, product codes), so unlike
+            # "multi-values" there is no Literal to constrain them to.
+            fields[group.key] = (list[str], Field(default_factory=list, description=description))
         else:
             # Enum-constrained: must have defined values
             if not group.values:
@@ -256,7 +262,7 @@ def is_label_entity(text: str, labels_cfg: EntityLabelsConfig, labels_lookup: se
     if text.lower() in labels_lookup:
         return True
     for group in labels_cfg.attributes:
-        if group.type == "text" and group.key and text.lower().startswith(f"{group.key.lower()}:"):
+        if group.type in ("text", "multi-text") and group.key and text.lower().startswith(f"{group.key.lower()}:"):
             return True
         if group.type == "map" and group.key and group.fields:
             prefix = f"{group.key.lower()}:"
@@ -289,8 +295,8 @@ def build_labels_lookup(labels_cfg: EntityLabelsConfig | list | None) -> set[str
 
     valid = set()
     for group in labels_cfg.attributes:
-        if group.type in ("text", "map"):
-            continue  # text: no fixed vocabulary; map: uses three-level key:field:value strings
+        if group.type in ("text", "multi-text", "map"):
+            continue  # text/multi-text: no fixed vocabulary; map: three-level key:field:value strings
         for v in group.values:
             if group.key and v.value:
                 valid.add(f"{group.key}:{v.value}".lower())

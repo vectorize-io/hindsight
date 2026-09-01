@@ -1221,6 +1221,9 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
         if attr.type == "text":
             # Free-text: no predefined values — LLM writes any relevant string or null
             lines.append(f"- {attr.key} (free text or null): {attr.description}")
+        elif attr.type == "multi-text":
+            # Open vocabulary, many values: the LLM writes the list, nothing constrains it
+            lines.append(f"- {attr.key} (list of free-text values, [] if none apply): {attr.description}")
         else:
             mode = "multi-value (list)" if attr.type == "multi-values" else "single value or null"
             lines.append(f"- {attr.key} ({mode}): {attr.description}")
@@ -1822,7 +1825,7 @@ async def _extract_facts_from_chunk(
                                 if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                                     continue
                                 label_str = f"{group.key}:{v.strip()}"
-                                if group.type == "text":
+                                if group.type in ("text", "multi-text"):
                                     if label_str.lower() not in existing_texts_lower:
                                         validated_entities.append(label_str)
                                         existing_texts_lower.add(label_str.lower())
@@ -2665,7 +2668,7 @@ async def extract_facts_from_contents_batch_api(
                             if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                                 continue
                             label_str = f"{group.key}:{v.strip()}"
-                            if group.type == "text":
+                            if group.type in ("text", "multi-text"):
                                 if label_str.lower() not in existing_texts_lower:
                                     validated_entities.append(label_str)
                                     existing_texts_lower.add(label_str.lower())

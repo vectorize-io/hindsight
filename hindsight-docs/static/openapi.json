@@ -11191,6 +11191,7 @@
               "value",
               "multi-values",
               "text",
+              "multi-text",
               "map"
             ],
             "title": "Type",
@@ -11247,6 +11248,7 @@
               "value",
               "multi-values",
               "text",
+              "multi-text",
               "map"
             ],
             "title": "Type",
@@ -11583,6 +11585,7 @@
             "type": "string",
             "enum": [
               "text",
+              "multi-text",
               "value",
               "multi-values",
               "map"
@@ -11622,6 +11625,7 @@
             "type": "string",
             "enum": [
               "text",
+              "multi-text",
               "value",
               "multi-values",
               "map"
