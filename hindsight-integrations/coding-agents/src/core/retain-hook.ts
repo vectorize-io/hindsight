@@ -14,7 +14,7 @@
  * in core/hook.ts.
  */
 import { readFileSync } from "node:fs";
-import { deriveBankId } from "./bank";
+import { deriveBankIdOrSkip } from "./bank";
 import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
@@ -167,7 +167,11 @@ export async function runRetainHook(
   if (!transcriptPath) return;
 
   const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
+  const derived = deriveBankIdOrSkip(cfg, cwd, spec.harness, sessionRoot);
+  // Skipping the write-back loses this session; retaining it into a guessed bank loses it AND
+  // pollutes the server with a bank nothing ever reads back (#3950).
+  if (derived === null) return;
+  const resolved = applyBankConfig(cfg, derived, cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)

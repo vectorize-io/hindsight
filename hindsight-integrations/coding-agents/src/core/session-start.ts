@@ -28,7 +28,7 @@ import { SURVEY_DOC_IDS, startCodebaseSurvey, type SurveyHarness } from "./surve
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import type { Config } from "./config";
-import { deriveBankId } from "./bank";
+import { deriveBankIdOrSkip } from "./bank";
 import { brandWord } from "./brand";
 import { diag } from "./diag";
 import { setLogLevel } from "./log";
@@ -363,7 +363,9 @@ export async function runSessionStartHook(
     // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
     // same bank however far the agent navigates (#3563).
     const sessionRoot = sessionRootDir(harness, sessionId, cwd);
-    const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, harness, sessionRoot), cwd);
+    const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
+    if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
+    const resolved = applyBankConfig(cfg, derived, cwd);
     cfg = resolved.cfg;
     const bankId = resolved.bankId;
     if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)

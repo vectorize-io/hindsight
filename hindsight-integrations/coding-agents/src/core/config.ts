@@ -190,7 +190,7 @@ export interface Config {
   daemonProfile: string;
   embedVersion?: string;
   embedPackagePath?: string;
-  bankId?: string; // resolved per-directory via deriveBankId(cfg, dir) — see core/bank.ts
+  bankId?: string; // resolved per-directory via deriveBankIdOrSkip — see core/bank.ts
   dynamicBankId?: boolean;
   bankIdTemplate?: string;
   mapPathToBank?: Record<string, string>;
@@ -560,7 +560,7 @@ export function applyBankConfig(
   cfg: Config,
   resolvedId: string,
   /** The directory the bank was resolved FROM. Supplying it enforces `optInOnly`; every entry
-   *  point already has it to hand, having just passed it to `deriveBankId`. */
+   *  point already has it to hand, having just passed it to bank resolution. */
   directory?: string
 ): { cfg: Config; bankId: string } {
   // Rides the `disabled` gate every entry point already checks after bank resolution, rather than

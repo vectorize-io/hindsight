@@ -6,7 +6,7 @@
  * changes, and a network request here would make rendering depend on server latency.
  */
 import { applyBankConfig, loadConfig, type Config } from "./core/config";
-import { deriveBankId } from "./core/bank";
+import { deriveBankIdOrSkip } from "./core/bank";
 import { brandWord } from "./core/brand";
 
 export interface AntigravityStatusLineState {
@@ -24,7 +24,9 @@ export function buildAntigravityStatusLine(state: AntigravityStatusLineState, cf
   // the directory the agent navigated to while the hooks keep writing to the session's own bank
   // (#3563). It is a display-only divergence — this command never calls the API, so nothing is
   // retained or created under the name shown.
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, "antigravity-cli"), cwd);
+  const bankId = deriveBankIdOrSkip(cfg, cwd, "antigravity-cli");
+  if (bankId === null) return brandWord(); // unidentifiable repo: name no bank rather than the wrong one
+  const resolved = applyBankConfig(cfg, bankId, cwd);
   return resolved.cfg.disabled ? "" : `${brandWord()} · ${resolved.bankId}`;
 }
 
