@@ -81,6 +81,7 @@ import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { HarnessLogo } from "@/components/ui/harness-logo";
+import { InlineImageText } from "@/components/ui/inline-image-text";
 import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 
 const ITEMS_PER_PAGE = 50;
@@ -634,7 +635,7 @@ function InvalidatedFactsSection({ bankId, documentId }: { bankId: string; docum
   );
 }
 
-function ChunkRow({ chunk }: { chunk: any }) {
+function ChunkRow({ chunk, bankId }: { chunk: any; bankId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [memoriesExpanded, setMemoriesExpanded] = useState(false);
   const [chunkFactType, setChunkFactType] = useState<ChunkFactType>("world");
@@ -691,9 +692,11 @@ function ChunkRow({ chunk }: { chunk: any }) {
           /* Split view: left text, right compact memories */
           <div className="grid grid-cols-2 divide-x divide-border" style={{ height: "350px" }}>
             <div className="overflow-y-auto">
-              <pre className="px-4 py-3 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono">
-                {text}
-              </pre>
+              <InlineImageText
+                text={text}
+                bankId={bankId}
+                className="px-4 py-3 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono"
+              />
             </div>
             <div className="flex flex-col overflow-hidden">
               <ChunkMemoriesHeader
@@ -2124,9 +2127,11 @@ export function DocumentsView() {
                               {t("editButton")}
                             </Button>
                           </div>
-                          <pre className="p-4 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono">
-                            {selectedDocument.original_text}
-                          </pre>
+                          <InlineImageText
+                            text={selectedDocument.original_text}
+                            bankId={currentBank ?? ""}
+                            className="p-4 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono"
+                          />
                         </div>
                       )
                     ) : null}
@@ -2151,7 +2156,7 @@ export function DocumentsView() {
                   ) : chunks.length > 0 ? (
                     <div className="rounded-lg border border-border overflow-hidden divide-y divide-border">
                       {chunks.map((chunk) => (
-                        <ChunkRow key={chunk.chunk_id} chunk={chunk} />
+                        <ChunkRow key={chunk.chunk_id} chunk={chunk} bankId={currentBank ?? ""} />
                       ))}
                     </div>
                   ) : chunksLoaded ? (

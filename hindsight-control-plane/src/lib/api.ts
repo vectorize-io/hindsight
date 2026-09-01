@@ -31,6 +31,17 @@ function describeErrorDetails(details: unknown): string | undefined {
   return String(details);
 }
 
+/**
+ * One element of a multimodal retain item's content.
+ *
+ * Retain accepts either a plain string or an ordered list of these, so an image
+ * can sit inline where it actually appears and the extractor reads it alongside
+ * the prose that refers to it.
+ */
+export type RetainContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
 export interface WebhookHttpConfig {
   method: string;
   timeout_seconds: number;
@@ -540,7 +551,11 @@ export class ControlPlaneClient {
   async retain(params: {
     bank_id: string;
     items: Array<{
-      content: string;
+      /**
+       * Raw content: a plain string, or ordered blocks so an image sits inline
+       * where it appears. The block form needs a vision-capable retain LLM.
+       */
+      content: string | Array<RetainContentBlock>;
       timestamp?: string;
       context?: string;
       document_id?: string;

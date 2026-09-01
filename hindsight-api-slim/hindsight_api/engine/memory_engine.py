@@ -6203,6 +6203,53 @@ class MemoryEngine(MemoryEngineInterface):
         except FileNotFoundError:
             return None
 
+    async def resolve_bank_images(
+        self,
+        bank_id: str,
+        image_hashes: "Sequence[str]",
+        request_context: "RequestContext",
+    ) -> "dict[str, StoredImage]":
+        """Look up the metadata for images a bank's chunks reference.
+
+        Used to turn the placeholders in recalled chunk text into something a
+        client can render. Hashes with no row are omitted rather than raising: a
+        document whose image bytes are gone should still recall its facts.
+        """
+        from .retain.image_store import load_bank_images
+
+        if not image_hashes:
+            return {}
+        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if profile is None:
+            return {}
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            return await load_bank_images(conn, bank_id, image_hashes)
+
+    async def retrieve_bank_image(
+        self,
+        bank_id: str,
+        image_hash: str,
+        request_context: "RequestContext",
+    ) -> "tuple[str, bytes] | None":
+        """Fetch one image's media type and bytes, authorized against ``bank_id``.
+
+        Returns ``None`` both when the bank is not visible to the caller and when
+        the image does not exist — indistinguishable on purpose, so a caller
+        cannot probe for which images a bank holds. Same guarantee as
+        :meth:`retrieve_bank_file`, and the reason the hash alone is not a
+        capability: it is derived from the content, so anyone holding the same
+        image could otherwise read whether some bank had also retained it.
+        """
+        records = await self.resolve_bank_images(bank_id, [image_hash], request_context)
+        record = records.get(image_hash)
+        if record is None:
+            return None
+        try:
+            return record.media_type, await self._file_storage.retrieve(record.storage_key)
+        except FileNotFoundError:
+            return None
+
     def _require_vision_capable_retain_llm(self) -> None:
         """Refuse an image-bearing retain the configured retain LLM cannot read.
 

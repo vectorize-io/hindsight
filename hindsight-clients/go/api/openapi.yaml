@@ -3493,6 +3493,54 @@ paths:
       summary: Export documents (async)
       tags:
       - Document Transfer
+  /v1/default/banks/{bank_id}/images/{image_hash}:
+    get:
+      description: |-
+        Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
+
+        Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+      operationId: get_bank_image
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: image_hash
+        required: true
+        schema:
+          title: Image Hash
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            image/png: {}
+          description: Image bytes
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Fetch an image retained inline with a document
+      tags:
+      - Memory
   /v1/default/files/download/{key}:
     get:
       description: Stream a file previously written to file storage — currently the
@@ -5606,6 +5654,38 @@ components:
       - name
       - source_query
       title: BankTemplateMentalModel
+    Base64ImageSource:
+      description: |-
+        Inline image bytes, base64-encoded.
+
+        The only source type in this version. ``url`` (server-side fetch) and
+        ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
+        is modelled as a discriminated union on ``type`` rather than as bare fields.
+      properties:
+        type:
+          default: base64
+          enum:
+          - base64
+          title: Type
+          type: string
+        media_type:
+          description: "MIME type of the image. One of: image/png, image/jpeg, image/gif,\
+            \ image/webp."
+          enum:
+          - image/png
+          - image/jpeg
+          - image/gif
+          - image/webp
+          title: Media Type
+          type: string
+        data:
+          description: "Base64-encoded image bytes (no data: URI prefix)."
+          title: Data
+          type: string
+      required:
+      - data
+      - media_type
+      title: Base64ImageSource
     Body_file_retain:
       properties:
         files:
@@ -5700,11 +5780,42 @@ components:
           description: Whether the chunk text was truncated due to token limits
           title: Truncated
           type: boolean
+        images:
+          items:
+            $ref: '#/components/schemas/ChunkImage'
+          nullable: true
+          type: array
       required:
       - chunk_index
       - id
       - text
       title: ChunkData
+    ChunkImage:
+      description: "An image referenced by a chunk's text, and where to fetch it."
+      properties:
+        hash:
+          description: sha256 of the image bytes; the id inside the chunk text's placeholder.
+          title: Hash
+          type: string
+        media_type:
+          description: MIME type of the image.
+          title: Media Type
+          type: string
+        byte_size:
+          description: Size of the image in bytes.
+          title: Byte Size
+          type: integer
+        url:
+          description: Bank-scoped API path serving the image bytes. Requires the
+            same authorization as the bank.
+          title: Url
+          type: string
+      required:
+      - byte_size
+      - hash
+      - media_type
+      - url
+      title: ChunkImage
     ChunkIncludeOptions:
       description: Options for including chunks in recall results.
       properties:
@@ -6963,6 +7074,21 @@ components:
             $ref: '#/components/schemas/ValidationError'
           type: array
       title: HTTPValidationError
+    ImageContentBlock:
+      description: "An image within a multimodal item, in the position the caller\
+        \ wrote it."
+      properties:
+        type:
+          enum:
+          - image
+          title: Type
+          type: string
+        source:
+          $ref: '#/components/schemas/Base64ImageSource'
+      required:
+      - source
+      - type
+      title: ImageContentBlock
     IncludeOptions:
       description: Options for including additional data in recall results.
       properties:
@@ -8098,8 +8224,7 @@ components:
         timestamp: 2024-01-15T10:30:00Z
       properties:
         content:
-          title: Content
-          type: string
+          $ref: '#/components/schemas/Content'
         timestamp:
           $ref: '#/components/schemas/Timestamp'
         context:
@@ -10204,6 +10329,22 @@ components:
       - end
       - start
       title: TemporalWindow
+    TextContentBlock:
+      description: "A run of text within a multimodal item, in the position the caller\
+        \ wrote it."
+      properties:
+        type:
+          enum:
+          - text
+          title: Type
+          type: string
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - type
+      title: TextContentBlock
     TokenUsage:
       description: |-
         Token usage metrics for LLM calls.
@@ -10826,6 +10967,30 @@ components:
         \ before this was captured."
       nullable: true
       title: Observation Scopes
+    Content_anyOf_inner:
+      discriminator:
+        mapping:
+          image: '#/components/schemas/ImageContentBlock'
+          text: '#/components/schemas/TextContentBlock'
+        propertyName: type
+      oneOf:
+      - $ref: '#/components/schemas/TextContentBlock'
+      - $ref: '#/components/schemas/ImageContentBlock'
+    Content:
+      anyOf:
+      - type: string
+      - items:
+          $ref: '#/components/schemas/Content_anyOf_inner'
+        type: array
+      description: |-
+        The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:
+
+          [{"type": "text", "text": "click the button shown:"},
+           {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+           {"type": "text", "text": "...then reconnect."}]
+
+        The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
+      title: Content
     Timestamp:
       anyOf:
       - format: date-time

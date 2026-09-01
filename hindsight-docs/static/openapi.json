@@ -5035,6 +5035,73 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/images/{image_hash}": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Fetch an image retained inline with a document",
+        "description": "Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` \u2014 so an agent can show or reason over the original image behind an image-derived fact.\n\nAccess is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.",
+        "operationId": "get_bank_image",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "image_hash",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Image Hash"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "image/png": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/files/download/{key}": {
       "get": {
         "tags": [
@@ -8443,6 +8510,39 @@
         "title": "BankTemplateMentalModel",
         "description": "A mental model definition within a bank template manifest."
       },
+      "Base64ImageSource": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "base64",
+            "title": "Type",
+            "default": "base64"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp"
+            ],
+            "title": "Media Type",
+            "description": "MIME type of the image. One of: image/png, image/jpeg, image/gif, image/webp."
+          },
+          "data": {
+            "type": "string",
+            "title": "Data",
+            "description": "Base64-encoded image bytes (no data: URI prefix)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "media_type",
+          "data"
+        ],
+        "title": "Base64ImageSource",
+        "description": "Inline image bytes, base64-encoded.\n\nThe only source type in this version. ``url`` (server-side fetch) and\n``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this\nis modelled as a discriminated union on ``type`` rather than as bare fields."
+      },
       "Body_file_retain": {
         "properties": {
           "files": {
@@ -8592,6 +8692,21 @@
             "title": "Truncated",
             "description": "Whether the chunk text was truncated due to token limits",
             "default": false
+          },
+          "images": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkImage"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Images",
+            "description": "Images this chunk's text references, in order of first appearance, when it was retained with inline image content. The text keeps each image's placeholder token (\u27e6hs-image:sha256:...\u27e7) where the image sat, so a multimodal agent can render or reason over the original image at the position it occupied in the source document. Omitted for chunks with no images."
           }
         },
         "type": "object",
@@ -8602,6 +8717,39 @@
         ],
         "title": "ChunkData",
         "description": "Chunk data for a single chunk."
+      },
+      "ChunkImage": {
+        "properties": {
+          "hash": {
+            "type": "string",
+            "title": "Hash",
+            "description": "sha256 of the image bytes; the id inside the chunk text's placeholder."
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME type of the image."
+          },
+          "byte_size": {
+            "type": "integer",
+            "title": "Byte Size",
+            "description": "Size of the image in bytes."
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Bank-scoped API path serving the image bytes. Requires the same authorization as the bank."
+          }
+        },
+        "type": "object",
+        "required": [
+          "hash",
+          "media_type",
+          "byte_size",
+          "url"
+        ],
+        "title": "ChunkImage",
+        "description": "An image referenced by a chunk's text, and where to fetch it."
       },
       "ChunkIncludeOptions": {
         "properties": {
@@ -10480,6 +10628,25 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "ImageContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Base64ImageSource"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "source"
+        ],
+        "title": "ImageContentBlock",
+        "description": "An image within a multimodal item, in the position the caller wrote it."
+      },
       "IncludeOptions": {
         "properties": {
           "entities": {
@@ -11756,8 +11923,33 @@
       "MemoryItem": {
         "properties": {
           "content": {
-            "type": "string",
-            "title": "Content"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContentBlock"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageContentBlock"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                      "image": "#/components/schemas/ImageContentBlock",
+                      "text": "#/components/schemas/TextContentBlock"
+                    }
+                  }
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Content",
+            "description": "The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:\n\n  [{\"type\": \"text\", \"text\": \"click the button shown:\"},\n   {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},\n   {\"type\": \"text\", \"text\": \"...then reconnect.\"}]\n\nThe block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form."
           },
           "timestamp": {
             "anyOf": [
@@ -15394,6 +15586,26 @@
         ],
         "title": "TemporalWindow",
         "description": "A caller-supplied window for recall's temporal arm.\n\nSupplying this **replaces the date extraction** recall would otherwise run\nover the query text, so a caller that already knows the range it means does\nnot have to phrase it in English and hope the parser agrees.\n\nIt is **not a filter**. The temporal arm is one of four retrieval arms: it\nsurfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /\n``occurred_end``) fall inside the window so fusion can rank them higher.\nThe semantic, keyword and graph arms are unaffected, so results dated\noutside the window are still returned. Narrowing results to a date range is\na different operation this does not provide.\n\nHas no effect when the bank's ``enable_temporal_retrieval`` config is off:\nthat flag gates the arm itself, and stays the single switch for it."
+      },
+      "TextContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "TextContentBlock",
+        "description": "A run of text within a multimodal item, in the position the caller wrote it."
       },
       "TokenUsage": {
         "properties": {

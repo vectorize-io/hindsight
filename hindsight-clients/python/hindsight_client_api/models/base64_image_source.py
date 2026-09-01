@@ -17,22 +17,36 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.chunk_image import ChunkImage
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ChunkData(BaseModel):
+class Base64ImageSource(BaseModel):
     """
-    Chunk data for a single chunk.
+    Inline image bytes, base64-encoded.  The only source type in this version. ``url`` (server-side fetch) and ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this is modelled as a discriminated union on ``type`` rather than as bare fields.
     """ # noqa: E501
-    id: StrictStr
-    text: StrictStr
-    chunk_index: StrictInt
-    truncated: Optional[StrictBool] = Field(default=False, description="Whether the chunk text was truncated due to token limits")
-    images: Optional[List[ChunkImage]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "chunk_index", "truncated", "images"]
+    type: Optional[StrictStr] = 'base64'
+    media_type: StrictStr = Field(description="MIME type of the image. One of: image/png, image/jpeg, image/gif, image/webp.")
+    data: StrictStr = Field(description="Base64-encoded image bytes (no data: URI prefix).")
+    __properties: ClassVar[List[str]] = ["type", "media_type", "data"]
+
+    @field_validator('type')
+    def type_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['base64']):
+            raise ValueError("must be one of enum values ('base64')")
+        return value
+
+    @field_validator('media_type')
+    def media_type_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']):
+            raise ValueError("must be one of enum values ('image/png', 'image/jpeg', 'image/gif', 'image/webp')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -52,7 +66,7 @@ class ChunkData(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ChunkData from a JSON string"""
+        """Create an instance of Base64ImageSource from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,23 +87,11 @@ class ChunkData(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in images (list)
-        _items = []
-        if self.images:
-            for _item_images in self.images:
-                if _item_images:
-                    _items.append(_item_images.to_dict())
-            _dict['images'] = _items
-        # set to None if images (nullable) is None
-        # and model_fields_set contains the field
-        if self.images is None and "images" in self.model_fields_set:
-            _dict['images'] = None
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ChunkData from a dict"""
+        """Create an instance of Base64ImageSource from a dict"""
         if obj is None:
             return None
 
@@ -97,11 +99,9 @@ class ChunkData(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "id": obj.get("id"),
-            "text": obj.get("text"),
-            "chunk_index": obj.get("chunk_index"),
-            "truncated": obj.get("truncated") if obj.get("truncated") is not None else False,
-            "images": [ChunkImage.from_dict(_item) for _item in obj["images"]] if obj.get("images") is not None else None
+            "type": obj.get("type") if obj.get("type") is not None else 'base64',
+            "media_type": obj.get("media_type"),
+            "data": obj.get("data")
         })
         return _obj
 

@@ -17,22 +17,26 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.chunk_image import ChunkImage
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List
+from hindsight_client_api.models.base64_image_source import Base64ImageSource
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ChunkData(BaseModel):
+class ImageContentBlock(BaseModel):
     """
-    Chunk data for a single chunk.
+    An image within a multimodal item, in the position the caller wrote it.
     """ # noqa: E501
-    id: StrictStr
-    text: StrictStr
-    chunk_index: StrictInt
-    truncated: Optional[StrictBool] = Field(default=False, description="Whether the chunk text was truncated due to token limits")
-    images: Optional[List[ChunkImage]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "chunk_index", "truncated", "images"]
+    type: StrictStr
+    source: Base64ImageSource
+    __properties: ClassVar[List[str]] = ["type", "source"]
+
+    @field_validator('type')
+    def type_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['image']):
+            raise ValueError("must be one of enum values ('image')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -52,7 +56,7 @@ class ChunkData(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ChunkData from a JSON string"""
+        """Create an instance of ImageContentBlock from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,23 +77,14 @@ class ChunkData(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in images (list)
-        _items = []
-        if self.images:
-            for _item_images in self.images:
-                if _item_images:
-                    _items.append(_item_images.to_dict())
-            _dict['images'] = _items
-        # set to None if images (nullable) is None
-        # and model_fields_set contains the field
-        if self.images is None and "images" in self.model_fields_set:
-            _dict['images'] = None
-
+        # override the default output from pydantic by calling `to_dict()` of source
+        if self.source:
+            _dict['source'] = self.source.to_dict()
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ChunkData from a dict"""
+        """Create an instance of ImageContentBlock from a dict"""
         if obj is None:
             return None
 
@@ -97,11 +92,8 @@ class ChunkData(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "id": obj.get("id"),
-            "text": obj.get("text"),
-            "chunk_index": obj.get("chunk_index"),
-            "truncated": obj.get("truncated") if obj.get("truncated") is not None else False,
-            "images": [ChunkImage.from_dict(_item) for _item in obj["images"]] if obj.get("images") is not None else None
+            "type": obj.get("type"),
+            "source": Base64ImageSource.from_dict(obj["source"]) if obj.get("source") is not None else None
         })
         return _obj
 

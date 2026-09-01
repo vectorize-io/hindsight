@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.content import Content
 from hindsight_client_api.models.entity_input import EntityInput
 from hindsight_client_api.models.observation_scopes import ObservationScopes
 from hindsight_client_api.models.timestamp import Timestamp
@@ -29,7 +30,7 @@ class MemoryItem(BaseModel):
     """
     Single memory item for retain.
     """ # noqa: E501
-    content: StrictStr
+    content: Content
     timestamp: Optional[Timestamp] = None
     context: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None
@@ -91,6 +92,9 @@ class MemoryItem(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of content
+        if self.content:
+            _dict['content'] = self.content.to_dict()
         # override the default output from pydantic by calling `to_dict()` of timestamp
         if self.timestamp:
             _dict['timestamp'] = self.timestamp.to_dict()
@@ -161,7 +165,7 @@ class MemoryItem(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "content": obj.get("content"),
+            "content": Content.from_dict(obj["content"]) if obj.get("content") is not None else None,
             "timestamp": Timestamp.from_dict(obj["timestamp"]) if obj.get("timestamp") is not None else None,
             "context": obj.get("context"),
             "metadata": obj.get("metadata"),

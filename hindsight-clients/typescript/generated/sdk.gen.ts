@@ -98,6 +98,9 @@ import type {
   GetBankConfigData,
   GetBankConfigErrors,
   GetBankConfigResponses,
+  GetBankImageData,
+  GetBankImageErrors,
+  GetBankImageResponses,
   GetBankProfileData,
   GetBankProfileErrors,
   GetBankProfileResponses,
@@ -1321,6 +1324,21 @@ export const exportDocuments = <ThrowOnError extends boolean = false>(
 ) =>
   (options.client ?? client).post<ExportDocumentsResponses, ExportDocumentsErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/document-transfer/export",
+    ...options,
+  });
+
+/**
+ * Fetch an image retained inline with a document
+ *
+ * Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
+ *
+ * Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+ */
+export const getBankImage = <ThrowOnError extends boolean = false>(
+  options: Options<GetBankImageData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetBankImageResponses, GetBankImageErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/images/{image_hash}",
     ...options,
   });
 

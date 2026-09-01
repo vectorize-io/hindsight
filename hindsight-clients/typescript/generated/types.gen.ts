@@ -929,6 +929,34 @@ export type BankTemplateMentalModel = {
 };
 
 /**
+ * Base64ImageSource
+ *
+ * Inline image bytes, base64-encoded.
+ *
+ * The only source type in this version. ``url`` (server-side fetch) and
+ * ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
+ * is modelled as a discriminated union on ``type`` rather than as bare fields.
+ */
+export type Base64ImageSource = {
+  /**
+   * Type
+   */
+  type?: "base64";
+  /**
+   * Media Type
+   *
+   * MIME type of the image. One of: image/png, image/jpeg, image/gif, image/webp.
+   */
+  media_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  /**
+   * Data
+   *
+   * Base64-encoded image bytes (no data: URI prefix).
+   */
+  data: string;
+};
+
+/**
  * Body_file_retain
  */
 export type BodyFileRetain = {
@@ -1037,6 +1065,44 @@ export type ChunkData = {
    * Whether the chunk text was truncated due to token limits
    */
   truncated?: boolean;
+  /**
+   * Images
+   *
+   * Images this chunk's text references, in order of first appearance, when it was retained with inline image content. The text keeps each image's placeholder token (⟦hs-image:sha256:...⟧) where the image sat, so a multimodal agent can render or reason over the original image at the position it occupied in the source document. Omitted for chunks with no images.
+   */
+  images?: Array<ChunkImage> | null;
+};
+
+/**
+ * ChunkImage
+ *
+ * An image referenced by a chunk's text, and where to fetch it.
+ */
+export type ChunkImage = {
+  /**
+   * Hash
+   *
+   * sha256 of the image bytes; the id inside the chunk text's placeholder.
+   */
+  hash: string;
+  /**
+   * Media Type
+   *
+   * MIME type of the image.
+   */
+  media_type: string;
+  /**
+   * Byte Size
+   *
+   * Size of the image in bytes.
+   */
+  byte_size: number;
+  /**
+   * Url
+   *
+   * Bank-scoped API path serving the image bytes. Requires the same authorization as the bank.
+   */
+  url: string;
 };
 
 /**
@@ -2203,6 +2269,19 @@ export type HttpValidationError = {
 };
 
 /**
+ * ImageContentBlock
+ *
+ * An image within a multimodal item, in the position the caller wrote it.
+ */
+export type ImageContentBlock = {
+  /**
+   * Type
+   */
+  type: "image";
+  source: Base64ImageSource;
+};
+
+/**
  * IncludeOptions
  *
  * Options for including additional data in recall results.
@@ -3000,8 +3079,25 @@ export type MemoriesTimeseriesResponse = {
 export type MemoryItem = {
   /**
    * Content
+   *
+   * The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:
+   *
+   * [{"type": "text", "text": "click the button shown:"},
+   * {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+   * {"type": "text", "text": "...then reconnect."}]
+   *
+   * The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
    */
-  content: string;
+  content:
+    | string
+    | Array<
+        | ({
+            type: "text";
+          } & TextContentBlock)
+        | ({
+            type: "image";
+          } & ImageContentBlock)
+      >;
   /**
    * Timestamp
    *
@@ -5066,6 +5162,22 @@ export type TemporalWindow = {
    * End of the window (inclusive).
    */
   end: string;
+};
+
+/**
+ * TextContentBlock
+ *
+ * A run of text within a multimodal item, in the position the caller wrote it.
+ */
+export type TextContentBlock = {
+  /**
+   * Type
+   */
+  type: "text";
+  /**
+   * Text
+   */
+  text: string;
 };
 
 /**
@@ -8367,6 +8479,44 @@ export type ExportDocumentsResponses = {
 };
 
 export type ExportDocumentsResponse = ExportDocumentsResponses[keyof ExportDocumentsResponses];
+
+export type GetBankImageData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Image Hash
+     */
+    image_hash: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/images/{image_hash}";
+};
+
+export type GetBankImageErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetBankImageError = GetBankImageErrors[keyof GetBankImageErrors];
+
+export type GetBankImageResponses = {
+  /**
+   * Image bytes
+   */
+  200: unknown;
+};
 
 export type DownloadFileData = {
   body?: never;
