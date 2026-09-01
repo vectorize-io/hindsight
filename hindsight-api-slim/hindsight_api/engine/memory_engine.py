@@ -2309,8 +2309,13 @@ class MemoryEngine(MemoryEngineInterface):
         # initialize encoding eagerly to avoid delaying the first time
         get_token_encoding()
 
-        # Store operation validator extension (optional)
-        self._operation_validator = operation_validator
+        # Store operation validator extension (optional). Wrapped so every hook is timed: the
+        # validator runs outside the operation's own timer, so nothing else can see what it costs.
+        # Done here, once, rather than at each call site -- the interface has nineteen hooks and a
+        # hand-instrumented one is a hook that silently loses its timing the next time one is added.
+        from ..extensions.validator_instrumentation import instrument_operation_validator
+
+        self._operation_validator = instrument_operation_validator(operation_validator)
 
         # Store tenant extension (always set, use default if none provided)
         if tenant_extension is None:

@@ -304,6 +304,10 @@ class MetricsCollectorBase:
         """Record one phase of a retain."""
         raise NotImplementedError
 
+    def record_validator_phase(self, operation: str, hook: str, seconds: float):
+        """Record one operation-validator hook (`hook` is "pre" or "post")."""
+        raise NotImplementedError
+
     def record_loop_stall(self, stall_seconds: float):
         """Record a detected event-loop stall (blocked longer than the watchdog threshold)."""
         raise NotImplementedError
@@ -370,6 +374,9 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         pass
 
     def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        pass
+
+    def record_validator_phase(self, operation: str, hook: str, seconds: float):
         pass
 
     def record_loop_stall(self, stall_seconds: float):
@@ -491,6 +498,22 @@ class MetricsCollector(MetricsCollectorBase):
         self.retain_phase_calls = self.meter.create_counter(
             name="hindsight.retain.phase.calls",
             description="Number of times a retain phase ran -- the round-trip count per phase",
+            unit="calls",
+        )
+        # The operation validator runs OUTSIDE the recall/retain timers -- `validate_*` before the
+        # work starts and `on_*_complete` after it ends -- so whatever it does is invisible in the
+        # `[phases]` accounting, which measures only the inner search. A validator that reaches a
+        # database (billing does: an org row and a pricing table, uncached, on a small control
+        # pool) is then latency nobody can see. Labelled by hook so the pre-check and the
+        # post-charge are separable: they fail differently and are fixed differently.
+        self.validator_phase_duration = self.meter.create_histogram(
+            name="hindsight.validator.phase.duration",
+            description="Time in an operation-validator hook, which runs outside the operation's own timer",
+            unit="s",
+        )
+        self.validator_phase_calls = self.meter.create_counter(
+            name="hindsight.validator.phase.calls",
+            description="Number of operation-validator hook invocations",
             unit="calls",
         )
         self.event_loop_stalls = self.meter.create_counter(
@@ -752,6 +775,12 @@ class MetricsCollector(MetricsCollectorBase):
             attrs["store"] = store
         self.retain_phase_duration.record(seconds, attrs)
         self.retain_phase_calls.add(calls, attrs)
+
+    def record_validator_phase(self, operation: str, hook: str, seconds: float):
+        """Record one operation-validator hook. `hook` is "pre" or "post"."""
+        attrs = {"operation": operation, "hook": hook, "tenant": _get_tenant()}
+        self.validator_phase_duration.record(seconds, attrs)
+        self.validator_phase_calls.add(1, attrs)
 
     def record_loop_stall(self, stall_seconds: float):
         """Record a detected event-loop stall. Called from the watchdog thread."""
