@@ -318,6 +318,10 @@ export function createInstallerUi(o: InstallerUiOptions): InstallerUi {
             `${dim("└")}  ${green("✓")} Uninstalled ${agents} in ${secs}s — Hindsight entries removed, *.hindsight-backup files left in place.`
           );
         }
+      } else if (o.command === "update") {
+        write(
+          `${dim("└")}  ${green("✓")} Runtime up to date${o.version ? ` (v${o.version})` : ""}`
+        );
       } else {
         // Bare usage: nothing happened, just close the frame.
         write(dim("└"));

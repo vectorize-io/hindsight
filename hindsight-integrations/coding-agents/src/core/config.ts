@@ -124,6 +124,13 @@ export interface RawConfig {
   /** Plugin log verbosity ("debug" | "info" | "warn" | "error", default "info");
    *  HINDSIGHT_LOG_LEVEL overrides for ad-hoc debugging. */
   logLevel?: "debug" | "info" | "warn" | "error";
+  /** Keep the installed runtime current by itself (default true). Once a day a session start asks
+   *  npm for the published version and, when it is newer, re-stages ~/.hindsight/coding-agents in
+   *  the background — the copy every wired agent's hooks already point at. It rewires no host
+   *  config, so a release that adds a NEW hook entry point still needs a manual `install`.
+   *  Set false to pin the installed version (air-gapped machines, or a deliberate downgrade);
+   *  updating is then `npx @vectorize-io/hindsight-coding-agents install` again, as before. */
+  autoUpdate?: boolean;
   surveyRefreshCommits?: number; // re-run the survey at SessionStart once this many commits have accrued since the last one, so structural pages track an evolving architecture (default 20; 0 = cold-seed only)
   /** How git history feeds memory — seeding AND keeping current use the same engine:
    *  "message" = commit messages only (cheap aggregated doc, re-upserted when HEAD moves);
@@ -201,6 +208,7 @@ export interface Config {
   observationScopes: ObservationScopes;
   banks: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
   logLevel: "debug" | "info" | "warn" | "error";
+  autoUpdate: boolean;
 }
 
 /**
@@ -344,6 +352,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     logLevel: ["debug", "info", "warn", "error"].includes(raw.logLevel as string)
       ? (raw.logLevel as "debug" | "info" | "warn" | "error")
       : "info",
+    autoUpdate: raw.autoUpdate ?? true,
   };
 }
 
@@ -433,6 +442,7 @@ const ENV_KEYS = {
   surveyBudgetUsd: "HINDSIGHT_SURVEY_BUDGET_USD",
   surveyRefreshCommits: "HINDSIGHT_SURVEY_REFRESH_COMMITS",
   logLevel: "HINDSIGHT_LOG_LEVEL",
+  autoUpdate: "HINDSIGHT_AUTO_UPDATE",
   gitIngest: "HINDSIGHT_GIT_INGEST",
   // Scalar modes only ("shared", "combined", "per_tag", "all_combinations"). An explicit scope
   // list is a list OF lists, which does not survive flattening into one variable — file-only.
@@ -452,6 +462,7 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "autoReflect",
   "autoSeed",
   "codebaseSurvey",
+  "autoUpdate",
 ]);
 const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "optInPaths"]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([

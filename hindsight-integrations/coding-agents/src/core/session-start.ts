@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { gitHeadSha, hasGitHistory, commitsSince, repoNameOf } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
+import { maybeAutoUpdate } from "./auto-update";
 import { syncCompanionSkill } from "./skill-sync";
 import { SURVEY_DOC_IDS, startCodebaseSurvey, type SurveyHarness } from "./survey";
 import { applyBankConfig, loadConfig } from "./config";
@@ -351,6 +352,9 @@ export async function runSessionStartHook(
     let cfg = loadConfig({ harness });
     setLogLevel(cfg.logLevel);
     syncCompanionSkill(harness); // keep the installed skill current with the package version
+    // …and keep the package itself current. Detached and rate-limited to once a day; the update
+    // lands for the NEXT session, so nothing here waits on it.
+    void maybeAutoUpdate(cfg);
     if (cfg.disabled) return;
 
     // Recorded HERE, on the session's first hook, so every later hook of this session resolves the

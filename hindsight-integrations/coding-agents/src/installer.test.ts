@@ -1173,6 +1173,45 @@ describe("runtime staging", () => {
     expect(existsSync(join(staged, "dist", "installer.js"))).toBe(true);
   });
 
+  // `update` is what core/auto-update.ts spawns unattended, so its blast radius IS the contract:
+  // it refreshes the staged runtime and rewrites nothing a host reads.
+  it("`update` re-stages the runtime without touching any host config", () => {
+    const ctx = makeCtx();
+    const v1 = mkdtempSync(join(tmpdir(), "v1-"));
+    const v2 = mkdtempSync(join(tmpdir(), "v2-"));
+    homes.push(v1, v2);
+    fakePackage(v1);
+    fakePackage(v2);
+    writeFileSync(join(v2, "dist", "new-only.js"), "// added in the next version");
+
+    Object.assign(ctx, { pkgRoot: v1, dist: join(v1, "dist") });
+    run(["install", "claude-code"], ctx);
+    const settingsPath = join(ctx.home, ".claude", "settings.json");
+    const before = readFileSync(settingsPath, "utf8");
+
+    Object.assign(ctx, { pkgRoot: v2, dist: join(v2, "dist") });
+    expect(run(["update"], ctx)).toBe(0);
+
+    const staged = join(ctx.home, ".hindsight", "coding-agents", "dist");
+    expect(existsSync(join(staged, "new-only.js"))).toBe(true);
+    // Byte-identical: the hooks already point at the staged path, so an update has no reason to
+    // rewrite them — and rewriting is exactly what would let an unattended run wire agents the
+    // user never installed.
+    expect(readFileSync(settingsPath, "utf8")).toBe(before);
+  });
+
+  it("`update` needs no harness argument and wires nothing when nothing is installed", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    fakePackage(src);
+    Object.assign(ctx, { pkgRoot: src, dist: join(src, "dist") });
+
+    expect(run(["update"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ".hindsight", "coding-agents", "dist"))).toBe(true);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(false);
+  });
+
   // A checkout whose dist was never built has nothing to copy; wiring the source path is better
   // than pointing every hook at a directory that does not exist.
   it("wires in place when there is nothing to stage", () => {

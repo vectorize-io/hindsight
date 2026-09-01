@@ -1499,14 +1499,33 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
   // why installing from a cache used to be refused outright. Copying the runtime somewhere stable
   // first removes the problem instead of pushing it onto the user: `npx` now works, and nobody has
   // to keep a global install of a tool whose only job is to set other tools up.
-  if (command === "install") ctx = stageRuntime(ctx);
+  if (command === "install" || command === "update") ctx = stageRuntime(ctx);
+  // `update` is `install`'s staging half and nothing else: it replaces the runtime every wired
+  // agent already points at (~/.hindsight/coding-agents/dist, a path that is stable across
+  // versions) and writes to NO host config. That separation is what makes it safe to run
+  // unattended from `core/auto-update.ts` — an `install` would need a harness list, and choosing
+  // one on the user's behalf would rewire agents they never asked us to touch.
+  //
+  // The cost of not rewiring: a version that introduces a NEW hook entry point is staged but not
+  // referenced, so that one feature waits for a manual `install`. Every existing entry point picks
+  // the new code up on its next spawn.
+  if (command === "update") {
+    ctx.log?.(
+      ctx.pkgRoot === ctxIn.pkgRoot
+        ? "runtime already up to date — nothing staged"
+        : "runtime updated — every wired agent picks it up on its next session"
+    );
+    return 0;
+  }
   if (command !== "install" && command !== "uninstall") {
     ctx.log?.(
       `usage: hindsight-coding-agents <install|uninstall> <all|harness...>\n` +
+        `       hindsight-coding-agents update\n` +
         `       [--server cloud|self-hosted|daemon] [--api-url <url>] [--api-token <token>]\n` +
         `       [--import-conversations]\n` +
         `  all      every agent detected on this machine\n` +
         `  harness  ${INSTALLERS.map((i) => i.name).join(", ")} (agy aliases antigravity-cli)\n` +
+        `  update   re-stage the runtime only, leaving every host config untouched\n` +
         `  agents/CI: without a TTY nothing ever prompts — pass --server (and --api-url/--api-token) to choose`
     );
     return command ? 1 : 0;

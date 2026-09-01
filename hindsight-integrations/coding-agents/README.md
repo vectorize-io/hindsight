@@ -20,12 +20,19 @@ in front of the agent at the moment it starts working, and keeps a curated set o
 npx @vectorize-io/hindsight-coding-agents install all          # every detected agent, wired natively
 npx @vectorize-io/hindsight-coding-agents install claude-code  # or just one
 npx @vectorize-io/hindsight-coding-agents uninstall all        # removes exactly what install added
+npx @vectorize-io/hindsight-coding-agents update               # refresh the runtime only, no rewiring
 ```
 
 `install` takes an explicit target — `all`, or one or more harness names. A bare
 `npx @vectorize-io/hindsight-coding-agents install` changes nothing and prints the choice, so wiring every agent on
 the machine is never something that happens by accident. **Updating is the same `install`
 command again** — it re-copies the runtime in place.
+
+Day to day you should not have to: once a day, a session start checks npm and re-stages a newer
+runtime in the background (`autoUpdate`, on by default — set it to `false` to pin the version you
+have). That is the `update` command above, which refreshes the copy every wired agent already
+points at and deliberately touches no host config; re-run `install` yourself after a release that
+adds a new hook, or to wire another agent.
 
 <!-- skill:end -->
 
@@ -433,6 +440,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `retainSessions`        | `true`                               | session write-back, honored by every harness: hook harnesses write the transcript on Stop, plugin harnesses (opencode, Kilo) upsert it every turn plus an idle flush that captures the reply the per-turn pass can't see. Set `false` — globally, per harness, or per bank — to stop writing transcripts (the background history import stops with it) while recall, git ingest and the memory tools keep working                                 |
 | `maxParallelRetains`    | `10`                                 | cap on concurrent retain-related requests: drain()'s per-op polls plus deepen's chat/git retain pools. The API rate-limits bursts, not single requests — if you see 429s, lower this rather than raising it                                                                                                                                                                                                                                       |
 | `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                                                                                                                                                                                                                                        |
+| `autoUpdate`            | `true`                               | keep the installed runtime current by itself: once a day a session start asks npm for the published version and, when it is newer, re-stages `~/.hindsight/coding-agents` in the background. It rewires no host config, so a release adding a **new** hook entry point still needs a manual `install`. Set `false` to pin the installed version                                                                                                   |
 | `gitIngest`             | `"message"`                          | git depth for seeding AND staying current (same engine): `"message"` = commit messages only (one doc, re-upserted when HEAD moves); `"full"` = messages + per-commit full diffs (progressive, newest first); `"none"` = git off                                                                                                                                                                                                                   |
 | `harnesses.<name>`      | —                                    | per-harness override of any field above                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `harness`               | `opencode`                           | **deepen engine only**: which session format `--conversations` is read as                                                                                                                                                                                                                                                                                                                                                                         |
