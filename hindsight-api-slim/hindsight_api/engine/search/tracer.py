@@ -5,6 +5,7 @@ The SearchTracer collects comprehensive information about each step
 of the spreading activation search process for debugging and visualization.
 """
 
+import logging
 import time
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -23,6 +24,8 @@ from .trace import (
     TemporalConstraint,
     WeightComponents,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SearchTracer:
@@ -216,6 +219,22 @@ class SearchTracer:
                 details=details or {},
             )
         )
+        # Every recall phase already funnels through here, and the tracer is constructed for EVERY
+        # recall so the `[phases]` line has somewhere to write -- so this is the one place that
+        # turns a per-request log line into an aggregate, with no new timers and no per-request
+        # flag for a caller to remember.
+        #
+        # Instrumentation must never be the thing that fails the request it measures.
+        try:
+            from ...metrics import get_metrics_collector
+
+            get_metrics_collector().record_recall_phase(
+                phase_name,
+                duration_seconds,
+                diagnostic=bool((details or {}).get("diagnostic")),
+            )
+        except Exception:
+            logger.debug("recall phase metrics not recorded", exc_info=True)
 
     def add_retrieval_results(
         self,
