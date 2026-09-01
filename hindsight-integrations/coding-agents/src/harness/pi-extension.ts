@@ -46,9 +46,10 @@ interface SessionManagerLike {
   getSessionId(): string;
 }
 
+/** Only what this adapter reads. Both hosts also expose a UI notifier, but the seed banner it would
+ *  carry is raised inside seedIfCold at extension load, before any handler has a `ctx` to notify
+ *  through — so it is logged rather than toasted here, and the field is not declared. */
 interface ExtensionContext {
-  hasUI: boolean;
-  ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
   sessionManager: SessionManagerLike;
 }
 

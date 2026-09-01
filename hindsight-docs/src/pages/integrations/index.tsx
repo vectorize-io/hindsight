@@ -30,6 +30,8 @@ const CODING_AGENT_LOGOS: {id: string; name: string; file: string}[] = [
   {id: 'devin-cli', name: 'Devin CLI', file: 'devin-cli.svg'},
   {id: 'cline-cli', name: 'Cline CLI', file: 'cline-cli.svg'},
   {id: 'dsh', name: 'DeepSeek Harness', file: 'dsh.svg'},
+  {id: 'pi', name: 'pi', file: 'pi.svg'},
+  {id: 'prime-agent', name: 'Prime Agent', file: 'prime-agent.svg'},
 ];
 
 const INTEGRATIONS_JSON_URL =

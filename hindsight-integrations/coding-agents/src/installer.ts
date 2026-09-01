@@ -42,6 +42,7 @@ import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
+import { SKILL_DIRS } from "./core/skill-dirs";
 import { createInstallerUi, type SelectOption } from "./install-ui";
 
 /**
@@ -193,21 +194,33 @@ function stripHarnessHooks(hooks: Record<string, any>, harness: HookHarnessName)
   }
 }
 
+/** This host's skills directory, from the map core/skill-sync.ts also reads — see SKILL_DIRS for
+ *  why the two sides must not keep separate copies of these paths. */
+function skillsBaseFor(c: InstallCtx, harness: string): string {
+  const parts = SKILL_DIRS[harness];
+  if (!parts) throw new Error(`${harness} installs a skill but names no directory in SKILL_DIRS`);
+  return join(c.home, ...parts);
+}
+
 /** Copy the packaged companion SKILL into a host's skills directory (idempotent overwrite).
  * The log line carries the harness prefix like every adapter message: several adapters install
  * the skill before their first own log, and an unprefixed line would render under the PREVIOUS
  * harness's group in the CLI output. */
-function installSkill(c: InstallCtx, harness: string, skillsBase: string): void {
+function installSkill(c: InstallCtx, harness: string): void {
   const src = join(c.pkgRoot, "skill");
   if (!existsSync(join(src, "SKILL.md"))) return;
+  const skillsBase = skillsBaseFor(c, harness);
   const dst = join(skillsBase, "hindsight-coding-agent");
   mkdirSync(skillsBase, { recursive: true });
   cpSync(src, dst, { recursive: true });
   c.log?.(`${harness}: skill installed at ${dst}`);
 }
 
-function uninstallSkill(c: InstallCtx, skillsBase: string): void {
-  rmSync(join(skillsBase, "hindsight-coding-agent"), { recursive: true, force: true });
+function uninstallSkill(c: InstallCtx, harness: string): void {
+  rmSync(join(skillsBaseFor(c, harness), "hindsight-coding-agent"), {
+    recursive: true,
+    force: true,
+  });
 }
 
 // ── per-harness adapters ────────────────────────────────────────────────────────
@@ -280,18 +293,13 @@ const opencode: HarnessInstaller = {
  * ever name one bundle. It stays pointed at Prime Agent's; the explicit installs below are how each
  * host gets the entry that reports its own harness.
  *
- * `skillsDir` is per-host rather than shared: both read `~/.agents/skills` too, but that is the
- * root Codex and dsh install into, and uninstallSkill removes by a fixed directory name — so
- * putting ours there would make uninstalling one host delete the other hosts' copy. Each writes
- * its OWN skills directory instead.
+ * The skills directory (SKILL_DIRS) is per-host rather than shared: both read `~/.agents/skills`
+ * too, but that is the root Codex and dsh install into, and uninstallSkill removes by a fixed
+ * directory name — so putting ours there would make uninstalling one host delete the other hosts'
+ * copy. Each writes its OWN skills directory instead.
  */
-function piFamilyInstaller(
-  harness: string,
-  configDir: string[],
-  skillsDir: string[]
-): HarnessInstaller {
+function piFamilyInstaller(harness: string, configDir: string[]): HarnessInstaller {
   const settings = (c: InstallCtx) => join(c.home, ...configDir, "settings.json");
-  const skills = (c: InstallCtx) => join(c.home, ...skillsDir);
   return {
     name: harness,
     // Both hosts name their executable exactly as we name the harness, so the harness id doubles
@@ -304,12 +312,12 @@ function piFamilyInstaller(
       const exts: string[] = Array.isArray(cfg.extensions) ? cfg.extensions : [];
       cfg.extensions = [...exts.filter((p) => !String(p).includes(MARKER)), entry];
       writeJson(path, cfg);
-      installSkill(c, harness, skills(c));
+      installSkill(c, harness);
       c.log?.(`${harness}: extension registered in ${path}`);
     },
     uninstall(c) {
       // Before the settings guard on purpose: a hand-deleted settings.json must not strand the skill.
-      uninstallSkill(c, skills(c));
+      uninstallSkill(c, harness);
       const path = settings(c);
       if (!existsSync(path)) return;
       const cfg = readJson(path);
@@ -323,12 +331,8 @@ function piFamilyInstaller(
   };
 }
 
-const pi = piFamilyInstaller("pi", [".pi", "agent"], [".pi", "agent", "skills"]);
-const primeAgent = piFamilyInstaller(
-  "prime-agent",
-  [".prime", "agent"],
-  [".prime", "agent", "skills"]
-);
+const pi = piFamilyInstaller("pi", [".pi", "agent"]);
+const primeAgent = piFamilyInstaller("prime-agent", [".prime", "agent"]);
 
 /**
  * Kilo Code CLI — an opencode fork, so registration is opencode's: append our entry to the config's
@@ -400,7 +404,7 @@ const claudeCode: HarnessInstaller = {
     c.log?.(`claude-code: hooks merged into ${path}`);
     // Companion SKILL: every skills-capable host gets it (claude/antigravity/cursor native dirs;
     // codex via the ~/.agents/skills standard).
-    installSkill(c, "claude-code", join(c.home, ".claude", "skills"));
+    installSkill(c, "claude-code");
     const mcp = c.claudeMcp ?? defaultClaudeMcp;
     // `claude mcp add` REFUSES when the name is taken ("MCP server hindsight already exists in
     // user config") — so on a machine that already had Hindsight, a re-install could never
@@ -443,7 +447,7 @@ const claudeCode: HarnessInstaller = {
     }
     const mcp = c.claudeMcp ?? defaultClaudeMcp;
     mcp(["mcp", "remove", "--scope", "user", "hindsight"]);
-    uninstallSkill(c, join(c.home, ".claude", "skills"));
+    uninstallSkill(c, "claude-code");
     c.log?.("claude-code: hooks + MCP registration + skill removed");
   },
 };
@@ -508,7 +512,7 @@ const codex: HarnessInstaller = {
       writeFileSync(tomlPath, next);
       c.log?.(`codex: wrote ${additions.length} section(s) to ${tomlPath}`);
     }
-    installSkill(c, "codex", join(c.home, ".agents", "skills")); // agentskills-standard shared dir
+    installSkill(c, "codex"); // agentskills-standard shared dir
   },
   uninstall(c) {
     const hooksPath = join(c.home, ".codex", "hooks.json");
@@ -519,7 +523,7 @@ const codex: HarnessInstaller = {
         writeJson(hooksPath, cfg);
       }
     }
-    uninstallSkill(c, join(c.home, ".agents", "skills"));
+    uninstallSkill(c, "codex");
     const tomlPath = join(c.home, ".codex", "config.toml");
     if (existsSync(tomlPath)) {
       const toml = readFileSync(tomlPath, "utf8");
@@ -589,7 +593,7 @@ const antigravity: HarnessInstaller = {
       );
     }
     c.log?.(`antigravity-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
-    installSkill(c, "antigravity-cli", join(c.home, ".gemini", "config", "skills"));
+    installSkill(c, "antigravity-cli");
   },
   uninstall(c) {
     const hooksPath = join(c.home, ".gemini", "config", "hooks.json");
@@ -621,7 +625,7 @@ const antigravity: HarnessInstaller = {
         writeJson(settingsPath, settings);
       }
     }
-    uninstallSkill(c, join(c.home, ".gemini", "config", "skills"));
+    uninstallSkill(c, "antigravity-cli");
     c.log?.("antigravity-cli: hooks + MCP entry + status line + skill removed");
   },
 };
@@ -1013,7 +1017,7 @@ const cursor: HarnessInstaller = {
     };
     writeJson(mcpPath, mcp);
     c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
-    installSkill(c, "cursor-cli", join(c.home, ".cursor", "skills"));
+    installSkill(c, "cursor-cli");
   },
   uninstall(c) {
     const hooksPath = join(c.home, ".cursor", "hooks.json");
@@ -1033,7 +1037,7 @@ const cursor: HarnessInstaller = {
         writeJson(mcpPath, mcp);
       }
     }
-    uninstallSkill(c, join(c.home, ".cursor", "skills"));
+    uninstallSkill(c, "cursor-cli");
     c.log?.("cursor-cli: hooks + MCP entry + skill removed");
   },
 };
@@ -1054,7 +1058,7 @@ const copilot: HarnessInstaller = {
       hindsight: mcpServerEntry(c.dist, "copilot-cli"),
     };
     writeJson(mcpPath, mcp);
-    installSkill(c, "copilot-cli", join(c.home, ".copilot", "skills"));
+    installSkill(c, "copilot-cli");
     c.log?.(`copilot-cli: hooks installed at ${hooksPath}, MCP into ${mcpPath}`);
   },
   uninstall(c) {
@@ -1069,7 +1073,7 @@ const copilot: HarnessInstaller = {
         writeJson(mcpPath, mcp);
       }
     }
-    uninstallSkill(c, join(c.home, ".copilot", "skills"));
+    uninstallSkill(c, "copilot-cli");
     c.log?.("copilot-cli: hooks + MCP entry + skill removed");
   },
 };
@@ -1104,7 +1108,7 @@ const grok: HarnessInstaller = {
       copyFileSync(path, `${path}.hindsight-backup`);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${withoutOurs.replace(/\n*$/, "\n")}${block}`);
-    installSkill(c, "grok-build", join(c.home, ".grok", "skills"));
+    installSkill(c, "grok-build");
     c.log?.(`grok-build: native hooks + MCP installed in ${path}`);
   },
   uninstall(c) {
@@ -1114,7 +1118,7 @@ const grok: HarnessInstaller = {
       const cleaned = existing.replace(GROK_BLOCK_RE, "\n");
       if (cleaned !== existing) writeFileSync(path, cleaned);
     }
-    uninstallSkill(c, join(c.home, ".grok", "skills"));
+    uninstallSkill(c, "grok-build");
     c.log?.("grok-build: native hooks + MCP + skill removed");
   },
 };
@@ -1153,7 +1157,7 @@ const cline: HarnessInstaller = {
       hindsight: mcpServerEntry(c.dist, "cline-cli"),
     };
     writeJson(mcpPath, mcp);
-    installSkill(c, "cline-cli", join(c.home, ".cline", "data", "settings", "skills"));
+    installSkill(c, "cline-cli");
     c.log?.(
       installed
         ? "cline-cli: native plugin + MCP + skill installed"
@@ -1173,7 +1177,7 @@ const cline: HarnessInstaller = {
         writeJson(mcpPath, mcp);
       }
     }
-    uninstallSkill(c, join(c.home, ".cline", "data", "settings", "skills"));
+    uninstallSkill(c, "cline-cli");
     c.log?.("cline-cli: native plugin + MCP + skill removed");
   },
 };
@@ -1222,7 +1226,7 @@ const dsh: HarnessInstaller = {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, others ? `${others}\n\n${block}` : block);
     // dsh's skill provider scans the shared agentskills root, the same one Codex reads.
-    installSkill(c, "dsh", join(c.home, ".agents", "skills"));
+    installSkill(c, "dsh");
     c.log?.(`dsh: plugin registered in ${path} (applies to every dsh profile)`);
   },
   uninstall(c) {
@@ -1234,7 +1238,7 @@ const dsh: HarnessInstaller = {
       // BOOT on anything else, so removing the last block must leave an empty list behind.
       if (others !== existing.trim()) writeFileSync(path, others ? `${others}\n` : "[]\n");
     }
-    uninstallSkill(c, join(c.home, ".agents", "skills"));
+    uninstallSkill(c, "dsh");
     c.log?.("dsh: plugin entry + skill removed");
   },
 };

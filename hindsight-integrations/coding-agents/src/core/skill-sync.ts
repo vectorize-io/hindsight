@@ -11,13 +11,7 @@ import { cpSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const SKILL_DIRS: Record<string, string[]> = {
-  "claude-code": [".claude", "skills"],
-  codex: [".agents", "skills"], // agentskills-standard shared dir
-  "antigravity-cli": [".gemini", "config", "skills"],
-  "cursor-cli": [".cursor", "skills"],
-};
+import { SKILL_DIRS } from "./skill-dirs";
 
 /** The packaged skill dir (pkgRoot/skill, resolved relative to the built dist). */
 function packagedSkillDir(): string {

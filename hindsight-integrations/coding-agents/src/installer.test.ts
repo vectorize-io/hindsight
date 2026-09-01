@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { INSTALLERS, MARKER, run, type InstallCtx } from "./installer";
+import { SKILL_DIRS } from "./core/skill-dirs";
 
 // Every test gets a FRESH temp dir as ctx.home (never the real $HOME) and a stubbed
 // claudeMcp so the real `claude` CLI is never executed. run() is always called with
@@ -1298,5 +1299,60 @@ describe("server setup", () => {
     ctx.log = (m) => logs.push(m);
     expect(run(["install", "claude-code", "--server", "daemon"], ctx)).toBe(0);
     expect(logs.join("\n")).toContain("rustup");
+  });
+});
+
+/**
+ * Companion-skill parity across every host that installs one (#3524 shape).
+ *
+ * The installer writes the skill and core/skill-sync.ts re-copies it on drift at every session
+ * start, so `npm update -g` upgrades the skill too. Those were two hand-maintained path lists, and
+ * the self-update one covered four of the ten hosts — the six it missed kept whichever SKILL.md
+ * they were installed with, forever, with nothing failing. A per-host test cannot catch that: the
+ * host that is forgotten is by definition the one nobody wrote a test for.
+ *
+ * So drive the real thing over the WHOLE family: install each harness into a temp home, find where
+ * the skill actually landed, and require that the self-update refreshes that same copy.
+ */
+describe("every installed companion skill is kept current by the session-start self-update", () => {
+  const SKILL_NAME = "hindsight-coding-agent";
+
+  /** makeCtx's pkgRoot is a synthetic /opt path, so the packaged skill can't be staged in it.
+   *  Build a real temp package root holding a SKILL.md the installer can copy. */
+  function ctxWithPackagedSkill(body: string): InstallCtx {
+    const ctx = makeCtx();
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-skillsync-"));
+    homes.push(pkgRoot);
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), body);
+    return { ...ctx, pkgRoot, dist: join(pkgRoot, "dist") };
+  }
+
+  /** Every directory named `hindsight-coding-agent` under `root`, home-relative. */
+  function findSkillCopies(root: string, prefix: string[] = []): string[][] {
+    return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+      if (!entry.isDirectory()) return [];
+      const rel = [...prefix, entry.name];
+      return entry.name === SKILL_NAME ? [rel] : findSkillCopies(join(root, entry.name), rel);
+    });
+  }
+
+  it.each(INSTALLERS.map((i) => i.name))("%s", async (harness) => {
+    const ctx = ctxWithPackagedSkill("packaged v1");
+    run(["install", harness], ctx);
+    const copies = findSkillCopies(ctx.home);
+    if (!copies.length) return; // host without a skills mechanism (opencode, Kilo) — nothing to keep current
+
+    // Where it landed must be the directory the shared map names, so the self-update looks there.
+    expect(copies.map((parts) => parts.slice(0, -1))).toEqual([SKILL_DIRS[harness]]);
+
+    // And the self-update must actually refresh THIS host's copy when the package moves on.
+    const installed = join(ctx.home, ...copies[0], "SKILL.md");
+    const srcDir = mkdtempSync(join(tmpdir(), "hs-pkg-newer-"));
+    homes.push(srcDir);
+    writeFileSync(join(srcDir, "SKILL.md"), "packaged v2");
+    const { syncCompanionSkill } = await import("./core/skill-sync");
+    syncCompanionSkill(harness, { home: ctx.home, srcDir });
+    expect(readFileSync(installed, "utf8")).toBe("packaged v2");
   });
 });
