@@ -295,7 +295,7 @@ async def test_mcp_tool_execution_with_different_mcp_and_tenant_tokens(memory):
     from httpx import ASGITransport
 
     from hindsight_api.api import create_app
-    from hindsight_api.extensions import ApiKeyTenantExtension
+    from hindsight_api.extensions.builtin.tenant import ApiKeyTenantExtension
 
     mcp_token = "mcp-secret-token"
     tenant_key = "tenant-secret-key"
@@ -347,7 +347,7 @@ async def test_mcp_rejects_wrong_mcp_token_even_if_matches_tenant_key(memory):
     from httpx import ASGITransport
 
     from hindsight_api.api import create_app
-    from hindsight_api.extensions import ApiKeyTenantExtension
+    from hindsight_api.extensions.builtin.tenant import ApiKeyTenantExtension
 
     mcp_token = "mcp-secret-token"
     tenant_key = "tenant-secret-key"

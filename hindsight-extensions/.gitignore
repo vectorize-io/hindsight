@@ -1,0 +1,6 @@
+# Extension locks are not checked in: they pin the whole hindsight-api-slim
+# dependency tree through the local `tool.uv.sources` path, so any core
+# dependency change would leave every extension's lock stale. CI resolves
+# fresh with `uv sync --extra dev`.
+uv.lock
+dist/

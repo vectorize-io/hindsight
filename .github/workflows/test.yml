@@ -46,6 +46,7 @@ jobs:
       integrations-zcode: ${{ steps.filter.outputs.integrations-zcode }}
       integrations-agent-plugin: ${{ steps.filter.outputs.integrations-agent-plugin }}
       integrations-copilot-cli: ${{ steps.filter.outputs.integrations-copilot-cli }}
+      extensions-supabase-tenant: ${{ steps.filter.outputs.extensions-supabase-tenant }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
@@ -168,6 +169,8 @@ jobs:
             - 'hindsight-integrations/cursor-cli/**'
           integrations-copilot-cli:
             - 'hindsight-integrations/copilot-cli/**'
+          extensions-supabase-tenant:
+            - 'hindsight-extensions/supabase-tenant/**'
           integrations-crewai:
             - 'hindsight-integrations/crewai/**'
           integrations-litellm:
@@ -3776,6 +3779,47 @@ jobs:
       working-directory: ./hindsight-integrations/copilot-cli
       run: uv run pytest tests -v
 
+  test-extension-supabase-tenant:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.extensions-supabase-tenant == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build supabase-tenant extension
+      working-directory: ./hindsight-extensions/supabase-tenant
+      run: uv build
+
+    # No --frozen: the lock is not checked in, because tool.uv.sources resolves
+    # hindsight-api-slim from the local checkout and its dependency tree moves
+    # with core.
+    - name: Install dependencies
+      working-directory: ./hindsight-extensions/supabase-tenant
+      run: uv sync --extra dev
+
+    - name: Run tests
+      working-directory: ./hindsight-extensions/supabase-tenant
+      run: uv run pytest tests -v
+
   test-crewai-integration:
     needs: [detect-changes]
     if: >-
@@ -5363,6 +5407,7 @@ jobs:
       - test-flowise-integration
       - test-obsidian-integration
       - test-agent-framework-integration
+      - test-extension-supabase-tenant
       - test-crewai-integration
       - test-langgraph-integration
       - test-superagent-integration
