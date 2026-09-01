@@ -1,32 +1,21 @@
-"""Narrator resolution + injection (issue #1680).
+"""Narrator injection and bank-name isolation (issues #1680 and #3962).
 
 The "Narrator: {name}" line in fact extraction is stamped into the who-dimension
-of every first-person fact and the observations derived from them. When the bank
-``name`` is just the bank_id (the auto-create default), that string is a routing
-key, not a speaker, and priming extraction with it pollutes stored fact text.
+of every first-person fact and the observations derived from them. A bank's
+``name`` is display/management metadata rather than a speaker identity, so neither
+normal retain nor dry-run extraction may inject it automatically.
 
-These are pure unit tests — no LLM, no DB. They pin the suppression decision and
-that the Narrator line is present/absent accordingly.
+The prompt assertions use MockLLM only to capture deterministic prompt assembly;
+model attribution behaviour is covered by the real-LLM test alongside this file.
 """
 
+import uuid
 from datetime import datetime
 
+import pytest
+
+from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.retain.fact_extraction import _build_user_message
-from hindsight_api.engine.retain.orchestrator import _resolve_narrator
-
-
-class TestResolveNarrator:
-    def test_suppressed_when_name_equals_bank_id(self):
-        """Auto-create default (name == bank_id) → no narrator, routing key not injected."""
-        bank_id = "my-agent::channel-456::user-789"
-        assert _resolve_narrator(bank_id, bank_id) is None
-
-    def test_explicit_name_passes_through(self):
-        """A human-readable name decoupled from bank_id is used as the narrator."""
-        assert _resolve_narrator("Aria", "my-agent::channel-456::user-789") == "Aria"
-
-    def test_short_name_distinct_from_bank_id(self):
-        assert _resolve_narrator("Aria", "Aria-bank-1") == "Aria"
 
 
 class TestNarratorInjection:
@@ -41,8 +30,7 @@ class TestNarratorInjection:
             agent_name=agent_name,
         )
 
-    def test_no_narrator_line_when_suppressed(self):
-        """agent_name=None (the suppressed case) → no Narrator line, no leaked string."""
+    def test_no_narrator_line_without_explicit_override(self):
         msg = self._msg(None)
         assert "Narrator:" not in msg
 
@@ -59,9 +47,77 @@ class TestNarratorInjection:
         assert "Narrator: Aria" in without_context  # base narrator still present
         assert "Context above takes precedence" not in without_context
 
-    def test_routing_key_never_reaches_prompt_via_resolution(self):
-        """End-to-end of the fix: resolve then build → routing key absent from prompt."""
-        bank_id = "my-agent::channel-456::user-789"
-        msg = self._msg(_resolve_narrator(bank_id, bank_id))
-        assert bank_id not in msg
-        assert "Narrator:" not in msg
+
+def _fact_extraction_prompts(memory: MemoryEngine) -> list[str]:
+    return [
+        message["content"]
+        for call in memory._retain_llm_config.get_mock_calls()
+        if call["scope"] == "retain_extract_facts"
+        for message in call["messages"]
+        if message["role"] == "user"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bank_display_name_not_injected_by_retain(memory: MemoryEngine):
+    bank_id = f"narrator-retain-{uuid.uuid4().hex[:8]}"
+    display_name = "ReviewModelEval0825"
+    request_context = RequestContext()
+
+    try:
+        await memory.update_bank(bank_id, name=display_name, request_context=request_context)
+        memory._retain_llm_config.clear_mock_calls()
+
+        await memory.retain_async(
+            bank_id,
+            "assistant: I scheduled a truck for next Wednesday morning.",
+            context="Conversation between a user and a dispatch assistant.",
+            request_context=request_context,
+        )
+
+        prompts = _fact_extraction_prompts(memory)
+        assert prompts
+        assert all(display_name not in prompt for prompt in prompts)
+        assert all("Narrator:" not in prompt for prompt in prompts)
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_display_name_not_injected_by_dry_run(memory: MemoryEngine):
+    bank_id = f"narrator-dry-run-{uuid.uuid4().hex[:8]}"
+    display_name = "crm_test_env"
+    request_context = RequestContext()
+
+    try:
+        await memory.update_bank(bank_id, name=display_name, request_context=request_context)
+        memory._retain_llm_config.clear_mock_calls()
+
+        await memory.extract_dry_run(
+            bank_id,
+            "assistant: I scheduled a truck for next Wednesday morning.",
+            context="Conversation between a user and a dispatch assistant.",
+            request_context=request_context,
+        )
+
+        prompts = _fact_extraction_prompts(memory)
+        assert prompts
+        assert all(display_name not in prompt for prompt in prompts)
+        assert all("Narrator:" not in prompt for prompt in prompts)
+
+        memory._retain_llm_config.clear_mock_calls()
+        await memory.extract_dry_run(
+            bank_id,
+            "assistant: I scheduled a truck for next Wednesday morning.",
+            context="Conversation between a user and a dispatch assistant.",
+            agent_name="Dispatch",
+            request_context=request_context,
+        )
+
+        explicit_prompts = _fact_extraction_prompts(memory)
+        assert explicit_prompts
+        assert all("Narrator: Dispatch" in prompt for prompt in explicit_prompts)
+        assert all(display_name not in prompt for prompt in explicit_prompts)
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

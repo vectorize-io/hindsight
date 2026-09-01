@@ -27,7 +27,6 @@ from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
-from . import bank_utils
 
 
 @dataclass
@@ -343,32 +342,6 @@ async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: 
         get_metrics_collector().record_retain_document(bank_id=bank_id, memory_unit_count=total)
     except Exception:
         logger.debug("Failed to record retain document outcome metric", exc_info=True)
-
-
-#: "the narrator has not been resolved yet", which `None` cannot mean: `_resolve_narrator`
-#: returns None for a suppressed narrator, so None is a RESOLVED value. Using None as the
-#: sentinel made every recursive call re-resolve -- and re-read the bank row to do it -- for
-#: exactly the banks where the narrator is suppressed, which is the auto-created default.
-_NARRATOR_UNRESOLVED = object()
-
-
-def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
-    """Resolve the narrator (memory owner) used to prime fact extraction.
-
-    The narrator is injected as a "Narrator: {name}" line in fact extraction and
-    is stamped into the who-dimension of every first-person fact — and the
-    observations later consolidated from those facts. That is correct for a named
-    agent retaining its own logs, but harmful when ``name`` is just the bank_id:
-    on auto-create the bank ``name`` defaults to ``bank_id``, which is typically a
-    routing key (e.g. ``my-agent::channel-456::user-789``), not a speaker. Priming
-    extraction with a routing key embeds that string into stored fact text and
-    pollutes downstream observations (issue #1680). Suppress it in that case.
-
-    Returns the narrator name, or ``None`` to omit the Narrator line entirely.
-    """
-    if profile_name == bank_id:
-        return None
-    return profile_name
 
 
 # What a reprocess must NOT replay, because it supplies its own: `content` is the
@@ -1204,7 +1177,7 @@ async def retain_batch(
     document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
     body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
-    agent_name: "str | None | object" = _NARRATOR_UNRESOLVED,
+    agent_name: str = "",
     retain_session=None,
     document_prefetch: "dict[str, dict] | asyncio.Task | None" = None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
@@ -1226,6 +1199,11 @@ async def retain_batch(
     a per-document offset each sub-batch would restart chunk_index at 0, so
     their chunk_ids collide and later sub-batches overwrite earlier chunks —
     leaving only one sub-batch's worth of chunks/memories behind (issue #1888).
+
+    ``agent_name`` is an explicit internal narrator override. It is deliberately
+    not inferred from the bank profile: ``banks.name`` is a display/management
+    label, not a speaker identity, and putting it in the extraction prompt leaks
+    project names into stored facts and entities (issue #3962).
 
     Returns a three-tuple of:
       * per-content-item unit ID lists
@@ -1252,20 +1230,6 @@ async def retain_batch(
     log_buffer.append(f"RETAIN_BATCH START: {bank_id}")
     log_buffer.append(f"Batch size: {len(contents_dicts)} content items, {total_chars:,} chars")
     log_buffer.append(f"{'=' * 60}")
-
-    # The bank profile is read for ONE value: the narrator name. A multi-document retain groups
-    # by document and re-enters this function per group (below), so reading it here made it one
-    # read -- and one pooled connection -- PER DOCUMENT rather than per retain. Resolved once by
-    # the outermost call and handed down.
-    #
-    # The sentinel is NOT None: `_resolve_narrator` returns None for a suppressed narrator, so
-    # None is a resolved value and testing for it would re-read on every recursion for precisely
-    # the auto-created banks where suppression applies.
-    if agent_name is _NARRATOR_UNRESOLVED:
-        profile = await bank_utils.get_bank_profile(pool, bank_id)
-        # Suppress the narrator when name == bank_id (auto-create default) — see
-        # _resolve_narrator for why a routing-key narrator pollutes extraction (#1680).
-        agent_name = _resolve_narrator(profile["name"], bank_id)
 
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)
