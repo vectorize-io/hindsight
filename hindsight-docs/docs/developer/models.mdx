@@ -390,6 +390,35 @@ rotate out from under it.
 
 `CODEX_HOME` is also honored by the `openai-codex` embeddings provider.
 
+#### Two Codex profiles in one process
+
+`CODEX_HOME` is process-wide, so every Codex provider a Hindsight process builds
+resolves the same `auth.json`. To run more than one independently authorized
+ChatGPT account — for example, to fail over when the preferred account hits its
+usage limit — give each one its own credentials directory with
+`HINDSIGHT_API_LLM_CODEX_HOME` (primary) and `HINDSIGHT_API_LLM_<n>_CODEX_HOME`
+(indexed [multi-LLM chain](/docs/developer/configuration#multi-llm-strategies-failover--round-robin)
+members). Each falls back to `CODEX_HOME`, then `~/.codex`, when unset.
+
+```bash
+# Two profiles, logged in separately
+CODEX_HOME=/var/lib/hindsight/codex-a codex auth login
+CODEX_HOME=/var/lib/hindsight/codex-b codex auth login
+
+export HINDSIGHT_API_LLM_PROVIDER=openai-codex
+export HINDSIGHT_API_LLM_CODEX_HOME=/var/lib/hindsight/codex-a
+export HINDSIGHT_API_LLM_1_PROVIDER=openai-codex
+export HINDSIGHT_API_LLM_1_CODEX_HOME=/var/lib/hindsight/codex-b
+export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
+```
+
+Token refresh is coordinated per auth-file path, so the two profiles refresh
+independently and never overwrite each other's tokens. Failover is the generic
+multi-LLM behaviour: a member is tried after the previous one has exhausted its
+own retries and raised — there is no separate quota classifier or cooldown, so a
+rate-limited primary is re-tried (and fails) at the head of each request before
+the fallback serves it.
+
 ---
 
 ### Nous Portal Setup (Hermes)

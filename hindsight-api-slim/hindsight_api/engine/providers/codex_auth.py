@@ -69,19 +69,27 @@ _CODEX_AUTH_LOCKS_GUARD = threading.Lock()
 _CODEX_AUTH_LOCKS: dict[Path, threading.Lock] = {}
 
 
-def default_codex_auth_file() -> Path:
+def default_codex_auth_file(codex_home: str | None = None) -> Path:
     """Return the path to Codex's ``auth.json``.
 
-    Honors the ``CODEX_HOME`` environment variable — the same variable the
-    canonical ``@openai/codex`` CLI uses to relocate its config/credentials
-    directory — and falls back to ``~/.codex`` when it is unset or empty.
+    ``codex_home`` is an explicit credentials directory for one provider
+    instance (``HINDSIGHT_API_LLM_CODEX_HOME`` / the per-member
+    ``..._LLM_<n>_CODEX_HOME``). It exists so that two Codex members of a
+    multi-LLM chain can hold two independently authorized ChatGPT profiles;
+    without it every member in a process resolves the same store and failover
+    between profiles is a no-op.
+
+    When it is ``None`` (the default), honors the ``CODEX_HOME`` environment
+    variable — the same variable the canonical ``@openai/codex`` CLI uses to
+    relocate its config/credentials directory — and falls back to ``~/.codex``
+    when that is unset or empty.
 
     Resolved lazily on each call (rather than cached at import time) so that
     the environment is read at the point of use.
     """
-    codex_home = os.environ.get("CODEX_HOME")
-    if codex_home:
-        return Path(codex_home) / "auth.json"
+    home = codex_home or os.environ.get("CODEX_HOME")
+    if home:
+        return Path(home) / "auth.json"
     return Path.home() / ".codex" / "auth.json"
 
 

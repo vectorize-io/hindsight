@@ -140,8 +140,8 @@ class CodexLLM(LLMInterface):
     LLM provider using OpenAI Codex OAuth authentication.
 
     Authenticates using ChatGPT Plus/Pro credentials stored in the Codex
-    ``auth.json`` (honoring ``CODEX_HOME``, default ``~/.codex``) and makes API
-    calls to chatgpt.com/backend-api/codex/responses.
+    ``auth.json`` (``codex_home`` if given, else ``CODEX_HOME``, else
+    ``~/.codex``) and makes API calls to chatgpt.com/backend-api/codex/responses.
     """
 
     def __init__(
@@ -152,10 +152,21 @@ class CodexLLM(LLMInterface):
         model: str,
         reasoning_effort: str | None = None,
         extra_body: dict[str, Any] | None = None,
+        codex_home: str | None = None,
         **kwargs: Any,
     ):
-        """Initialize Codex LLM provider."""
+        """Initialize Codex LLM provider.
+
+        ``codex_home`` selects this instance's credentials directory (its
+        ``auth.json``), overriding the process-wide ``CODEX_HOME``. Two members
+        of a multi-LLM chain can therefore run as two independently authorized
+        ChatGPT profiles.
+        """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
+
+        # Resolved once: every auth read/write on this instance uses this path,
+        # never the process-wide default.
+        self._codex_home = codex_home
 
         # Single-flight async refresh lock. Multiple concurrent coroutines
         # racing toward an expired token should produce one network refresh.
@@ -167,7 +178,7 @@ class CodexLLM(LLMInterface):
             refresh_token = self._load_codex_refresh_token()
             logger.info(f"Loaded Codex OAuth credentials for account: {account_id}")
         except Exception as e:
-            auth_file = default_codex_auth_file()
+            auth_file = default_codex_auth_file(self._codex_home)
             raise RuntimeError(
                 f"Failed to load Codex OAuth credentials from {auth_file}: {e}\n\n"
                 "To set up Codex authentication:\n"
@@ -182,7 +193,7 @@ class CodexLLM(LLMInterface):
             access_token=access_token,
             account_id=account_id,
             refresh_token=refresh_token,
-            auth_file=default_codex_auth_file(),
+            auth_file=default_codex_auth_file(self._codex_home),
         )
 
         # Use ChatGPT backend API endpoint. Codex auth is tied to
@@ -265,7 +276,8 @@ class CodexLLM(LLMInterface):
 
     def _load_codex_auth(self) -> tuple[str, str]:
         """
-        Load OAuth credentials from the Codex ``auth.json`` (CODEX_HOME or ~/.codex).
+        Load OAuth credentials from this instance's Codex ``auth.json``
+        (``codex_home``, else ``CODEX_HOME``, else ``~/.codex``).
 
         Returns:
             Tuple of (access_token, account_id).
@@ -274,7 +286,7 @@ class CodexLLM(LLMInterface):
             FileNotFoundError: If auth file doesn't exist.
             ValueError: If auth file is invalid.
         """
-        auth_file = default_codex_auth_file()
+        auth_file = default_codex_auth_file(self._codex_home)
 
         if not auth_file.exists():
             raise FileNotFoundError(
@@ -306,7 +318,11 @@ class CodexLLM(LLMInterface):
         pre- and post-``__init__`` because it does not depend on
         ``_auth_manager`` being constructed yet.
         """
-        auth_file = self._auth_manager._auth_file if hasattr(self, "_auth_manager") else default_codex_auth_file()
+        auth_file = (
+            self._auth_manager._auth_file
+            if hasattr(self, "_auth_manager")
+            else default_codex_auth_file(self._codex_home)
+        )
         return CodexAuthManager.load_refresh_token_from_file(auth_file)
 
     @staticmethod

@@ -7,6 +7,8 @@ Covers:
 - HTTP API integration tests for CRUD and delivery listing endpoints
 """
 
+import hashlib
+import hmac
 import json
 import uuid
 from datetime import datetime, timezone
@@ -53,15 +55,18 @@ def _make_delivery_task(
     url: str = "https://example.com/hook",
     retry_count: int = 0,
     webhook_id: str | None = None,
+    secret: str | None = None,
+    http_config: dict | None = None,
 ) -> dict:
     return {
         "type": "webhook_delivery",
         "bank_id": bank_id,
         "url": url,
-        "secret": None,
+        "secret": secret,
         "event_type": "consolidation.completed",
         "payload": '{"event":"consolidation.completed"}',
         "webhook_id": webhook_id,
+        "http_config": http_config,
         "_retry_count": retry_count,
     }
 
@@ -112,6 +117,59 @@ class TestHmacSigning:
         sig1 = manager._sign_payload("secret", b"payload-one")
         sig2 = manager._sign_payload("secret", b"payload-two")
         assert sig1 != sig2
+
+    def test_hmac_signing_matches_github_construction(self):
+        """The body-only signature is plain HMAC-SHA256 over the raw body.
+
+        This is what makes X-Hub-Signature-256 a legitimate name for it: a stock
+        GitHub-style receiver must verify it byte for byte.
+        """
+        manager = self._make_manager()
+        payload = b'{"event":"consolidation.completed"}'
+        expected = hmac.new(b"my-secret", payload, hashlib.sha256).hexdigest()
+        assert manager._sign_payload("my-secret", payload) == f"sha256={expected}"
+
+
+class TestTimestampedHmacSigning:
+    """Unit tests for WebhookManager._sign_payload_v2()."""
+
+    def _make_manager(self) -> WebhookManager:
+        pool = MagicMock()
+        return WebhookManager(backend=pool, global_webhooks=[])
+
+    def test_v2_format(self):
+        """_sign_payload_v2 returns 't=<unix>,v1=<64 hex chars>'."""
+        manager = self._make_manager()
+        sig = manager._sign_payload_v2("my-secret", b"hello world", 1772000000)
+        t_part, v1_part = sig.split(",")
+        assert t_part == "t=1772000000"
+        assert v1_part.startswith("v1=")
+        hex_part = v1_part[len("v1=") :]
+        assert len(hex_part) == 64
+        assert all(c in "0123456789abcdef" for c in hex_part)
+
+    def test_v2_signs_timestamp_dot_body(self):
+        """The MAC covers '<timestamp>.<raw body>', so the timestamp is authenticated."""
+        manager = self._make_manager()
+        payload = b'{"event":"consolidation.completed"}'
+        expected = hmac.new(b"secret", b"1772000000." + payload, hashlib.sha256).hexdigest()
+        assert manager._sign_payload_v2("secret", payload, 1772000000) == f"t=1772000000,v1={expected}"
+
+    def test_v2_differs_with_timestamp(self):
+        """A replayed body with a fresh timestamp cannot reuse the old MAC."""
+        manager = self._make_manager()
+        payload = b"payload"
+        sig1 = manager._sign_payload_v2("secret", payload, 1772000000)
+        sig2 = manager._sign_payload_v2("secret", payload, 1772000060)
+        assert sig1 != sig2
+
+    def test_v2_differs_from_body_only_signature(self):
+        """The two schemes must not collide - a body-only MAC is not a valid v2 MAC."""
+        manager = self._make_manager()
+        payload = b"payload"
+        body_only = manager._sign_payload("secret", payload)[len("sha256=") :]
+        v2 = manager._sign_payload_v2("secret", payload, 1772000000).split("v1=")[1]
+        assert body_only != v2
 
 
 class TestRetryConstants:
@@ -407,6 +465,83 @@ class TestHandleWebhookDelivery:
         with patch.object(memory._http_client, "post", new=AsyncMock(return_value=mock_response)):
             # Should not raise
             await memory._handle_webhook_delivery(task_dict)
+
+    @staticmethod
+    async def _capture_headers(memory: MemoryEngine, task_dict: dict) -> dict[str, str]:
+        """Run one delivery against a stubbed transport and return the sent headers."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        post = AsyncMock(return_value=mock_response)
+        with patch.object(memory._http_client, "post", new=post):
+            await memory._handle_webhook_delivery(task_dict)
+        return post.call_args.kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_unsigned_delivery_sends_no_signature_headers(self, memory: MemoryEngine):
+        """Without a secret there is nothing to sign, so no signature header is sent."""
+        headers = await self._capture_headers(memory, _make_delivery_task(secret=None))
+
+        assert "X-Hindsight-Signature" not in headers
+        assert "X-Hub-Signature-256" not in headers
+        assert "X-Hindsight-Signature-V2" not in headers
+
+    @pytest.mark.asyncio
+    async def test_signed_delivery_emits_both_body_only_signature_headers(self, memory: MemoryEngine):
+        """X-Hub-Signature-256 carries the same value as X-Hindsight-Signature.
+
+        Same secret, same algorithm, same bytes: the second name exists only so stock
+        GitHub-style receivers can verify without a Hindsight-specific shim.
+        """
+        task_dict = _make_delivery_task(secret="my-secret")
+        headers = await self._capture_headers(memory, task_dict)
+
+        payload_bytes = task_dict["payload"].encode()
+        expected = "sha256=" + hmac.new(b"my-secret", payload_bytes, hashlib.sha256).hexdigest()
+        assert headers["X-Hindsight-Signature"] == expected
+        assert headers["X-Hub-Signature-256"] == expected
+
+    @pytest.mark.asyncio
+    async def test_signed_delivery_emits_verifiable_timestamped_signature(self, memory: MemoryEngine):
+        """X-Hindsight-Signature-V2 verifies against '<t>.<body>' with a fresh timestamp."""
+        task_dict = _make_delivery_task(secret="my-secret")
+        before = int(datetime.now(timezone.utc).timestamp())
+        headers = await self._capture_headers(memory, task_dict)
+        after = int(datetime.now(timezone.utc).timestamp())
+
+        t_part, v1_part = headers["X-Hindsight-Signature-V2"].split(",")
+        timestamp = int(t_part[len("t=") :])
+        assert before <= timestamp <= after, "signature timestamp must be the attempt time"
+
+        payload_bytes = task_dict["payload"].encode()
+        expected = hmac.new(b"my-secret", f"{timestamp}.".encode() + payload_bytes, hashlib.sha256).hexdigest()
+        assert v1_part == f"v1={expected}"
+
+    @pytest.mark.asyncio
+    async def test_custom_headers_cannot_override_signature_or_event(self, memory: MemoryEngine):
+        """http_config.headers must not be able to forge the event type or a signature.
+
+        The spread order in _handle_webhook_delivery is load-bearing: a receiver that
+        trusts these headers would otherwise be trusting caller-controlled values.
+        """
+        task_dict = _make_delivery_task(
+            secret="my-secret",
+            http_config={
+                "headers": {
+                    "X-Hindsight-Event": "attacker.controlled",
+                    "X-Hindsight-Signature": "sha256=forged",
+                    "X-Hub-Signature-256": "sha256=forged",
+                    "X-Hindsight-Signature-V2": "t=0,v1=forged",
+                    "X-Custom": "kept",
+                }
+            },
+        )
+        headers = await self._capture_headers(memory, task_dict)
+
+        assert headers["X-Hindsight-Event"] == "consolidation.completed"
+        assert headers["X-Hindsight-Signature"] != "sha256=forged"
+        assert headers["X-Hub-Signature-256"] != "sha256=forged"
+        assert headers["X-Hindsight-Signature-V2"] != "t=0,v1=forged"
+        assert headers["X-Custom"] == "kept", "unrelated custom headers still pass through"
 
     @pytest.mark.asyncio
     async def test_deliver_failure_raises_retry_task_at(self, memory: MemoryEngine):
