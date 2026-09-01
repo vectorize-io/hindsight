@@ -1407,8 +1407,9 @@ DEFAULT_RETAIN_IMAGE_MAX_COUNT = 50  # Max images in one retain item
 # true token cost, which would exceed the whole budget and put every image in a chunk
 # of its own. That would defeat the point: the value of an inline image is that the
 # model sees it *with* the sentence that introduces it. Half the budget leaves room
-# for an image plus the prose either side of it, and the config validation below
-# refuses a value that could not fit at all.
+# for an image plus the prose either side of it. A bank that lowers retain_chunk_size
+# below this is not an error — the chunker clamps the cost to the budget, so the
+# image still fits, just with less room for prose beside it.
 DEFAULT_RETAIN_IMAGE_CHUNK_COST_CHARS = 1500
 # Hard cap regardless of the cost budget: many small images could otherwise fit one
 # chunk and still blow past a provider's per-request image limit.
@@ -1959,11 +1960,9 @@ def validate_retain_chunking_config(
 def validate_retain_image_chunking_config(
     retain_image_chunk_cost_chars: Any,
     retain_max_images_per_chunk: Any,
-    retain_chunk_size: Any,
     *,
     retain_image_chunk_cost_chars_name: str = "retain_image_chunk_cost_chars",
     retain_max_images_per_chunk_name: str = "retain_max_images_per_chunk",
-    retain_chunk_size_name: str = "retain_chunk_size",
 ) -> None:
     """Validate the hierarchical inline-image chunking fields.
 
@@ -1971,19 +1970,18 @@ def validate_retain_image_chunking_config(
     places, so a bank/tenant override is rejected at write time rather than
     surfacing as a broken retain later.
 
-    The cross-field rule matters more than the bounds: an image costing at least
-    the whole chunk budget could never share a chunk with the prose around it, so
-    every image would be extracted with no context — silently producing worse
-    facts rather than failing. Refuse that configuration outright.
+    Deliberately only bounds-checks each field on its own. An earlier version also
+    required ``retain_image_chunk_cost_chars < retain_chunk_size``, on the
+    reasoning that a costlier image could never share a chunk with the prose
+    around it. That rule was wrong in practice: it made a *text-only* config
+    invalid — a bank or retain strategy that lowers ``retain_chunk_size`` to 800
+    for its own reasons was rejected because of an image default it never chose,
+    which would break existing deployments on upgrade. The chunker clamps the
+    cost to the budget instead, so an image always fits (see
+    ``_iter_image_aware_chunks``).
     """
     _validate_retain_chunking_int(retain_image_chunk_cost_chars_name, retain_image_chunk_cost_chars)
     _validate_retain_chunking_int(retain_max_images_per_chunk_name, retain_max_images_per_chunk)
-    if retain_image_chunk_cost_chars >= retain_chunk_size:
-        raise ValueError(
-            f"{retain_image_chunk_cost_chars_name} ({retain_image_chunk_cost_chars}) must be less than "
-            f"{retain_chunk_size_name} ({retain_chunk_size}), so an image can share a chunk with the "
-            f"text around it."
-        )
 
 
 def validate_retain_completion_token_budget(
@@ -3514,10 +3512,8 @@ class HindsightConfig:
         validate_retain_image_chunking_config(
             self.retain_image_chunk_cost_chars,
             self.retain_max_images_per_chunk,
-            self.retain_chunk_size,
             retain_image_chunk_cost_chars_name=ENV_RETAIN_IMAGE_CHUNK_COST_CHARS,
             retain_max_images_per_chunk_name=ENV_RETAIN_MAX_IMAGES_PER_CHUNK,
-            retain_chunk_size_name=ENV_RETAIN_CHUNK_SIZE,
         )
 
         # The two ingress size caps are static, so they are only ever env-sourced.
