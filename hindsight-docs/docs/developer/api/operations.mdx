@@ -240,6 +240,8 @@ Each worker has a single concurrency budget (`HINDSIGHT_API_WORKER_MAX_SLOTS`, d
 
 For most deployments the defaults are fine. Reserve slots for an operation type if you've seen it starved by a flood of another type (e.g., a long file_convert_retain blocking graph_maintenance on a deletion-heavy workload).
 
+Slots are also rotated across banks. Each claim serves the next bank in turn — one operation — then fills the rest of the pool oldest-first from anywhere. So a bank ingesting in bulk cannot own the whole pool while another bank's single write waits behind its backlog, and it is not throttled either: when no one else is waiting it still takes every slot.
+
 ## Next Steps
 
 - [**Documents**](./documents) — Track document sources

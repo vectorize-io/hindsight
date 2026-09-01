@@ -47,9 +47,11 @@ class _StubOps:
         self._recorder = recorder
 
     async def claim_tasks(self, conn, table, worker_id, reserved_limits, shared_limit, **kwargs):
+        from hindsight_api.engine.db.ops import ClaimedOperations
+
         self._recorder.claimed_tables.append(table)
         self._recorder.claim_conns.append(conn)
-        return [
+        rows = [
             {
                 "operation_id": uuid.uuid4(),
                 "operation_type": "test",
@@ -61,6 +63,9 @@ class _StubOps:
                 "bank_id": "test-bank",
             }
         ]
+        # The bank rotation's cursor rides back with the rows (#3861); this stub
+        # claims for one bank, so it reports that bank as where it got to.
+        return ClaimedOperations(rows=rows, next_bank_cursor="test-bank")
 
 
 class _StubBackend:

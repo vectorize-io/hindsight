@@ -202,7 +202,7 @@ async def _claim(
     """Run one claim cycle and return the claimed operation ids as strings."""
     async with backend.acquire() as conn:
         async with conn.transaction():
-            rows = await backend.ops.claim_tasks(
+            claimed = await backend.ops.claim_tasks(
                 conn,
                 _TABLE,
                 "test-bankclaim-worker",
@@ -210,7 +210,7 @@ async def _claim(
                 shared,
                 consolidation_bank_priority=consolidation_bank_priority,
             )
-    return {str(row["operation_id"]) for row in rows}
+    return {str(row["operation_id"]) for row in claimed.rows}
 
 
 async def _status_of(pool, op_id: uuid.UUID) -> str:
