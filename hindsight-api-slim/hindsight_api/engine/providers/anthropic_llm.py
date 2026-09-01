@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
@@ -141,7 +142,8 @@ class AnthropicLLM(LLMInterface):
             client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
-            client_kwargs["timeout"] = self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+            # Per-phase so the connect leg is capped independently (issue #3881).
+            client_kwargs["timeout"] = build_sdk_timeout(self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT)
             if default_headers:
                 client_kwargs["default_headers"] = default_headers
 
@@ -415,7 +417,8 @@ class AnthropicLLM(LLMInterface):
                         await asyncio.sleep(backoff + jitter)
                         continue
 
-                logger.error(f"Anthropic API error after {max_retries + 1} attempts: {str(e)}")
+                detail = f" [{describe_transport_error(e)}]" if isinstance(e, APIConnectionError) else ""
+                logger.error(f"Anthropic API error after {max_retries + 1} attempts: {str(e)}{detail}")
                 raise
 
             except Exception as e:
@@ -613,6 +616,11 @@ class AnthropicLLM(LLMInterface):
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
                 last_exception = e
+                if isinstance(e, APIConnectionError):
+                    logger.warning(
+                        f"APIConnectionError in tool call ({self.provider}/{self.model}, scope={scope}, "
+                        f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]} [{describe_transport_error(e)}]"
+                    )
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue

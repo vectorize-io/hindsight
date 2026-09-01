@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from ...cancellation import OperationCancelledError
 from ...config import get_config
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
+from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
+from ..llm_transport import describe_llm_error
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
 from .prompts import (
     _SPLIT_SYNTHESIS_WARN_CHUNKS,
@@ -686,7 +688,13 @@ async def _run_reflect_agent_inner(
             )
             or "none"
         )
-        llm_summary = ", ".join(f"{c['scope']}={c['duration_ms']}ms" for c in llm_trace) or "none"
+        llm_summary = (
+            ", ".join(
+                f"{c['scope']}={c['duration_ms']}ms" + (f"(q{c['queued_ms']}ms)" if c.get("queued_ms") else "")
+                for c in llm_trace
+            )
+            or "none"
+        )
         total_llm_ms = sum(c["duration_ms"] for c in llm_trace)
         total_tools_ms = sum(t["duration_ms"] for t in tool_trace_summary)
 
@@ -898,6 +906,11 @@ async def _run_reflect_agent_inner(
             await _resolve_pending_cache()
 
         call_msg_count = len(messages)
+        # Time spent waiting on LLM concurrency permits is collected separately so a
+        # long `agent_N` entry can be read as "the provider was slow" and nothing
+        # else -- see llm_trace.set_queue_wait_sink (#3881).
+        queue_wait = LLMQueueWait()
+        queue_token = set_queue_wait_sink(queue_wait)
         try:
             ct_kwargs: dict[str, Any] = dict(
                 messages=messages,
@@ -911,6 +924,7 @@ async def _run_reflect_agent_inner(
                 ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
             result = await llm_config.call_with_tools(**ct_kwargs)
             llm_duration = int((time.time() - llm_start) * 1000)
+            queued_ms = int(queue_wait.seconds * 1000)
             consecutive_errors = 0
             total_input_tokens += result.input_tokens
             total_output_tokens += result.output_tokens
@@ -920,6 +934,7 @@ async def _run_reflect_agent_inner(
                 {
                     "scope": f"agent_{iteration + 1}",
                     "duration_ms": llm_duration,
+                    "queued_ms": queued_ms,
                     "input_tokens": result.input_tokens,
                     "output_tokens": result.output_tokens,
                 }
@@ -932,9 +947,15 @@ async def _run_reflect_agent_inner(
             raise
         except Exception as e:
             err_duration = int((time.time() - llm_start) * 1000)
+            queued_ms = int(queue_wait.seconds * 1000)
             consecutive_errors += 1
-            logger.warning(f"[REFLECT {reflect_id}] LLM error on iteration {iteration + 1}: {e} ({err_duration}ms)")
-            llm_trace.append({"scope": f"agent_{iteration + 1}_err", "duration_ms": err_duration})
+            logger.warning(
+                f"[REFLECT {reflect_id}] LLM error on iteration {iteration + 1}: {describe_llm_error(e)} "
+                f"({err_duration}ms, {queued_ms}ms queued)"
+            )
+            llm_trace.append(
+                {"scope": f"agent_{iteration + 1}_err", "duration_ms": err_duration, "queued_ms": queued_ms}
+            )
             # Context overflow errors must never be retried — retrying would only make them worse.
             # Skip straight to final synthesis with whatever evidence we have: the
             # prompt was too big for the model, which is a budgeting problem, not a
@@ -953,6 +974,9 @@ async def _run_reflect_agent_inner(
             if iteration < max_iterations - 1 and consecutive_errors < 2:
                 continue
             raise
+
+        finally:
+            reset_queue_wait_sink(queue_token)
 
         # No tool calls this turn.
         if not result.tool_calls:

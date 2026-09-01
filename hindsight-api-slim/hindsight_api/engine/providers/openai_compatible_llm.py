@@ -52,6 +52,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
@@ -832,7 +833,10 @@ class OpenAICompatibleLLM(LLMInterface):
             else:
                 client_kwargs["base_url"] = self.base_url
         if self.timeout:
-            client_kwargs["timeout"] = self.timeout
+            # Per-phase, not a bare float: a float sets connect to the full request
+            # budget too, so an endpoint that never completes its handshake stalls for
+            # the whole llm_timeout instead of failing in seconds (issue #3881).
+            client_kwargs["timeout"] = build_sdk_timeout(self.timeout)
 
         self._client = AsyncOpenAI(**client_kwargs)
         logger.info(
@@ -1327,13 +1331,16 @@ class OpenAICompatibleLLM(LLMInterface):
                 status_code = getattr(e, "status_code", None) or getattr(
                     getattr(e, "response", None), "status_code", None
                 )
-                logger.warning(f"APIConnectionError (HTTP {status_code}), attempt {attempt + 1}: {str(e)[:200]}")
+                cause = describe_transport_error(e)
+                logger.warning(
+                    f"APIConnectionError (HTTP {status_code}), attempt {attempt + 1}: {str(e)[:200]} [{cause}]"
+                )
                 if attempt < max_retries:
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
                 else:
-                    logger.error(f"Connection error after {max_retries + 1} attempts: {str(e)}")
+                    logger.error(f"Connection error after {max_retries + 1} attempts: {str(e)} [{cause}]")
                     raise
 
             except APIStatusError as e:
@@ -1631,16 +1638,17 @@ class OpenAICompatibleLLM(LLMInterface):
                 status_code = getattr(e, "status_code", None) or getattr(
                     getattr(e, "response", None), "status_code", None
                 )
+                cause = describe_transport_error(e)
                 if attempt < max_retries:
                     logger.warning(
                         f"APIConnectionError in tool call ({self.provider}/{self.model}, scope={scope}, "
-                        f"attempt {attempt + 1}/{max_retries + 1}, HTTP {status_code}): {str(e)[:200]}"
+                        f"attempt {attempt + 1}/{max_retries + 1}, HTTP {status_code}): {str(e)[:200]} [{cause}]"
                     )
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
                 logger.error(
                     f"Connection error in tool call after {max_retries + 1} attempts "
-                    f"({self.provider}/{self.model}, scope={scope}): {str(e)}"
+                    f"({self.provider}/{self.model}, scope={scope}): {str(e)} [{cause}]"
                 )
                 raise
 

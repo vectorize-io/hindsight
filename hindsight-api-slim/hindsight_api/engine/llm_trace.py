@@ -137,6 +137,46 @@ def current_response_usage() -> LLMResponseUsage | None:
     return _response_usage_ctx.get()
 
 
+@dataclass
+class LLMQueueWait:
+    """Accumulator for time a call spent waiting on LLM concurrency permits."""
+
+    seconds: float = 0.0
+
+
+# Optional per-call sink for permit wait time, bound by a caller that wants to
+# report it. Unset by default, which makes record_queue_wait a no-op.
+_queue_wait_ctx: ContextVar[LLMQueueWait | None] = ContextVar("hindsight_llm_queue_wait_ctx", default=None)
+
+
+def set_queue_wait_sink(sink: LLMQueueWait | None) -> Token:
+    """Collect permit wait time for calls made under this context. Returns a reset token.
+
+    Without a sink, ``duration`` for an LLM call conflates two very different things:
+    time queued behind a concurrency permit and time the request was actually in
+    flight. That ambiguity sent issue #3881 chasing the provider. The worker path has
+    the ``.queued`` stage breadcrumb for this, but ``set_stage`` is a no-op outside a
+    worker task, so a synchronous HTTP request had no signal at all.
+    """
+    return _queue_wait_ctx.set(sink)
+
+
+def reset_queue_wait_sink(token: Token) -> None:
+    """Unwind a binding made by :func:`set_queue_wait_sink`."""
+    _queue_wait_ctx.reset(token)
+
+
+def record_queue_wait(seconds: float) -> None:
+    """Add permit wait time to the active sink. No-op when no caller bound one.
+
+    Accumulates rather than overwrites: a provider that owns its retry loop
+    re-acquires permits per attempt, and the caller wants the total.
+    """
+    sink = _queue_wait_ctx.get()
+    if sink is not None:
+        sink.seconds += seconds
+
+
 def set_trace_context(ctx: LLMTraceContext | None) -> Token:
     """Bind trace attribution to the current context. Returns a reset token."""
     return _trace_ctx.set(ctx)

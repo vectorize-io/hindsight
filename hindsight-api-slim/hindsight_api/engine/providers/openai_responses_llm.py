@@ -52,6 +52,7 @@ from hindsight_api.engine.llm_interface import (
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 
 # Provider-agnostic pure helpers (text cleanup, quota-defer parsing, json-mode
@@ -225,7 +226,8 @@ class OpenAIResponsesLLM(LLMInterface):
             else:
                 client_kwargs["base_url"] = self.base_url
         if self.timeout:
-            client_kwargs["timeout"] = self.timeout
+            # Per-phase so the connect leg is capped independently (issue #3881).
+            client_kwargs["timeout"] = build_sdk_timeout(self.timeout)
 
         self._client = AsyncOpenAI(**client_kwargs)
         logger.info(
@@ -387,7 +389,7 @@ class OpenAIResponsesLLM(LLMInterface):
                 )
                 logger.warning(
                     f"APIConnectionError ({self.provider}/{self.model}, scope={scope}, HTTP {status_code}, "
-                    f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]}"
+                    f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]} [{describe_transport_error(e)}]"
                 )
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
