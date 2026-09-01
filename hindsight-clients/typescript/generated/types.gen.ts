@@ -4750,7 +4750,8 @@ export type RefreshMentalModelOperationDetails = {
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
     | "refresh_failed_delta_not_applied"
-    | "refresh_failed_structured_output";
+    | "refresh_failed_structured_output"
+    | "refresh_failed_error";
   /**
    * Failure Reason
    *
@@ -4763,6 +4764,9 @@ export type RefreshMentalModelOperationDetails = {
     | "delta_ops_all_skipped"
     | "delta_not_applied"
     | "structured_output_failed"
+    | "retrieval_failed"
+    | "no_answer"
+    | "unexpected_error"
     | null;
 };
 

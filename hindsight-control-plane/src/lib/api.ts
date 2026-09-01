@@ -240,6 +240,18 @@ export type RefreshOutcome =
   | "refresh_failed_empty_candidate"
   | "refresh_failed_delta_not_applied";
 
+/** Why a refresh refused to write, as recorded on the model's own history. */
+export type RefreshFailureReason =
+  | "empty_candidate"
+  | "structured_doc_unreadable"
+  | "delta_ops_failed"
+  | "delta_ops_all_skipped"
+  | "delta_not_applied"
+  | "structured_output_failed"
+  | "retrieval_failed"
+  | "no_answer"
+  | "unexpected_error";
+
 export interface MentalModelRefreshScope {
   tags?: string[] | null;
   tags_match: TagsMatch;
@@ -1727,6 +1739,12 @@ export class ControlPlaneClient {
           mental_models?: unknown[];
         } | null;
         changed_at: string;
+        /** Present only on failure records: a refresh that refused to write.
+         *  Absent (undefined) on the version snapshots a successful refresh
+         *  writes, which is every row written before failures were recorded. */
+        kind?: "refresh_failed";
+        failure_reason?: RefreshFailureReason;
+        error_message?: string;
       }[]
     >(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/history`));
   }

@@ -1512,7 +1512,22 @@
     "refreshTrace": "새로 고침 트레이스",
     "traceNotCaptured": "이 새로 고침에 대한 트레이스가 기록되지 않았습니다. 모델 설정에서 ‘새로 고침 트레이스 보관’을 켜세요.",
     "actionDryRun": "드라이 런 실행",
-    "actionDryRunRunning": "드라이런 실행 중…"
+    "actionDryRunRunning": "드라이런 실행 중…",
+    "failureReasonUnknown": "새로 고침 실패",
+    "failureReasonRetrievalFailed": "검색 실패",
+    "failureReasonNoAnswer": "답변이 생성되지 않음",
+    "failureReasonEmptyCandidate": "빈 콘텐츠가 생성됨",
+    "failureReasonDocUnreadable": "저장된 문서를 읽을 수 없음",
+    "failureReasonDeltaOpsFailed": "델타 작업 실패",
+    "failureReasonDeltaOpsAllSkipped": "모든 델타 작업이 거부됨",
+    "failureReasonDeltaNotApplied": "델타가 적용되지 않음",
+    "failureReasonStructuredOutput": "구조화된 출력 추출 실패",
+    "failureAttempts": "· {count}회 시도",
+    "tabErrors": "오류",
+    "noErrors": "실패한 새로 고침이 없습니다.",
+    "errorsIntro": "쓰기를 거부한 새로 고침을 최신순으로 표시합니다. 모두 저장된 콘텐츠를 그대로 두었습니다. 실패한 새로 고침은 자동으로 몇 번 재시도되며, 그 후에는 다시 트리거될 때까지 마지막으로 성공한 버전이 유지됩니다.",
+    "errorsPresent": "이 멘탈 모델에 실패한 새로 고침이 있습니다",
+    "failureReasonUnexpected": "예기치 않은 오류"
   },
   "constellation": {
     "instructions": "스크롤하여 확대/축소 · 드래그하여 이동 · 호버하여 탐색 · 클릭하여 선택",

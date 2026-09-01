@@ -1363,7 +1363,10 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 return json.dumps({"error": str(e)})
             except Exception as e:
                 logger.error(f"Error reflecting: {e}", exc_info=True)
-                return f'{{"error": "{e}", "text": ""}}'
+                # Built with json.dumps, not an f-string: error text carries provider
+                # messages with quotes and newlines in them, which hand-rolled JSON
+                # turns into a payload the client cannot parse.
+                return json.dumps({"error": str(e), "text": ""})
 
     else:
 

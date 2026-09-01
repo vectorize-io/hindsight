@@ -9826,6 +9826,7 @@ components:
           - refresh_failed_empty_candidate
           - refresh_failed_delta_not_applied
           - refresh_failed_structured_output
+          - refresh_failed_error
           title: Outcome
           type: string
         failure_reason:
@@ -9836,6 +9837,9 @@ components:
           - delta_ops_all_skipped
           - delta_not_applied
           - structured_output_failed
+          - retrieval_failed
+          - no_answer
+          - unexpected_error
           nullable: true
           type: string
       required:

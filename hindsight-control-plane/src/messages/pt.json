@@ -1512,7 +1512,22 @@
     "refreshTrace": "Rastro da atualização",
     "traceNotCaptured": "Nenhum rastro registrado para esta atualização. Ative “Manter rastros de atualização” nas configurações do modelo.",
     "actionDryRun": "Executar simulação",
-    "actionDryRunRunning": "Executando simulação…"
+    "actionDryRunRunning": "Executando simulação…",
+    "failureReasonUnknown": "Falha na atualização",
+    "failureReasonRetrievalFailed": "Falha na recuperação",
+    "failureReasonNoAnswer": "Nenhuma resposta produzida",
+    "failureReasonEmptyCandidate": "Conteúdo vazio produzido",
+    "failureReasonDocUnreadable": "Documento armazenado ilegível",
+    "failureReasonDeltaOpsFailed": "Falha nas operações delta",
+    "failureReasonDeltaOpsAllSkipped": "Todas as operações delta rejeitadas",
+    "failureReasonDeltaNotApplied": "Delta não aplicado",
+    "failureReasonStructuredOutput": "Falha na extração de saída estruturada",
+    "failureAttempts": "· {count} tentativas",
+    "tabErrors": "Erros",
+    "noErrors": "Nenhuma atualização com falha.",
+    "errorsIntro": "Atualizações que se recusaram a escrever, da mais recente para a mais antiga. Nenhuma alterou o conteúdo armazenado. Uma atualização com falha é repetida automaticamente algumas vezes; depois disso o modelo mantém a última versão válida até ser acionado novamente.",
+    "errorsPresent": "Este modelo mental tem atualizações com falha",
+    "failureReasonUnexpected": "Erro inesperado"
   },
   "constellation": {
     "instructions": "Scroll para zoom · Arraste para mover · Passe o mouse para explorar · Clique para selecionar",

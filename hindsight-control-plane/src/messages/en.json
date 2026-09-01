@@ -1512,7 +1512,22 @@
     "refreshTrace": "Refresh trace",
     "traceNotCaptured": "No trace recorded for this refresh. Turn on “Keep refresh traces” in the model's settings to record how each refresh reaches its result.",
     "actionDryRun": "Run dry run",
-    "actionDryRunRunning": "Running dry run…"
+    "actionDryRunRunning": "Running dry run…",
+    "failureReasonUnknown": "Refresh failed",
+    "failureReasonRetrievalFailed": "Retrieval failed",
+    "failureReasonNoAnswer": "No answer produced",
+    "failureReasonEmptyCandidate": "Empty content produced",
+    "failureReasonDocUnreadable": "Stored document unreadable",
+    "failureReasonDeltaOpsFailed": "Delta operations failed",
+    "failureReasonDeltaOpsAllSkipped": "All delta operations rejected",
+    "failureReasonDeltaNotApplied": "Delta not applied",
+    "failureReasonStructuredOutput": "Structured output extraction failed",
+    "failureAttempts": "· {count} attempts",
+    "tabErrors": "Errors",
+    "noErrors": "No failed refreshes.",
+    "errorsIntro": "Refreshes that refused to write, newest first. The stored content was left untouched by each of these. A failed refresh is retried a few times automatically; after that the model keeps its last good version until something triggers it again.",
+    "errorsPresent": "This mental model has failed refreshes",
+    "failureReasonUnexpected": "Unexpected error"
   },
   "constellation": {
     "instructions": "Scroll to zoom · Drag to pan · Hover to explore · Click to select",

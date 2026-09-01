@@ -267,6 +267,7 @@ Listing does not cost one query per model — the whole page is answered togethe
 - **Cumulative grounding.** Even in delta mode, `reflect_response.based_on` accumulates: the facts from this refresh are merged with everything previous refreshes relied on, deduplicated by id. The document rests on all of them, not just the latest slice.
 - **Nothing, if nothing is relevant.** A refresh that finds no topic-relevant memories leaves the content alone and only advances the watermark, so the same empty window stops re-triggering.
 - **No LLM call at all, if there is nothing to read.** Before the agentic loop starts, a refresh checks whether anything is in reach under this model's own settings: an in-scope memory (`tags`/`tags_match`, `tag_groups` and `fact_types` all narrow it) inside the window it would read — the whole bank in `full` mode, everything since `last_memory_seen_at` in `delta` mode — or a sibling mental model, unless `exclude_mental_models` closed that door. When there is nothing, the refresh completes immediately, leaves the document untouched, and spends nothing. This is the common case on a bank that was just created: its pages are refreshed the moment they exist, before anything has been retained.
+- **A failed retrieval is not an empty one.** If a retrieval step raises — the database, the embedder or the reranker is unavailable — the refresh **fails** instead of writing what the model came up with without it. Content, `structured_output` and the watermark are all left untouched, so the retry reads the same window again. This is the distinction that matters: "we looked and there is nothing on this topic" is an answer and gets written; "we could not look" is a failure and gets preserved. Without it, a broken retriever silently replaced a document built over months with a generic "I don't have information about that".
 
 ### Refresh Mode
 
@@ -601,7 +602,7 @@ somewhere else.
 |-------|----------|
 | `effective_mode` | Whether the run ended up `full` or `delta` |
 | `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` |
-| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed) |
+| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds two the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output` and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
 | `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
 | `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |
 | `delta_operations` | The operations emitted in delta mode, `applied` and `skipped` |
@@ -881,10 +882,18 @@ The endpoint returns a list of history entries, most recent first:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `previous_content` | string \| null | The content before this change (`null` if not available) |
+| `previous_content` | string \| null | The content before this change (`null` if not available, and always `null` on a failure record) |
 | `changed_at` | string | ISO 8601 timestamp of when the change occurred |
+| `kind` | `"refresh_failed"` \| absent | Present only on a **failure record** — a refresh that refused to write. Absent on version snapshots |
+| `outcome` | string \| absent | On a failure record: the operation outcome, e.g. `refresh_failed_error` |
+| `failure_reason` | string \| absent | On a failure record: why it refused — `retrieval_failed`, `no_answer`, `unexpected_error`, `empty_candidate`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped`, `delta_not_applied`, `structured_output_failed` |
+| `error_message` | string \| absent | On a failure record: the exception, as the operation reports it |
 
-Each entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
+Each version entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
+
+**Failures are recorded too.** A refresh that refuses to write produces no version, so before this it left no trace on the model at all — a document whose refreshes had been failing for a week was indistinguishable from one nobody had refreshed, and its stored `reflect_response` still described the last run that *succeeded*. Those runs now append a failure record carrying the reason and the exception. Read them by their `kind`: a client that only wants versions filters `kind` out, and one that wants to know whether the model is current checks whether the newest entry is a failure.
+
+Retention is applied per kind, so a run of failures cannot evict the version history — each is capped at `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` independently. A retried refresh records one entry per attempt.
 
 > **📝 Note**
 >

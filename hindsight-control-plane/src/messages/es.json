@@ -1512,7 +1512,22 @@
     "refreshTrace": "Traza de la actualización",
     "traceNotCaptured": "No se registró ninguna traza para esta actualización. Activa «Conservar trazas de actualización» en los ajustes del modelo.",
     "actionDryRun": "Ejecutar simulación",
-    "actionDryRunRunning": "Ejecutando simulación…"
+    "actionDryRunRunning": "Ejecutando simulación…",
+    "failureReasonUnknown": "Actualización fallida",
+    "failureReasonRetrievalFailed": "Fallo en la recuperación",
+    "failureReasonNoAnswer": "No se produjo respuesta",
+    "failureReasonEmptyCandidate": "Se generó contenido vacío",
+    "failureReasonDocUnreadable": "Documento almacenado ilegible",
+    "failureReasonDeltaOpsFailed": "Fallaron las operaciones delta",
+    "failureReasonDeltaOpsAllSkipped": "Se rechazaron todas las operaciones delta",
+    "failureReasonDeltaNotApplied": "Delta no aplicado",
+    "failureReasonStructuredOutput": "Falló la extracción de salida estructurada",
+    "failureAttempts": "· {count} intentos",
+    "tabErrors": "Errores",
+    "noErrors": "No hay actualizaciones fallidas.",
+    "errorsIntro": "Actualizaciones que se negaron a escribir, de la más reciente a la más antigua. Ninguna modificó el contenido almacenado. Una actualización fallida se reintenta automáticamente unas cuantas veces; después el modelo conserva su última versión válida hasta que algo vuelva a activarlo.",
+    "errorsPresent": "Este modelo mental tiene actualizaciones fallidas",
+    "failureReasonUnexpected": "Error inesperado"
   },
   "constellation": {
     "instructions": "Desplaza para hacer zoom · Arrastra para mover · Pasa el cursor para explorar · Haz clic para seleccionar",

@@ -44,8 +44,8 @@ class RefreshMentalModelOperationDetails(BaseModel):
     @field_validator('outcome')
     def outcome_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_structured_output']):
-            raise ValueError("must be one of enum values ('content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_structured_output')")
+        if value not in set(['content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_structured_output', 'refresh_failed_error']):
+            raise ValueError("must be one of enum values ('content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied', 'refresh_failed_structured_output', 'refresh_failed_error')")
         return value
 
     @field_validator('failure_reason')
@@ -54,8 +54,8 @@ class RefreshMentalModelOperationDetails(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['empty_candidate', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'delta_not_applied', 'structured_output_failed']):
-            raise ValueError("must be one of enum values ('empty_candidate', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'delta_not_applied', 'structured_output_failed')")
+        if value not in set(['empty_candidate', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'delta_not_applied', 'structured_output_failed', 'retrieval_failed', 'no_answer', 'unexpected_error']):
+            raise ValueError("must be one of enum values ('empty_candidate', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'delta_not_applied', 'structured_output_failed', 'retrieval_failed', 'no_answer', 'unexpected_error')")
         return value
 
     model_config = ConfigDict(

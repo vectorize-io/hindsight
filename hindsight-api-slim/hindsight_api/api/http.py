@@ -179,7 +179,7 @@ from hindsight_api.engine.mental_model_refresh import (
     RefreshMentalModelOperationDetails,
 )
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
-from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolCallError
+from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolCallError, ReflectToolExecutionError
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
     DryRunExtractionResult,
@@ -5131,6 +5131,13 @@ def _register_routes(app: FastAPI):
             # The request itself is fine, so this is a server-side (500) failure, not a
             # 4xx -- but log at warning, not error: it's a misconfiguration, not a bug.
             logger.warning("Reflect tool-calling failure in bank %s: %s", bank_id, e)
+            raise HTTPException(status_code=500, detail=str(e))
+        except ReflectToolExecutionError as e:
+            # A retrieval tool raised, so the loop could not finish gathering the
+            # evidence it was asked for. Answering anyway would return a confident
+            # reply built on a partial (often empty) evidence set, which callers
+            # store as a real answer (#2894). Returning the failure lets them retry.
+            logger.warning("Reflect retrieval failure in bank %s: %s", bank_id, e)
             raise HTTPException(status_code=500, detail=str(e))
         except TimeoutError as e:
             logger.error("Timeout in /v1/default/banks/%s/reflect: %s", bank_id, e)

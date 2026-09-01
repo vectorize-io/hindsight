@@ -14806,7 +14806,8 @@
               "content_preserved_no_new_facts",
               "refresh_failed_empty_candidate",
               "refresh_failed_delta_not_applied",
-              "refresh_failed_structured_output"
+              "refresh_failed_structured_output",
+              "refresh_failed_error"
             ],
             "title": "Outcome",
             "description": "What the refresh did with the document: rewrote it (`content_written`), produced a document identical to the stored one (`content_unchanged`), had no new facts to read at all (`content_preserved_no_new_facts`), or refused to write (the `refresh_failed_*` values)."
@@ -14821,7 +14822,10 @@
                   "delta_ops_failed",
                   "delta_ops_all_skipped",
                   "delta_not_applied",
-                  "structured_output_failed"
+                  "structured_output_failed",
+                  "retrieval_failed",
+                  "no_answer",
+                  "unexpected_error"
                 ]
               },
               {

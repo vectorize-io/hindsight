@@ -27,6 +27,7 @@ import {
   Pencil,
   RefreshCw,
   Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
@@ -39,7 +40,7 @@ import {
   MentalModelDryRunDialog,
   TraceSummary,
 } from "./mental-model-diagnostics-view";
-import type { MentalModelRefreshTrace } from "@/lib/api";
+import type { MentalModelRefreshTrace, RefreshFailureReason } from "@/lib/api";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
@@ -82,11 +83,122 @@ type ReflectResponseSnapshot = {
   trace?: MentalModelRefreshTrace;
 } | null;
 
-type HistoryEntry = {
+export type HistoryEntry = {
   previous_content: string | null;
   previous_reflect_response?: ReflectResponseSnapshot;
   changed_at: string;
+  /** Failure records carry these; version snapshots do not. A refresh that
+   *  refused to write produced no version, so it is an event on the timeline
+   *  rather than a diff — and without it the model looked as though it had
+   *  simply never been refreshed (#2894). */
+  kind?: "refresh_failed";
+  failure_reason?: RefreshFailureReason;
+  error_message?: string;
 };
+
+const isFailureEntry = (e: HistoryEntry) => e.kind === "refresh_failed";
+
+/** Consecutive attempts that failed the same way, as one entry on the timeline. */
+export type FailureGroup = { entry: HistoryEntry; attempts: number; oldest: string };
+
+/** The failures in a model's history, as episodes.
+ *
+ * A failed refresh is retried by the worker and each attempt records its own
+ * row, so one broken retriever produces a run of identical entries. They are
+ * collapsed into a single event with an attempt count.
+ *
+ * Takes the WHOLE history, not just the failures: a successful refresh between
+ * two identical failures means the thing broke, recovered, and broke again —
+ * two episodes, not one. Filtering the versions out first would silently merge
+ * them and under-report how often the model has been failing. */
+export function groupFailures(history: HistoryEntry[]): FailureGroup[] {
+  const groups: FailureGroup[] = [];
+  let previousWasFailure = false;
+  for (const entry of history) {
+    if (!isFailureEntry(entry)) {
+      previousWasFailure = false;
+      continue;
+    }
+    const last = groups[groups.length - 1];
+    if (
+      previousWasFailure &&
+      last &&
+      last.entry.failure_reason === entry.failure_reason &&
+      last.entry.error_message === entry.error_message
+    ) {
+      last.attempts += 1;
+      last.oldest = entry.changed_at;
+    } else {
+      groups.push({ entry, attempts: 1, oldest: entry.changed_at });
+    }
+    previousWasFailure = true;
+  }
+  return groups;
+}
+
+/** The model's failed refreshes, newest first, as a timeline of events.
+
+ * Kept out of the History tab on purpose: that tab is a version browser, and a
+ * refusal to write produces no version — interleaving the two made the failures
+ * read as versions and buried the diffs under repetitions of one outage. */
+function RefreshErrorTimeline({ groups }: { groups: FailureGroup[] }) {
+  const t = useTranslations("mentalModelDetailModal");
+  const reasonLabels: Record<RefreshFailureReason, string> = {
+    retrieval_failed: t("failureReasonRetrievalFailed"),
+    no_answer: t("failureReasonNoAnswer"),
+    empty_candidate: t("failureReasonEmptyCandidate"),
+    structured_doc_unreadable: t("failureReasonDocUnreadable"),
+    delta_ops_failed: t("failureReasonDeltaOpsFailed"),
+    delta_ops_all_skipped: t("failureReasonDeltaOpsAllSkipped"),
+    delta_not_applied: t("failureReasonDeltaNotApplied"),
+    structured_output_failed: t("failureReasonStructuredOutput"),
+    unexpected_error: t("failureReasonUnexpected"),
+  };
+
+  if (groups.length === 0) {
+    return <p className="text-sm text-muted-foreground italic">{t("noErrors")}</p>;
+  }
+
+  return (
+    <div className="space-y-1">
+      <p className="text-sm text-muted-foreground pb-2">{t("errorsIntro")}</p>
+      <ol className="relative border-l border-border ml-2">
+        {groups.map((g, i) => (
+          <li key={`${g.entry.changed_at}-${i}`} className="relative pl-6 pb-5 last:pb-0">
+            <span className="absolute -left-[5px] top-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-4 ring-background" />
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-sm font-semibold text-red-700 dark:text-red-400">
+                {g.entry.failure_reason
+                  ? reasonLabels[g.entry.failure_reason]
+                  : t("failureReasonUnknown")}
+              </span>
+              {g.attempts > 1 && (
+                <span className="text-xs text-muted-foreground">
+                  {t("failureAttempts", { count: g.attempts })}
+                </span>
+              )}
+              <span
+                className="text-xs text-muted-foreground"
+                title={
+                  g.attempts > 1
+                    ? `${formatDateTime(g.oldest)} — ${formatDateTime(g.entry.changed_at)}`
+                    : formatDateTime(g.entry.changed_at)
+                }
+              >
+                &middot; {formatRelativeTime(g.entry.changed_at)}
+              </span>
+            </div>
+            {g.entry.error_message && (
+              <pre className="mt-1.5 rounded-md border border-border bg-muted/40 p-2 text-xs font-mono whitespace-pre-wrap break-words text-muted-foreground">
+                {g.entry.error_message}
+              </pre>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
 
 function getFactTypeDisplay(factType: string, t?: (key: string) => string) {
   if (factType === "directives") {
@@ -561,6 +673,8 @@ function MentalModelHistoryView({
 }) {
   const t = useTranslations("mentalModelDetailModal");
   const [idx, setIdx] = useState(0);
+  // Failures are not versions — they have no before/after to diff — so they live
+  // on their own Errors tab rather than in this pager.
   const entry = history[idx];
   const afterContent = idx === 0 ? currentContent : (history[idx - 1].previous_content ?? "");
   const beforeBasedOn = entry.previous_reflect_response?.based_on;
@@ -683,6 +797,14 @@ export function MentalModelDetailModal({
   const [viewDirectiveId, setViewDirectiveId] = useState<string | null>(null);
 
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  // Failures are events, not versions: they drive the Errors tab and its dot,
+  // and never appear in the version pager.
+  const failureEntries = useMemo(() => (history ?? []).filter(isFailureEntry), [history]);
+  const versionEntries = useMemo(
+    () => (history ?? []).filter((e) => !isFailureEntry(e)),
+    [history]
+  );
+  const failureGroups = useMemo(() => groupFailures(history ?? []), [history]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [dryRunning, setDryRunning] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<MentalModelDryRunRefreshResult | null>(null);
@@ -711,8 +833,12 @@ export function MentalModelDetailModal({
     load();
   }, [mentalModelId, currentBank, initialTab]);
 
+  // Loaded as soon as the model is, not only when the Errors or History tab is
+  // opened: the history is where a failed refresh is recorded, and the red dot on
+  // the Errors tab has to be right from the moment the modal opens (#2894). An
+  // earlier revision showed a banner on every tab instead; the dot replaced it.
   useEffect(() => {
-    if (activeTab !== "history" || !mentalModel || !currentBank || history !== null) return;
+    if (!mentalModel || !currentBank || history !== null) return;
 
     const loadHistory = async () => {
       setLoadingHistory(true);
@@ -728,7 +854,7 @@ export function MentalModelDetailModal({
     };
 
     loadHistory();
-  }, [activeTab, mentalModel, currentBank, history]);
+  }, [mentalModel, currentBank, history]);
 
   // A dry run changes nothing, so it is an action with a transient result rather
   // than a tab: run it, show the preview, throw it away.
@@ -854,7 +980,7 @@ export function MentalModelDetailModal({
               className="flex-1 flex flex-col overflow-hidden"
             >
               <div className="flex items-center justify-between gap-2">
-                <TabsList className="grid grid-cols-3 w-full max-w-md">
+                <TabsList className="grid grid-cols-4 w-full max-w-2xl">
                   <TabsTrigger value="content" className="flex items-center gap-1.5">
                     <FileText className="w-3.5 h-3.5" />
                     {t("tabContent")}
@@ -866,6 +992,19 @@ export function MentalModelDetailModal({
                   <TabsTrigger value="history" className="flex items-center gap-1.5">
                     <HistoryIcon className="w-3.5 h-3.5" />
                     {t("tabHistory")}
+                  </TabsTrigger>
+                  <TabsTrigger value="errors" className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {t("tabErrors")}
+                    {/* The whole signal that something is wrong: a full alert on
+                        every tab shouted at people reading a document that was
+                        never damaged. */}
+                    {failureEntries.length > 0 && (
+                      <span
+                        className="h-2 w-2 rounded-full bg-red-500"
+                        aria-label={t("errorsPresent")}
+                      />
+                    )}
                   </TabsTrigger>
                 </TabsList>
                 <DropdownMenu>
@@ -980,14 +1119,26 @@ export function MentalModelDetailModal({
                   <ConfigurationTab mentalModel={mentalModel} />
                 </TabsContent>
 
+                <TabsContent value="errors" className="mt-0">
+                  {/* Until the history is in, "no failed refreshes" would be a claim
+                      the UI cannot yet make. */}
+                  {loadingHistory ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Spinner size="md" variant="jump" />
+                    </div>
+                  ) : (
+                    <RefreshErrorTimeline groups={failureGroups} />
+                  )}
+                </TabsContent>
+
                 <TabsContent value="history" className="mt-0">
                   {loadingHistory ? (
                     <div className="flex items-center justify-center py-12">
                       <Spinner size="md" variant="jump" />
                     </div>
-                  ) : history && history.length > 0 ? (
+                  ) : versionEntries.length > 0 ? (
                     <MentalModelHistoryView
-                      history={history}
+                      history={versionEntries}
                       currentContent={mentalModel.content}
                       currentBasedOn={basedOn}
                       currentTrace={

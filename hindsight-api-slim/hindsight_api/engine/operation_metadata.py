@@ -194,17 +194,22 @@ class RefreshMentalModelOutcomeMetadata:
     failure_reason: "RefreshFailureReason | None" = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for JSON serialization, omitting unrecorded fields.
+        """Convert to dict for JSON serialization, omitting an unrecorded outcome.
 
-        ``outcome``/``failure_reason`` are dropped when unset rather than written
-        as null: the metadata is merged into whatever the operation already
-        carries, and a null would overwrite a recorded value with "unknown".
+        ``outcome`` is dropped when unset rather than written as null: the metadata
+        is merged into whatever the operation already carries, and a null would
+        overwrite a recorded value with "unknown".
+
+        ``failure_reason`` is the opposite — it is written as null when unset, and
+        must be. A refresh is retried on the SAME operation row, so an attempt that
+        failed leaves its reason behind; merging a success over it without clearing
+        the reason produced the nonsense pairing ``outcome=content_written`` with
+        ``failure_reason=no_answer``. This writer only ever runs on a refresh that
+        finished, so "no reason" is a fact about it, not a gap.
         """
         data = asdict(self)
         if data.get("outcome") is None:
             data.pop("outcome", None)
-        if data.get("failure_reason") is None:
-            data.pop("failure_reason", None)
         return data
 
 

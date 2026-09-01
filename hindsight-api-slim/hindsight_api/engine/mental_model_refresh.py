@@ -47,7 +47,10 @@ RefreshOutcome = Literal[
 
 # What a refresh did, as recorded on the operation. A superset of RefreshOutcome:
 # the persist path can still refuse a document the executor accepted, when
-# structured-output extraction fails against a configured response_schema. Kept
+# structured-output extraction fails against a configured response_schema, and
+# a refresh can also die on an error rather than refuse to write a document
+# (``refresh_failed_error`` — a retrieval tool raised, the agent produced no
+# answer, or something unforeseen escaped). Kept
 # separate rather than widening RefreshOutcome, so the dry run does not advertise
 # an outcome it can never return — it never extracts structured output. Spelled
 # out rather than unioned because a union of Literals renders as an ``anyOf`` of
@@ -60,12 +63,19 @@ RefreshOperationOutcome = Literal[
     "refresh_failed_empty_candidate",
     "refresh_failed_delta_not_applied",
     "refresh_failed_structured_output",
+    "refresh_failed_error",
 ]
 
 # Why a refresh refused to write, matching the ``reflect_response.refresh_skipped``
 # value persisted alongside the preserved document. Finer-grained than the outcome:
 # ``refresh_failed_delta_not_applied`` alone does not say whether the op call failed,
 # every op was rejected, or the baseline document could not be read.
+# ``retrieval_failed``, ``no_answer`` and ``unexpected_error`` are errors rather
+# than refusals, so they have no ``refresh_skipped`` counterpart on the model — the
+# run died before there was a ``reflect_response`` to write one into. They are
+# recorded on the operation and in ``mental_model_history`` instead.
+# ``unexpected_error`` is the catch-all: whatever escaped is not something the
+# pipeline models, but the refresh still failed and still has to leave a record.
 RefreshFailureReason = Literal[
     "empty_candidate",
     "structured_doc_unreadable",
@@ -73,6 +83,9 @@ RefreshFailureReason = Literal[
     "delta_ops_all_skipped",
     "delta_not_applied",
     "structured_output_failed",
+    "retrieval_failed",
+    "no_answer",
+    "unexpected_error",
 ]
 
 

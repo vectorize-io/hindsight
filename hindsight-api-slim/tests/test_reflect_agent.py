@@ -13,10 +13,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
     ReflectNoAnswerError,
     ReflectToolCallError,
+    ReflectToolExecutionError,
     _all_mental_models_are_usable_and_fresh,
     _cache_cleanup_tasks,
     _count_messages_tokens,
@@ -719,22 +721,91 @@ class TestReflectAgentMocked:
         assert mock_llm.call_with_tools.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_recovery_from_tool_execution_error(self, mock_llm, mock_functions):
-        """Test that LLM can recover after a tool execution fails."""
-        # Make recall fail the first time, succeed the second time
-        mock_functions["recall_fn"].side_effect = [
-            Exception("Database connection failed"),
-            {"memories": [{"id": "mem-1", "content": "test memory"}]},
-        ]
+    async def test_tool_execution_error_fails_the_run(self, mock_llm, mock_functions):
+        """A tool that raises fails the whole run — the loop must not answer around it.
+
+        Reflect used to feed the exception back as a tool result and let the model
+        try again. Whatever it answered was then indistinguishable from a run over
+        a bank that genuinely holds nothing, and a mental-model refresh wrote that
+        answer over a real document (#2894). A raising tool is a broken dependency,
+        so the run fails and the caller never reaches its write.
+        """
+        mock_functions["recall_fn"].side_effect = Exception("Database connection failed")
 
         mock_llm.call_with_tools.side_effect = [
             LLMToolCallResult(
                 tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
                 finish_reason="tool_calls",
             ),
-            # LLM tries again after seeing error
             LLMToolCallResult(
-                tool_calls=[LLMToolCall(id="2", name="recall", arguments={"query": "test retry"})],
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="done",
+                        arguments={"answer": "I don't have information about that.", "memory_ids": []},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        with pytest.raises(ReflectToolExecutionError) as exc_info:
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="test query",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                **mock_functions,
+            )
+
+        assert "recall" in str(exc_info.value)
+        assert "Database connection failed" in str(exc_info.value)
+        # The failure is immediate: the model is never asked to carry on without it.
+        assert mock_llm.call_with_tools.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_one_failing_tool_fails_a_parallel_batch(self, mock_llm, mock_functions):
+        """Even one failure in a parallel batch fails the run, however much the others returned."""
+        mock_functions["search_observations_fn"].side_effect = Exception("pgroonga index unavailable")
+
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="recall", arguments={"query": "test"}),
+                    LLMToolCall(id="2", name="search_observations", arguments={"query": "test"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        with pytest.raises(ReflectToolExecutionError) as exc_info:
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="test query",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                **mock_functions,
+            )
+
+        assert "search_observations" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_tool_argument_errors_are_still_fed_back(self, mock_llm, mock_functions):
+        """A malformed call is the model's mistake, not a broken dependency.
+
+        ``_execute_tool`` returns ``{"error": ...}`` for a missing argument or a
+        hallucinated tool name. Those are fixable by calling again with different
+        arguments, so they keep going back to the model — only tools that *raise*
+        fail the run.
+        """
+        mock_llm.call_with_tools.side_effect = [
+            # No query argument: the dispatcher answers with an error dict.
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="recall", arguments={"query": "test"})],
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(
@@ -742,7 +813,7 @@ class TestReflectAgentMocked:
                     LLMToolCall(
                         id="3",
                         name="done",
-                        arguments={"answer": "Recovered from error", "memory_ids": ["mem-1"]},
+                        arguments={"answer": "Recovered from a bad call", "memory_ids": ["mem-1"]},
                     )
                 ],
                 finish_reason="tool_calls",
@@ -757,8 +828,111 @@ class TestReflectAgentMocked:
             **mock_functions,
         )
 
-        assert result.text == "Recovered from error"
+        assert result.text == "Recovered from a bad call"
         assert mock_llm.call_with_tools.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_persistent_llm_error_fails_instead_of_synthesizing(self, mock_llm, mock_functions):
+        """A provider that keeps failing fails the run, rather than answering around it.
+
+        The loop used to fall through to a forced final synthesis on any LLM error.
+        With retrieval never completed, that synthesis had nothing to work from and
+        produced a confident "no information" answer that callers stored (#2894).
+        The provider's own 429/5xx retries already ran inside the call, so reaching
+        here twice means the failure is not transient.
+        """
+        mock_llm.call_with_tools.side_effect = RuntimeError("provider unavailable")
+
+        with pytest.raises(RuntimeError, match="provider unavailable"):
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="test query",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                **mock_functions,
+            )
+
+        # Retried once (capped at 2 consecutive errors), then gave up.
+        assert mock_llm.call_with_tools.call_count == 2
+        mock_llm.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_transient_llm_error_is_still_retried(self, mock_llm, mock_functions):
+        """One failed turn followed by a good one is a normal run, not a failure."""
+        mock_llm.call_with_tools.side_effect = [
+            RuntimeError("connection reset"),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="done",
+                        arguments={"answer": "Recovered after a blip", "memory_ids": ["mem-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        assert result.text == "Recovered after a blip"
+
+    @pytest.mark.asyncio
+    async def test_cancellation_from_a_tool_is_not_wrapped(self, mock_llm, mock_functions):
+        """A client disconnect must stay a cancellation, not become a tool failure.
+
+        ``recall`` re-raises ``OperationCancelledError`` so the HTTP layer can
+        answer 499 (issue #2122). Wrapping it in ``ReflectToolExecutionError``
+        would report a client that went away as a server-side retrieval failure.
+        """
+        mock_functions["recall_fn"].side_effect = OperationCancelledError("client disconnected")
+
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        with pytest.raises(OperationCancelledError):
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="test query",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                **mock_functions,
+            )
+
+    @pytest.mark.asyncio
+    async def test_cancellation_from_the_llm_call_is_not_retried(self, mock_llm, mock_functions):
+        """A cancellation raised by the LLM call is not a provider failure.
+
+        It must not be retried and must not be synthesized around — it reaches the
+        HTTP layer as itself, so a client disconnect stays a 499 (issue #2122).
+        """
+        mock_llm.call_with_tools.side_effect = OperationCancelledError("client disconnected")
+
+        with pytest.raises(OperationCancelledError):
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="test query",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                **mock_functions,
+            )
+
+        assert mock_llm.call_with_tools.call_count == 1
+        mock_llm.call.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_normalizes_tool_names_in_other_tools(self, mock_llm, mock_functions):

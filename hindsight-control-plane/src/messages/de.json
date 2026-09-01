@@ -1512,7 +1512,22 @@
     "refreshTrace": "Aktualisierungs-Trace",
     "traceNotCaptured": "Für diese Aktualisierung wurde kein Trace aufgezeichnet. Aktivieren Sie „Aktualisierungs-Traces behalten“ in den Modelleinstellungen.",
     "actionDryRun": "Testlauf ausführen",
-    "actionDryRunRunning": "Probelauf läuft…"
+    "actionDryRunRunning": "Probelauf läuft…",
+    "failureReasonUnknown": "Aktualisierung fehlgeschlagen",
+    "failureReasonRetrievalFailed": "Abruf fehlgeschlagen",
+    "failureReasonNoAnswer": "Keine Antwort erzeugt",
+    "failureReasonEmptyCandidate": "Leerer Inhalt erzeugt",
+    "failureReasonDocUnreadable": "Gespeichertes Dokument nicht lesbar",
+    "failureReasonDeltaOpsFailed": "Delta-Operationen fehlgeschlagen",
+    "failureReasonDeltaOpsAllSkipped": "Alle Delta-Operationen abgelehnt",
+    "failureReasonDeltaNotApplied": "Delta nicht angewendet",
+    "failureReasonStructuredOutput": "Extraktion der strukturierten Ausgabe fehlgeschlagen",
+    "failureAttempts": "· {count} Versuche",
+    "tabErrors": "Fehler",
+    "noErrors": "Keine fehlgeschlagenen Aktualisierungen.",
+    "errorsIntro": "Aktualisierungen, die nicht geschrieben haben – neueste zuerst. Der gespeicherte Inhalt blieb dabei jeweils unberührt. Eine fehlgeschlagene Aktualisierung wird einige Male automatisch wiederholt; danach behält das Modell seine letzte gültige Version, bis es erneut ausgelöst wird.",
+    "errorsPresent": "Dieses Mental Model hat fehlgeschlagene Aktualisierungen",
+    "failureReasonUnexpected": "Unerwarteter Fehler"
   },
   "constellation": {
     "instructions": "Scrollen zum Zoomen · Ziehen zum Verschieben · Hover zum Erkunden · Klicken zum Auswählen",

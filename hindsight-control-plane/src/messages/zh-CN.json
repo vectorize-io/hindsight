@@ -1512,7 +1512,22 @@
     "refreshTrace": "刷新追踪",
     "traceNotCaptured": "本次刷新没有记录追踪。请在模型设置中开启“保留刷新追踪”。",
     "actionDryRun": "执行试运行演练",
-    "actionDryRunRunning": "试运行中…"
+    "actionDryRunRunning": "试运行中…",
+    "failureReasonUnknown": "刷新失败",
+    "failureReasonRetrievalFailed": "检索失败",
+    "failureReasonNoAnswer": "未生成回答",
+    "failureReasonEmptyCandidate": "生成了空内容",
+    "failureReasonDocUnreadable": "无法读取已存储的文档",
+    "failureReasonDeltaOpsFailed": "增量操作失败",
+    "failureReasonDeltaOpsAllSkipped": "所有增量操作均被拒绝",
+    "failureReasonDeltaNotApplied": "未应用增量",
+    "failureReasonStructuredOutput": "结构化输出提取失败",
+    "failureAttempts": "· {count} 次尝试",
+    "tabErrors": "错误",
+    "noErrors": "没有失败的刷新。",
+    "errorsIntro": "拒绝写入的刷新，按时间倒序排列。它们都没有改动已存储的内容。失败的刷新会自动重试几次；之后模型将保留最后一个有效版本，直到再次被触发。",
+    "errorsPresent": "此心智模型有失败的刷新",
+    "failureReasonUnexpected": "意外错误"
   },
   "constellation": {
     "instructions": "滚动缩放 · 拖拽平移 · 悬停探索 · 点击选择",

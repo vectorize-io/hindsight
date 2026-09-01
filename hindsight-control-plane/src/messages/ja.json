@@ -1512,7 +1512,22 @@
     "refreshTrace": "更新トレース",
     "traceNotCaptured": "この更新のトレースは記録されていません。モデル設定で「更新トレースを保持」を有効にしてください。",
     "actionDryRun": "ドライラン実行",
-    "actionDryRunRunning": "ドライラン実行中…"
+    "actionDryRunRunning": "ドライラン実行中…",
+    "failureReasonUnknown": "更新に失敗しました",
+    "failureReasonRetrievalFailed": "検索に失敗しました",
+    "failureReasonNoAnswer": "回答が生成されませんでした",
+    "failureReasonEmptyCandidate": "空のコンテンツが生成されました",
+    "failureReasonDocUnreadable": "保存されたドキュメントを読み取れません",
+    "failureReasonDeltaOpsFailed": "デルタ操作に失敗しました",
+    "failureReasonDeltaOpsAllSkipped": "すべてのデルタ操作が拒否されました",
+    "failureReasonDeltaNotApplied": "デルタが適用されませんでした",
+    "failureReasonStructuredOutput": "構造化出力の抽出に失敗しました",
+    "failureAttempts": "· {count} 回試行",
+    "tabErrors": "エラー",
+    "noErrors": "失敗した更新はありません。",
+    "errorsIntro": "書き込みを拒否した更新を新しい順に表示します。いずれも保存済みコンテンツには手を加えていません。失敗した更新は数回自動で再試行され、その後は次のトリガーまで最後に成功したバージョンが保持されます。",
+    "errorsPresent": "このメンタルモデルには失敗した更新があります",
+    "failureReasonUnexpected": "予期しないエラー"
   },
   "constellation": {
     "instructions": "スクロールでズーム · ドラッグで移動 · ホバーで探索 · クリックで選択",

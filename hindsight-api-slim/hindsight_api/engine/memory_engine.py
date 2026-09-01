@@ -142,6 +142,12 @@ def _authorize_nested_operations() -> "Iterator[None]":
 
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
+# ``mental_model_history`` holds two kinds of row in one JSONB blob: the version
+# snapshots a successful refresh writes, and the failure records a refused one
+# writes. Rows written before failure records existed carry no ``kind`` at all, so
+# absent means version — no backfill needed.
+_MM_HISTORY_KIND_FAILURE = "refresh_failed"
+
 #: Marks a queued ``refresh_mental_model`` operation as *automatically* triggered — by
 #: consolidation or by the cron scan — and therefore subject to the minimum-interval
 #: floor. Explicit refreshes omit it and always run at once.
@@ -532,7 +538,7 @@ from .mental_model_refresh import (
 )
 from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
-from .reflect import run_reflect_agent
+from .reflect import ReflectNoAnswerError, ReflectToolExecutionError, run_reflect_agent
 from .reflect.retractions import (
     RetractedGrounding,
     based_on_fact_ids,
@@ -3185,6 +3191,35 @@ class MemoryEngine(MemoryEngineInterface):
             # fails the operation, and once it does nothing else writes to the
             # row except the prose error_message (#3274).
             await self._write_refresh_failure_metadata(task_dict.get("operation_id"), e)
+            raise
+        except OperationCancelledError:
+            # Not a failed refresh: the caller went away. It records no outcome and
+            # no history, exactly like the deferral above.
+            raise
+        except Exception as e:
+            # Anything else that escaped the refresh — a provider error the reflect
+            # loop gave up on, a store that went away mid-run. The refresh failed, so
+            # it leaves the same record every refusal does; without this the model
+            # would look as though it had simply never been refreshed, which is the
+            # whole defect this path exists to close (#2894).
+            #
+            # The ORIGINAL exception is re-raised, not a MentalModelRefreshError
+            # wrapping it: the worker classifies retryability by exception class, and
+            # burying, say, a ProviderContentPolicyError would turn a permanent
+            # refusal back into three retries of the same doomed call (#3690).
+            failure = MentalModelRefreshError(
+                f"Refresh failed for mental_model_id={mental_model_id}: {type(e).__name__}: {e}",
+                outcome="refresh_failed_error",
+                reason="unexpected_error",
+            )
+            await self._write_refresh_failure_metadata(task_dict.get("operation_id"), failure)
+            await self._record_mental_model_refresh_failure(
+                bank_id,
+                mental_model_id,
+                outcome="refresh_failed_error",
+                failure_reason="unexpected_error",
+                error_message=f"{type(e).__name__}: {e}",
+            )
             raise
         if refreshed is None:
             raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
@@ -14349,9 +14384,13 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> list[dict] | None:
         """Get the refresh history of a mental model.
 
-        Returns None if the mental model is not found.
-        Returns a list of history entries (most recent first), each with previous_content and changed_at.
-
+        Returns None if the mental model is not found, otherwise the entries most
+        recent first. Two kinds share the list: version snapshots, carrying
+        ``previous_content`` and ``previous_reflect_response``, and failure records
+        for refreshes that refused to write, carrying ``kind="refresh_failed"`` plus
+        ``outcome``/``failure_reason``/``error_message``. Both carry ``changed_at``.
+        A failure produced no version, so its ``previous_content`` is always None —
+        read ``kind`` to tell them apart.
         """
         await self._authenticate_tenant(request_context)
         # Suppressed under _authorize_nested_operations: export_knowledge_base reads
@@ -14395,13 +14434,22 @@ class MemoryEngine(MemoryEngineInterface):
                     content = json.loads(content) if content else {}
                 content = content or {}
                 changed_at = r["changed_at"]
-                result.append(
-                    {
-                        "previous_content": content.get("previous_content"),
-                        "previous_reflect_response": content.get("previous_reflect_response"),
-                        "changed_at": changed_at.isoformat() if hasattr(changed_at, "isoformat") else changed_at,
-                    }
-                )
+                entry = {
+                    "previous_content": content.get("previous_content"),
+                    "previous_reflect_response": content.get("previous_reflect_response"),
+                    "changed_at": changed_at.isoformat() if hasattr(changed_at, "isoformat") else changed_at,
+                }
+                # A failure record is not a version: it has no content to diff.
+                # It reports why the refresh refused to write, so a reader of the
+                # history can tell "this document is unchanged because nothing
+                # changed" from "this document is unchanged because the refresh
+                # broke" (#2894).
+                if content.get("kind") == _MM_HISTORY_KIND_FAILURE:
+                    entry["kind"] = _MM_HISTORY_KIND_FAILURE
+                    entry["outcome"] = content.get("outcome")
+                    entry["failure_reason"] = content.get("failure_reason")
+                    entry["error_message"] = content.get("error_message")
+                result.append(entry)
             return result
 
     async def _mental_model_embedding_vector(self, name: str, content: str) -> list[float] | None:
@@ -15707,9 +15755,12 @@ class MemoryEngine(MemoryEngineInterface):
         Raises:
             MentalModelRefreshError: The refresh could not produce a document that is
                 safe to store — it came back empty, its delta operations never reached
-                the document, or structured-output extraction failed. In every case the
-                previous content and the watermark are left untouched, so a retry reads
-                the same window again.
+                the document, structured-output extraction failed, or reflect itself
+                failed before there was a candidate at all (a retrieval tool raised, or
+                the agent produced no answer). In every case the previous content and
+                the watermark are left untouched, so a retry reads the same window
+                again, and the reason is recorded on the operation and in the model's
+                history.
         """
         await self._authenticate_tenant(request_context)
 
@@ -15720,7 +15771,33 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Create parent span for mental model refresh operation
         with create_operation_span("mental_model_refresh", bank_id):
-            run = await self._execute_mental_model_refresh(bank_id, mental_model, request_context=request_context)
+            try:
+                run = await self._execute_mental_model_refresh(bank_id, mental_model, request_context=request_context)
+            except (ReflectToolExecutionError, ReflectNoAnswerError) as exc:
+                # Reflect failed before there was a run: a retrieval tool raised
+                # (#2894) or the agent produced no answer (#2959). Nothing was
+                # written — content, structured document and watermark all stand —
+                # but the failure must still be recorded, or the model looks like it
+                # was simply never refreshed. Re-raised as a MentalModelRefreshError
+                # so it reaches the operation's typed ``details`` through the same
+                # ``_write_refresh_failure_metadata`` hook every other refusal uses.
+                failure_reason: RefreshFailureReason = (
+                    "retrieval_failed" if isinstance(exc, ReflectToolExecutionError) else "no_answer"
+                )
+                detail = f"{type(exc).__name__}: {exc}"
+                await self._record_mental_model_refresh_failure(
+                    bank_id,
+                    mental_model_id,
+                    outcome="refresh_failed_error",
+                    failure_reason=failure_reason,
+                    error_message=detail,
+                )
+                raise MentalModelRefreshError(
+                    f"Refresh failed for mental_model_id={mental_model_id}: {detail} "
+                    f"Previous content preserved in DB; recorded in the model's history for audit.",
+                    outcome="refresh_failed_error",
+                    reason=failure_reason,
+                ) from exc
             if run is None:
                 return None
 
@@ -15800,6 +15877,16 @@ class MemoryEngine(MemoryEngineInterface):
                     reflect_response=reflect_response_payload,
                     last_refreshed_source_query=run.source_query,
                     request_context=request_context,
+                )
+                # ``refresh_skipped`` above is only readable until the next refresh
+                # overwrites the reflect_response. The history row is the durable
+                # copy, and the one a reader of the model's own timeline sees.
+                await self._record_mental_model_refresh_failure(
+                    bank_id,
+                    mental_model_id,
+                    outcome=outcome,
+                    failure_reason=reason,
+                    error_message=detail,
                 )
                 raise MentalModelRefreshError(
                     f"Refresh failed for mental_model_id={mental_model_id}: {detail} "
@@ -16282,6 +16369,27 @@ class MemoryEngine(MemoryEngineInterface):
         content = json.dumps(
             {"previous_content": previous_content, "previous_reflect_response": previous_reflect_response}
         )
+        await self._insert_mental_model_history_row(
+            conn, bank_id, mental_model_id, content, max_entries, is_failure=False
+        )
+
+    async def _insert_mental_model_history_row(
+        self,
+        conn: Any,
+        bank_id: str,
+        mental_model_id: str,
+        content_json: str,
+        max_entries: int,
+        *,
+        is_failure: bool,
+    ) -> None:
+        """Insert one history row and trim that row's KIND back to ``max_entries``.
+
+        Retention is per kind — version snapshots and failure records are capped
+        independently. A single overall cap would let a broken retriever's run of
+        failures evict every content version the model ever had, which is the
+        opposite of what the history is for.
+        """
         await conn.execute(
             f"""
             INSERT INTO {fq_table("mental_model_history")} (mental_model_id, bank_id, content, changed_at)
@@ -16289,16 +16397,32 @@ class MemoryEngine(MemoryEngineInterface):
             """,
             mental_model_id,
             bank_id,
-            content,
+            content_json,
         )
         if max_entries and max_entries > 0:
+            # ``content->>'kind'`` is NULL on every row written before failure
+            # records existed, and those are all version snapshots — so the
+            # version predicate matches them without a backfill migration.
+            #
+            # Spelled out as ``IS NULL OR <>`` rather than ``IS DISTINCT FROM``:
+            # the ``->>`` operator is rewritten to JSON_VALUE for Oracle, but
+            # ``IS DISTINCT FROM`` is not, and Oracle 23ai does not accept it —
+            # migration d1e2f3a4b5c6 writes the same predicate out longhand for
+            # the same reason. Every trim would otherwise throw on Oracle.
+            kind_predicate = (
+                f"content->>'kind' = '{_MM_HISTORY_KIND_FAILURE}'"
+                if is_failure
+                else f"(content->>'kind' IS NULL OR content->>'kind' <> '{_MM_HISTORY_KIND_FAILURE}')"
+            )
             await conn.execute(
                 f"""
                 DELETE FROM {fq_table("mental_model_history")}
                 WHERE mental_model_id = $1 AND bank_id = $2
+                  AND {kind_predicate}
                   AND id NOT IN (
                       SELECT id FROM {fq_table("mental_model_history")}
                       WHERE mental_model_id = $1 AND bank_id = $2
+                        AND {kind_predicate}
                       ORDER BY changed_at DESC, id DESC
                       LIMIT $3
                   )
@@ -16307,6 +16431,51 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id,
                 max_entries,
             )
+
+    async def _record_mental_model_refresh_failure(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        *,
+        outcome: "RefreshOperationOutcome",
+        failure_reason: "RefreshFailureReason",
+        error_message: str,
+    ) -> None:
+        """Record a refusal to write in the model's own history.
+
+        A failed refresh writes no content, so before this it left no trace on the
+        model at all: the History tab kept rendering the last SUCCESSFUL trace as
+        though it were current, and the only record of the failure was prose on an
+        async-operation row that a mental-model view never reads (#2894).
+
+        Best-effort by design — the refresh has already failed and is about to
+        raise; losing the audit row must not also swallow that exception, and the
+        operation still carries the same reason in its typed ``details``.
+        """
+        config = get_config()
+        if not config.enable_mental_model_history:
+            return
+        content = json.dumps(
+            {
+                "kind": _MM_HISTORY_KIND_FAILURE,
+                "outcome": outcome,
+                "failure_reason": failure_reason,
+                "error_message": error_message,
+            }
+        )
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await self._insert_mental_model_history_row(
+                    conn,
+                    bank_id,
+                    mental_model_id,
+                    content,
+                    config.mental_model_history_max_entries,
+                    is_failure=True,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to record refresh failure history for mental model {mental_model_id}: {e}")
 
     async def clear_mental_model(
         self,

@@ -1512,7 +1512,22 @@
     "refreshTrace": "Trace de l'actualisation",
     "traceNotCaptured": "Aucune trace enregistrée pour cette actualisation. Activez « Conserver les traces d'actualisation » dans les réglages du modèle.",
     "actionDryRun": "Exécuter à blanc",
-    "actionDryRunRunning": "Simulation en cours…"
+    "actionDryRunRunning": "Simulation en cours…",
+    "failureReasonUnknown": "Échec de l'actualisation",
+    "failureReasonRetrievalFailed": "Échec de la récupération",
+    "failureReasonNoAnswer": "Aucune réponse produite",
+    "failureReasonEmptyCandidate": "Contenu vide produit",
+    "failureReasonDocUnreadable": "Document stocké illisible",
+    "failureReasonDeltaOpsFailed": "Échec des opérations delta",
+    "failureReasonDeltaOpsAllSkipped": "Toutes les opérations delta rejetées",
+    "failureReasonDeltaNotApplied": "Delta non appliqué",
+    "failureReasonStructuredOutput": "Échec de l'extraction de la sortie structurée",
+    "failureAttempts": "· {count} tentatives",
+    "tabErrors": "Erreurs",
+    "noErrors": "Aucune actualisation échouée.",
+    "errorsIntro": "Actualisations qui ont refusé d'écrire, les plus récentes d'abord. Aucune n'a modifié le contenu stocké. Une actualisation échouée est réessayée automatiquement quelques fois ; ensuite le modèle conserve sa dernière version valide jusqu'au prochain déclenchement.",
+    "errorsPresent": "Ce modèle mental a des actualisations échouées",
+    "failureReasonUnexpected": "Erreur inattendue"
   },
   "constellation": {
     "instructions": "Défiler pour zoomer · Glisser pour déplacer · Survoler pour explorer · Cliquer pour sélectionner",

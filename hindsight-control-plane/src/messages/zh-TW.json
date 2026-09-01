@@ -1512,7 +1512,22 @@
     "refreshTrace": "重新整理追蹤",
     "traceNotCaptured": "本次重新整理沒有記錄追蹤。請在模型設定中開啟「保留重新整理追蹤」。",
     "actionDryRun": "執行試運行演練",
-    "actionDryRunRunning": "試執行中…"
+    "actionDryRunRunning": "試執行中…",
+    "failureReasonUnknown": "重新整理失敗",
+    "failureReasonRetrievalFailed": "檢索失敗",
+    "failureReasonNoAnswer": "未產生回答",
+    "failureReasonEmptyCandidate": "產生了空內容",
+    "failureReasonDocUnreadable": "無法讀取已儲存的文件",
+    "failureReasonDeltaOpsFailed": "增量操作失敗",
+    "failureReasonDeltaOpsAllSkipped": "所有增量操作皆遭拒絕",
+    "failureReasonDeltaNotApplied": "未套用增量",
+    "failureReasonStructuredOutput": "結構化輸出擷取失敗",
+    "failureAttempts": "· {count} 次嘗試",
+    "tabErrors": "錯誤",
+    "noErrors": "沒有失敗的重新整理。",
+    "errorsIntro": "拒絕寫入的重新整理，依時間由新到舊排列。它們都沒有更動已儲存的內容。失敗的重新整理會自動重試幾次；之後模型會保留最後一個有效版本，直到再次被觸發。",
+    "errorsPresent": "此心智模型有失敗的重新整理",
+    "failureReasonUnexpected": "非預期錯誤"
   },
   "constellation": {
     "instructions": "滾動縮放 · 拖曳平移 · 懸停探索 · 按一下選取",
