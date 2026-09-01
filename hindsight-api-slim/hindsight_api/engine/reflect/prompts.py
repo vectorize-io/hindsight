@@ -444,6 +444,17 @@ def build_system_prompt_for_tools(
                 "## Output Format: Structured Document",
                 "Call done() with a 'document' field. Do NOT write a markdown document — "
                 "state its structure and the markdown is generated from it.",
+                # Name the wrapper and show it. Every field of a *section* was spelled out
+                # here — heading, level, blocks — and the array holding them never was, so
+                # the prose described a section while the tool schema described a document
+                # containing sections. Models resolved that disagreement in favour of the
+                # prose and emitted the bare section, which parsed to zero sections, an
+                # empty render, and a failed refresh. A shape stated in one place and shown
+                # in another is a shape that gets filled correctly.
+                "- 'document' holds a 'sections' array — one entry per section, in order. "
+                'Shape: {"sections": [{"heading": "Overview", "level": 2, "blocks": '
+                '["First paragraph.", "- a list item\\n- another"]}]}',
+                "- Even a one-section document uses the 'sections' array; never emit a bare section",
                 "- Each section carries its heading text (no '#') and a level; the heading is NOT a block",
                 "- 'blocks' holds the section's content, ONE block per paragraph, list, table or code fence",
                 "- Never put two paragraphs in one block, and never put a heading inside a block",

@@ -10,7 +10,9 @@ import uuid
 import pytest
 
 from hindsight_api.engine.memory_engine import (
+    MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
+    _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
     fq_table,
 )
@@ -1965,13 +1967,22 @@ class TestMentalModelRefreshTagSecurity:
         )
 
         # SECURITY CHECK: The refreshed content should ONLY include information from
-        # memories/models tagged with user:alice, NOT from user:bob or untagged
+        # memories/models tagged with user:alice, NOT from user:bob or untagged.
+        #
+        # The criteria asserts the ABSENCE half strictly and the presence half loosely,
+        # on purpose. What tag scoping guarantees is that nothing outside the scope can
+        # be reached; which of Alice's own details a refresh chooses to write up is the
+        # summariser's call. Demanding four specific ones ("frontend, React, morning
+        # preference, coffee") failed CI on a refresh that leaked nothing whatsoever and
+        # simply summarised Alice as a React frontend engineer — reported as a SECURITY
+        # VIOLATION, which it was not.
         await assert_meets_criteria(
             response=refreshed["content"],
             criteria=(
-                "The content mentions Alice and her work (frontend, React, morning preference, coffee). "
-                "It does NOT mention Bob, Python (as a programming language Bob uses), tea, "
-                "100 employees, or 'growing fast'. Minor phrasing variations are acceptable."
+                "The content is about Alice and her work. It does NOT mention Bob, "
+                "Python (as a programming language Bob uses), tea, 100 employees, or "
+                "'growing fast'. Which of Alice's own details it includes does not matter, "
+                "and minor phrasing variations are acceptable."
             ),
             context=(
                 "Alice's data: frontend React engineer, works mornings, drinks coffee, favorite color blue. "
@@ -2414,7 +2425,15 @@ class TestMentalModelRefreshMaxTokens:
         engine._mental_model_refresh_cutoff = AsyncMock(  # type: ignore[method-assign]
             return_value=datetime(2026, 1, 1, tzinfo=timezone.utc)
         )
-        engine._mental_model_processed_watermark = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        # A scope with a memory in it: the reading this returns is also what decides
+        # whether the refresh has anything to reflect over (#3875), so a stub saying
+        # "empty" would skip the reflect call this test asserts on. The short-circuit
+        # itself is covered by TestRefreshSkipsEmptyScope below.
+        engine._mental_model_scope_watermark = AsyncMock(  # type: ignore[method-assign]
+            return_value=_MentalModelScopeWatermark(
+                newest_in_scope=datetime(2025, 12, 1, tzinfo=timezone.utc), watermark=None
+            )
+        )
 
         await engine.refresh_mental_model(
             bank_id="bank-1",
@@ -2951,3 +2970,309 @@ class TestMentalModelRefreshFactTypeFilter:
             "use a tool that has been disabled, then either hallucinates the call "
             "(rejected by the agent) or gives up with 'I cannot find any information…'."
         )
+
+
+class TestRefreshSkipsEmptyScope:
+    """A refresh with nothing to read must not run the reflect loop (#3875).
+
+    An empty scope is the *worst* case for the agent, not a cheap one: every forced
+    retrieval turn comes back empty, and the evidence guardrail then refuses each
+    ``done`` call — evidence is precisely what cannot be gathered — so the loop runs to
+    its iteration limit and pays a forced synthesis on top. Five default knowledge
+    pages, each enqueuing a refresh the moment the bank is created, spent the whole LLM
+    budget on that before a single document had been ingested.
+
+    Reflect is stubbed rather than mocked out at the LLM: what these tests are about is
+    whether it is *called*, and a stub makes both the skip and the non-skip assertions
+    exact instead of inferred from content.
+    """
+
+    @staticmethod
+    def _stub_reflect(memory: MemoryEngine) -> list[dict]:
+        """Replace reflect_async with a stub, returning the list its calls land in."""
+        from hindsight_api.engine.response_models import ReflectResult
+
+        calls: list[dict] = []
+
+        async def fake_reflect_async(**kwargs):
+            calls.append(kwargs)
+            return ReflectResult(text="synthesised from real memories", based_on={})
+
+        memory.reflect_async = fake_reflect_async  # type: ignore[method-assign]
+        return calls
+
+    @staticmethod
+    async def _newest_memory_updated_at(memory: MemoryEngine, bank_id, request_context):
+        """The bank's write watermark — the ``last_memory_seen_at`` a refresh that had
+        already read everything would have persisted."""
+        from datetime import datetime
+
+        # force_refresh: the stats are TTL-cached, and this is read moments after a
+        # retain that must be reflected in the watermark.
+        stats = await memory.get_bank_stats(bank_id, request_context=request_context, force_refresh=True)
+        written_at = stats["last_memory_write_at"]
+        return datetime.fromisoformat(written_at) if written_at else None
+
+    async def test_full_refresh_over_empty_bank_skips_the_reflect_loop(self, memory: MemoryEngine, request_context):
+        """The reported shape: a page created with its bank, before anything is retained."""
+        bank_id = f"test-mm-empty-full-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Coding Style",
+            source_query="How does this project write code?",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            request_context=request_context,
+        )
+        calls = self._stub_reflect(memory)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert calls == [], (
+            "refresh over a bank with no memories called reflect anyway — that is the "
+            "worst-case agentic loop (iteration limit + forced synthesis) for a "
+            "guaranteed-empty answer, and it is what starves a fresh bank of the LLM "
+            "slots it needs to ingest anything (#3875)"
+        )
+        assert refreshed is not None
+        assert refreshed["content"].strip() == MENTAL_MODEL_PENDING_CONTENT, (
+            "the document must be preserved, not overwritten from an empty synthesis"
+        )
+        reflect_response = refreshed["reflect_response"]
+        assert reflect_response["reflect_skipped"] == "no_sources_in_scope"
+        assert reflect_response["outcome"] == "content_preserved_no_new_facts", (
+            "a skipped refresh is a completed no-op, not a failure — failing it would "
+            "make the worker retry inputs that are guaranteed identical"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_full_refresh_runs_once_the_bank_has_memories(self, memory: MemoryEngine, request_context):
+        """The other half: the short-circuit must not outlive the emptiness."""
+        bank_id = f"test-mm-empty-seeded-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Coding Style",
+            source_query="How does this project write code?",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            request_context=request_context,
+        )
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "The team formats every Python file with ruff before committing."}],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+        calls = self._stub_reflect(memory)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert len(calls) == 1, "a bank with memories in scope must still be reflected over"
+        assert refreshed is not None
+        assert "synthesised from real memories" in refreshed["content"]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_refresh_skips_when_nothing_changed_since_the_watermark(
+        self, memory: MemoryEngine, request_context
+    ):
+        """Delta mode: the window, not the bank, is what has to be empty. A quiet bank
+        full of already-read memories is as unreadable to this refresh as an empty one."""
+        bank_id = f"test-mm-empty-delta-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "The team formats every Python file with ruff before committing."}],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Coding Style",
+            source_query="How does this project write code?",
+            content="# Coding Style\n\nRuff formats every file.",
+            trigger={"mode": "delta", "exclude_mental_models": True},
+            request_context=request_context,
+        )
+        # Pretend the previous refresh read everything currently in the bank.
+        watermark = await self._newest_memory_updated_at(memory, bank_id, request_context)
+        assert watermark is not None, "test premise broken — the retain produced no memory units"
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            refresh_watermark=watermark,
+            last_refreshed_source_query="How does this project write code?",
+            refresh_completed=True,
+            request_context=request_context,
+        )
+        calls = self._stub_reflect(memory)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert calls == [], "a delta refresh whose window holds nothing must not reflect"
+        assert refreshed is not None
+        assert refreshed["content"].strip() == "# Coding Style\n\nRuff formats every file."
+        assert refreshed["reflect_response"]["reflect_skipped"] == "no_sources_in_scope"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_refresh_runs_when_a_memory_landed_after_the_watermark(
+        self, memory: MemoryEngine, request_context
+    ):
+        bank_id = f"test-mm-delta-newer-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "The team formats every Python file with ruff before committing."}],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Coding Style",
+            source_query="How does this project write code?",
+            content="# Coding Style\n\nRuff formats every file.",
+            trigger={"mode": "delta", "exclude_mental_models": True},
+            request_context=request_context,
+        )
+        watermark = await self._newest_memory_updated_at(memory, bank_id, request_context)
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            refresh_watermark=watermark,
+            last_refreshed_source_query="How does this project write code?",
+            refresh_completed=True,
+            request_context=request_context,
+        )
+        # New content lands after that watermark: this is what a delta refresh exists for.
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Type checking runs with ty on every pull request."}],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+        calls = self._stub_reflect(memory)
+
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        assert len(calls) == 1, "a memory newer than the watermark is exactly what delta must read"
+        assert calls[0]["created_after"] == watermark
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_memories_outside_the_models_tag_scope_are_not_sources(self, memory: MemoryEngine, request_context):
+        """The bank is not empty — the model's *scope* is. Tags, tag_groups and
+        fact_types all narrow what the agent's tools can return, so the check has to be
+        made under the model's own flags rather than against a bank-wide count."""
+        bank_id = f"test-mm-scope-tags-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "The team formats every Python file with ruff before committing."}],
+            document_tags=["backend"],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Design System",
+            source_query="How is the design system organised?",
+            content="# Design System\n\nnothing yet",
+            tags=["design-system"],
+            trigger={"tags_match": "all_strict", "exclude_mental_models": True},
+            request_context=request_context,
+        )
+        calls = self._stub_reflect(memory)
+
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        assert calls == [], (
+            "every memory in the bank is out of this model's tag scope, so its reflect would have retrieved nothing"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_sibling_document_counts_as_a_source_unless_excluded(self, memory: MemoryEngine, request_context):
+        """``search_mental_models`` reads sibling documents, and applies no time bound —
+        so with the door open, one of them is a source even on a bank with no memories.
+        The check must respect ``exclude_mental_models`` in both directions."""
+        bank_id = f"test-mm-sibling-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Architecture",
+            source_query="How is the system built?",
+            content="# Architecture\n\nA monorepo with an API and a control plane.",
+            request_context=request_context,
+        )
+        open_mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Onboarding",
+            source_query="What should a new engineer read first?",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            trigger={"exclude_mental_models": False},
+            request_context=request_context,
+        )
+        closed_mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Onboarding (isolated)",
+            source_query="What should a new engineer read first?",
+            content=MENTAL_MODEL_PENDING_CONTENT,
+            trigger={"exclude_mental_models": True},
+            request_context=request_context,
+        )
+        calls = self._stub_reflect(memory)
+
+        await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=open_mm["id"], request_context=request_context
+        )
+        assert len(calls) == 1, (
+            "a sibling document with real content is readable, so this refresh had "
+            "something to reflect over even with no memories in the bank"
+        )
+
+        calls.clear()
+        await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=closed_mm["id"], request_context=request_context
+        )
+        assert calls == [], "exclude_mental_models closes the only door left — nothing to read"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_siblings_still_generating_are_not_sources(self, memory: MemoryEngine, request_context):
+        """The bank-init shape exactly: several pages created together, each holding the
+        placeholder and each waiting on content none of them has. Counting a placeholder
+        as a source would defeat the check for the case it was written for."""
+        bank_id = f"test-mm-siblings-pending-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        pages = [
+            await memory.create_mental_model(
+                bank_id=bank_id,
+                name=f"Page {i}",
+                source_query=f"topic {i}",
+                content=MENTAL_MODEL_PENDING_CONTENT,
+                trigger={"exclude_mental_models": False},
+                request_context=request_context,
+            )
+            for i in range(5)
+        ]
+        calls = self._stub_reflect(memory)
+
+        for page in pages:
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=page["id"], request_context=request_context
+            )
+
+        assert calls == [], (
+            "five pages created with the bank each ran a full reflect over an empty "
+            "graph, holding the LLM slots the bank needed to seed itself (#3875)"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)

@@ -529,6 +529,7 @@ async def apply_edit(
     event_date,
     mentioned_at,
     entity_ids: list[str] | None,
+    embedding=None,
 ) -> None:
     # `entity_ids` and `mentioned_at` are unused here: the entity postings are
     # re-linked into `unit_entities` by the caller, and an edit does not move the
@@ -548,22 +549,23 @@ async def apply_edit(
     # would see the pre-edit values.
     sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
     sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
+    # The re-embedded vector rides the edit's own UPDATE. It describes the text being written by
+    # this statement, so writing it here is what keeps the two from ever disagreeing — and it
+    # spares a store whose write is not a row update a second write of this row.
+    params: list = [str(unit_id), bank_id, text, context, fact_type, occurred_start, occurred_end, event_date]
+    embedding_clause = ""
+    if embedding is not None:
+        params.append(embedding)
+        embedding_clause = f", embedding = ${len(params)}::vector"
     await conn.execute(
         f"""
         UPDATE {mu}
         SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
             event_date = $8, consolidated_at = NULL, consolidation_failed_at = NULL,
-            edited_at = now(), updated_at = now(){sv_clause}
+            edited_at = now(), updated_at = now(){sv_clause}{embedding_clause}
         WHERE id = $1 AND bank_id = $2
         """,
-        str(unit_id),
-        bank_id,
-        text,
-        context,
-        fact_type,
-        occurred_start,
-        occurred_end,
-        event_date,
+        *params,
     )
     # Drop only the DERIVED links — graph maintenance recomputes temporal/semantic. Causal edges
     # are retain-time extraction output that nothing recreates, so an edit preserves them (#2864).

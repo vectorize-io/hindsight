@@ -439,6 +439,11 @@ def create_llm_provider(
     ollama_num_ctx: int | None = None,
     cache_affinity: str | None = None,
     structured_output_forced_tool: bool = False,
+    # Appended rather than inserted: some callers still pass the older settings
+    # positionally (guarded by the positional-compatibility tests in
+    # tests/test_llm_wrapper.py), so a parameter added mid-list silently steals
+    # another one's slot. New parameters go at the end.
+    codex_home: str | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -487,6 +492,8 @@ def create_llm_provider(
             Nous). ``None`` lets each provider fall back to its own default
             (``HINDSIGHT_API_LLM_TIMEOUT`` / ``DEFAULT_LLM_TIMEOUT`` for those four;
             Anthropic and Gemini keep their provider-specific defaults).
+        codex_home: Codex credentials directory (for the openai-codex provider); overrides
+            the process-wide ``CODEX_HOME``.
 
     Returns:
         LLMInterface implementation for the specified provider.
@@ -525,6 +532,8 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            codex_home=codex_home,
+            timeout=timeout,
         )
 
     elif provider_lower == "claude-code":
@@ -571,6 +580,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            timeout=timeout,
             vertexai_project_id=vertexai_project_id,
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
@@ -589,6 +599,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
             default_headers=default_headers,
             extra_body=extra_body,
+            timeout=timeout,
         )
 
     elif provider_lower == "litellm":
@@ -652,6 +663,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            timeout=timeout,
             model_path=config.llamacpp_model_path,
             gpu_layers=config.llamacpp_gpu_layers,
             context_size=config.llamacpp_context_size,
@@ -673,6 +685,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             cache_affinity=cache_affinity,
+            timeout=timeout,
         )
 
     elif provider_lower == "nous":
@@ -795,6 +808,10 @@ class LLMProvider:
         ollama_num_ctx: int | None = None,
         cache_affinity: str | None = None,
         structured_output_forced_tool: bool = False,
+        # Appended rather than inserted — see the note on ``create_llm_provider``:
+        # callers that pass these positionally would otherwise have one argument
+        # land in the wrong slot.
+        codex_home: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -845,6 +862,11 @@ class LLMProvider:
             structured_output_forced_tool: Structured output via a forced tool call
                 instead of ``response_format``, for the LiteLLM-backed providers - from
                 config (``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``).
+            codex_home: Codex credentials directory for ``provider="openai-codex"`` — the
+                directory holding the ``auth.json`` this provider authenticates with. ``None``
+                uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
+                multi-LLM chain to run two independently authorized ChatGPT profiles, so that
+                failover away from a rate-limited profile actually reaches a different account.
 
         This constructor uses every argument as passed and does not read global
         ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
@@ -868,6 +890,9 @@ class LLMProvider:
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
         self.litellmrouter_config = litellmrouter_config
+        # Codex credentials directory (openai-codex only). Used verbatim — the caller
+        # resolves the server-level default, like the fields around it.
+        self.codex_home = codex_home
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = openai_service_tier
@@ -1021,6 +1046,7 @@ class LLMProvider:
             openai_service_tier=self.openai_service_tier,
             bedrock_service_tier=self.bedrock_service_tier,
             gemini_service_tier=self.gemini_service_tier,
+            codex_home=self.codex_home,
             extra_body=self.extra_body,
             default_headers=self.default_headers,
             vertexai_project_id=vertexai_project_id,
@@ -1485,7 +1511,8 @@ class LLMProvider:
         """
         Load OAuth credentials from the Codex ``auth.json``.
 
-        Honors ``CODEX_HOME`` (falling back to ``~/.codex``).
+        Honors this provider's ``codex_home``, then ``CODEX_HOME`` (falling back
+        to ``~/.codex``).
 
         Returns:
             Tuple of (access_token, account_id).
@@ -1496,7 +1523,7 @@ class LLMProvider:
         """
         from .providers.codex_auth import default_codex_auth_file
 
-        auth_file = default_codex_auth_file()
+        auth_file = default_codex_auth_file(self.codex_home)
 
         if not auth_file.exists():
             raise FileNotFoundError(
@@ -1614,6 +1641,7 @@ class LLMProvider:
             ENV_LLM_BASE_URL,
             ENV_LLM_BEDROCK_SERVICE_TIER,
             ENV_LLM_CACHE_AFFINITY,
+            ENV_LLM_CODEX_HOME,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_GEMINI_SAFETY_SETTINGS,
@@ -1683,6 +1711,7 @@ class LLMProvider:
             prompt_cache_enabled=prompt_cache_enabled,
             ollama_num_ctx=_parse_optional_positive_int(ENV_LLM_OLLAMA_NUM_CTX, os.getenv(ENV_LLM_OLLAMA_NUM_CTX)),
             litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
+            codex_home=os.getenv(ENV_LLM_CODEX_HOME) or None,
             vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or None,
             vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,
             vertexai_service_account_key=os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY) or None,

@@ -1,6 +1,9 @@
 """
 Supabase Tenant Extension for Hindsight
 
+Ships separately from the Hindsight server: build an image on top of Hindsight
+that copies this package in (see the Dockerfile beside it).
+
 Validates Supabase JWTs and maps authenticated users to isolated memory banks.
 Each user gets their own PostgreSQL schema based on their Supabase user ID.
 
@@ -15,7 +18,6 @@ Features:
     - Zero User Management: Leverages your existing Supabase Auth setup
     - Production Ready: Includes health checks, timeouts, key rotation handling,
       and error handling
-    - Built-in: Ships with Hindsight, no extra installation needed
     - Legacy Support: Falls back to /auth/v1/user endpoint for HS256 projects
 
 JWT Verification Strategy:
@@ -28,7 +30,7 @@ JWT Verification Strategy:
     the service_role key to be configured.
 
 Configuration via environment variables:
-    HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.supabase_tenant:SupabaseTenantExtension
+    HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_supabase_tenant:SupabaseTenantExtension
     HINDSIGHT_API_TENANT_SUPABASE_URL=https://your-project.supabase.co
 
     # Optional - only required for legacy HS256 projects or health checks

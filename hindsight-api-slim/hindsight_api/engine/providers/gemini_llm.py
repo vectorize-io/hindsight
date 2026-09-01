@@ -26,6 +26,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import has_tagged_union, provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -64,6 +65,35 @@ def _usage_from_gemini_response(response: Any) -> LLMResponseUsage:
         output_tokens=usage.candidates_token_count or 0,
         cached_tokens=getattr(usage, "cached_content_token_count", 0) or 0,
     )
+
+
+def _gemini_dict_schema(response_format: Any) -> dict[str, Any]:
+    """Serialize a model to a schema dict Gemini's *API* accepts, not just its SDK.
+
+    Handing the SDK a dict is not the same as handing it the pydantic class. The
+    class path quietly drops keys the backend has no field for; the dict path maps
+    them faithfully, so ``extra="forbid"`` — which every delta operation model sets
+    — arrives as ``additionalProperties: false``, becomes ``Schema.additional_properties``,
+    and Vertex rejects the whole request:
+
+        400 INVALID_ARGUMENT: Unknown name "additional_properties" at
+        'generation_config.response_schema': Cannot find field.
+
+    The SDK builds that request without complaint, which is why this needed a real
+    call to find (#3937). Strip the key on the way out: it carries no meaning for a
+    backend that has nowhere to put it, and the model still cannot invent fields —
+    the delta parser validates against the pydantic model regardless.
+    """
+    schema = provider_json_schema(response_format)
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {k: strip(v) for k, v in node.items() if k != "additionalProperties"}
+        if isinstance(node, list):
+            return [strip(item) for item in node]
+        return node
+
+    return strip(schema)
 
 
 @dataclass(frozen=True)
@@ -159,6 +189,19 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
     return _GeminiConversation(system_instruction=system_instruction, contents=gemini_contents)
 
 
+# Fallback per-request deadline when the caller resolved no timeout. A safety net
+# for network hangs; valid slow responses are well under this.
+#: How many times a deadline abort is retried, over and above the API-error ladder.
+#: Two, because the stall is per-request rather than sticky: CI logs have calls that
+#: stall for the whole deadline and then answer in ~3s on the very next attempt, at a
+#: rate high enough (~1 in 4) that a single retry still left ~5% of calls stalling
+#: twice. It stays a small fixed number so the worst case is bounded arithmetic —
+#: deadline x (1 + _TIMEOUT_RETRIES) — that an operation's budget can be checked against.
+_TIMEOUT_RETRIES = 2
+
+_DEFAULT_GEMINI_TIMEOUT = 90.0
+
+
 class GeminiLLM(LLMInterface):
     """
     LLM provider for Google Gemini and Vertex AI.
@@ -183,6 +226,12 @@ class GeminiLLM(LLMInterface):
 
         self._client = None
         self._is_vertexai = self.provider == "vertexai"
+
+        # Per-request deadline, resolved by the caller from ``llm_timeout`` / the
+        # per-operation override. The literal is only the unconfigured fallback —
+        # it used to be hardcoded at every call site, so a configured timeout was
+        # silently ignored (issue #3898).
+        self._request_timeout = self.timeout or _DEFAULT_GEMINI_TIMEOUT
 
         # Safety settings: None means use Gemini's defaults
         self._safety_settings: list | None = kwargs.get("gemini_safety_settings")
@@ -370,7 +419,7 @@ class GeminiLLM(LLMInterface):
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
 
         def _system_instruction_with_schema() -> str:
-            schema = response_format.model_json_schema()
+            schema = provider_json_schema(response_format)
             schema_msg = (
                 f"\n\nYou must respond with valid JSON matching this schema:\n"
                 f"{json.dumps(schema, indent=2, ensure_ascii=False)}"
@@ -405,7 +454,15 @@ class GeminiLLM(LLMInterface):
                 config_kwargs["system_instruction"] = system_instruction
             if response_format is not None and not use_schema_prompt_fallback:
                 config_kwargs["response_mime_type"] = "application/json"
-                config_kwargs["response_schema"] = response_format
+                # The model class is handed to the SDK untouched wherever the SDK can
+                # convert it, which is every schema this provider has ever sent. A
+                # discriminated union is the exception: pydantic renders it as
+                # ``oneOf`` + ``discriminator`` and ``types.Schema`` forbids both keys,
+                # so the SDK raises before the request leaves the process. Serializing
+                # it ourselves rewrites the union to the ``anyOf`` the SDK accepts.
+                config_kwargs["response_schema"] = (
+                    _gemini_dict_schema(response_format) if has_tagged_union(response_format) else response_format
+                )
             if temperature is not None:
                 config_kwargs["temperature"] = temperature
             # Gemini's equivalent of OpenAI-style max_completion_tokens is max_output_tokens.
@@ -425,6 +482,9 @@ class GeminiLLM(LLMInterface):
         generation_config = _build_generation_config(cache_active)
 
         last_exception = None
+        # Separate from `max_retries`, which is the API-error ladder — see
+        # _TIMEOUT_RETRIES for why a deadline abort gets its own small budget.
+        timeout_retries_left = _TIMEOUT_RETRIES
 
         for attempt in range(max_retries + 1):
             try:
@@ -436,7 +496,7 @@ class GeminiLLM(LLMInterface):
                             contents=gemini_contents,
                             config=generation_config,
                         ),
-                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                        timeout=self._request_timeout,
                     )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
@@ -645,6 +705,32 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini API error: {type(e).__name__}: {str(e)}")
                     raise
 
+            except TimeoutError as e:
+                # The per-request deadline fired: this call produced nothing at all.
+                # That is the most transient failure there is — a healthy Gemini call
+                # answers in well under a second, so a stall is the provider dropping
+                # this one request and the retry almost always lands immediately.
+                # Before this, the generic handler below re-raised it and a stall was
+                # terminal: the caller paid the whole deadline and still got an error,
+                # which is how a single hung reflect iteration cost 120s and left the
+                # agent to answer from a degraded forced pass.
+                #
+                # A small fixed budget of such retries, tracked separately from the
+                # API-error ladder, so the worst case stays bounded arithmetic the
+                # operation's wall budget can be checked against (see _TIMEOUT_RETRIES).
+                # No backoff — the server never answered, so there is nothing to give
+                # room to, and the deadline already spent the time.
+                last_exception = e
+                if timeout_retries_left > 0 and attempt < max_retries:
+                    timeout_retries_left -= 1
+                    logger.warning(
+                        f"Gemini call hit its {self._request_timeout}s deadline with no response; "
+                        f"retrying ({timeout_retries_left} left)"
+                    )
+                    continue
+                logger.error(f"Gemini call hit its {self._request_timeout}s deadline; giving up")
+                raise
+
             except Exception as e:
                 logger.error(f"Unexpected error during Gemini call: {type(e).__name__}: {str(e)}")
                 raise
@@ -801,6 +887,9 @@ class GeminiLLM(LLMInterface):
         config = _build_tools_config(cache_active)
 
         last_exception = None
+        # Separate from `max_retries`, which is the API-error ladder — see
+        # _TIMEOUT_RETRIES for why a deadline abort gets its own small budget.
+        timeout_retries_left = _TIMEOUT_RETRIES
         for attempt in range(max_retries + 1):
             try:
                 # With the cache active, send only the un-cached tail (delta);
@@ -815,7 +904,7 @@ class GeminiLLM(LLMInterface):
                             contents=active_contents,
                             config=config,
                         ),
-                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                        timeout=self._request_timeout,
                     )
                 stash_response_usage(_usage_from_gemini_response(response))
 
@@ -957,6 +1046,32 @@ class GeminiLLM(LLMInterface):
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
+                raise
+
+            except TimeoutError as e:
+                # The per-request deadline fired: this call produced nothing at all.
+                # That is the most transient failure there is — a healthy Gemini tool call
+                # answers in well under a second, so a stall is the provider dropping
+                # this one request and the retry almost always lands immediately.
+                # Before this, the generic handler below re-raised it and a stall was
+                # terminal: the caller paid the whole deadline and still got an error,
+                # which is how a single hung reflect iteration cost 120s and left the
+                # agent to answer from a degraded forced pass.
+                #
+                # A small fixed budget of such retries, tracked separately from the
+                # API-error ladder, so the worst case stays bounded arithmetic the
+                # operation's wall budget can be checked against (see _TIMEOUT_RETRIES).
+                # No backoff — the server never answered, so there is nothing to give
+                # room to, and the deadline already spent the time.
+                last_exception = e
+                if timeout_retries_left > 0 and attempt < max_retries:
+                    timeout_retries_left -= 1
+                    logger.warning(
+                        f"Gemini tool call hit its {self._request_timeout}s deadline with no response; "
+                        f"retrying ({timeout_retries_left} left)"
+                    )
+                    continue
+                logger.error(f"Gemini tool call hit its {self._request_timeout}s deadline; giving up")
                 raise
 
             except Exception as e:

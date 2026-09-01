@@ -374,6 +374,15 @@ class WorkerPoller:
         # Rotation offset for per-tenant fair claiming. Advances past the last
         # schema we serviced so a busy tenant can't monopolize the poll order.
         self._next_schema_idx: int = 0
+        # The same rotation one level down, per schema: the bank the claim
+        # served last, so the next one takes a row for the bank after it.
+        # Claiming is otherwise a global FIFO on created_at, which lets one bank
+        # mid-bulk-ingest hold every slot until its queue drains while other
+        # banks' writes wait behind the backlog (#3861). A cursor over the bank
+        # id space rather than a set of known banks: the starved bank is the one
+        # this worker has never claimed for, so only a range can discover it.
+        # Empty string starts a round; claim_tasks resets to it at the end of one.
+        self._next_bank_cursor: dict[str | None, str] = {}
         # Retention cleanup runs outside the claim loop. Keep one task per
         # poller so maintenance cannot overlap with itself or block slot refill.
 
@@ -669,14 +678,20 @@ class WorkerPoller:
         table = fq_table("async_operations", schema)
 
         async with conn.transaction():
-            all_rows = await self._backend.ops.claim_tasks(
+            claimed = await self._backend.ops.claim_tasks(
                 conn,
                 table,
                 self._worker_id,
                 reserved_limits,
                 shared_limit,
+                bank_cursor=self._next_bank_cursor.get(schema, ""),
                 consolidation_bank_priority=self._consolidation_bank_priority,
             )
+            # Where the rotation got to. Carried across claims per schema, the
+            # way _next_schema_idx is across tenants; the claim query itself
+            # picks the bank, so this costs no extra statement to learn.
+            self._next_bank_cursor[schema] = claimed.next_bank_cursor
+            all_rows = claimed.rows
 
             if not all_rows:
                 return []

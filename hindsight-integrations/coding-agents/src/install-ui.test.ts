@@ -113,6 +113,18 @@ describe("installer UI renderer", () => {
     expect(lines.join("\n")).toMatch(/✓ Uninstalled 1 agent in \d+\.\ds/);
   });
 
+  // `update` reports no agent count on purpose: it stages the runtime and wires nobody, so
+  // "Installed 0 agents" would be both true and misleading.
+  it("closes an `update` with the staged version rather than an agent count", () => {
+    const { ui, lines } = makeUi("update");
+    ui.intro();
+    ui.log("runtime updated — every wired agent picks it up on its next session");
+    ui.outro(0);
+    const out = lines.join("\n");
+    expect(out).toContain("✓ Runtime up to date (v1.2.3)");
+    expect(out).not.toMatch(/\d+ agents? in /);
+  });
+
   it("renders guard-path failures as an error and an aborted outro when nothing was wired", () => {
     const { ui, lines } = makeUi("install");
     ui.intro();

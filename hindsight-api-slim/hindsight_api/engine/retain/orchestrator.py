@@ -27,7 +27,6 @@ from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
-from . import bank_utils
 
 
 @dataclass
@@ -345,32 +344,6 @@ async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: 
         logger.debug("Failed to record retain document outcome metric", exc_info=True)
 
 
-#: "the narrator has not been resolved yet", which `None` cannot mean: `_resolve_narrator`
-#: returns None for a suppressed narrator, so None is a RESOLVED value. Using None as the
-#: sentinel made every recursive call re-resolve -- and re-read the bank row to do it -- for
-#: exactly the banks where the narrator is suppressed, which is the auto-created default.
-_NARRATOR_UNRESOLVED = object()
-
-
-def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
-    """Resolve the narrator (memory owner) used to prime fact extraction.
-
-    The narrator is injected as a "Narrator: {name}" line in fact extraction and
-    is stamped into the who-dimension of every first-person fact — and the
-    observations later consolidated from those facts. That is correct for a named
-    agent retaining its own logs, but harmful when ``name`` is just the bank_id:
-    on auto-create the bank ``name`` defaults to ``bank_id``, which is typically a
-    routing key (e.g. ``my-agent::channel-456::user-789``), not a speaker. Priming
-    extraction with a routing key embeds that string into stored fact text and
-    pollutes downstream observations (issue #1680). Suppress it in that case.
-
-    Returns the narrator name, or ``None`` to omit the Narrator line entirely.
-    """
-    if profile_name == bank_id:
-        return None
-    return profile_name
-
-
 # What a reprocess must NOT replay, because it supplies its own: `content` is the
 # document's stored original_text, `document_id` and `update_mode` are set by the
 # reprocess itself, and `tags` live on the document row and are read from there.
@@ -383,7 +356,7 @@ def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
 # and only the resulting facts are wrong. Inverting it makes the safe case the
 # default — a new retain field round-trips unless someone deliberately excludes it,
 # and the single source of truth becomes what api_retain puts on the content dict.
-_RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags"})
+_RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags", "force_reextract"})
 
 
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
@@ -1057,7 +1030,6 @@ async def _delta_store_owned_write(
 async def _extract_and_embed(
     contents: list[RetainContent],
     llm_config,
-    agent_name: str,
     config,
     embeddings_model,
     format_date_fn,
@@ -1075,8 +1047,16 @@ async def _extract_and_embed(
     """
     set_stage("retain.extract_and_embed")
     step_start = time.time()
+    # No narrator: extraction takes none from this path at all. A "Narrator: {name}" line is
+    # stamped into the who-dimension of every first-person fact, so whatever primes it ends up
+    # verbatim in stored fact text. Retain used to prime it with the bank's `name` — a display
+    # label (#1680 already had to suppress it when it defaulted to the bank_id, itself typically
+    # a routing key), which leaked project/tenant names like "AuditProject_0825" into memories
+    # that never mentioned them (#3962). A caller that genuinely wants to name the speaker says
+    # so in the item's `context`, which extraction already reads and which the dry-run
+    # `agent_name` override is deprecated in favour of.
     extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, agent_name, config, pool, operation_id, schema
+        contents, llm_config, config, pool, operation_id, schema
     )
     log_buffer.append(
         f"  Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks "
@@ -1204,7 +1184,6 @@ async def retain_batch(
     document_body_hash: str | None = None,
     chunk_index_offset: int = 0,
     body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
-    agent_name: "str | None | object" = _NARRATOR_UNRESOLVED,
     retain_session=None,
     document_prefetch: "dict[str, dict] | asyncio.Task | None" = None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
@@ -1252,20 +1231,6 @@ async def retain_batch(
     log_buffer.append(f"RETAIN_BATCH START: {bank_id}")
     log_buffer.append(f"Batch size: {len(contents_dicts)} content items, {total_chars:,} chars")
     log_buffer.append(f"{'=' * 60}")
-
-    # The bank profile is read for ONE value: the narrator name. A multi-document retain groups
-    # by document and re-enters this function per group (below), so reading it here made it one
-    # read -- and one pooled connection -- PER DOCUMENT rather than per retain. Resolved once by
-    # the outermost call and handed down.
-    #
-    # The sentinel is NOT None: `_resolve_narrator` returns None for a suppressed narrator, so
-    # None is a resolved value and testing for it would re-read on every recursion for precisely
-    # the auto-created banks where suppression applies.
-    if agent_name is _NARRATOR_UNRESOLVED:
-        profile = await bank_utils.get_bank_profile(pool, bank_id)
-        # Suppress the narrator when name == bank_id (auto-create default) — see
-        # _resolve_narrator for why a routing-key narrator pollutes extraction (#1680).
-        agent_name = _resolve_narrator(profile["name"], bank_id)
 
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)
@@ -1366,7 +1331,6 @@ async def retain_batch(
                     # record write per document. Each of those is an append to the namespace's one
                     # WAL head, which concurrent appends contend for.
                     body_accum=body_accum,
-                    agent_name=agent_name,
                     retain_session=retain_session,
                     document_prefetch=document_prefetch,
                 )
@@ -1525,6 +1489,18 @@ async def retain_batch(
         if item_mode:
             update_mode = item_mode
             break
+
+    # --- Forced re-extraction ---
+    # Two independent skips make a re-retain of byte-identical content a no-op: the delta
+    # path finds no changed chunk and updates document metadata only, and the recovery gate
+    # in `_streaming_retain_batch` treats a matching content_hash plus surviving chunk hashes
+    # as a crashed retain being resumed and preserves every existing unit. Both are right for
+    # a re-push of unchanged content; both are wrong for `reprocess_document`, whose whole
+    # purpose is "extract this again under the CURRENT config", where the content is unchanged
+    # by definition (#3899). The flag rides on the content item, so it survives the async
+    # operation payload and the oversized-item splitter (which copies every field onto each
+    # slice) without a parameter on every frame in between.
+    force_reextract = any(bool(item.get("force_reextract")) for item in contents_dicts)
 
     # The document version this append was built on. Captured with the text it
     # reads so the write path can prove nothing else appended in between — see
@@ -1711,7 +1687,7 @@ async def retain_batch(
     from ..memories import get_memories as _get_memories_delta
 
     _delta_provider = _get_memories_delta()
-    if attempts_delta_retain(_delta_provider, bank_id, is_first_batch):
+    if not force_reextract and attempts_delta_retain(_delta_provider, bank_id, is_first_batch):
         delta_result = await _try_delta_retain(
             pool,
             embeddings_model,
@@ -1725,7 +1701,6 @@ async def retain_batch(
             effective_doc_id,
             fact_type_override,
             document_tags,
-            agent_name,
             log_buffer,
             start_time,
             operation_id,
@@ -1796,7 +1771,6 @@ async def retain_batch(
         is_first_batch=is_first_batch,
         fact_type_override=fact_type_override,
         document_tags=document_tags,
-        agent_name=agent_name,
         log_buffer=log_buffer,
         start_time=start_time,
         all_pre_chunks=all_pre_chunks,
@@ -1815,6 +1789,7 @@ async def retain_batch(
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
+        force_reextract=force_reextract,
     )
 
 
@@ -2214,7 +2189,6 @@ async def _streaming_retain_batch(
     is_first_batch: bool,
     fact_type_override: str | None,
     document_tags: list[str] | None,
-    agent_name: str,
     log_buffer: list[str],
     start_time: float,
     all_pre_chunks: list[str],
@@ -2233,6 +2207,7 @@ async def _streaming_retain_batch(
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
+    force_reextract: bool = False,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -2304,7 +2279,11 @@ async def _streaming_retain_batch(
     # nothing, `is_recovery` stayed False, and it cost a pool acquire and a query per document.
     from ..memories import get_memories as _get_memories_recov
 
-    _sql_recovery_possible = not _get_memories_recov().store_owned_for(bank_id)
+    # A forced re-extraction is an operator saying "extract this again under the current
+    # config", so it must never be classified as a crashed retain being resumed: recovery
+    # preserves every existing unit and skips every matching chunk, which is exactly the
+    # silent no-op #3899 reports. Skipping the probe also skips its two queries.
+    _sql_recovery_possible = not force_reextract and not _get_memories_recov().store_owned_for(bank_id)
     try:
         if _sql_recovery_possible:
             async with acquire_with_retry(pool) as conn:
@@ -2525,7 +2504,6 @@ async def _streaming_retain_batch(
                 extracted, processed, chunk_meta, usage = await _extract_and_embed(
                     [content],
                     llm_config,
-                    agent_name,
                     config,
                     coalescing_embedder,
                     format_date_fn,
@@ -3437,7 +3415,6 @@ async def _try_delta_retain(
     document_id,
     fact_type_override,
     document_tags,
-    agent_name,
     log_buffer,
     start_time,
     operation_id,
@@ -3758,7 +3735,6 @@ async def _try_delta_retain(
         extracted_facts, processed_facts, new_chunk_metadata, usage = await _extract_and_embed(
             delta_contents,
             llm_config,
-            agent_name,
             config,
             embeddings_model,
             format_date_fn,

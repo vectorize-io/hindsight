@@ -21,9 +21,7 @@ from .memory_engine import (
 from .response_models import MemoryFact, RecallResult, ReflectResult
 from .search.trace import (
     EntryPoint,
-    LinkInfo,
     NodeVisit,
-    PruningDecision,
     QueryInfo,
     SearchPhaseMetrics,
     SearchSummary,
@@ -47,8 +45,6 @@ __all__ = [
     "EntryPoint",
     "NodeVisit",
     "WeightComponents",
-    "LinkInfo",
-    "PruningDecision",
     "SearchSummary",
     "SearchPhaseMetrics",
     "LLMConfig",

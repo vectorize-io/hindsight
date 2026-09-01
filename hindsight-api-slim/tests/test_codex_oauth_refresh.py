@@ -43,6 +43,7 @@ from hindsight_api.engine.providers.codex_llm import (
     CodexLLM,
     CodexRefreshExpiredError,
 )
+from tests.codex_stream_stub import stub_codex_stream_with
 
 
 @pytest.fixture(autouse=True)
@@ -669,17 +670,20 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
         call_count["refresh"] += 1
         return refresh_resp
 
-    # Async mock for the LLM's HTTP client (used for backend calls).
-    async def fake_backend_post(url, **kwargs):
+    fail_response.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=fail_response)
+    )
+    fail_response.aread = AsyncMock(return_value=b"unauthorized")
+
+    # Stub for the LLM's HTTP client (used for backend calls).
+    def fake_backend_stream(url, **kwargs):
         call_count["post"] += 1
         sent_headers.append(httpx.Headers(kwargs["headers"]))
-        if call_count["post"] == 1:
-            raise httpx.HTTPStatusError("401", request=MagicMock(), response=fail_response)
-        return success_resp
+        return fail_response if call_count["post"] == 1 else success_resp
 
     with (
         patch.object(llm._auth_manager._http_client, "post", new=fake_refresh_post),
-        patch.object(llm._client, "post", new=fake_backend_post),
+        stub_codex_stream_with(llm, fake_backend_stream),
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
         result = await llm.call(
@@ -720,7 +724,7 @@ async def test_call_proactively_refreshes_when_token_is_stale(tmp_path: Path):
         call_order.append("refresh")
         return refresh_resp
 
-    async def fake_backend_post(url, **kwargs):
+    def fake_backend_stream(url, **kwargs):
         call_order.append("backend")
         # Assert that by the time the backend is called, the new token is in use.
         assert kwargs["headers"]["Authorization"] == f"Bearer {new_access}"
@@ -728,7 +732,7 @@ async def test_call_proactively_refreshes_when_token_is_stale(tmp_path: Path):
 
     with (
         patch.object(llm._auth_manager._http_client, "post", new=fake_refresh_post),
-        patch.object(llm._client, "post", new=fake_backend_post),
+        stub_codex_stream_with(llm, fake_backend_stream),
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
         await llm.call(
@@ -754,12 +758,12 @@ async def test_call_does_not_refresh_when_token_is_fresh(tmp_path: Path):
 
     call_count = {"backend": 0}
 
-    async def fake_backend_post(url, **kwargs):
+    def fake_backend_stream(url, **kwargs):
         call_count["backend"] += 1
         return success_resp
 
     with (
-        patch.object(llm._client, "post", new=fake_backend_post),
+        stub_codex_stream_with(llm, fake_backend_stream),
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
         await llm.call(

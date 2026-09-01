@@ -1,31 +1,45 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { getHarness, HARNESS_NAMES } from "./registry";
+import { getHarness, HARNESS_NAMES, PLUGIN_ENTRYPOINTS } from "./registry";
 
 describe("HARNESS_NAMES", () => {
   it("lists all registered harnesses", () => {
     expect(HARNESS_NAMES).toEqual(
       expect.arrayContaining([
         "opencode",
+        "opencode2",
         "kilo",
         "cline-cli",
+        "pi",
         "prime-agent",
         "dsh",
         "claude-code",
         "cursor-cli",
         "codex",
+        "dcode",
         "antigravity-cli",
         "devin-cli",
         "copilot-cli",
         "grok-build",
+        "qwen-code",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(12);
+    expect(HARNESS_NAMES).toHaveLength(16);
   });
 });
 
 describe("getHarness", () => {
   it("resolves hook harnesses without touching the opencode adapter", async () => {
-    for (const name of ["claude-code", "cursor-cli", "codex", "antigravity-cli", "devin-cli"]) {
+    for (const name of [
+      "claude-code",
+      "cursor-cli",
+      "codex",
+      "dcode",
+      "antigravity-cli",
+      "devin-cli",
+    ]) {
       const adapter = await getHarness(name);
       expect(adapter.name).toBe(name);
       // Lightweight hook adapters have no persistent runtime — createRuntime always throws before
@@ -44,10 +58,33 @@ describe("getHarness", () => {
     expect(() => adapter.createRuntime({} as never)).toThrow();
   });
 
+  it("resolves opencode2 as its own plugin harness, separate from v1", async () => {
+    // Same no-runtime shape as opencode above, but a DIFFERENT entrypoint: v2's plugin contract
+    // shares nothing with v1's, so handing either host the other's export loads a plugin that
+    // registers nothing and reports no error.
+    const adapter = await getHarness("opencode2");
+    expect(adapter.name).toBe("opencode2");
+    expect(() => adapter.createRuntime({} as never)).toThrow(/src\/opencode2\.ts/);
+  });
+
   it("resolves Cline as a native-plugin harness rather than a hook binary", async () => {
     const adapter = await getHarness("cline-cli");
     expect(adapter.name).toBe("cline-cli");
     expect(() => adapter.createRuntime({} as never)).toThrow(/src\/cline\.ts/);
+  });
+
+  it("resolves pi and its Prime Agent fork as separate extension harnesses", async () => {
+    for (const [name, entry] of [
+      ["pi", /src\/pi\.ts/],
+      ["prime-agent", /src\/prime-agent\.ts/],
+    ] as const) {
+      const adapter = await getHarness(name);
+      expect(adapter.name).toBe(name);
+      // Both drive the same shared adapter (harness/pi-extension.ts) but are wired by their own
+      // entrypoint, so each must resolve to its own dist bundle — swapping them would silently
+      // retain one host's sessions under the other's bank.
+      expect(() => adapter.createRuntime({} as never)).toThrow(entry);
+    }
   });
 
   it("resolves DeepSeek Harness as a native Cordis-plugin harness", async () => {
@@ -72,5 +109,46 @@ describe("registry covers every installable harness", () => {
     const { INSTALLERS } = await import("../installer");
     const missing = INSTALLERS.map((i) => i.name).filter((n) => !HARNESS_NAMES.includes(n));
     expect(missing).toEqual([]);
+  });
+
+  // The check above is DIRECTIONAL, and the other direction is just as broken: a harness in the
+  // registry with no installer is advertised by the README and rejected by `install <name>` with
+  // "unknown harness". Every hook harness must be installable — the plugin harnesses are wired by
+  // their own entrypoints and are exempt only because they still carry an INSTALLERS entry.
+  it("has no hook harness the registry names but the installer cannot wire", async () => {
+    const { INSTALLERS } = await import("../installer");
+    const { HOOK_HARNESSES } = await import("./hook-lifecycle");
+    const installable = new Set(INSTALLERS.map((i) => i.name));
+    const missing = Object.keys(HOOK_HARNESSES).filter((n) => !installable.has(n));
+    expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * The harness name an entrypoint reports is a bare string literal that nothing else checks: it
+ * selects the `harnesses.<name>` config section, feeds `{harness}` bank templating, and is stamped
+ * on every document that host retains. A typo there ships green — the registry, the installer and
+ * the control plane's logo map are three SEPARATE hand-maintained lists, so none of them notices
+ * that the running plugin calls itself something else.
+ *
+ * So assert it over the whole family, enumerated from the registry rather than a fourth list: every
+ * entrypoint the registry names must report the harness the registry maps it to.
+ */
+describe("every plugin entrypoint reports the harness the registry maps it to", () => {
+  const PKG = fileURLToPath(new URL("../..", import.meta.url));
+
+  /** The two idioms an entrypoint uses to name itself: the argument it hands its shared factory
+   *  (opencode/Kilo via createPluginEntry, opencode 2 via createOpencode2PluginEntry, pi/Prime Agent
+   *  via createPiExtension), or its own module constant (Cline and dsh, which build their runtime
+   *  themselves). Matching the factory NAMES rather than a generic call keeps the guard honest: an
+   *  entrypoint that names itself some new way fails here until this list is widened, which is
+   *  exactly the review that a new host needs.  */
+  const DECLARES_HARNESS =
+    /(?:createPluginEntry|createOpencode2PluginEntry|createPiExtension)\("([^"]+)"\)|const HARNESS = "([^"]+)"/;
+
+  it.each(Object.entries(PLUGIN_ENTRYPOINTS))("%s (%s)", (harness, entry) => {
+    const declaration = readFileSync(join(PKG, entry), "utf8").match(DECLARES_HARNESS);
+    expect(declaration, `${entry} names no harness in a form this guard recognises`).not.toBeNull();
+    expect(declaration![1] ?? declaration![2]).toBe(harness);
   });
 });

@@ -3132,31 +3132,50 @@ async def apply_bank_template_manifest(
         bank_exists=bank_exists,
         request_context=request_context,
     ):
-        if projected_mental_model_ids:
+        # The snapshot above only chose which operation to authorize; a concurrent
+        # create or delete (and the server default template applied during
+        # provisioning) can flip a resource between create and update before this
+        # request writes. Re-read the committed state here, inside the scope and
+        # immediately before the writes, and decide against that instead.
+        if manifest.mental_models:
             provisioned = await memory.list_mental_models(
                 bank_id=bank_id,
                 limit=None,
                 detail="metadata",
                 request_context=request_context,
             )
-            provisioned_by_id = {item["id"]: item for item in provisioned.items}
-            existing_by_id.update(
-                {
-                    item_id: provisioned_by_id[item_id]
-                    for item_id in projected_mental_model_ids & provisioned_by_id.keys()
-                }
-            )
+            existing_by_id = {item["id"]: item for item in provisioned.items}
 
-        if projected_directive_names:
-            provisioned = await memory.list_directives(
+        if manifest.directives:
+            provisioned_directives = await memory.list_directives(
                 bank_id=bank_id,
                 active_only=False,
                 limit=None,
                 request_context=request_context,
             )
-            provisioned_by_name = {item["name"]: item for item in provisioned.items}
-            existing_by_name.update(
-                {name: provisioned_by_name[name] for name in projected_directive_names & provisioned_by_name.keys()}
+            existing_by_name = {item["name"]: item for item in provisioned_directives.items}
+
+        # Authorize whatever the fresh state now calls for. Resources whose
+        # classification held are already preauthorized and this is a no-op; only a
+        # flipped one reaches the validator, so an ordinary import still costs one
+        # decision per resource.
+        for mental_model in manifest.mental_models or []:
+            await memory.authorize_bank_template_import_write(
+                bank_id,
+                BankWriteOperation.UPDATE_MENTAL_MODEL
+                if mental_model.id in existing_by_id
+                else BankWriteOperation.CREATE_MENTAL_MODEL,
+                target=mental_model.id,
+                request_context=request_context,
+            )
+        for directive in manifest.directives or []:
+            await memory.authorize_bank_template_import_write(
+                bank_id,
+                BankWriteOperation.UPDATE_DIRECTIVE
+                if directive.name in existing_by_name
+                else BankWriteOperation.CREATE_DIRECTIVE,
+                target=directive.name,
+                request_context=request_context,
             )
 
         if config_updates:
@@ -7314,7 +7333,9 @@ def _register_routes(app: FastAPI):
             # Get bank-specific config overrides (not the fully resolved config,
             # so the template only contains what was explicitly set on this bank)
             await app.state.memory._authenticate_tenant(request_context)
-            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id)
+            # Fresh, not cached: this exports what is stored ON the bank, and a template taken
+            # right after a config edit must not carry the values that edit replaced.
+            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id, cached=False)
 
             # Filter to only BankTemplateConfig fields (exclude credentials, static fields)
             template_config_fields = set(BankTemplateConfig.model_fields.keys())

@@ -637,6 +637,7 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults:
         gemini_service_tier=member.gemini_service_tier or config.llm_gemini_service_tier,
         gemini_safety_settings=_get_raw_config().llm_gemini_safety_settings,
         prompt_cache_enabled=config.llm_prompt_cache_enabled,
+        codex_home=member.codex_home or config.llm_codex_home,
         vertexai_project_id=member.vertexai_project_id or config.llm_vertexai_project_id,
         vertexai_region=member.vertexai_region or config.llm_vertexai_region,
         vertexai_service_account_key=member.vertexai_service_account_key or config.llm_vertexai_service_account_key,
@@ -1437,6 +1438,28 @@ class _MentalModelScopeFilter:
     params: list[Any]
 
 
+@dataclass(frozen=True)
+class _MentalModelScopeWatermark:
+    """What one ``MAX(updated_at)`` over a mental model's scope tells a refresh.
+
+    Both answers come off the same aggregate, so they are returned together rather
+    than queried twice: whether there is anything in scope to read at all, and the
+    watermark to persist afterwards. They are not the same number — the watermark is
+    clamped so it can never regress — which is exactly why the raw reading has to
+    travel alongside it.
+    """
+
+    newest_in_scope: datetime | None
+    """Newest in-scope memory visible at the refresh snapshot; None when the scope
+    holds nothing at all. Unclamped, so it answers "is there anything here?" —
+    and, compared against the delta window's lower bound, "anything *new*?"."""
+
+    watermark: datetime | None
+    """The ``last_memory_seen_at`` a successful refresh persists: ``newest_in_scope``
+    raised to the model's current watermark so it never moves backwards. None leaves
+    the column untouched."""
+
+
 def _resolve_refresh_tag_filtering(
     model_tags: list[str] | None,
     trigger_data: dict[str, Any],
@@ -2100,6 +2123,7 @@ class MemoryEngine(MemoryEngineInterface):
             openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            codex_home=config.llm_codex_home,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
@@ -2147,6 +2171,7 @@ class MemoryEngine(MemoryEngineInterface):
             openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            codex_home=config.llm_codex_home,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
@@ -2188,6 +2213,7 @@ class MemoryEngine(MemoryEngineInterface):
             openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            codex_home=config.llm_codex_home,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
@@ -2229,6 +2255,7 @@ class MemoryEngine(MemoryEngineInterface):
             openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            codex_home=config.llm_codex_home,
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
@@ -2309,8 +2336,13 @@ class MemoryEngine(MemoryEngineInterface):
         # initialize encoding eagerly to avoid delaying the first time
         get_token_encoding()
 
-        # Store operation validator extension (optional)
-        self._operation_validator = operation_validator
+        # Store operation validator extension (optional). Wrapped so every hook is timed: the
+        # validator runs outside the operation's own timer, so nothing else can see what it costs.
+        # Done here, once, rather than at each call site -- the interface has nineteen hooks and a
+        # hand-instrumented one is a hook that silently loses its timing the next time one is added.
+        from ..extensions.validator_instrumentation import instrument_operation_validator
+
+        self._operation_validator = instrument_operation_validator(operation_validator)
 
         # Store tenant extension (always set, use default if none provided)
         if tenant_extension is None:
@@ -3600,13 +3632,29 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             payload_bytes = str(raw_payload).encode()
 
+        # User-supplied headers are spread FIRST so the Hindsight-controlled headers
+        # below always win: a custom header must never be able to forge the event type
+        # or overwrite a signature. Content-Type stays overridable -- some receivers
+        # insist on a vendor media type, and the body is JSON either way.
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "X-Hindsight-Event": event_type,
             **http_config.headers,
+            "X-Hindsight-Event": event_type,
         }
         if secret and self._webhook_manager:
-            headers["X-Hindsight-Signature"] = self._webhook_manager._sign_payload(secret, payload_bytes)
+            signature = self._webhook_manager._sign_payload(secret, payload_bytes)
+            headers["X-Hindsight-Signature"] = signature
+            # Byte-identical to the header above. `sha256=<hex>` over the raw body is
+            # the construction GitHub popularised, so emitting the conventional name
+            # too lets stock receivers verify without a Hindsight-specific shim.
+            headers["X-Hub-Signature-256"] = signature
+            # Timestamped signature (signed at attempt time, so it moves on retries).
+            # The body-only signatures above have no notion of freshness, which leaves
+            # a captured delivery replayable forever; receivers that check `t` against
+            # a tolerance window get replay protection.
+            headers["X-Hindsight-Signature-V2"] = self._webhook_manager._sign_payload_v2(
+                secret, payload_bytes, int(datetime.now(UTC).timestamp())
+            )
 
         if self._http_client is None:
             raise RuntimeError("HTTP client not initialized")
@@ -7186,14 +7234,36 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 if len(merged_candidates) > max_candidates:
                     # Sort by RRF score (boosted per-strategy if configured) and take top
-                    # candidates. The weighted-RRF boost keeps boosted-arm candidates from
-                    # being trimmed out of the reranker's global budget.
+                    # candidates. The rank-space boost reaches deeper into a boosted arm
+                    # before the cut without displacing the head of the other arms (#3956).
                     from .search.recall_boost import boosted_rrf_score
 
                     strategy_boosts = get_config().recall_strategy_boosts
                     merged_candidates.sort(key=lambda mc: boosted_rrf_score(mc, strategy_boosts), reverse=True)
                     pre_filtered_count = len(merged_candidates) - max_candidates
                     merged_candidates = merged_candidates[:max_candidates]
+                    if tracer:
+                        # Surface the cut in the trace: which arms actually made it into
+                        # the reranker's budget, and whether a boost shaped that. Ranking
+                        # complaints land on the trace first, and without this the boost
+                        # is only visible in server logs (issue #3956). Cheap: source_ranks
+                        # is already in memory and payloads are not materialized until below.
+                        arm_composition: dict[str, int] = {}
+                        for mc in merged_candidates:
+                            for key in mc.source_ranks:
+                                arm = key.removesuffix("_rank")
+                                arm_composition[arm] = arm_composition.get(arm, 0) + 1
+                        tracer.add_phase_metric(
+                            "rerank_prefilter",
+                            0.0,
+                            {
+                                "kept": len(merged_candidates),
+                                "dropped": pre_filtered_count,
+                                "max_candidates": max_candidates,
+                                "strategy_boosts": dict(strategy_boosts) if strategy_boosts else None,
+                                "arm_composition": arm_composition,
+                            },
+                        )
 
                 # Materialize the payload for the candidates that survived fusion, for a store
                 # that returned scores rather than payloads. THIS is why ranking can be cheap: the
@@ -7719,9 +7789,6 @@ class MemoryEngine(MemoryEngineInterface):
                         context=sr.retrieval.context or "",
                         event_date=sr.retrieval.occurred_start,
                         is_entry_point=(sr.id in [ep.node_id for ep in tracer.entry_points]),
-                        parent_node_id=None,  # In parallel retrieval, there's no clear parent
-                        link_type=None,
-                        link_weight=None,
                         activation=sr.candidate.rrf_score,  # Use RRF score as activation
                         semantic_similarity=sr.retrieval.similarity or 0.0,
                         recency=sr.recency,
@@ -10134,15 +10201,15 @@ class MemoryEngine(MemoryEngineInterface):
                             mentioned_at=edit_plan.mentioned_at,
                             entity_ids=edit_plan.edit_entity_ids,
                             entity_names=edit_plan.entity_names_for_store,
+                            # The vector describes the text being written by this same call, so
+                            # it goes with it: a following set_memory_embedding would be a second
+                            # write of the row apply_edit just wrote.
+                            embedding=edit_embedding,
+                            # The memory's type as it stands, so the store need not re-read the
+                            # memory to see whether this edit changes it. `live2` is the re-read
+                            # this transaction already did, so it is free here.
+                            current_fact_type=live2.fact_type,
                         )
-                        if edit_embedding is not None:
-                            await store.set_memory_embedding(
-                                conn=conn,
-                                fq_table=fq_table,
-                                bank_id=bank_id,
-                                unit_id=str(memory_uuid),
-                                embedding=edit_embedding,
-                            )
                         await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                         need_consolidation = True
                         need_graph = True
@@ -10660,9 +10727,9 @@ class MemoryEngine(MemoryEngineInterface):
         Side-effect-free and idempotent.
         """
         from .response_models import ExtractedFact
-        from .retain import bank_utils, fact_extraction
+        from .retain import fact_extraction
 
-        # Resolve the tenant schema before touching any bank-scoped data (config, bank profile).
+        # Resolve the tenant schema before touching any bank-scoped data (config).
         await self._authenticate_tenant(request_context)
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
         if self._llm_config.provider == "none":
@@ -10675,22 +10742,17 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             setattr(resolved_config, key, value)
 
-        backend = await self._get_backend()
-        # Narrator primes the "Narrator:" line in the prompt. Dry-run must not
-        # create a bank just to resolve that optional display name.
-        if agent_name is None:
-            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
-            profile_name = profile["name"] if profile is not None else bank_id
-            agent_name = None if profile_name == bank_id else profile_name
-
+        # No narrator unless the caller passed one. The bank's display `name` is deliberately
+        # NOT consulted: it leaked into extracted fact text (#3962), and retain no longer
+        # derives a narrator from it either, so a dry run must mirror what retain would do.
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
         facts, _chunks, usage = await fact_extraction.extract_facts_from_text(
             text=content,
             event_date=event_date,
             llm_config=retain_llm,
-            agent_name=agent_name or "",
             config=resolved_config,
             context=context,
+            agent_name=agent_name,
         )
 
         extracted = [
@@ -11434,10 +11496,19 @@ class MemoryEngine(MemoryEngineInterface):
         # on the item, so retain_params came back without it and the NEXT reprocess
         # fell back to the bank default again.
         content_dict.update(retain_params)
-        # These three are the reprocess's own and must win over anything stored.
+        # These are the reprocess's own and must win over anything stored.
         content_dict["content"] = original_text
         content_dict["document_id"] = document_id
         content_dict["update_mode"] = "replace"
+        # A reprocess replays the SAME content by construction, and the retain pipeline has two
+        # skips for exactly that: the delta path sees no changed chunk and updates metadata only,
+        # and the crash-recovery gate sees the matching content_hash plus surviving chunk hashes
+        # and preserves every existing unit. Either one makes the reprocess a silent no-op — zero
+        # LLM calls, `unit_ids_count: 0`, operation `completed` — which is the opposite of what
+        # this endpoint is for ("re-extract using the current engine configuration"). Whether it
+        # no-opped or re-extracted depended on how faithfully retain_params happened to replay
+        # (#3873), so the outcome was not even stable. Force it (#3899).
+        content_dict["force_reextract"] = True
 
         tags = doc.get("tags") or []
         if tags:
@@ -12172,8 +12243,12 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
     ) -> BankConfigState:
         """Load config after the caller has established tenant and operation access."""
-        config = await self._config_resolver.get_bank_config(bank_id, request_context)
-        overrides = await self._config_resolver._load_bank_config(bank_id)
+        # Both fresh: this is what the bank-config ENDPOINT answers with, and `overrides` is what
+        # the UI renders as "Bank override". A cached read here answers a successful config edit
+        # with the values it replaced, on any pod that did not serve the write. The hot-path
+        # callers (`recall_async`, `retain_batch_async`) take the cached default instead.
+        config = await self._config_resolver.get_bank_config(bank_id, request_context, cached=False)
+        overrides = await self._config_resolver._load_bank_config(bank_id, cached=False)
         return BankConfigState(config=config, overrides=overrides)
 
     @asynccontextmanager
@@ -12266,6 +12341,41 @@ class MemoryEngine(MemoryEngineInterface):
             yield
         finally:
             _bank_template_import_authorization.reset(token)
+
+    async def authorize_bank_template_import_write(
+        self,
+        bank_id: str,
+        operation: "BankWriteOperation",
+        *,
+        target: str | None = None,
+        request_context: "RequestContext",
+    ) -> None:
+        """Reserve one import write, validating it only if it was not preauthorized.
+
+        The import preauthorizes the operation each resource needed when the
+        manifest was classified. A concurrent create or delete can flip that
+        classification before the write runs, and the flipped operation deserves
+        its own decision rather than a blanket grant for both outcomes: a
+        validator that meters creations separately from updates must not be
+        charged for a create the import never performs.
+        """
+        state = self._get_bank_template_import_authorization_state(bank_id, request_context)
+        if state is None:
+            # No import scope: the engine call validates the write itself.
+            return
+        write = BankTemplateImportWrite(operation=operation, target=target)
+        if state.bank_write_remaining.get(write, 0) > 0:
+            return
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            context = BankWriteContext(
+                bank_id=bank_id,
+                operation=operation,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(context))
+        state.bank_write_remaining[write] = 1
 
     def _consume_preauthorized_bank_write(
         self,
@@ -12582,12 +12692,24 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+            from hindsight_api.extensions import (
+                BankReadContext,
+                BankReadOperation,
+                BankWriteContext,
+                BankWriteOperation,
+            )
 
             ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK_DISPOSITION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+            ctx_read = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_PROFILE, request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx_read))
+
+        await self._ensure_bank_exists(bank_id, request_context)
         await self._get_backend()
         await bank_utils.update_bank_disposition(self._backend, bank_id, disposition)
 
@@ -12617,6 +12739,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.SET_BANK_MISSION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+        await self._ensure_bank_exists(bank_id, request_context)
         await self._get_backend()
         await bank_utils.set_bank_mission(self._backend, bank_id, mission)
         return {"bank_id": bank_id, "mission": mission}
@@ -12642,12 +12766,24 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+            from hindsight_api.extensions import (
+                BankReadContext,
+                BankReadOperation,
+                BankWriteContext,
+                BankWriteOperation,
+            )
 
             ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.MERGE_BANK_MISSION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+            ctx_read = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_PROFILE, request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx_read))
+
+        await self._ensure_bank_exists(bank_id, request_context)
         await self._get_backend()
         return await bank_utils.merge_bank_mission(self._backend, self._reflect_llm_config, bank_id, new_info)
 
@@ -14623,24 +14759,31 @@ class MemoryEngine(MemoryEngineInterface):
                 mental_model_id,
             )
 
-    async def _mental_model_processed_watermark(
+    async def _mental_model_scope_watermark(
         self,
         bank_id: str,
         mental_model_id: str,
         scope_filter: "_MentalModelScopeFilter",
         refresh_cutoff: datetime,
-    ) -> datetime | None:
-        """Watermark to persist after a refresh: the newest in-scope memory visible at
-        the snapshot, clamped so it never regresses below the model's current
-        ``last_memory_seen_at`` (falling back to ``last_refreshed_at`` for a row no
-        refresh has stamped since the migration backfill).
+    ) -> _MentalModelScopeWatermark:
+        """One ``MAX(updated_at)`` over the model's scope, read for both its answers.
 
-        A still-uncommitted straddling row is excluded from this max, so when it commits
-        it stays newer than the watermark and is caught next time. Returns ``None`` when
-        no in-scope memory is visible (leave ``last_memory_seen_at`` untouched, so an
-        in-flight first row is not skipped). Kept as its own method — like
-        ``_mental_model_refresh_cutoff`` — so mock unit tests of the refresh wiring can
-        stub it instead of reaching a real pool.
+        ``watermark`` is what a successful refresh persists: the newest in-scope memory
+        visible at the snapshot, clamped so it never regresses below the model's current
+        ``last_memory_seen_at`` (falling back to ``last_refreshed_at`` for a row no
+        refresh has stamped since the migration backfill). A still-uncommitted straddling
+        row is excluded from the max, so when it commits it stays newer than the watermark
+        and is caught next time; ``None`` leaves the column untouched, so an in-flight
+        first row is not skipped.
+
+        ``newest_in_scope`` is the same reading *unclamped*, and is what the refresh's
+        emptiness check (#3875) decides on — it has to be carried out of here rather
+        than re-queried, because the clamp destroys exactly the information that check
+        needs: a model whose watermark is already set reports that watermark whether its
+        scope holds a thousand memories or none.
+
+        Kept as its own method — like ``_mental_model_refresh_cutoff`` — so mock unit
+        tests of the refresh wiring can stub it instead of reaching a real pool.
         """
         backend = await self._get_backend()
         assert self._dialect is not None
@@ -14658,10 +14801,40 @@ class MemoryEngine(MemoryEngineInterface):
                 *watermark_params,
             )
         if newest_in_scope is None:
-            return None
+            return _MentalModelScopeWatermark(newest_in_scope=None, watermark=None)
         if current_memory_seen_at is not None:
-            return max(newest_in_scope, current_memory_seen_at)
-        return newest_in_scope
+            return _MentalModelScopeWatermark(
+                newest_in_scope=newest_in_scope, watermark=max(newest_in_scope, current_memory_seen_at)
+            )
+        return _MentalModelScopeWatermark(newest_in_scope=newest_in_scope, watermark=newest_in_scope)
+
+    async def _bank_has_readable_document(self, bank_id: str, *, excluding_id: str) -> bool:
+        """Does this bank hold another mental model the reflect agent could read?
+
+        ``search_mental_models`` returns sibling documents, so one with real content is
+        something to reflect over even when no memory is — and it applies no time bound,
+        so that holds inside a delta window too. Only the model being refreshed is
+        excluded, not its full ``exclude_mental_model_ids`` list: over-counting keeps a
+        refresh running, which is the safe direction to be wrong in.
+
+        A sibling still holding the ``Generating content...`` placeholder does not
+        count. That is exactly the state a bank's default pages are all in while they
+        wait on each other, and treating it as content would defeat the emptiness check
+        for the case it was written for (#3875).
+        """
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            other_documents = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('mental_models')} "
+                f"WHERE bank_id = $1 AND id <> $2 AND LENGTH(TRIM(content)) > 0 AND content NOT LIKE $3",
+                bank_id,
+                excluding_id,
+                # Prefix match, not equality: the placeholder is stored as written but read
+                # back through the structured render, which ends it with a newline. It
+                # carries no LIKE wildcard of its own, so the pattern needs no escaping.
+                f"{MENTAL_MODEL_PENDING_CONTENT}%",
+            )
+        return bool(other_documents)
 
     async def _execute_mental_model_refresh(
         self,
@@ -14770,9 +14943,10 @@ class MemoryEngine(MemoryEngineInterface):
         # such a straddling commit stays newer than the watermark and is caught next
         # time, instead of being stamped "already processed" and dropped forever.
         scope_filter = self._build_mm_scope_filter(bank_id, tag_filtering, fact_types)
-        processed_watermark = await self._mental_model_processed_watermark(
+        scope_watermark = await self._mental_model_scope_watermark(
             bank_id, mental_model_id, scope_filter, refresh_cutoff
         )
+        processed_watermark = scope_watermark.watermark
 
         # Run reflect with the source query, excluding the mental model being refreshed
         # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
@@ -14844,7 +15018,44 @@ class MemoryEngine(MemoryEngineInterface):
             watermark=processed_watermark,
         )
 
-        reflect_result = await self.reflect_async(**reflect_kwargs)
+        # Having nothing to read is not a cheap reflect — it is the most expensive
+        # one there is (#3875). The forced retrieval turns all come back empty, and
+        # the agent's evidence guardrail then refuses every ``done`` call, because
+        # evidence is exactly what it cannot gather; the loop runs to its iteration
+        # limit and pays a forced synthesis on top. A bank's default knowledge pages
+        # each enqueue a refresh the moment they are created, so a fresh bank spent
+        # its whole LLM budget on five worst-case reflects over an empty graph — the
+        # budget it needed to ingest the content those pages were waiting for.
+        #
+        # So ask first whether this model's flags leave the agent anything to retrieve.
+        # The watermark reading already answers it for memories, at no cost: it is the
+        # newest memory visible at the snapshot *within this model's scope*, so
+        # tags/tag_groups/fact_types are already applied to it. ``None`` means the scope
+        # is empty; otherwise the delta window's lower bound settles it, because a max
+        # newer than the bound is exactly "at least one row is in the window" — the same
+        # comparison recall makes with ``updated_at > created_after``. Full mode has no
+        # lower bound, so any memory at all counts. Only when that comes back empty is
+        # there a query to pay, and only while sibling documents are still in reach.
+        has_sources = scope_watermark.newest_in_scope is not None and (
+            created_after is None or scope_watermark.newest_in_scope > created_after
+        )
+        if not has_sources and not exclude_mental_models:
+            has_sources = await self._bank_has_readable_document(bank_id, excluding_id=mental_model_id)
+        if has_sources:
+            reflect_result = await self.reflect_async(**reflect_kwargs)
+        else:
+            # An empty result, not a shortcut around the rest of the pipeline: the
+            # delta legs below still run. A retraction is a reason to edit the
+            # document all by itself, and gating it on new facts arriving is the
+            # coupling that lets a retired claim survive forever on a quiet bank —
+            # the same reason the unsay pass runs before the no-new-facts return.
+            logger.info(
+                f"[MENTAL_MODELS] Refresh for {mental_model_id}: nothing in scope to reflect over "
+                f"(mode={'delta' if use_delta else 'full'}"
+                f"{f', window opens {created_after.isoformat()}' if created_after else ''}); "
+                f"skipping the reflect loop"
+            )
+            reflect_result = ReflectResult(text="", based_on={})
 
         # Build reflect_response payload to store
         # based_on contains MemoryFact objects for most types, but plain dicts for directives
@@ -14958,10 +15169,22 @@ class MemoryEngine(MemoryEngineInterface):
             "mental_models": [],  # Mental models are included in based_on["mental-models"]
         }
 
+        if not has_sources:
+            # Recorded on the model so a refresh that did nothing says why it did
+            # nothing — distinct from a reflect that ran and came back empty-handed.
+            reflect_response_payload["reflect_skipped"] = "no_sources_in_scope"
+
         warnings: list[str] = []
         retrieved_total = sum(facts.retrieved.values())
         used_total = sum(facts.used.values())
-        if retrieved_total == 0:
+        if not has_sources:
+            warnings.append(
+                "Nothing in this document's scope was readable, so the reflect loop was skipped and the "
+                "document left as it is. Check the resolved scope — tags, tag_groups and fact_types all "
+                "narrow it — and, in delta mode, the time window: only memories changed after the last "
+                "refresh are in range."
+            )
+        elif retrieved_total == 0:
             warnings.append(
                 "Retrieval returned no facts at all. Check the resolved scope and the time window — "
                 "in delta mode nothing created after the last refresh is in range."
@@ -15025,6 +15248,7 @@ class MemoryEngine(MemoryEngineInterface):
         # drift is structurally impossible. Falls back to the full candidate
         # markdown if either the structuring or the LLM op call fails.
         from .reflect.delta_ops import (
+            DeltaOperationList,
             apply_operations,
             parse_delta_operation_list,
         )
@@ -15217,11 +15441,19 @@ class MemoryEngine(MemoryEngineInterface):
                 # operation + mental_model_id), same as every other pipeline call.
                 delta_llm = await _op_llm()
                 try:
-                    # Text-mode call (not structured-output) because Pydantic's
-                    # discriminated-union JSON schema isn't accepted by every
-                    # provider — Gemini in particular rejects ``oneOf`` /
-                    # ``discriminator``. We parse + validate the JSON ourselves
-                    # so the same prompt works against any LLM.
+                    # Structured-output call, following the retain extraction path:
+                    # the schema is sent, ``strict_schema`` is resolved from reflect's
+                    # own flag, and ``skip_validation`` keeps the raw JSON so
+                    # ``parse_delta_operation_list`` still validates op-by-op (a single
+                    # malformed op is dropped, not the whole batch).
+                    #
+                    # This was a text-mode call until #3901: pydantic renders the
+                    # eight-op discriminated union as ``oneOf`` + ``discriminator``,
+                    # which OpenAI's strict subset rejects and the Gemini SDK refuses
+                    # to even serialize, so no schema could be sent and the prompt was
+                    # the only description of the payload the model got. Providers are
+                    # now handed the union as ``anyOf`` (``provider_json_schema``),
+                    # which both accept.
                     #
                     # The transport cap is the decoupled ``reflect_max_completion_tokens``
                     # (uncapped by default), NOT ``delta_max_tokens``. On thinking models
@@ -15238,6 +15470,9 @@ class MemoryEngine(MemoryEngineInterface):
                             {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
                             {"role": "user", "content": user_prompt},
                         ],
+                        response_format=DeltaOperationList,
+                        strict_schema=get_config().llm_strict_schema_reflect,
+                        skip_validation=True,  # Get raw JSON; the op-by-op parser validates leniently
                         max_completion_tokens=get_config().reflect_max_completion_tokens,
                         temperature=get_config().llm_temperature_consolidation,
                         scope="mental_model_delta_ops",
@@ -15332,6 +15567,25 @@ class MemoryEngine(MemoryEngineInterface):
 
         effective_mode: RefreshMode = "delta" if delta_applied else "full"
 
+        # Nothing was read, and no delta edit was made from what was not read. The
+        # candidate is empty by construction rather than by failure, so this must not
+        # fall into the empty-candidate guard below: that raises, and the worker would
+        # retry a refresh whose inputs are guaranteed identical next time. Preserve the
+        # document and report the same outcome the delta leg reports for an empty
+        # window — which is what this is, in full mode with the window wide open.
+        #
+        # Reached by a full refresh, and by a delta refresh whose baseline could not be
+        # read (a delta with a baseline has already returned via the no-new-facts leg).
+        if not has_sources and not delta_applied:
+            return _finish(
+                effective_mode=effective_mode,
+                mode_fallback_reason=mode_fallback_reason,
+                final_content=current_content,
+                final_structured=None,
+                delta_operations=delta_operations,
+                outcome="content_preserved_no_new_facts",
+            )
+
         # Refuse to overwrite existing content with an empty render.
         # The reflect agent can return an empty answer (small models, all
         # tool-call retries failing, transient provider errors, the cleaner
@@ -15411,8 +15665,9 @@ class MemoryEngine(MemoryEngineInterface):
         # report ``content_written`` even though nothing about the document
         # changed. So does a full regeneration that reproduces the stored text.
         # ``content_preserved_no_new_facts`` does not cover either: it fires only
-        # when the delta window was empty, whereas these runs read facts and
-        # concluded there was nothing to change.
+        # when there was nothing to read — an empty delta window, or a scope with no
+        # readable memory at all — whereas these runs read facts and concluded there
+        # was nothing to change.
         return _finish(
             effective_mode=effective_mode,
             mode_fallback_reason=mode_fallback_reason,
@@ -15504,7 +15759,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             if run.outcome == "content_preserved_no_new_facts":
                 logger.info(
-                    f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: no new facts found, preserving content"
+                    f"[MENTAL_MODELS] Refresh for {mental_model_id} ({run.effective_mode}): "
+                    f"no new facts found, preserving content"
                 )
                 # Content is preserved unchanged, so the structured view must be too.
                 if prev_structured_output is not None:
@@ -16651,6 +16907,13 @@ class MemoryEngine(MemoryEngineInterface):
         is unpopulated (``vchord``) degrade to a vector-only search rather than
         erroring. ``enable_text_search=false`` drops that arm outright, leaving a
         vector-only ranking.
+
+        Like recall's, the BM25 arm generates candidates disjunctively (``tok | tok``
+        on the native backend) rather than requiring every term. Precision comes back
+        from the fusion with the vector arm — so when no embedding is available the
+        ranking is ``ts_rank_cd`` alone, which weighs term density and proximity but
+        not term rarity. That fallback is broad by design: an exhaustive AND returned
+        nothing at all for ordinary multi-word questions.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator and not _nested_operation_authorized.get():
@@ -16738,12 +17001,21 @@ class MemoryEngine(MemoryEngineInterface):
         # so the search has no answer to give rather than a degraded one.
         bank_config = await self._config_resolver.get_bank_config(bank_id, request_context)
         enable_text_search = bool(bank_config.get("enable_text_search", True))
-        if not enable_text_search and emb_str is None:
+
+        from .search.retrieval import tokenize_query
+
+        # No tokens means no BM25 arm — the same gate recall applies (see
+        # retrieve_semantic_bm25_combined_sql): there is nothing to match on, and on the
+        # native backend an empty token list cannot even build a valid to_tsquery.
+        # Tokenizing feeds nothing else, so a bank with text search off skips it.
+        tokens = tokenize_query(query) if enable_text_search else []
+        include_bm25 = bool(tokens)
+        if not include_bm25 and emb_str is None:
             return []
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            if emb_str is not None and not enable_text_search:
+            if emb_str is not None and not include_bm25:
                 # Vector-only: no BM25 arm to fuse with, so rank straight off the ANN scan.
                 sql = f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
@@ -16755,66 +17027,86 @@ class MemoryEngine(MemoryEngineInterface):
                     LIMIT {limit}
                 """
                 rows = await conn.fetch(sql, emb_str, bank_id)
-            elif emb_str is not None:
-                bm25 = knowledge_bm25_arm(
-                    text_search_extension,
-                    table_alias="mm",
-                    text_param="$3",
-                    pg_search_function_schema=pg_search_function_schema,
+            else:
+                # Same builder the memory-recall BM25 arm uses, so the two paths cannot
+                # drift apart on query shape again — knowledge search used to bind the
+                # raw query to a conjunctive websearch_to_tsquery here, which returned
+                # no candidates at all for ordinary multi-word questions.
+                # The dialect is built from the connection, as recall builds its own.
+                # `mental_models.search_vector` is generated with a hard-coded 'english'
+                # config (see migrations), so its stats are read with 'english' too.
+                from .search.bm25_term_selection import build_bm25_query_text
+
+                bm25_text = await build_bm25_query_text(
+                    conn,
+                    create_sql_dialect(getattr(conn, "backend_type", "postgresql")),
+                    tokens=tokens,
+                    query_text=query,
+                    table="mental_models",
+                    language="english",
+                    config=cfg,
                 )
-                # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
-                # independently, then RRF-fused (k=60) in SQL.
-                sql = f"""
-                    WITH vec AS (
-                        SELECT kp.id AS page_id,
-                               ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector) AS rnk
+
+                if emb_str is not None:
+                    bm25 = knowledge_bm25_arm(
+                        text_search_extension,
+                        table_alias="mm",
+                        text_param="$3",
+                        pg_search_function_schema=pg_search_function_schema,
+                    )
+                    # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
+                    # independently, then RRF-fused (k=60) in SQL.
+                    sql = f"""
+                        WITH vec AS (
+                            SELECT kp.id AS page_id,
+                                   ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector) AS rnk
+                            FROM {join}
+                            WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
+                            ORDER BY mm.embedding <=> $1::vector
+                            LIMIT {fetch}
+                        ),
+                        bm AS (
+                            SELECT kp.id AS page_id,
+                                   ROW_NUMBER() OVER (ORDER BY {bm25.order_by}) AS rnk
+                            FROM {join}
+                            WHERE kp.bank_id = $2 AND kp.kind = 'page'
+                                  {bm25.match_filter}
+                            ORDER BY {bm25.order_by}
+                            LIMIT {fetch}
+                        ),
+                        fused AS (
+                            SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
+                                   COALESCE(1.0 / (60 + vec.rnk), 0) + COALESCE(1.0 / (60 + bm.rnk), 0) AS score
+                            FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
+                        )
+                        SELECT kp.id, kp.name, kp.mental_model_id,
+                               LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at, f.score
+                        FROM fused f
+                        JOIN {kp} kp ON kp.id = f.page_id AND kp.bank_id = $2
+                        LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
+                        ORDER BY f.score DESC
+                        LIMIT {limit}
+                    """
+                    rows = await conn.fetch(sql, emb_str, bank_id, bm25_text)
+                else:
+                    # Embedding unavailable → BM25-only fallback (still useful).
+                    bm25 = knowledge_bm25_arm(
+                        text_search_extension,
+                        table_alias="mm",
+                        text_param="$2",
+                        pg_search_function_schema=pg_search_function_schema,
+                    )
+                    sql = f"""
+                        SELECT kp.id, kp.name, kp.mental_model_id,
+                               LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
+                               {bm25.score_expr} AS score
                         FROM {join}
-                        WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
-                        ORDER BY mm.embedding <=> $1::vector
-                        LIMIT {fetch}
-                    ),
-                    bm AS (
-                        SELECT kp.id AS page_id,
-                               ROW_NUMBER() OVER (ORDER BY {bm25.order_by}) AS rnk
-                        FROM {join}
-                        WHERE kp.bank_id = $2 AND kp.kind = 'page'
+                        WHERE kp.bank_id = $1 AND kp.kind = 'page'
                               {bm25.match_filter}
                         ORDER BY {bm25.order_by}
-                        LIMIT {fetch}
-                    ),
-                    fused AS (
-                        SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
-                               COALESCE(1.0 / (60 + vec.rnk), 0) + COALESCE(1.0 / (60 + bm.rnk), 0) AS score
-                        FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
-                    )
-                    SELECT kp.id, kp.name, kp.mental_model_id,
-                           LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at, f.score
-                    FROM fused f
-                    JOIN {kp} kp ON kp.id = f.page_id AND kp.bank_id = $2
-                    LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
-                    ORDER BY f.score DESC
-                    LIMIT {limit}
-                """
-                rows = await conn.fetch(sql, emb_str, bank_id, query)
-            else:
-                # Embedding unavailable → BM25-only fallback (still useful).
-                bm25 = knowledge_bm25_arm(
-                    text_search_extension,
-                    table_alias="mm",
-                    text_param="$2",
-                    pg_search_function_schema=pg_search_function_schema,
-                )
-                sql = f"""
-                    SELECT kp.id, kp.name, kp.mental_model_id,
-                           LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
-                           {bm25.score_expr} AS score
-                    FROM {join}
-                    WHERE kp.bank_id = $1 AND kp.kind = 'page'
-                          {bm25.match_filter}
-                    ORDER BY {bm25.order_by}
-                    LIMIT {limit}
-                """
-                rows = await conn.fetch(sql, bank_id, query)
+                        LIMIT {limit}
+                    """
+                    rows = await conn.fetch(sql, bank_id, bm25_text)
 
         return [
             {

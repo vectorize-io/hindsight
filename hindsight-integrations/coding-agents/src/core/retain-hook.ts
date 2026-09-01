@@ -14,7 +14,7 @@
  * in core/hook.ts.
  */
 import { readFileSync } from "node:fs";
-import { deriveBankId } from "./bank";
+import { deriveBankIdOrSkip } from "./bank";
 import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
@@ -26,6 +26,7 @@ import type { RetainCursorStore } from "./retain-cursor";
 import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
 import { fileCursorStore, sessionRootDir } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
+import { stripInjectedMemory } from "./transcript-util";
 
 /** Headroom left before the host's kill: the response still has to come back after the last wait. */
 const HOST_DEADLINE_MARGIN_MS = 2000;
@@ -35,11 +36,19 @@ export interface RetainHookEventFields {
   sessionId?: string;
   transcriptPath?: string;
   cwd?: string;
+  /** Dcode's materialized transcript may lag the just-finished assistant response. */
+  lastAssistantMessage?: string;
 }
 
 /** Read a harness's transcript file into normalized turns. Claude and Codex use different JSONL
  *  schemas, so each harness supplies its own reader (default: Claude). */
 export type TranscriptReader = (path: string) => TransportTurn[];
+
+/** Normalize a harness's `lastAssistantMessage` into the same text its transcript reader would
+ *  produce for that message. Harness-specific because the field is not always prose: Dcode sends
+ *  `str(content)`, a Python repr, whenever the provider returns content blocks. Defaults to
+ *  identity for harnesses that send the reply verbatim. */
+export type LastMessageReader = (raw: string) => string;
 
 export interface RetainHookSpec {
   /** Harness name — config `harnesses.<name>` section, {harness} template field, diag records. */
@@ -53,6 +62,8 @@ export interface RetainHookSpec {
   parse(event: Record<string, unknown>): RetainHookEventFields;
   /** Harness-specific transcript parser. Defaults to the Claude JSONL reader. */
   readTranscript?: TranscriptReader;
+  /** Harness-specific decoder for `lastAssistantMessage`. Defaults to identity. */
+  readLastMessage?: LastMessageReader;
 }
 
 /** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. The
@@ -74,6 +85,8 @@ export async function buildRetain(args: {
   transcriptPath: string;
   client: RetainClient;
   readTranscript?: TranscriptReader;
+  lastAssistantMessage?: string;
+  readLastMessage?: LastMessageReader;
   /** Configured retainTags/retainMetadata, already resolved for this session (core/retain-stamp.ts). */
   stamp?: RetainStamp;
   /** Injectable for tests; defaults to the per-session temp file (a Stop hook has no memory). */
@@ -85,6 +98,24 @@ export async function buildRetain(args: {
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
 
   const turns = readTranscript(transcriptPath);
+  // Decode BEFORE stripping/trimming: the raw field can be a serialized content-block list rather
+  // than prose (see LastMessageReader), and the injected-memory tags live inside its text blocks.
+  const decoded = args.lastAssistantMessage
+    ? (args.readLastMessage ?? ((raw: string) => raw))(args.lastAssistantMessage)
+    : "";
+  const lastAssistantMessage = stripInjectedMemory(decoded).trim();
+  // Dcode materializes before Stop handlers run, so its final response can be absent from the
+  // file. Dedupe by adjacent content because the same response is present after a flush on some
+  // runs; this keeps repeated Stop delivery idempotent without dropping a legitimate later reply.
+  // The decode above is what makes that compare meaningful — both sides now join text blocks the
+  // same way, so an already-flushed reply matches instead of being appended twice.
+  if (lastAssistantMessage && turns.at(-1)?.content !== lastAssistantMessage) {
+    turns.push({
+      role: "assistant",
+      content: lastAssistantMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
   if (turns.length === 0) return;
 
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
@@ -126,7 +157,7 @@ export async function runRetainHook(
   } catch {
     return; // no/invalid event: stay silent
   }
-  const { sessionId, transcriptPath, cwd: rawCwd } = spec.parse(ev);
+  const { sessionId, transcriptPath, cwd: rawCwd, lastAssistantMessage } = spec.parse(ev);
   const cwd = rawCwd || process.cwd();
 
   let cfg = loadConfig({ harness: spec.harness });
@@ -136,7 +167,11 @@ export async function runRetainHook(
   if (!transcriptPath) return;
 
   const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
+  const derived = deriveBankIdOrSkip(cfg, cwd, spec.harness, sessionRoot);
+  // Skipping the write-back loses this session; retaining it into a guessed bank loses it AND
+  // pollutes the server with a bank nothing ever reads back (#3950).
+  if (derived === null) return;
+  const resolved = applyBankConfig(cfg, derived, cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
@@ -167,6 +202,8 @@ export async function runRetainHook(
     transcriptPath,
     client,
     readTranscript: spec.readTranscript,
+    lastAssistantMessage,
+    readLastMessage: spec.readLastMessage,
     retryUntil: hostDeadline,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,

@@ -55,7 +55,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
-from hindsight_api.engine.structured_output import strict_json_schema
+from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -1099,7 +1099,7 @@ class OpenAICompatibleLLM(LLMInterface):
         if response_format is not None:
             schema = None
             if hasattr(response_format, "model_json_schema"):
-                schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
+                schema = strict_json_schema(response_format) if strict_schema else provider_json_schema(response_format)
 
             if strict_schema and schema is not None:
                 # Use OpenAI's strict JSON schema enforcement
@@ -1705,7 +1705,7 @@ class OpenAICompatibleLLM(LLMInterface):
         start_time = time.time()
 
         # Get the JSON schema from the Pydantic model
-        schema = response_format.model_json_schema() if hasattr(response_format, "model_json_schema") else None
+        schema = provider_json_schema(response_format) if hasattr(response_format, "model_json_schema") else None
 
         # Build the base URL for Ollama's native API
         # Default OpenAI-compatible URL is http://localhost:11434/v1

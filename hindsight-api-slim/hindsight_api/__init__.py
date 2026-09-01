@@ -50,9 +50,7 @@ _LAZY_EXPORTS: "dict[str, tuple[str, str]]" = {
     "LLMConfig": (".engine.llm_wrapper", "LLMConfig"),
     "MemoryEngine": (".engine.memory_engine", "MemoryEngine"),
     "EntryPoint": (".engine.search.trace", "EntryPoint"),
-    "LinkInfo": (".engine.search.trace", "LinkInfo"),
     "NodeVisit": (".engine.search.trace", "NodeVisit"),
-    "PruningDecision": (".engine.search.trace", "PruningDecision"),
     "QueryInfo": (".engine.search.trace", "QueryInfo"),
     "SearchPhaseMetrics": (".engine.search.trace", "SearchPhaseMetrics"),
     "SearchSummary": (".engine.search.trace", "SearchSummary"),
@@ -95,9 +93,7 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers and IDEs, never at run
     from .engine.memory_engine import MemoryEngine  # noqa: F401
     from .engine.search.trace import (  # noqa: F401
         EntryPoint,
-        LinkInfo,
         NodeVisit,
-        PruningDecision,
         QueryInfo,
         SearchPhaseMetrics,
         SearchSummary,

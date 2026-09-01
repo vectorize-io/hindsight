@@ -6,6 +6,7 @@ import pytest
 
 from hindsight_api.engine.llm_wrapper import create_llm_provider
 from hindsight_api.engine.providers.codex_llm import CodexLLM
+from tests.codex_stream_stub import stub_codex_stream
 
 
 def build_llm(extra_body: dict | None = None) -> CodexLLM:
@@ -42,17 +43,16 @@ def test_factory_forwards_extra_body() -> None:
 @pytest.mark.asyncio
 async def test_call_merges_extra_body_into_request() -> None:
     llm = build_llm({"service_tier": "priority"})
-    response = MagicMock()
+    response = MagicMock(status_code=200)
     response.raise_for_status.return_value = None
 
     with (
-        patch.object(llm._client, "post", new_callable=AsyncMock) as mock_post,
+        stub_codex_stream(llm, response) as mock_stream,
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
-        mock_post.return_value = response
         await llm.call(messages=[{"role": "user", "content": "hello"}], max_retries=0)
 
-    assert mock_post.call_args.kwargs["json"]["service_tier"] == "priority"
+    assert mock_stream.call_args.kwargs["json"]["service_tier"] == "priority"
 
 
 @pytest.mark.asyncio
@@ -62,14 +62,13 @@ async def test_call_with_tools_merges_extra_body_into_request() -> None:
     response.raise_for_status.return_value = None
 
     with (
-        patch.object(llm._client, "post", new_callable=AsyncMock) as mock_post,
+        stub_codex_stream(llm, response) as mock_stream,
         patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
     ):
-        mock_post.return_value = response
         await llm.call_with_tools(
             messages=[{"role": "user", "content": "hello"}],
             tools=[],
             max_retries=0,
         )
 
-    assert mock_post.call_args.kwargs["json"]["service_tier"] == "priority"
+    assert mock_stream.call_args.kwargs["json"]["service_tier"] == "priority"

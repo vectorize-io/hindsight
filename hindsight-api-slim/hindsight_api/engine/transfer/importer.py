@@ -49,6 +49,13 @@ logger = logging.getLogger(__name__)
 OnConflict = Literal["skip", "replace", "new-id"]
 _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
 
+#: Texts per embedding call for the import phases that are sized by the *bank* rather
+#: than by a document: observations and mental models arrive as one list covering the
+#: whole archive. Slicing here, above the provider, bounds peak memory for every
+#: provider — including in-process ones with nothing downstream to slice for them
+#: (issue #3891). Retain bounds itself the same way (#3763).
+_EMBED_BATCH_SIZE = 128
+
 
 @dataclass
 class ImportedDocument:
@@ -457,6 +464,18 @@ async def _restore_rows(
     return inserted
 
 
+async def _embed_in_batches(embeddings_model: Any, texts: list[str]) -> list[list[float]]:
+    """Embed ``texts`` in ``_EMBED_BATCH_SIZE`` slices, preserving input order."""
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+        vectors.extend(
+            await embedding_processing.generate_embeddings_batch(
+                embeddings_model, texts[start : start + _EMBED_BATCH_SIZE]
+            )
+        )
+    return vectors
+
+
 async def _regenerate_mental_model_embeddings(embeddings_model: Any, mm_rows: list[dict]) -> dict[str, list[float]]:
     """Re-embed each restored mental model with the *target* model.
 
@@ -469,7 +488,7 @@ async def _regenerate_mental_model_embeddings(embeddings_model: Any, mm_rows: li
     if not mm_rows:
         return {}
     texts = [f"{(r.get('name') or '')} {(r.get('content') or '')}" for r in mm_rows]
-    vectors = await embedding_processing.generate_embeddings_batch(embeddings_model, texts)
+    vectors = await _embed_in_batches(embeddings_model, texts)
     # The vectors themselves, not the ``str(...)`` Postgres wants: a store-owned bank indexes the
     # same vector, and re-parsing a repr to recover it would be lossy for nothing. The one caller
     # that needs the literal stringifies at its own INSERT.
@@ -1127,9 +1146,7 @@ async def _import_observations(
 
     # Observations embed the raw text (matching consolidation), not the
     # date-augmented text used for facts.
-    embeddings = await embedding_processing.generate_embeddings_batch(
-        embeddings_model, [obs.text for obs, _ in resolved]
-    )
+    embeddings = await _embed_in_batches(embeddings_model, [obs.text for obs, _ in resolved])
     processed = [
         ProcessedFact(
             fact_text=obs.text,

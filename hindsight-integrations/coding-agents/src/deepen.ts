@@ -23,7 +23,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveBankId } from "./core/bank";
+import { deriveBankIdOrSkip } from "./core/bank";
 import { ingestChats } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { commitsSince, repoNameOf, retainCommit, syncGitLog } from "./core/git";
@@ -50,7 +50,9 @@ function arg(name: string, def?: string): string | undefined {
 const REPO = arg("repo");
 const cfg0 = loadConfig({ harness: arg("harness") ?? undefined, path: arg("config") });
 const BANK =
-  arg("bank") ?? (REPO ? deriveBankId(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId);
+  arg("bank") ??
+  (REPO ? deriveBankIdOrSkip(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId) ??
+  undefined;
 const resolved0 = BANK
   ? applyBankConfig(cfg0, BANK, REPO ?? undefined)
   : { cfg: cfg0, bankId: BANK };
@@ -151,7 +153,10 @@ async function main() {
         sessionId,
       });
 
-    await client.configureBank({ pageTrigger: buildPageTrigger(cfg) });
+    await client.configureBank({
+      pageTrigger: buildPageTrigger(cfg),
+      manage: cfg.manageBankConfig,
+    });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
         bank: FINAL_BANK,

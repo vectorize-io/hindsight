@@ -85,7 +85,18 @@ export function buildMcpServer(tools: ToolSpec[]): McpServer {
   }
 
   for (const tool of tools) {
-    server.tool(tool.name, tool.description, tool.inputSchema, tool.handler);
+    // registerTool (not the deprecated `tool()`) so the safety annotations reach the client:
+    // Dcode rejects unannotated MCP calls outright in headless mode, and Codex Auto-review treats
+    // them as unverified external access. See ToolSpec.annotations.
+    server.registerTool(
+      tool.name,
+      {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
+      },
+      tool.handler
+    );
   }
   return server;
 }

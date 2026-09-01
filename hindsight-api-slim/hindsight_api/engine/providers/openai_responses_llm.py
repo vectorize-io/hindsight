@@ -63,7 +63,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     _strip_reasoning_tags,
 )
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
-from hindsight_api.engine.structured_output import strict_json_schema
+from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -477,7 +477,7 @@ class OpenAIResponsesLLM(LLMInterface):
                     }
                 }
             else:
-                schema = response_format.model_json_schema()
+                schema = provider_json_schema(response_format)
                 params["input"] = _ensure_json_word_in_user_message(_inject_schema_into_input(input_items, schema))
                 params["text"] = {"format": {"type": "json_object"}}
 

@@ -47,6 +47,12 @@ def knowledge_bm25_arm(
     ``table_alias`` is the alias the ``mental_models`` row carries in the query
     (``mm``); ``text_param`` is the bind placeholder holding the query text.
 
+    For the ``native`` backend, ``text_param`` must be bound to the output of
+    :meth:`prepare_bm25_text` (disjunctive ``" | "`` tokens). ``websearch_to_tsquery``
+    was originally used here as an error-free parser for raw strings (#2455), but
+    its default conjunctive AND (``&``) across space-separated words caused
+    multi-word natural-language queries to return 0 BM25 candidates.
+
     ``pgroonga`` queries the multilingual expression index over ``name +
     content``; ``ensure_text_search_extension`` reconciles ``mental_models`` to
     that shape (dummy TEXT ``search_vector``) like every other pgroonga table.
@@ -121,11 +127,19 @@ def knowledge_bm25_arm(
     # The generating expression hard-codes the 'english' config (see the
     # learnings/pinned_reflections migration), so query with 'english' regardless
     # of the configured native language.
-    score = f"ts_rank_cd({a}.search_vector, websearch_to_tsquery('english', {p}))"
+    #
+    # to_tsquery over disjunctive OR tokens prepared via prepare_bm25_text.
+    # websearch_to_tsquery was originally used here as an error-free parser for
+    # raw strings (#2455), but its default conjunctive AND (&) across words caused
+    # multi-word queries to return 0 hits. Joining tokens with OR aligns candidate
+    # generation with memory recall (build_bm25_arm); ranking is then ts_rank_cd,
+    # fused with the vector arm when the search has an embedding to fuse with
+    # (search_knowledge_pages runs no reranker either way).
+    score = f"ts_rank_cd({a}.search_vector, to_tsquery('english', {p}))"
     return KnowledgeBm25Arm(
         score_expr=score,
         order_by=f"{score} DESC",
-        match_filter=f"AND {a}.search_vector @@ websearch_to_tsquery('english', {p})",
+        match_filter=f"AND {a}.search_vector @@ to_tsquery('english', {p})",
     )
 
 

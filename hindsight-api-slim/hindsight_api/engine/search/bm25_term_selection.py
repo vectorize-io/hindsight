@@ -31,6 +31,13 @@ Caveats, by design:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
+
+from ..memory_engine import get_current_schema
+
+if TYPE_CHECKING:
+    from ...config import HindsightConfig
+    from ..sql import SQLDialect
 
 logger = logging.getLogger(__name__)
 
@@ -109,3 +116,58 @@ async def select_selective_bm25_tokens(
     scored.sort(key=lambda df_ord: df_ord)
     kept_ords = sorted(ord_ for _, ord_ in scored[:max_terms])
     return [tokens[ord_ - 1] for ord_ in kept_ords]
+
+
+async def build_bm25_query_text(
+    conn,
+    dialect: SQLDialect,
+    *,
+    tokens: list[str],
+    query_text: str,
+    table: str,
+    language: str,
+    config: HindsightConfig,
+) -> str:
+    """Turn query tokens into the text parameter a BM25 arm binds.
+
+    Every BM25 arm — memory recall over ``memory_units`` and knowledge search over
+    ``mental_models`` — goes through here, so the two cannot drift apart again: the
+    native backend gets one disjunctive ``tok | tok`` tsquery on both paths, and the
+    other backends get the raw query text their own parsers expect.
+
+    ``table`` and ``language`` name the corpus the selectivity stats are read from;
+    they differ per call site because ``mental_models.search_vector`` is generated
+    with a hard-coded ``'english'`` config while ``memory_units`` follows the
+    configured native language.
+    """
+    text_search_extension = config.text_search_extension
+    max_query_terms = config.bm25_max_query_terms
+    bm25_tokens = tokens
+    # Native tsvector has no IDF and ranks every `@@` match, so a long OR query over
+    # common terms scans and ranks a large fraction of the corpus (the +60s prod
+    # timeout). Keep only the most selective terms — lowest document frequency, read
+    # for free from pg_stats — which bounds both the match set and the per-row rank
+    # cost while preserving the high-signal terms a blunt first-N cap would discard.
+    # PG-native only; best-effort (falls back to first-N when stats are unavailable).
+    # Opt out via bm25_selective_terms to cap by position instead.
+    if (
+        text_search_extension == "native"
+        and max_query_terms > 0
+        and len(tokens) > max_query_terms
+        and config.bm25_selective_terms
+        and getattr(conn, "backend_type", "postgresql") == "postgresql"
+    ):
+        bm25_tokens = await select_selective_bm25_tokens(
+            conn,
+            tokens,
+            schema=get_current_schema(),
+            table=table,
+            language=language,
+            max_terms=max_query_terms,
+        )
+    return dialect.prepare_bm25_text(
+        bm25_tokens,
+        query_text,
+        text_search_extension=text_search_extension,
+        max_query_terms=max_query_terms,
+    )

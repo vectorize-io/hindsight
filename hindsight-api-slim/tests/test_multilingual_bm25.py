@@ -25,6 +25,7 @@ from hindsight_api.engine.retain.fact_extraction import (
     _DEFAULT_LANGUAGE_RULE as _RETAIN_DEFAULT_LANGUAGE_RULE,
 )
 from hindsight_api.engine.retain.fact_extraction import _build_extraction_prompt_and_schema
+from hindsight_api.engine.search import bm25_term_selection as bm25_mod
 from hindsight_api.engine.search import retrieval as retrieval_mod
 from hindsight_api.engine.search.retrieval import tokenize_query
 from hindsight_api.engine.sql.postgresql import PostgreSQLDialect
@@ -490,8 +491,8 @@ async def test_selective_terms_flag_gates_the_pg_stats_lookup(monkeypatch, selec
     )
     monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: fake_dialect)
-    monkeypatch.setattr(retrieval_mod, "get_current_schema", lambda: "public")
-    monkeypatch.setattr(retrieval_mod, "select_selective_bm25_tokens", fake_select)
+    monkeypatch.setattr(bm25_mod, "get_current_schema", lambda: "public")
+    monkeypatch.setattr(bm25_mod, "select_selective_bm25_tokens", fake_select)
 
     long_query = " ".join(f"term{i}" for i in range(20))  # 20 tokens, over the cap
     await retrieval_mod.retrieve_semantic_bm25_combined_sql(

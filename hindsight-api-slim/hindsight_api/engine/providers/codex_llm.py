@@ -20,7 +20,8 @@ import json
 import logging
 import time
 import uuid
-from contextlib import AbstractAsyncContextManager, nullcontext
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
@@ -30,7 +31,7 @@ from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterfac
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
-from hindsight_api.engine.structured_output import strict_json_schema
+from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -111,13 +112,36 @@ def _repair_invalid_json_escapes(text: str) -> str:
     return "".join(result)
 
 
+# Fallback per-request deadline when the caller resolved no timeout (direct
+# construction, tests). Configured deployments always pass one down from
+# ``llm_timeout`` / the per-operation override.
+_DEFAULT_CODEX_TIMEOUT = 120.0
+
+# Hard ceiling on one SSE response body, counted in decoded characters (what
+# ``aiter_lines`` yields — so a multi-byte body is cut off a little later than
+# the name suggests, which is fine for a backstop). The Codex backend can wedge
+# into runaway generation and emit megabytes of deltas for a request whose real
+# answer is a few hundred bytes (issue #3898); a structured-output call bounded
+# by ``max_completion_tokens`` never approaches this, so blowing past it means
+# the stream is not going to end on its own.
+_MAX_SSE_BODY_CHARS = 4 * 1024 * 1024
+
+
+class CodexRunawayStreamError(httpx.RequestError):
+    """The backend streamed past the deadline or the body-size ceiling.
+
+    Deliberately an ``httpx.RequestError``: a runaway stream is a transport-level
+    failure, and both call paths already retry that class with backoff.
+    """
+
+
 class CodexLLM(LLMInterface):
     """
     LLM provider using OpenAI Codex OAuth authentication.
 
     Authenticates using ChatGPT Plus/Pro credentials stored in the Codex
-    ``auth.json`` (honoring ``CODEX_HOME``, default ``~/.codex``) and makes API
-    calls to chatgpt.com/backend-api/codex/responses.
+    ``auth.json`` (``codex_home`` if given, else ``CODEX_HOME``, else
+    ``~/.codex``) and makes API calls to chatgpt.com/backend-api/codex/responses.
     """
 
     def __init__(
@@ -128,10 +152,21 @@ class CodexLLM(LLMInterface):
         model: str,
         reasoning_effort: str | None = None,
         extra_body: dict[str, Any] | None = None,
+        codex_home: str | None = None,
         **kwargs: Any,
     ):
-        """Initialize Codex LLM provider."""
+        """Initialize Codex LLM provider.
+
+        ``codex_home`` selects this instance's credentials directory (its
+        ``auth.json``), overriding the process-wide ``CODEX_HOME``. Two members
+        of a multi-LLM chain can therefore run as two independently authorized
+        ChatGPT profiles.
+        """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
+
+        # Resolved once: every auth read/write on this instance uses this path,
+        # never the process-wide default.
+        self._codex_home = codex_home
 
         # Single-flight async refresh lock. Multiple concurrent coroutines
         # racing toward an expired token should produce one network refresh.
@@ -143,7 +178,7 @@ class CodexLLM(LLMInterface):
             refresh_token = self._load_codex_refresh_token()
             logger.info(f"Loaded Codex OAuth credentials for account: {account_id}")
         except Exception as e:
-            auth_file = default_codex_auth_file()
+            auth_file = default_codex_auth_file(self._codex_home)
             raise RuntimeError(
                 f"Failed to load Codex OAuth credentials from {auth_file}: {e}\n\n"
                 "To set up Codex authentication:\n"
@@ -158,7 +193,7 @@ class CodexLLM(LLMInterface):
             access_token=access_token,
             account_id=account_id,
             refresh_token=refresh_token,
-            auth_file=default_codex_auth_file(),
+            auth_file=default_codex_auth_file(self._codex_home),
         )
 
         # Use ChatGPT backend API endpoint. Codex auth is tied to
@@ -180,8 +215,16 @@ class CodexLLM(LLMInterface):
         self.reasoning_summary = self._map_reasoning_effort(reasoning_effort)
         self._extra_body = dict(extra_body or {})
 
-        # HTTP client for SSE streaming
-        self._client = httpx.AsyncClient(timeout=120.0)
+        # Per-request deadline. ``self.timeout`` is resolved by the caller from
+        # ``llm_timeout`` / the per-operation override; the literal below is only
+        # the unconfigured fallback.
+        self._request_timeout = self.timeout or _DEFAULT_CODEX_TIMEOUT
+
+        # HTTP client for SSE streaming. httpx timeouts are per-operation (per
+        # socket read), so this bounds a *silent* backend only — a stream that
+        # keeps delivering bytes never trips it. The total deadline in
+        # ``_stream_request`` is what bounds a talkative one.
+        self._client = httpx.AsyncClient(timeout=self._request_timeout)
 
     # ------------------------------------------------------------------
     # Properties — delegate to _auth_manager (preserves test-visible API)
@@ -233,7 +276,8 @@ class CodexLLM(LLMInterface):
 
     def _load_codex_auth(self) -> tuple[str, str]:
         """
-        Load OAuth credentials from the Codex ``auth.json`` (CODEX_HOME or ~/.codex).
+        Load OAuth credentials from this instance's Codex ``auth.json``
+        (``codex_home``, else ``CODEX_HOME``, else ``~/.codex``).
 
         Returns:
             Tuple of (access_token, account_id).
@@ -242,7 +286,7 @@ class CodexLLM(LLMInterface):
             FileNotFoundError: If auth file doesn't exist.
             ValueError: If auth file is invalid.
         """
-        auth_file = default_codex_auth_file()
+        auth_file = default_codex_auth_file(self._codex_home)
 
         if not auth_file.exists():
             raise FileNotFoundError(
@@ -274,7 +318,11 @@ class CodexLLM(LLMInterface):
         pre- and post-``__init__`` because it does not depend on
         ``_auth_manager`` being constructed yet.
         """
-        auth_file = self._auth_manager._auth_file if hasattr(self, "_auth_manager") else default_codex_auth_file()
+        auth_file = (
+            self._auth_manager._auth_file
+            if hasattr(self, "_auth_manager")
+            else default_codex_auth_file(self._codex_home)
+        )
         return CodexAuthManager.load_refresh_token_from_file(auth_file)
 
     @staticmethod
@@ -442,7 +490,7 @@ class CodexLLM(LLMInterface):
         schema = None
         use_forced_tool = False
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
+            schema = strict_json_schema(response_format) if strict_schema else provider_json_schema(response_format)
             if strict_schema:
                 use_forced_tool = True
             else:
@@ -502,18 +550,18 @@ class CodexLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.codex.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
-                    response.raise_for_status()
+                    async with self._stream_request(url, payload, headers) as response:
+                        response.raise_for_status()
 
-                    # Forced-tool path: read structured output from the function-call
-                    # arguments (already a JSON string in a dedicated channel) rather
-                    # than from free-form assistant text.
-                    if use_forced_tool:
-                        text_content, tool_calls = await self._parse_sse_tool_stream(response)
-                        content = text_content or ""
-                    else:
-                        tool_calls = []
-                        content = await self._parse_sse_stream(response)
+                        # Forced-tool path: read structured output from the function-call
+                        # arguments (already a JSON string in a dedicated channel) rather
+                        # than from free-form assistant text.
+                        if use_forced_tool:
+                            text_content, tool_calls = await self._parse_sse_tool_stream(response)
+                            content = text_content or ""
+                        else:
+                            tool_calls = []
+                            content = await self._parse_sse_stream(response)
 
                 # Codex SSE carries no usage block; stash the same char/4 estimate
                 # the success path traces so a later parse/validate failure records
@@ -707,6 +755,60 @@ class CodexLLM(LLMInterface):
                 logger.error(f"Unexpected Codex error: {type(e).__name__}: {e}")
                 raise
 
+    @asynccontextmanager
+    async def _stream_request(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: httpx.Headers,
+    ) -> AsyncIterator[httpx.Response]:
+        """POST and hand back the still-streaming response under a total deadline.
+
+        Two things this gives that ``client.post()`` did not (issue #3898):
+
+        * ``asyncio.timeout`` bounds the request *and* the caller's parse of the
+          body. httpx's own timeout is per socket read, so a backend that keeps
+          sending bytes resets it forever; only a wall-clock deadline ends that.
+        * ``stream()`` means the body is consumed incrementally, so
+          ``_iter_sse_lines`` can abandon a runaway response instead of buffering
+          megabytes of it before any parsing runs.
+
+        Non-200 bodies are read eagerly so callers keep using ``response.text``
+        and ``raise_for_status()`` exactly as they did against a buffered response.
+        """
+        try:
+            async with asyncio.timeout(self._request_timeout):
+                async with self._client.stream("POST", url, json=payload, headers=headers) as response:
+                    if response.status_code != 200:
+                        # Not a stream: read the body so callers keep reaching for
+                        # ``response.text`` / ``raise_for_status()`` unchanged.
+                        await response.aread()
+                    yield response
+        except TimeoutError as e:
+            raise CodexRunawayStreamError(
+                f"Codex response exceeded the {self._request_timeout:g}s deadline "
+                f"(HINDSIGHT_API_LLM_TIMEOUT or its per-operation override)",
+                request=httpx.Request("POST", url),
+            ) from e
+
+    async def _iter_sse_lines(self, response: httpx.Response) -> AsyncIterator[str]:
+        """Yield SSE lines, abandoning the response if the body runs away.
+
+        The deadline in ``_stream_request`` already bounds wall time; this bounds
+        volume, so a backend generating at speed is cut off in seconds rather than
+        held onto until the deadline expires.
+        """
+        seen_chars = 0
+        async for line in response.aiter_lines():
+            seen_chars += len(line) + 1  # +1 for the newline aiter_lines strips
+            if seen_chars > _MAX_SSE_BODY_CHARS:
+                raise CodexRunawayStreamError(
+                    f"Codex response exceeded {_MAX_SSE_BODY_CHARS} characters without completing; "
+                    "abandoning the stream",
+                    request=response.request,
+                )
+            yield line
+
     async def _parse_sse_stream(self, response: httpx.Response) -> str:
         """
         Parse Server-Sent Events (SSE) stream from Codex API.
@@ -720,7 +822,7 @@ class CodexLLM(LLMInterface):
         full_text = ""
         event_type = None
 
-        async for line in response.aiter_lines():
+        async for line in self._iter_sse_lines(response):
             if not line:
                 continue
 
@@ -880,17 +982,17 @@ class CodexLLM(LLMInterface):
         async def _request_attempt(attempt: int) -> tuple[str | None, list[LLMToolCall]]:
             async with attempt_context() if attempt_context is not None else nullcontext():
                 set_stage(f"llm.codex.tools.attempt={attempt}/2")
-                response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
-                if response.status_code != 200:
-                    # 401/403 on the first attempt may still be recovered by the
-                    # reactive token refresh below — don't log those as errors yet.
-                    detail = f"Codex API error {response.status_code}: {response.text[:500]}"
-                    if response.status_code in (401, 403) and not attempted_refresh_after_auth_error:
-                        logger.warning(f"{detail} (will attempt token refresh)")
-                    else:
-                        logger.error(detail)
-                response.raise_for_status()
-                return await self._parse_sse_tool_stream(response)
+                async with self._stream_request(url, payload, headers) as response:
+                    if response.status_code != 200:
+                        # 401/403 on the first attempt may still be recovered by the
+                        # reactive token refresh below — don't log those as errors yet.
+                        detail = f"Codex API error {response.status_code}: {response.text[:500]}"
+                        if response.status_code in (401, 403) and not attempted_refresh_after_auth_error:
+                            logger.warning(f"{detail} (will attempt token refresh)")
+                        else:
+                            logger.error(detail)
+                    response.raise_for_status()
+                    return await self._parse_sse_tool_stream(response)
 
         try:
             try:
@@ -986,7 +1088,7 @@ class CodexLLM(LLMInterface):
         tool_calls: list[LLMToolCall] = []
         event_type = None
 
-        async for line in response.aiter_lines():
+        async for line in self._iter_sse_lines(response):
             if not line:
                 continue
 

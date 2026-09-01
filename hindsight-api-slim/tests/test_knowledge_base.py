@@ -503,6 +503,48 @@ class TestSearch:
         )
         assert len(capped.json()["results"]) <= 1
 
+    @pytest.mark.memory_backend_incompatible
+    async def test_natural_language_question_still_matches_bm25(
+        self, memory: MemoryEngine, kb_bank, request_context, monkeypatch
+    ):
+        """A multi-word question must not have to appear in a page word for word.
+
+        The BM25 arm ORs its tokens, so "billing" alone carries the match; the
+        conjunctive ``websearch_to_tsquery`` this replaced required *every* term and
+        returned nothing for ordinary questions. The embedding is suppressed so the
+        BM25 arm answers alone — otherwise the vector arm would hide the defect.
+        """
+        bank_id, ids = kb_bank
+
+        async def no_embedding(embeddings, texts, *, input_type=None):
+            return [None]
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", no_embedding)
+
+        results = await memory.search_knowledge_pages(
+            bank_id,
+            "what are the billing terms for late payments?",
+            request_context=request_context,
+        )
+
+        assert results, "the BM25 arm must still generate candidates for a question"
+        assert results[0]["id"] == ids.billing
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_query_without_word_characters_returns_nothing(
+        self, memory: MemoryEngine, kb_bank, request_context, monkeypatch
+    ):
+        """No tokens means no BM25 arm; with no embedding either there is nothing to
+        rank on, and the empty token list must not reach ``to_tsquery``."""
+        bank_id, _ = kb_bank
+
+        async def no_embedding(embeddings, texts, *, input_type=None):
+            return [None]
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", no_embedding)
+
+        assert await memory.search_knowledge_pages(bank_id, "???", request_context=request_context) == []
+
     async def test_query_is_required(self, api_client, kb_bank):
         bank_id, _ = kb_bank
         resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/search")

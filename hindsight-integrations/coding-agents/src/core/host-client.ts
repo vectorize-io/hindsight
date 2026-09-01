@@ -15,7 +15,7 @@
  * can rotate under them.
  */
 import { applyBankConfig, loadConfig, type Config } from "./config";
-import { deriveBankId } from "./bank";
+import { deriveBankIdOrSkip } from "./bank";
 import { HindsightClient } from "./hindsight";
 
 /** A host's resolved memory: the config for THIS workspace, the bank it resolved to, and a client
@@ -33,12 +33,15 @@ export function resolveHostConfig(
   directory: string
 ): { cfg: Config; bankId: string } {
   const cfg0 = loadConfig({ harness });
-  // A globally disabled plugin stops HERE, before bank derivation: that path shells out to git,
-  // and `disabled` exists to be a zero-overhead baseline — the same agent with no memory — not
-  // merely a silent one. Callers return early on `cfg.disabled`, so the empty bank id never
-  // reaches a request.
+  // A globally disabled plugin stops HERE, before bank derivation: `disabled` exists to be a
+  // zero-overhead baseline — the same agent with no memory — not merely a silent one. Callers
+  // return early on `cfg.disabled`, so the empty bank id never reaches a request.
   if (cfg0.disabled) return { cfg: cfg0, bankId: "" };
-  return applyBankConfig(cfg0, deriveBankId(cfg0, directory, harness), directory);
+  const bankId = deriveBankIdOrSkip(cfg0, directory, harness);
+  // An unidentifiable repository takes the same exit: no bank id is safer than a guessed one, and
+  // `disabled` is the signal every caller already handles (#3950).
+  if (bankId === null) return { cfg: { ...cfg0, disabled: true }, bankId: "" };
+  return applyBankConfig(cfg0, bankId, directory);
 }
 
 /**

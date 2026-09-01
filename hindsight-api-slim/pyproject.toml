@@ -33,7 +33,6 @@ dependencies = [
     # Contained to engine/token_encoding.py — see that module for the rationale.
     "quicktok-v1>=0.4.0",
     "httpx>=0.27.0",
-    "PyJWT[crypto]>=2.8.0",
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
     "python-dateutil>=2.8.0",
     # Two coupled reasons for these floors — keep all six pins moving together:
@@ -89,7 +88,7 @@ dependencies = [
     "cryptography>=50.0.0", # GHSA-g6cj-pr64-35w5: Bleichenbacher oracle in PKCS#7 EnvelopedData decryption (supersedes the >=48.0.1 GHSA-537c-gmf6-5ccf floor). GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix
-    "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
+    "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix. Transitive only (via mcp) since the Supabase tenant extension moved to hindsight-extensions/supabase-tenant — no core module imports jwt.
     "orjson>=3.11.6", # Unbounded recursion DoS fix
     "python-multipart>=0.0.22", # Arbitrary file write via non-default configuration fix
     "tornado>=6.5.5", # DoS multipart/incomplete cookie validation fix

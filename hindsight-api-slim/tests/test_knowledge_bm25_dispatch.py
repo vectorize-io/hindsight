@@ -36,8 +36,10 @@ def test_native_uses_tsvector_operators():
     arm = _arm("native")
     # The mental_models tsvector is generated with the 'english' config, so the
     # query must use 'english' regardless of the configured native language.
-    assert "ts_rank_cd(mm.search_vector, websearch_to_tsquery('english', $3))" in arm.score_expr
-    assert arm.match_filter == "AND mm.search_vector @@ websearch_to_tsquery('english', $3)"
+    # Joining tokens with OR aligns candidate recall with memory-recall BM25;
+    # precision is restored downstream via ts_rank_cd ranking and RRF fusion.
+    assert "ts_rank_cd(mm.search_vector, to_tsquery('english', $3))" in arm.score_expr
+    assert arm.match_filter == "AND mm.search_vector @@ to_tsquery('english', $3)"
 
 
 def test_pgroonga_uses_multilingual_expression_index():

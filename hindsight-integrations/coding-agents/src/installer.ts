@@ -14,6 +14,7 @@
  *   cursor-cli   sessionStart + beforeSubmitPrompt + stop hooks in ~/.cursor/hooks.json + ~/.cursor/mcp.json
  *   copilot-cli  sessionStart + userPromptTransformed + agentStop hooks in ~/.copilot/hooks/ + MCP
  *   cline-cli    native in-process plugin + MCP
+ *   dcode        native Agent Plugin via `dcode plugin marketplace/install`
  *   dsh          native Cordis plugin row in $DSH_HOME/cordis.patch.yml (DeepSeek Harness)
  *
  * IDEMPOTENT: our entries are recognized by the package path in their command ("hindsight-coding-
@@ -43,6 +44,7 @@ import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
+import { SKILL_DIRS } from "./core/skill-dirs";
 import { createInstallerUi, type SelectOption } from "./install-ui";
 
 /**
@@ -63,8 +65,12 @@ export interface InstallCtx {
   dist: string; // built entry points
   /** Runs `claude mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
   claudeMcp?: (args: string[]) => boolean;
+  /** Runs `qwen mcp ...`; injectable for tests. Returns false when the CLI isn't usable. */
+  qwenMcp?: (args: string[]) => boolean;
   /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
   clinePlugin?: (args: string[]) => boolean;
+  /** Runs native Dcode plugin commands; injectable for tests. Returns false when unusable. */
+  dcodePlugin?: (args: string[]) => boolean;
   /** Reports whether `node:sqlite` works in the node that runs hooks; injectable for tests. */
   nodeSqlite?: () => boolean;
   /** Whether stdin can be prompted. Defaults to the real TTY check at the CLI entry; tests set it
@@ -233,21 +239,33 @@ function stripHarnessHooks(hooks: Record<string, any>, harness: HookHarnessName)
   }
 }
 
+/** This host's skills directory, from the map core/skill-sync.ts also reads — see SKILL_DIRS for
+ *  why the two sides must not keep separate copies of these paths. */
+function skillsBaseFor(c: InstallCtx, harness: string): string {
+  const parts = SKILL_DIRS[harness];
+  if (!parts) throw new Error(`${harness} installs a skill but names no directory in SKILL_DIRS`);
+  return join(c.home, ...parts);
+}
+
 /** Copy the packaged companion SKILL into a host's skills directory (idempotent overwrite).
  * The log line carries the harness prefix like every adapter message: several adapters install
  * the skill before their first own log, and an unprefixed line would render under the PREVIOUS
  * harness's group in the CLI output. */
-function installSkill(c: InstallCtx, harness: string, skillsBase: string): void {
+function installSkill(c: InstallCtx, harness: string): void {
   const src = join(c.pkgRoot, "skill");
   if (!existsSync(join(src, "SKILL.md"))) return;
+  const skillsBase = skillsBaseFor(c, harness);
   const dst = join(skillsBase, "hindsight-coding-agent");
   mkdirSync(skillsBase, { recursive: true });
   cpSync(src, dst, { recursive: true });
   c.log?.(`${harness}: skill installed at ${dst}`);
 }
 
-function uninstallSkill(c: InstallCtx, skillsBase: string): void {
-  rmSync(join(skillsBase, "hindsight-coding-agent"), { recursive: true, force: true });
+function uninstallSkill(c: InstallCtx, harness: string): void {
+  rmSync(join(skillsBaseFor(c, harness), "hindsight-coding-agent"), {
+    recursive: true,
+    force: true,
+  });
 }
 
 // ── per-harness adapters ────────────────────────────────────────────────────────
@@ -261,8 +279,8 @@ export interface HarnessInstaller {
    * reporting success and then never retaining anything.
    */
   preflight?(ctx: InstallCtx): string | undefined;
-  install(ctx: InstallCtx): void;
-  uninstall(ctx: InstallCtx): void;
+  install(ctx: InstallCtx): void | boolean;
+  uninstall(ctx: InstallCtx): void | boolean;
 }
 
 function onPath(bin: string): boolean {
@@ -301,75 +319,132 @@ function opencodeConfigPath(c: InstallCtx): string {
   return existing ?? join(dir, "opencode.json");
 }
 
+function runDcodePlugin(args: string[]): boolean {
+  try {
+    execFileSync("dcode", args, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Register/unregister the package root in `~/.config/opencode`'s `plugin` array. Shared verbatim by
+ * `opencode` and `opencode2`: the two CLIs read the SAME config file, and v1 REJECTS the whole file
+ * on v2's `plugins` key ("Configuration is invalid … Unrecognized key: plugins"), so a v2-specific
+ * entry is not an option. One entry serves both because they resolve a plugin directory
+ * differently — v1 follows package.json `main` (dist/index.js), v2 loads `<dir>/index.js` — and v2
+ * migrates the legacy `plugin` key to `plugins` for itself. See src/opencode2.ts.
+ *
+ * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
+ * keeps that idempotent), and uninstalling either removes the shared entry.
+ */
+function registerOpencodePlugin(c: InstallCtx, name: string): void {
+  const path = opencodeConfigPath(c);
+  let cfg: Record<string, any> = {};
+  if (existsSync(path)) {
+    const parsed = parseJsonc(readFileSync(path, "utf8"));
+    if (!parsed) {
+      c.log?.(`${name}: SKIPPED — could not parse ${path}; add the plugin entry manually`);
+      return;
+    }
+    cfg = parsed;
+  }
+  const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
+  // writeJsonc, not writeJson: this config routinely carries comments, and re-serializing the
+  // parsed object would strip every one of them even though the read succeeded.
+  writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot]);
+  c.log?.(`${name}: plugin registered in ${path}`);
+}
+
+function unregisterOpencodePlugin(c: InstallCtx, name: string): void {
+  const path = opencodeConfigPath(c);
+  if (!existsSync(path)) return;
+  const cfg = parseJsonc(readFileSync(path, "utf8"));
+  if (!cfg || !Array.isArray(cfg.plugin)) return;
+  const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
+  writeJsonc(path, "plugin", kept.length ? kept : undefined);
+  c.log?.(`${name}: plugin entry removed`);
+}
+
 const opencode: HarnessInstaller = {
   name: "opencode",
   detect: (c) => onPath("opencode") || existsSync(join(c.home, ".config", "opencode")),
-  install(c) {
-    const path = opencodeConfigPath(c);
-    let cfg: Record<string, any> = {};
-    if (existsSync(path)) {
-      const parsed = parseJsonc(readFileSync(path, "utf8"));
-      if (!parsed) {
-        c.log?.(`opencode: SKIPPED — could not parse ${path}; add the plugin entry manually`);
-        return;
-      }
-      cfg = parsed;
-    }
-    const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
-    // writeJsonc, not writeJson: this config routinely carries comments, and re-serializing the
-    // parsed object would strip every one of them even though the read succeeded.
-    writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot]);
-    c.log?.(`opencode: plugin registered in ${path}`);
-  },
-  uninstall(c) {
-    const path = opencodeConfigPath(c);
-    if (!existsSync(path)) return;
-    const cfg = parseJsonc(readFileSync(path, "utf8"));
-    if (!cfg || !Array.isArray(cfg.plugin)) return;
-    const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
-    writeJsonc(path, "plugin", kept.length ? kept : undefined);
-    c.log?.("opencode: plugin entry removed");
-  },
+  install: (c) => registerOpencodePlugin(c, "opencode"),
+  uninstall: (c) => unregisterOpencodePlugin(c, "opencode"),
 };
 
 /**
- * Prime Agent (PrimeIntellect) — a persistent plugin loaded as an extension. Register the built
- * `dist/prime-agent.js` in the `extensions` array of `~/.prime/agent/settings.json`; Prime Agent
- * loads that file's default export at session start. The entry path contains MARKER (the package is
- * `hindsight-coding-agents`), so uninstall's MARKER filter removes exactly what install added.
+ * opencode v2 — the `opencode2` binary (npm `@opencode-ai/cli@beta`), which installs ALONGSIDE v1
+ * rather than replacing it.
  *
- * The skill goes to Prime Agent's OWN `~/.prime/agent/skills`, not the shared `~/.agents/skills`
- * root it also reads: `uninstallSkill` removes a fixed directory name, so installing to the shared
- * root would make `uninstall prime-agent` delete Codex's and dsh's copy too (#3772).
+ * Detection is the binary only, deliberately NOT `~/.config/opencode`: that directory is v1's too,
+ * so keying on it would make `install` (which wires every detected agent) claim opencode2 on every
+ * v1-only machine.
  */
-const primeAgent: HarnessInstaller = {
-  name: "prime-agent",
-  detect: (c) => onPath("prime-agent") || existsSync(join(c.home, ".prime", "agent")),
-  install(c) {
-    const path = join(c.home, ".prime", "agent", "settings.json");
-    const cfg = readJson(path);
-    const entry = join(c.pkgRoot, "dist", "prime-agent.js");
-    const exts: string[] = Array.isArray(cfg.extensions) ? cfg.extensions : [];
-    cfg.extensions = [...exts.filter((p) => !String(p).includes(MARKER)), entry];
-    writeJson(path, cfg);
-    installSkill(c, "prime-agent", join(c.home, ".prime", "agent", "skills"));
-    c.log?.(`prime-agent: extension registered in ${path}`);
-  },
-  uninstall(c) {
-    const path = join(c.home, ".prime", "agent", "settings.json");
-    if (existsSync(path)) {
+const opencode2: HarnessInstaller = {
+  name: "opencode2",
+  detect: () => onPath("opencode2"),
+  install: (c) => registerOpencodePlugin(c, "opencode2"),
+  uninstall: (c) => unregisterOpencodePlugin(c, "opencode2"),
+};
+
+/**
+ * The pi-family extension hosts: pi and its fork Prime Agent (PrimeIntellect). Both load a
+ * persistent extension by absolute path from the `extensions` array of their own `settings.json`,
+ * calling that file's default export at session start — they differ only in the config directory
+ * (`~/.pi/agent` vs `~/.prime/agent`), the executable name, and which dist bundle reports which
+ * harness. The entry path runs through the package root, which contains MARKER, so uninstall's
+ * MARKER filter removes exactly what install added and leaves every other extension alone.
+ *
+ * These installs are the ONLY supported route for either host, and the package deliberately carries
+ * no `pi` key. Both hosts read that same `pkg.pi.extensions` when this package is installed as a
+ * distributed pi package, so it can only ever name one bundle — and the host it did not name would
+ * load the other's, reporting the wrong harness, taking that harness's config section and stamping
+ * it on every document it retained. It used to name Prime Agent's, which is exactly how pi
+ * mis-attributed before it had an entry of its own. A key that is right for at most one of two
+ * hosts is worse than none, so there is none; installer.test.ts holds that line.
+ *
+ * The skills directory (SKILL_DIRS) is per-host rather than shared: both read `~/.agents/skills`
+ * too, but that is the root Codex and dsh install into, and uninstallSkill removes by a fixed
+ * directory name — so putting ours there would make uninstalling one host delete the other hosts'
+ * copy. Each writes its OWN skills directory instead.
+ */
+function piFamilyInstaller(harness: string, configDir: string[]): HarnessInstaller {
+  const settings = (c: InstallCtx) => join(c.home, ...configDir, "settings.json");
+  return {
+    name: harness,
+    // Both hosts name their executable exactly as we name the harness, so the harness id doubles
+    // as the PATH probe here — unlike, say, antigravity-cli, whose binary is `agy`.
+    detect: (c) => onPath(harness) || existsSync(join(c.home, ...configDir)),
+    install(c) {
+      const path = settings(c);
+      const cfg = readJson(path);
+      const entry = join(c.pkgRoot, "dist", `${harness}.js`);
+      const exts: string[] = Array.isArray(cfg.extensions) ? cfg.extensions : [];
+      cfg.extensions = [...exts.filter((p) => !String(p).includes(MARKER)), entry];
+      writeJson(path, cfg);
+      installSkill(c, harness);
+      c.log?.(`${harness}: extension registered in ${path}`);
+    },
+    uninstall(c) {
+      // Before the settings guard on purpose: a hand-deleted settings.json must not strand the skill.
+      uninstallSkill(c, harness);
+      const path = settings(c);
+      if (!existsSync(path)) return;
       const cfg = readJson(path);
       if (Array.isArray(cfg.extensions)) {
         cfg.extensions = cfg.extensions.filter((p: string) => !String(p).includes(MARKER));
         if (!cfg.extensions.length) delete cfg.extensions;
         writeJson(path, cfg);
       }
-    }
-    // Outside the settings guard on purpose: a hand-deleted settings.json must not strand the skill.
-    uninstallSkill(c, join(c.home, ".prime", "agent", "skills"));
-    c.log?.("prime-agent: extension entry + skill removed");
-  },
-};
+      c.log?.(`${harness}: extension entry + skill removed`);
+    },
+  };
+}
+
+const pi = piFamilyInstaller("pi", [".pi", "agent"]);
+const primeAgent = piFamilyInstaller("prime-agent", [".prime", "agent"]);
 
 /**
  * Kilo Code CLI — an opencode fork, so registration is opencode's: append our entry to the config's
@@ -441,7 +516,7 @@ const claudeCode: HarnessInstaller = {
     c.log?.(`claude-code: hooks merged into ${path}`);
     // Companion SKILL: every skills-capable host gets it (claude/antigravity/cursor native dirs;
     // codex via the ~/.agents/skills standard).
-    installSkill(c, "claude-code", join(c.home, ".claude", "skills"));
+    installSkill(c, "claude-code");
     const mcp = c.claudeMcp ?? defaultClaudeMcp;
     // `claude mcp add` REFUSES when the name is taken ("MCP server hindsight already exists in
     // user config") — so on a machine that already had Hindsight, a re-install could never
@@ -484,7 +559,7 @@ const claudeCode: HarnessInstaller = {
     }
     const mcp = c.claudeMcp ?? defaultClaudeMcp;
     mcp(["mcp", "remove", "--scope", "user", "hindsight"]);
-    uninstallSkill(c, join(c.home, ".claude", "skills"));
+    uninstallSkill(c, "claude-code");
     c.log?.("claude-code: hooks + MCP registration + skill removed");
   },
 };
@@ -549,7 +624,7 @@ const codex: HarnessInstaller = {
       writeFileSync(tomlPath, next);
       c.log?.(`codex: wrote ${additions.length} section(s) to ${tomlPath}`);
     }
-    installSkill(c, "codex", join(c.home, ".agents", "skills")); // agentskills-standard shared dir
+    installSkill(c, "codex"); // agentskills-standard shared dir
   },
   uninstall(c) {
     const hooksPath = join(c.home, ".codex", "hooks.json");
@@ -560,7 +635,7 @@ const codex: HarnessInstaller = {
         writeJson(hooksPath, cfg);
       }
     }
-    uninstallSkill(c, join(c.home, ".agents", "skills"));
+    uninstallSkill(c, "codex");
     const tomlPath = join(c.home, ".codex", "config.toml");
     if (existsSync(tomlPath)) {
       const toml = readFileSync(tomlPath, "utf8");
@@ -630,7 +705,7 @@ const antigravity: HarnessInstaller = {
       );
     }
     c.log?.(`antigravity-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
-    installSkill(c, "antigravity-cli", join(c.home, ".gemini", "config", "skills"));
+    installSkill(c, "antigravity-cli");
   },
   uninstall(c) {
     const hooksPath = join(c.home, ".gemini", "config", "hooks.json");
@@ -662,7 +737,7 @@ const antigravity: HarnessInstaller = {
         writeJson(settingsPath, settings);
       }
     }
-    uninstallSkill(c, join(c.home, ".gemini", "config", "skills"));
+    uninstallSkill(c, "antigravity-cli");
     c.log?.("antigravity-cli: hooks + MCP entry + status line + skill removed");
   },
 };
@@ -704,6 +779,9 @@ export function runtimeDir(home: string): string {
   return join(home, ".hindsight", "coding-agents");
 }
 
+/** Names the directory `stageRuntime` copied from — read by core/auto-update.ts. */
+export const ORIGIN_FILE = ".install-origin.json";
+
 /**
  * Copy the runtime out of wherever this was executed from and into a stable location, then point
  * the wiring at the copy.
@@ -741,6 +819,25 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
     const pkgJson = join(c.pkgRoot, "package.json");
     if (existsSync(pkgJson)) copyFileSync(pkgJson, join(target, "package.json"));
+    // The Dcode Agent Plugin surface (its manifest and the hooks that manifest points at) plus the
+    // root index.js opencode2 loads a plugin directory from — see src/opencode2.ts. Without that
+    // file here, the staged copy is a v1-only plugin and opencode2 logs "configured plugin
+    // directory has no index entrypoint".
+    // (All are listed in package.json#files, so they exist in a published install too.)
+    for (const resource of ["plugin.json", "hooks", "index.js"]) {
+      const source = join(c.pkgRoot, resource);
+      if (existsSync(source)) cpSync(source, join(target, resource), { recursive: true });
+    }
+    // Record WHERE this copy came from, LAST — the marker means "a complete copy landed here".
+    // core/auto-update.ts will only replace a runtime it can prove was downloaded by npx: a copy
+    // staged from a global `npm i -g`, a project dependency or a local checkout belongs to whoever
+    // manages that source, and silently overwriting it would either fight their package manager
+    // (leaving `npm ls -g` reporting a version that is no longer what runs) or destroy a
+    // developer's locally-built dist.
+    writeFileSync(
+      join(target, ORIGIN_FILE),
+      JSON.stringify({ source: c.pkgRoot, stagedAt: new Date().toISOString() })
+    );
     c.log?.(`runtime staged at ${target}`);
     return { ...c, pkgRoot: target, dist: join(target, "dist") };
   } catch (error) {
@@ -1054,7 +1151,7 @@ const cursor: HarnessInstaller = {
     };
     writeJson(mcpPath, mcp);
     c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
-    installSkill(c, "cursor-cli", join(c.home, ".cursor", "skills"));
+    installSkill(c, "cursor-cli");
   },
   uninstall(c) {
     const hooksPath = join(c.home, ".cursor", "hooks.json");
@@ -1074,7 +1171,7 @@ const cursor: HarnessInstaller = {
         writeJson(mcpPath, mcp);
       }
     }
-    uninstallSkill(c, join(c.home, ".cursor", "skills"));
+    uninstallSkill(c, "cursor-cli");
     c.log?.("cursor-cli: hooks + MCP entry + skill removed");
   },
 };
@@ -1095,7 +1192,7 @@ const copilot: HarnessInstaller = {
       hindsight: mcpServerEntry(c.dist, "copilot-cli"),
     };
     writeJson(mcpPath, mcp);
-    installSkill(c, "copilot-cli", join(c.home, ".copilot", "skills"));
+    installSkill(c, "copilot-cli");
     c.log?.(`copilot-cli: hooks installed at ${hooksPath}, MCP into ${mcpPath}`);
   },
   uninstall(c) {
@@ -1110,7 +1207,7 @@ const copilot: HarnessInstaller = {
         writeJson(mcpPath, mcp);
       }
     }
-    uninstallSkill(c, join(c.home, ".copilot", "skills"));
+    uninstallSkill(c, "copilot-cli");
     c.log?.("copilot-cli: hooks + MCP entry + skill removed");
   },
 };
@@ -1145,7 +1242,7 @@ const grok: HarnessInstaller = {
       copyFileSync(path, `${path}.hindsight-backup`);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${withoutOurs.replace(/\n*$/, "\n")}${block}`);
-    installSkill(c, "grok-build", join(c.home, ".grok", "skills"));
+    installSkill(c, "grok-build");
     c.log?.(`grok-build: native hooks + MCP installed in ${path}`);
   },
   uninstall(c) {
@@ -1155,7 +1252,7 @@ const grok: HarnessInstaller = {
       const cleaned = existing.replace(GROK_BLOCK_RE, "\n");
       if (cleaned !== existing) writeFileSync(path, cleaned);
     }
-    uninstallSkill(c, join(c.home, ".grok", "skills"));
+    uninstallSkill(c, "grok-build");
     c.log?.("grok-build: native hooks + MCP + skill removed");
   },
 };
@@ -1194,7 +1291,7 @@ const cline: HarnessInstaller = {
       hindsight: mcpServerEntry(c.dist, "cline-cli"),
     };
     writeJson(mcpPath, mcp);
-    installSkill(c, "cline-cli", join(c.home, ".cline", "data", "settings", "skills"));
+    installSkill(c, "cline-cli");
     c.log?.(
       installed
         ? "cline-cli: native plugin + MCP + skill installed"
@@ -1214,8 +1311,127 @@ const cline: HarnessInstaller = {
         writeJson(mcpPath, mcp);
       }
     }
-    uninstallSkill(c, join(c.home, ".cline", "data", "settings", "skills"));
+    uninstallSkill(c, "cline-cli");
     c.log?.("cline-cli: native plugin + MCP + skill removed");
+  },
+};
+
+/** Dcode's plugin manager owns its cache and enablement state. Keep this installer as a thin
+ * native CLI invocation: the package's bundled marketplace points back at the staged package,
+ * while Dcode performs the copy, validation, enablement, and foreign-state preservation. */
+const DCODE_MARKETPLACE = "hindsight-coding-agents";
+const DCODE_PLUGIN_ID = "hindsight-coding-agents@hindsight-coding-agents";
+const DCODE_MARKETPLACE_RELATIVE_PATH = join(".agents", "plugins", "marketplace.json");
+const DCODE_FALLBACK_MARKETPLACE = "hindsight-coding-agents-marketplace.json";
+
+/**
+ * Prepare a local marketplace without taking ownership of a foreign manifest at the conventional
+ * path. A custom JSON file still has the same ~/.hindsight root, so ./coding-agents remains valid,
+ * while Dcode records it as its own marketplace and the foreign top-level name is untouched.
+ */
+function prepareDcodeMarketplace(c: InstallCtx): string | false {
+  const root = join(c.home, ".hindsight");
+  const conventionalPath = join(root, DCODE_MARKETPLACE_RELATIVE_PATH);
+  let path = conventionalPath;
+  let registrationSource = root;
+  let marketplace: Record<string, any> = { plugins: [] };
+  if (existsSync(conventionalPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(conventionalPath, "utf8"));
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.plugins)) {
+        path = join(root, DCODE_FALLBACK_MARKETPLACE);
+      } else if (
+        typeof (parsed as Record<string, unknown>).name === "string" &&
+        parsed.name !== DCODE_MARKETPLACE
+      ) {
+        // Do not mutate the identity of a marketplace that another Dcode plugin may already use.
+        path = join(root, DCODE_FALLBACK_MARKETPLACE);
+      } else {
+        marketplace = parsed;
+      }
+    } catch {
+      path = join(root, DCODE_FALLBACK_MARKETPLACE);
+    }
+  }
+  if (path !== conventionalPath && existsSync(path)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8"));
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        !Array.isArray(parsed.plugins) ||
+        parsed.name !== DCODE_MARKETPLACE
+      ) {
+        c.log?.(`dcode: refusing to replace malformed marketplace file ${path}`);
+        return false;
+      }
+      marketplace = parsed;
+    } catch {
+      c.log?.(`dcode: refusing to replace unreadable marketplace file ${path}`);
+      return false;
+    }
+  }
+  if (path !== conventionalPath) registrationSource = path;
+  const foreign = marketplace.plugins.filter(
+    (entry: unknown) =>
+      !entry ||
+      typeof entry !== "object" ||
+      (entry as Record<string, unknown>).name !== "hindsight-coding-agents"
+  );
+  marketplace.name = DCODE_MARKETPLACE;
+  marketplace.plugins = [
+    ...foreign,
+    {
+      name: "hindsight-coding-agents",
+      source: { source: "local", path: "./coding-agents" },
+    },
+  ];
+  writeJson(path, marketplace);
+  return registrationSource;
+}
+
+const dcode: HarnessInstaller = {
+  name: "dcode",
+  detect: (c) => onPath("dcode") || existsSync(join(c.home, ".deepagents")),
+  preflight: (c) =>
+    c.dcodePlugin || onPath("dcode") ? undefined : "the `dcode` CLI is not on PATH",
+  install(c) {
+    const plugin = c.dcodePlugin ?? runDcodePlugin;
+    const marketplacePath = prepareDcodeMarketplace(c);
+    const installed =
+      marketplacePath !== false &&
+      plugin(["plugin", "marketplace", "add", marketplacePath]) &&
+      plugin(["plugin", "install", DCODE_PLUGIN_ID]);
+    if (installed) {
+      c.log?.(`dcode: native Agent Plugin installed (${DCODE_PLUGIN_ID})`);
+    } else {
+      const source = marketplacePath === false ? join(c.home, ".hindsight") : marketplacePath;
+      c.log?.(
+        `dcode: could not install the native plugin — run \
+` + `  dcode plugin marketplace add "${source}" && dcode plugin install ${DCODE_PLUGIN_ID}`
+      );
+    }
+    return installed;
+  },
+  uninstall(c) {
+    const plugin = c.dcodePlugin ?? runDcodePlugin;
+    const removed = plugin(["plugin", "uninstall", DCODE_PLUGIN_ID]);
+    // Also retire the marketplace WE registered. `plugin uninstall` alone leaves it listed by
+    // `dcode plugin marketplace list` and the plugin itself listed as `disabled` — our own
+    // leftovers in Dcode's state, not foreign state we are obliged to preserve. Only ours is
+    // named DCODE_MARKETPLACE, so a foreign marketplace at the conventional path is untouched.
+    const marketplaceRemoved = plugin(["plugin", "marketplace", "remove", DCODE_MARKETPLACE]);
+    if (removed) {
+      c.log?.("dcode: native Agent Plugin removed (foreign ~/.deepagents state preserved)");
+      if (!marketplaceRemoved) {
+        c.log?.(
+          `dcode: the ${DCODE_MARKETPLACE} marketplace is still registered — remove it with \`dcode plugin marketplace remove ${DCODE_MARKETPLACE}\``
+        );
+      }
+    } else {
+      c.log?.(`dcode: could not run native uninstall for ${DCODE_PLUGIN_ID}`);
+    }
+    return removed;
   },
 };
 
@@ -1263,7 +1479,7 @@ const dsh: HarnessInstaller = {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, others ? `${others}\n\n${block}` : block);
     // dsh's skill provider scans the shared agentskills root, the same one Codex reads.
-    installSkill(c, "dsh", join(c.home, ".agents", "skills"));
+    installSkill(c, "dsh");
     c.log?.(`dsh: plugin registered in ${path} (applies to every dsh profile)`);
   },
   uninstall(c) {
@@ -1275,14 +1491,80 @@ const dsh: HarnessInstaller = {
       // BOOT on anything else, so removing the last block must leave an empty list behind.
       if (others !== existing.trim()) writeFileSync(path, others ? `${others}\n` : "[]\n");
     }
-    uninstallSkill(c, join(c.home, ".agents", "skills"));
+    uninstallSkill(c, "dsh");
     c.log?.("dsh: plugin entry + skill removed");
   },
 };
 
+const qwen: HarnessInstaller = {
+  name: "qwen-code",
+  detect: (c) => onPath("qwen") || existsSync(join(c.home, ".qwen")),
+  install(c) {
+    const path = join(c.home, ".qwen", "settings.json");
+    const settings = readJson(path);
+    settings.hooks = settings.hooks ?? {};
+    // Qwen's settings.json hook shape is Claude Code's, so the shared nested writer applies —
+    // the ONLY difference is the unit of `timeout`, which HOOK_HARNESSES already carries in ms.
+    mergeHarnessHooks(settings.hooks, "qwen-code", c.dist);
+    writeJson(path, settings);
+    c.log?.(`qwen-code: hooks merged into ${path}`);
+    installSkill(c, "qwen-code");
+    const mcp = c.qwenMcp ?? defaultQwenMcp;
+    // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
+    // re-install could never repoint a stale server. Remove first (a no-op when absent).
+    mcp(["mcp", "remove", "hindsight"]);
+    if (
+      mcp([
+        "mcp",
+        "add",
+        "-s",
+        "user",
+        "-e",
+        "HINDSIGHT_MCP_HARNESS=qwen-code",
+        "hindsight",
+        "node",
+        join(c.dist, "mcp-server.js"),
+      ])
+    ) {
+      c.log?.("qwen-code: MCP server registered (qwen mcp add, user scope)");
+    } else {
+      c.log?.(
+        `qwen-code: could not run \`qwen mcp add\` — register the tools manually:\n` +
+          `  qwen mcp add -s user -e HINDSIGHT_MCP_HARNESS=qwen-code hindsight node "${join(c.dist, "mcp-server.js")}"`
+      );
+    }
+  },
+  uninstall(c) {
+    const path = join(c.home, ".qwen", "settings.json");
+    if (existsSync(path)) {
+      const settings = readJson(path);
+      if (settings.hooks) {
+        stripHarnessHooks(settings.hooks, "qwen-code");
+        if (!Object.keys(settings.hooks).length) delete settings.hooks;
+        writeJson(path, settings);
+      }
+    }
+    const mcp = c.qwenMcp ?? defaultQwenMcp;
+    mcp(["mcp", "remove", "hindsight"]);
+    uninstallSkill(c, "qwen-code");
+    c.log?.("qwen-code: hooks + MCP registration + skill removed");
+  },
+};
+
+function defaultQwenMcp(args: string[]): boolean {
+  try {
+    execFileSync("qwen", args, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
+  opencode2,
   kilo,
+  pi,
   primeAgent,
   claudeCode,
   codex,
@@ -1291,7 +1573,9 @@ export const INSTALLERS: HarnessInstaller[] = [
   cursor,
   copilot,
   grok,
+  qwen,
   cline,
+  dcode,
   dsh,
 ];
 
@@ -1361,14 +1645,33 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
   // why installing from a cache used to be refused outright. Copying the runtime somewhere stable
   // first removes the problem instead of pushing it onto the user: `npx` now works, and nobody has
   // to keep a global install of a tool whose only job is to set other tools up.
-  if (command === "install") ctx = stageRuntime(ctx);
+  if (command === "install" || command === "update") ctx = stageRuntime(ctx);
+  // `update` is `install`'s staging half and nothing else: it replaces the runtime every wired
+  // agent already points at (~/.hindsight/coding-agents/dist, a path that is stable across
+  // versions) and writes to NO host config. That separation is what makes it safe to run
+  // unattended from `core/auto-update.ts` — an `install` would need a harness list, and choosing
+  // one on the user's behalf would rewire agents they never asked us to touch.
+  //
+  // The cost of not rewiring: a version that introduces a NEW hook entry point is staged but not
+  // referenced, so that one feature waits for a manual `install`. Every existing entry point picks
+  // the new code up on its next spawn.
+  if (command === "update") {
+    ctx.log?.(
+      ctx.pkgRoot === ctxIn.pkgRoot
+        ? "runtime already up to date — nothing staged"
+        : "runtime updated — every wired agent picks it up on its next session"
+    );
+    return 0;
+  }
   if (command !== "install" && command !== "uninstall") {
     ctx.log?.(
       `usage: hindsight-coding-agents <install|uninstall> <all|harness...>\n` +
+        `       hindsight-coding-agents update\n` +
         `       [--server cloud|self-hosted|daemon] [--api-url <url>] [--api-token <token>]\n` +
         `       [--import-conversations]\n` +
         `  all      every agent detected on this machine\n` +
         `  harness  ${INSTALLERS.map((i) => i.name).join(", ")} (agy aliases antigravity-cli)\n` +
+        `  update   re-stage the runtime only, leaving every host config untouched\n` +
         `  agents/CI: without a TTY nothing ever prompts — pass --server (and --api-url/--api-token) to choose`
     );
     return command ? 1 : 0;
@@ -1430,14 +1733,16 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     }
   }
   const runnable = targets.filter((t) => !blocked.has(t.name));
-  for (const t of runnable) t[command](ctx);
+  const failed: string[] = [];
+  for (const t of runnable) {
+    if (t[command](ctx) === false) failed.push(t.name);
+  }
   if (command === "install" && importHistory) {
     for (const t of runnable) importConversations(t.name, ctx);
   }
-  if (blocked.size) {
-    ctx.log?.(
-      `\n❌ not installed: ${[...blocked].join(", ")} — this machine can't run ${blocked.size > 1 ? "them" : "it"} (see above).`
-    );
+  if (blocked.size || failed.length) {
+    const notInstalled = [...blocked, ...failed];
+    ctx.log?.(`\n❌ not installed: ${notInstalled.join(", ")} — see the messages above.`);
     return 1;
   }
   // No completion message here: the CLI entry's InstallerUi outro reports success (and where the

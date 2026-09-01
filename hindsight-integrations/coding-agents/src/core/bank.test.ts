@@ -1,18 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+// The git LAYOUT probe is the seam, not `child_process`: resolution reads the repository layout
+// off disk (see git-layout.ts), so these unit tests state what the layout says and assert the bank
+// id derived from it. Real repositories are covered by bank-bare-hub / bank-missing-dir.
+vi.mock("./git-layout", () => ({ probeGitLayout: vi.fn() }));
 
-import { execFileSync } from "node:child_process";
 import { deriveBankId } from "./bank";
+import { probeGitLayout } from "./git-layout";
 
-const mockExec = vi.mocked(execFileSync);
-const NOT_A_REPO = () => {
-  throw new Error("fatal: not a git repository");
-};
+const mockProbe = vi.mocked(probeGitLayout);
+const inRepo = (commonDir: string, bare = false) =>
+  ({ status: "resolved", commonDir, bare }) as const;
 
 describe("deriveBankId", () => {
   beforeEach(() => {
-    mockExec.mockImplementation(NOT_A_REPO); // default: not in a git repo
+    mockProbe.mockReturnValue({ status: "absent" }); // default: not in a git repo
   });
   afterEach(() => {
     vi.clearAllMocks();
@@ -25,40 +27,31 @@ describe("deriveBankId", () => {
   });
 
   it("resolves the MAIN worktree root inside git (worktrees share one bank)", () => {
-    mockExec.mockReturnValue("/home/me/dev/myrepo/.git\n");
+    mockProbe.mockReturnValue(inRepo("/home/me/dev/myrepo/.git"));
     expect(deriveBankId({}, "/home/me/dev/myrepo-feature-wt")).toBe("coding-agent::myrepo");
   });
 
   it("uses the bare-repo directory name when common-dir is not .git", () => {
-    mockExec.mockReturnValue("/srv/git/myrepo.git\n");
+    mockProbe.mockReturnValue(inRepo("/srv/git/myrepo.git", true));
     expect(deriveBankId({}, "/srv/git/myrepo.git")).toBe("coding-agent::myrepo.git");
   });
 
   it("uses the hub name for a hidden bare repository shared by worktrees", () => {
-    mockExec.mockImplementation((_command, args) => {
-      if (args?.includes("--git-common-dir")) return "/home/me/myrepo/.bare\n";
-      if (args?.includes("--is-bare-repository")) return "true\n";
-      throw new Error("unexpected git command");
-    });
+    mockProbe.mockReturnValue(inRepo("/home/me/myrepo/.bare", true));
     expect(deriveBankId({}, "/home/me/myrepo/main")).toBe("coding-agent::myrepo");
-    expect(mockExec).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a hidden non-bare common directory unchanged", () => {
-    mockExec.mockImplementation((_command, args) => {
-      if (args?.includes("--git-common-dir")) return "/home/me/project/.git-bare\n";
-      if (args?.includes("--is-bare-repository")) return "false\n";
-      throw new Error("unexpected git command");
-    });
+    mockProbe.mockReturnValue(inRepo("/home/me/project/.git-bare", false));
     expect(deriveBankId({}, "/home/me/project")).toBe("coding-agent::.git-bare");
   });
 
   it("resolveWorktrees=false skips git and uses the directory basename", () => {
-    mockExec.mockReturnValue("/home/me/dev/myrepo/.git\n");
+    mockProbe.mockReturnValue(inRepo("/home/me/dev/myrepo/.git"));
     expect(deriveBankId({ resolveWorktrees: false }, "/home/me/dev/myrepo-wt")).toBe(
       "coding-agent::myrepo-wt"
     );
-    expect(mockExec).not.toHaveBeenCalled();
+    expect(mockProbe).not.toHaveBeenCalled();
   });
 
   it("the default bank is harness-neutral — same id regardless of the harness arg", () => {
@@ -94,7 +87,7 @@ describe("deriveBankId", () => {
     });
 
     it("{project} is the plain directory basename even inside git", () => {
-      mockExec.mockReturnValue("/home/me/dev/myrepo/.git\n");
+      mockProbe.mockReturnValue(inRepo("/home/me/dev/myrepo/.git"));
       expect(deriveBankId({ bankIdTemplate: "{project}" }, "/home/me/dev/myrepo-wt")).toBe(
         "myrepo-wt"
       );

@@ -20,6 +20,7 @@ import pytest
 
 from hindsight_api.config import ENV_ENABLE_TEXT_SEARCH, HindsightConfig, _get_raw_config
 from hindsight_api.engine.retain import orchestrator as retain_orchestrator
+from hindsight_api.engine.search import bm25_term_selection as bm25_mod
 from hindsight_api.engine.search import retrieval as retrieval_mod
 
 
@@ -89,8 +90,8 @@ def harness(monkeypatch):
 
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: dialect)
     monkeypatch.setattr(retrieval_mod, "tokenize_query", counting_tokenize)
-    monkeypatch.setattr(retrieval_mod, "select_selective_bm25_tokens", fake_select_selective)
-    monkeypatch.setattr(retrieval_mod, "get_current_schema", lambda: "public")
+    monkeypatch.setattr(bm25_mod, "select_selective_bm25_tokens", fake_select_selective)
+    monkeypatch.setattr(bm25_mod, "get_current_schema", lambda: "public")
     monkeypatch.setattr(retrieval_mod, "fq_table", lambda name: name)
 
     return SimpleNamespace(

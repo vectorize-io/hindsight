@@ -19,7 +19,7 @@ from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetEr
 from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_llm_value
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
-from ..structured_output import strict_json_schema
+from ..structured_output import provider_json_schema, strict_json_schema
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -1533,7 +1533,7 @@ def _build_request_body(batch_impl, config, prompt: str, user_message: str, resp
     # fallback, so the batch and streaming paths can't disagree.
     if hasattr(response_schema, "model_json_schema"):
         retain_strict_schema = config.llm_strict_schema_retain
-        schema = strict_json_schema(response_schema) if retain_strict_schema else response_schema.model_json_schema()
+        schema = strict_json_schema(response_schema) if retain_strict_schema else provider_json_schema(response_schema)
         request_body["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": "facts", "schema": schema, "strict": retain_strict_schema},
@@ -1559,7 +1559,7 @@ async def _extract_facts_from_chunk(
     context: str,
     llm_config: "LLMConfig",
     config,
-    agent_name: str = None,
+    agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
@@ -1963,7 +1963,7 @@ async def _extract_facts_with_auto_split(
     context: str,
     llm_config: LLMConfig,
     config,
-    agent_name: str = None,
+    agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
@@ -2069,10 +2069,10 @@ async def extract_facts_from_text(
     text: str,
     event_date: datetime | None,
     llm_config: LLMConfig,
-    agent_name: str,
     config,
     context: str = "",
     metadata: dict[str, str] | None = None,
+    agent_name: str | None = None,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -2087,10 +2087,12 @@ async def extract_facts_from_text(
         text: Input text (conversation, article, etc.)
         event_date: Reference date for resolving relative times
         llm_config: LLM configuration to use
-        agent_name: Agent name (memory owner)
         config: Resolved HindsightConfig for this bank
         context: Context about the conversation/document
         metadata: Optional document metadata key-value pairs
+        agent_name: Optional narrator to prime the prompt with ("Narrator: {name}").
+            Retain never sets it — see the caller in retain/orchestrator.py — and the
+            dry-run endpoint's field that does is deprecated in favour of ``context``.
 
     Returns:
         Tuple of (facts, chunks, usage) where:
@@ -2248,7 +2250,6 @@ async def _write_batch_extraction_errors(
 async def extract_facts_from_contents_batch_api(
     contents: list[RetainContent],
     llm_config,
-    agent_name: str,
     config,
     pool=None,
     operation_id: str | None = None,
@@ -2263,7 +2264,6 @@ async def extract_facts_from_contents_batch_api(
     Args:
         contents: List of RetainContent objects to process
         llm_config: LLM configuration with batch API support
-        agent_name: Name of the agent
         config: Resolved HindsightConfig for this bank
         pool: Database connection pool (for storing batch state)
         operation_id: Async operation ID (for crash recovery)
@@ -2380,7 +2380,6 @@ async def extract_facts_from_contents_batch_api(
                 item.event_date,
                 item.context,
                 item.metadata or None,
-                agent_name,
                 mission_preamble=_retain_mission_preamble(config),
             )
 
@@ -2851,7 +2850,6 @@ def _extract_facts_chunks(
 async def extract_facts_from_contents(
     contents: list[RetainContent],
     llm_config,
-    agent_name: str,
     config,
     pool=None,
     operation_id: str | None = None,
@@ -2871,7 +2869,6 @@ async def extract_facts_from_contents(
     Args:
         contents: List of RetainContent objects to process
         llm_config: LLM configuration for fact extraction
-        agent_name: Name of the agent (for agent-related fact detection)
         config: Resolved HindsightConfig for this bank
         pool: Database connection pool (passed to batch API for state storage)
         operation_id: Async operation ID (passed to batch API for crash recovery)
@@ -2890,9 +2887,7 @@ async def extract_facts_from_contents(
 
     # Route to batch API if enabled
     if config.retain_batch_enabled:
-        return await extract_facts_from_contents_batch_api(
-            contents, llm_config, agent_name, config, pool, operation_id, schema
-        )
+        return await extract_facts_from_contents_batch_api(contents, llm_config, config, pool, operation_id, schema)
 
     # Step 1: Create parallel fact extraction tasks
     fact_extraction_tasks = []
@@ -2903,7 +2898,6 @@ async def extract_facts_from_contents(
             event_date=item.event_date,
             context=item.context,
             llm_config=llm_config,
-            agent_name=agent_name,
             config=config,
             metadata=item.metadata or None,
         )

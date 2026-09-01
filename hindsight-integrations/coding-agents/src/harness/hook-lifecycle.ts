@@ -13,6 +13,8 @@ import { readAntigravityTranscript } from "../core/transcript-antigravity";
 import { readCopilotTranscript } from "../core/transcript-copilot";
 import { grokTranscriptPath, readGrokTranscript } from "../core/transcript-grok";
 import { readDevinTranscript } from "../core/transcript-devin";
+import { dcodeAssistantText, readDcodeTranscript } from "../core/transcript-dcode";
+import { readQwenTranscript } from "../core/transcript-qwen";
 
 export type HookHarnessName =
   | "claude-code"
@@ -21,18 +23,32 @@ export type HookHarnessName =
   | "cursor-cli"
   | "copilot-cli"
   | "devin-cli"
-  | "grok-build";
+  | "grok-build"
+  | "dcode"
+  | "qwen-code";
 export type HookLifecycle = "sessionStart" | "prompt" | "stop";
 export type HookConfigStyle = "nested" | "flat";
 
 export interface HookInstallSpec {
   event: string;
   entry: string;
+  /** In `HookHarnessSpec.timeoutUnit` — NOT always seconds. See that field. */
   timeout?: number;
 }
 
+/**
+ * The unit the HOST reads `HookInstallSpec.timeout` in. Every host but Qwen Code uses seconds;
+ * Qwen passes the value straight to setTimeout, so 30 there means 30ms and the hook is dead before
+ * a Node process starts. Declaring the unit makes that difference checkable instead of a comment:
+ * the lifecycle test normalises through it, so changing Qwen's 30_000 to 30 without also changing
+ * this field now fails a test rather than silently shipping dead hooks.
+ */
+export type HookTimeoutUnit = "seconds" | "milliseconds";
+
 export interface HookHarnessSpec {
   configStyle: HookConfigStyle;
+  /** Defaults to "seconds" when absent — the unit every host but qwen-code uses. */
+  timeoutUnit?: HookTimeoutUnit;
   install: Record<HookLifecycle, HookInstallSpec>;
   sessionStart: SessionStartHookSpec;
   prompt: HookSpec;
@@ -62,6 +78,38 @@ const codexPrompt: HookSpec = {
   harness: "codex",
   parse: (ev) => ({
     prompt: (ev.prompt as string | undefined) ?? (ev.user_prompt as string | undefined),
+    cwd: ev.cwd as string | undefined,
+    sessionId: ev.session_id as string | undefined,
+  }),
+};
+
+const dcodePrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "dcode",
+};
+
+/**
+ * Qwen Code speaks Claude Code's hook protocol field for field (session_id / transcript_path / cwd
+ * in, hookSpecificOutput.additionalContext + systemMessage out), so only `parse` differs — and it
+ * reads `submitted_prompt`, NOT `prompt`.
+ *
+ * `UserPromptSubmit` fires on tool-result continuations too, not just on submissions: Qwen's send
+ * loop labels the first turn `userQuery` and every continuation `toolResult`, and the hook's fire
+ * guard excludes only retry/steer/cron/notification/teammate/goal. On a continuation `prompt` holds
+ * whatever text is currently model-bound (a tool result), so keying on it would recall ~20 times per
+ * user turn against tool output. `submitted_prompt` is attached only when the turn is BOTH the first
+ * one and a real `userQuery`, which makes it the exact genuine-submission marker — and runHook's
+ * `if (!prompt) return` then suppresses every continuation with no core change.
+ *
+ * Cost, deliberately accepted: `submitted_prompt` is the interactive TUI's text projection, so
+ * headless (`qwen -p`), serve/SDK and ACP sessions carry none and never recall. They still get the
+ * SessionStart seed and the Stop write-back.
+ */
+const qwenPrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "qwen-code",
+  parse: (ev) => ({
+    prompt: ev.submitted_prompt as string | undefined,
     cwd: ev.cwd as string | undefined,
     sessionId: ev.session_id as string | undefined,
   }),
@@ -177,6 +225,28 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
       }),
       readTranscript: readCodexTranscript,
+    },
+  },
+  dcode: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "dcode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "dcode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "dcode-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: standardSessionStart("dcode"),
+    prompt: dcodePrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "dcode",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+        lastAssistantMessage: ev.last_assistant_message as string | undefined,
+      }),
+      readTranscript: readDcodeTranscript,
+      readLastMessage: dcodeAssistantText,
     },
   },
   "antigravity-cli": {
@@ -343,6 +413,37 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
       }),
       readTranscript: readGrokTranscript,
+    },
+  },
+  "qwen-code": {
+    configStyle: "nested",
+    timeoutUnit: "milliseconds",
+    // TIMEOUTS ARE MILLISECONDS HERE, not seconds like every other harness in this table: Qwen's
+    // hookRunner does `setTimeout(..., hookConfig.timeout ?? DEFAULT_HOOK_TIMEOUT)` with
+    // DEFAULT_HOOK_TIMEOUT = 60_000 ("Timeout in milliseconds, default 60000"). Writing 30/60
+    // registers 30ms/60ms hooks, which die before a Node process starts — and Qwen spawns hooks
+    // `detached` and terminates the whole process TREE on timeout, so the retain is genuinely lost
+    // rather than merely orphaned. `retain.hostTimeoutSec` below stays SECONDS, as its name says;
+    // these two numbers are the same budget in different units for this harness alone.
+    // The prompt timeout must also stay above core/hook.ts's HOOK_REFLECT_CAP_MS (25_000).
+    install: {
+      sessionStart: { event: "SessionStart", entry: "qwen-sessionstart-hook.js", timeout: 30_000 },
+      prompt: { event: "UserPromptSubmit", entry: "qwen-hook.js", timeout: 30_000 },
+      stop: { event: "Stop", entry: "qwen-stop-hook.js", timeout: 60_000 },
+    },
+    sessionStart: standardSessionStart("qwen-code"),
+    prompt: qwenPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "qwen-code",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        // Qwen supplies the path, but as the EMPTY STRING (not null, not absent) when chat
+        // recording is off — runRetainHook's `if (!transcriptPath) return` already covers that.
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readQwenTranscript,
     },
   },
 };

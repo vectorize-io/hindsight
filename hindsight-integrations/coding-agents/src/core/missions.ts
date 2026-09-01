@@ -209,7 +209,7 @@ export interface KnowledgePage {
  * Naming the repo and stating the exclusion is what lets the synthesizer make that call while it
  * still has the fact's text in front of it. It rides on `source_query` rather than the bank's
  * `reflect_mission` because the mission is seeded ONCE and then belongs to whoever set it
- * (CODING_BANK_STRUCTURE, #2492) — a mission-only fix would never reach an existing bank, while a
+ * (`codingBankManifest`, #2492) — a mission-only fix would never reach an existing bank, while a
  * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
  */
 function pageScopeRule(project: string): string {
@@ -378,21 +378,86 @@ export const CODING_BANK_TEMPLATE = {
   },
 } as const;
 
+/** Bank-level missions the template seeds ONCE and then leaves alone (#2492). */
+const MISSION_FIELDS = ["reflect_mission", "retain_mission", "observations_mission"] as const;
+
+/** Bank-scoped config OVERRIDES exactly as `GET /banks/{id}/config` reports them. */
+export type BankOverrides = Record<string, unknown>;
+
+/** The manifest `configureBank` POSTs to `/banks/{id}/import`. */
+export interface BankManifest {
+  version: "1";
+  bank: Record<string, unknown>;
+}
+
+/** A bank-config override the bank's owner actually made. Blank is not a choice; `false` is. */
+function isSet(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  return true;
+}
+
 /**
- * The subset re-applied to a bank that is ALREADY configured — everything above minus the missions.
+ * The template fields still missing from a bank whose overrides are `overrides` — or `undefined`
+ * when it already carries them all and there is nothing to write.
  *
- * The full template seeds a bank once. After that the missions are the user's: someone who rewrites
- * `reflect_mission` in the control plane means it, and re-importing the manifest on every seed pass
- * silently stamped the defaults back over it (#2492 — the same regression #1270 fixed for OpenClaw).
+ * **This plugin only ever ADDS what is missing; it never overwrites what the bank already says.**
  *
- * The retain strategies and entity labels stay, because they are not preferences: this plugin writes
- * documents under `git` / `gitlog` / `conversation` / `document`, and a bank missing one of those
- * would reject the write. A newer plugin adding a strategy needs it to land on existing banks too.
+ * Re-applying the whole template on every pass is how a plugin takes a bank over, and it has now
+ * been fixed three times over the same shape: #1270 for OpenClaw's missions, #2492 for this
+ * plugin's, and #3927 for everything those two left un-guarded. Each earlier fix protected only the
+ * fields that had just been noticed, so the rest kept being stamped back on every session start.
+ * Reading the current overrides and writing only where the bank is silent covers the whole surface
+ * at once, including whatever gets added to the template next.
+ *
+ * The two container fields merge PER ENTRY, because the server stores each as ONE config value and
+ * an import replaces it outright: re-sending the five strategies wholesale deleted any strategy the
+ * user had defined, reverted their edits to the plugin's own (mission, extraction mode, chunk
+ * size), and could leave `retain_default_strategy` naming a strategy that no longer existed.
+ * Merging still lets a strategy ADDED by a newer plugin release reach an existing bank — the reason
+ * the re-apply exists — without touching the entries already there.
+ *
+ * The consequence is deliberate: a release that REWORDS an existing strategy or label does not
+ * reach a bank that already has it. Clearing that override on the bank takes the current default
+ * back, since the next pass then finds the bank silent there.
  */
-export const CODING_BANK_STRUCTURE = {
-  version: "1",
-  bank: {
-    retain_strategies: RETAIN_STRATEGIES,
-    entity_labels: [KNOWLEDGE_LABELS],
-  },
-} as const;
+export function codingBankManifest(overrides: BankOverrides | undefined): BankManifest | undefined {
+  // Unreadable overrides — the bank does not exist yet, or the deployment has the bank-config API
+  // switched off. Nothing can have been customised through an API that is not there, and this same
+  // POST is what CREATES the bank, so `{}` seeds the lot (every branch below fires, and the result
+  // is CODING_BANK_TEMPLATE — asserted in missions.test.ts).
+  const current = overrides ?? {};
+  const template = CODING_BANK_TEMPLATE.bank;
+  const bank: Record<string, unknown> = {};
+
+  // The missions are seeded as a GROUP: the plugin writes all three together, so any one of them
+  // being present means this bank has been seeded already, or its owner wrote their own (#2492).
+  if (!MISSION_FIELDS.some((f) => isSet(current[f]))) {
+    bank.reflect_mission = template.reflect_mission;
+    bank.enable_observations = template.enable_observations;
+    bank.observations_mission = template.observations_mission;
+    bank.retain_mission = template.retain_mission;
+    bank.retain_extraction_mode = template.retain_extraction_mode;
+  }
+
+  if (!isSet(current.retain_default_strategy))
+    bank.retain_default_strategy = template.retain_default_strategy;
+  if (!isSet(current.entities_allow_free_form))
+    bank.entities_allow_free_form = template.entities_allow_free_form;
+
+  const strategies =
+    current.retain_strategies && typeof current.retain_strategies === "object"
+      ? (current.retain_strategies as Record<string, unknown>)
+      : {};
+  const missing = Object.entries(template.retain_strategies).filter(([n]) => !(n in strategies));
+  // The whole map is one config value, so the UNION has to be sent — not just the additions.
+  if (missing.length > 0)
+    bank.retain_strategies = { ...strategies, ...Object.fromEntries(missing) };
+
+  const labels = Array.isArray(current.entity_labels) ? current.entity_labels : [];
+  const [knowledgeGroup] = template.entity_labels;
+  if (!labels.some((g) => (g as { key?: unknown } | null)?.key === knowledgeGroup.key))
+    bank.entity_labels = [...labels, knowledgeGroup];
+
+  return Object.keys(bank).length > 0 ? { version: "1", bank } : undefined;
+}

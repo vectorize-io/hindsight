@@ -46,6 +46,7 @@ jobs:
       integrations-zcode: ${{ steps.filter.outputs.integrations-zcode }}
       integrations-agent-plugin: ${{ steps.filter.outputs.integrations-agent-plugin }}
       integrations-copilot-cli: ${{ steps.filter.outputs.integrations-copilot-cli }}
+      extensions-supabase-tenant: ${{ steps.filter.outputs.extensions-supabase-tenant }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
@@ -168,6 +169,8 @@ jobs:
             - 'hindsight-integrations/cursor-cli/**'
           integrations-copilot-cli:
             - 'hindsight-integrations/copilot-cli/**'
+          extensions-supabase-tenant:
+            - 'hindsight-extensions/supabase-tenant/**'
           integrations-crewai:
             - 'hindsight-integrations/crewai/**'
           integrations-litellm:
@@ -1622,28 +1625,39 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
+        # `smoke` decides which legs are loaded into the daemon and actually
+        # started. The full variants are skipped to save runner disk; cp-only
+        # is smoke tested despite being a full variant because the alpine
+        # image is small and it is the only leg that exercises the alpine Node
+        # runtime at all (it needs no LLM credentials - see NEEDS_LLM in
+        # docker/test-image.sh).
         include:
           - target: api-only
             name: api
             variant: full
+            smoke: false
             build_args: ""
           - target: api-only
             name: api-slim
             variant: slim
+            smoke: true
             build_args: |
               INCLUDE_LOCAL_MODELS=false
               PRELOAD_ML_MODELS=false
           - target: cp-only
             name: control-plane
             variant: full
+            smoke: true
             build_args: ""
           - target: standalone
             name: standalone
             variant: full
+            smoke: false
             build_args: ""
           - target: standalone
             name: standalone-slim
             variant: slim
+            smoke: true
             build_args: |
               INCLUDE_LOCAL_MODELS=false
               PRELOAD_ML_MODELS=false
@@ -1675,23 +1689,24 @@ jobs:
         target: ${{ matrix.target }}
         build-args: ${{ matrix.build_args }}
         push: false
-        load: ${{ matrix.variant == 'slim' }}
+        load: ${{ matrix.smoke }}
         tags: hindsight-${{ matrix.name }}:test
         # Removed GitHub Actions cache (type=gha) - it frequently returns 502 errors
         # causing buildx to fail with "failed to parse error response 502"
         # Build will be slower but more reliable
 
-    # Only test slim variants to save disk space (they're much smaller)
-    # Slim variants require external embedding providers
+    # Slim variants require external embedding providers; cp-only needs no
+    # credentials at all, so the credential step stays gated on the variant
+    # while the smoke test itself is gated on `smoke`.
     - name: Setup GCP credentials for smoke test
-      if: matrix.variant == 'slim'
+      if: matrix.variant == 'slim' && matrix.smoke
       run: |
         printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
         PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Smoke test - verify container starts
-      if: matrix.variant == 'slim'
+      if: matrix.smoke
       env:
         HINDSIGHT_API_LLM_PROVIDER: vertexai
         HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
@@ -1818,6 +1833,11 @@ jobs:
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # The real-LLM delta/retraction/cache evals gate on this flag *and* a key. The
+      # key was already set here, so they sat skipped and the mental-model delta path —
+      # the one that hands a provider a schema it has to accept — had no end-to-end
+      # coverage anywhere. Found while landing the structured-output change (#3937).
+      HINDSIGHT_RUN_GEMINI_EVALS: "1"
 
     steps:
     - uses: actions/checkout@v6
@@ -1865,7 +1885,17 @@ jobs:
 
     - name: Run core LLM tests
       working-directory: ./hindsight-api-slim
-      run: uv run pytest tests -v -m "hs_llm_core" --timeout 600
+      # --reruns, and ONLY on this job. Every test here asserts what a model chose to
+      # do — a judge verdict, whether the agent called done() rather than being forced,
+      # whether a summary kept a detail — so a single run's failure does not separate a
+      # regression from the model landing differently. It shows: this job has failed on
+      # a *different* test in most recent runs (5 distinct ones across 2 runs of #3982
+      # alone), which makes a red here carry no signal at all. Two reruns keep a real
+      # regression red — it reproduces — while a coin-flip settles.
+      #
+      # Deliberately NOT applied to the deterministic shards (test-api): there a rerun
+      # would hide exactly the races those tests exist to catch.
+      run: uv run pytest tests -v -m "hs_llm_core" --timeout 600 --reruns 2 --reruns-delay 5
 
   test-api-llm-acceptance:
     needs: [detect-changes]
@@ -3759,6 +3789,53 @@ jobs:
       working-directory: ./hindsight-integrations/copilot-cli
       run: uv run pytest tests -v
 
+  test-extension-supabase-tenant:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.extensions-supabase-tenant == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    # No --frozen: the lock is not checked in, because tool.uv.sources resolves
+    # hindsight-api-slim from the local checkout and its dependency tree moves
+    # with core.
+    - name: Install dependencies
+      working-directory: ./hindsight-extensions/supabase-tenant
+      run: uv sync
+
+    - name: Run tests
+      working-directory: ./hindsight-extensions/supabase-tenant
+      run: uv run pytest tests -v
+
+    # The Dockerfile IS the distribution mechanism — its final `import` step is
+    # the only thing proving the extension is reachable from the interpreter the
+    # server runs. Build it from the repo root, where the sources are in context.
+    - name: Build the extension image
+      run: |
+        docker build \
+          -f hindsight-extensions/supabase-tenant/Dockerfile \
+          --build-arg HINDSIGHT_IMAGE=ghcr.io/vectorize-io/hindsight:latest-slim \
+          -t hindsight-with-supabase .
+
   test-crewai-integration:
     needs: [detect-changes]
     if: >-
@@ -5346,6 +5423,7 @@ jobs:
       - test-flowise-integration
       - test-obsidian-integration
       - test-agent-framework-integration
+      - test-extension-supabase-tenant
       - test-crewai-integration
       - test-langgraph-integration
       - test-superagent-integration

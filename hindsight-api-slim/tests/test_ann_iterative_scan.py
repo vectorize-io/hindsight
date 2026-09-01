@@ -30,6 +30,7 @@ import pytest
 
 from hindsight_api._vector_index import ann_max_scan_tuples, ann_search_tuning_settings
 from hindsight_api.engine.memories.postgres import PostgresMemories
+from hindsight_api.engine.search import bm25_term_selection as bm25_mod
 from hindsight_api.engine.search import retrieval as retrieval_mod
 from hindsight_api.engine.search.link_expansion_retrieval import GRAPH_SEED_LIMIT
 
@@ -120,7 +121,7 @@ def search_path(monkeypatch):
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: dialect)
     monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
     monkeypatch.setattr(retrieval_mod, "fq_table", lambda name: name)
-    monkeypatch.setattr(retrieval_mod, "get_current_schema", lambda: None)
+    monkeypatch.setattr(bm25_mod, "get_current_schema", lambda: None)
     return dialect
 
 

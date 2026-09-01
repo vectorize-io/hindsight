@@ -180,7 +180,6 @@ async def test_batch_lifecycle_runs_entirely_on_the_batch_capable_member() -> No
     await extract_facts_from_contents_batch_api(
         contents=[RetainContent(content="Alice moved to Paris in 2023.")],
         llm_config=_chain(primary, secondary),
-        agent_name="test_agent",
         config=_batch_config(),
         pool=None,
         operation_id=None,
@@ -198,7 +197,6 @@ async def test_batch_request_body_carries_the_serving_members_settings() -> None
     await extract_facts_from_contents_batch_api(
         contents=[RetainContent(content="Alice moved to Paris in 2023.")],
         llm_config=_chain(_BatchMember("deepseek", False), secondary),
-        agent_name="test_agent",
         config=_batch_config(),
         pool=None,
         operation_id=None,
@@ -221,7 +219,6 @@ async def test_resume_polls_the_member_that_submitted_the_batch() -> None:
     await extract_facts_from_contents_batch_api(
         contents=[RetainContent(content="Alice moved to Paris in 2023.")],
         llm_config=_chain(_BatchMember("deepseek", False), secondary),
-        agent_name="test_agent",
         config=_batch_config(),
         pool=pool,
         operation_id=str(uuid.uuid4()),
@@ -246,7 +243,6 @@ async def test_resume_fails_loudly_when_the_chain_no_longer_serves_that_provider
         await extract_facts_from_contents_batch_api(
             contents=[RetainContent(content="Alice moved to Paris in 2023.")],
             llm_config=_chain(_BatchMember("deepseek", False), groq),
-            agent_name="test_agent",
             config=_batch_config(),
             pool=pool,
             operation_id=str(uuid.uuid4()),
@@ -283,7 +279,6 @@ async def test_submit_records_the_account_that_owns_the_batch() -> None:
     await extract_facts_from_contents_batch_api(
         contents=[RetainContent(content="Alice moved to Paris in 2023.")],
         llm_config=_chain(member),
-        agent_name="test_agent",
         config=_batch_config(),
         pool=pool,
         operation_id=str(uuid.uuid4()),
@@ -316,7 +311,6 @@ async def test_resume_polls_the_submitting_account_after_a_same_provider_reorder
     await extract_facts_from_contents_batch_api(
         contents=[RetainContent(content="Alice moved to Paris in 2023.")],
         llm_config=_chain(account_a, account_b),
-        agent_name="test_agent",
         config=_batch_config(),
         pool=pool,
         operation_id=str(uuid.uuid4()),
@@ -343,7 +337,6 @@ async def test_resume_fails_before_polling_when_the_submitting_account_is_gone()
         await extract_facts_from_contents_batch_api(
             contents=[RetainContent(content="Alice moved to Paris in 2023.")],
             llm_config=_chain(account_a),
-            agent_name="test_agent",
             config=_batch_config(),
             pool=pool,
             operation_id=str(uuid.uuid4()),

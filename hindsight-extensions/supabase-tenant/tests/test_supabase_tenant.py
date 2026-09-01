@@ -8,7 +8,7 @@ import jwt as pyjwt
 import pytest
 from jwt import PyJWK
 
-from hindsight_api.extensions.builtin.supabase_tenant import (
+from hindsight_ext_supabase_tenant.extension import (
     JWKS_CACHE_TTL_SECONDS,
     JWKS_MIN_REFRESH_INTERVAL_SECONDS,
     MIN_TOKEN_LENGTH,
@@ -166,8 +166,8 @@ class TestSupabaseTenantExtensionStartup:
         # JWKS fetch returns keys
         mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_api.extensions.builtin.supabase_tenant.PyJWK"):
+        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
+            with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
                 await ext.on_startup()
 
         assert ext._http_client is mock_client
@@ -178,8 +178,8 @@ class TestSupabaseTenantExtensionStartup:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_api.extensions.builtin.supabase_tenant.PyJWK") as mock_pyjwk:
+        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
+            with patch("hindsight_ext_supabase_tenant.extension.PyJWK") as mock_pyjwk:
                 mock_pyjwk.return_value = MagicMock(spec=PyJWK)
                 await ext.on_startup()
 
@@ -202,7 +202,7 @@ class TestSupabaseTenantExtensionStartup:
 
         mock_client.get.side_effect = mock_get
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.httpx.AsyncClient", return_value=mock_client):
+        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
             await ext.on_startup()
 
         assert ext._use_jwks is False
@@ -225,7 +225,7 @@ class TestSupabaseTenantExtensionStartup:
 
         mock_client.get.side_effect = mock_get
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.httpx.AsyncClient", return_value=mock_client):
+        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
             await ext.on_startup()
 
         assert ext._use_jwks is False
@@ -236,7 +236,7 @@ class TestSupabaseTenantExtensionStartup:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _make_mock_response(200, {"keys": []})
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.httpx.AsyncClient", return_value=mock_client):
+        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(ValueError, match="HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY is required"):
                 await ext.on_startup()
 
@@ -246,8 +246,8 @@ class TestSupabaseTenantExtensionStartup:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_api.extensions.builtin.supabase_tenant.PyJWK"):
+        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
+            with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
                 await ext.on_startup()
 
         # Second call should be health check
@@ -261,8 +261,8 @@ class TestSupabaseTenantExtensionStartup:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_api.extensions.builtin.supabase_tenant.PyJWK"):
+        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
+            with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
                 await ext.on_startup()
 
         # Only one call: JWKS fetch, no health check
@@ -281,7 +281,7 @@ class TestJWKSCacheManagement:
     async def test_get_signing_key_from_cache(self):
         ext, _ = _setup_jwks_ext()
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header:
+        with patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header:
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             key = await ext._get_signing_key("fake-token")
 
@@ -297,8 +297,8 @@ class TestJWKSCacheManagement:
         mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.PyJWK", return_value=new_key),
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.PyJWK", return_value=new_key),
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             key = await ext._get_signing_key("fake-token")
@@ -317,8 +317,8 @@ class TestJWKSCacheManagement:
         mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.PyJWK", return_value=rotated_key),
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.PyJWK", return_value=rotated_key),
         ):
             mock_header.return_value = {"kid": "rotated-key-99", "alg": "RS256"}
             # The refreshed JWKS won't have "rotated-key-99" either, so this should raise
@@ -332,7 +332,7 @@ class TestJWKSCacheManagement:
     async def test_get_signing_key_missing_kid_header(self):
         ext, _ = _setup_jwks_ext()
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header:
+        with patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header:
             mock_header.return_value = {"alg": "RS256"}  # no kid
             with pytest.raises(AuthenticationError, match="Token missing key ID"):
                 await ext._get_signing_key("fake-token")
@@ -345,7 +345,7 @@ class TestJWKSCacheManagement:
 
         mock_client.get.side_effect = httpx.ConnectError("Connection refused")
 
-        with patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header:
+        with patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header:
             mock_header.return_value = {"kid": "unknown-key", "alg": "RS256"}
             with pytest.raises(Exception):
                 await ext._get_signing_key("fake-token")
@@ -367,8 +367,8 @@ class TestAuthenticateJWKS:
         ext._context = mock_context
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": VALID_UUID, "aud": "authenticated"}
@@ -388,8 +388,8 @@ class TestAuthenticateJWKS:
         ext._context = mock_context
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": VALID_UUID}
@@ -403,9 +403,9 @@ class TestAuthenticateJWKS:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch(
-                "hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode",
+                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
                 side_effect=pyjwt.ExpiredSignatureError(),
             ),
         ):
@@ -419,9 +419,9 @@ class TestAuthenticateJWKS:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch(
-                "hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode",
+                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
                 side_effect=pyjwt.InvalidAudienceError(),
             ),
         ):
@@ -435,9 +435,9 @@ class TestAuthenticateJWKS:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch(
-                "hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode",
+                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
                 side_effect=pyjwt.InvalidIssuerError(),
             ),
         ):
@@ -451,9 +451,9 @@ class TestAuthenticateJWKS:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch(
-                "hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode",
+                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
                 side_effect=pyjwt.DecodeError(),
             ),
         ):
@@ -467,8 +467,8 @@ class TestAuthenticateJWKS:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"email": "test@example.com"}  # no sub
@@ -482,8 +482,8 @@ class TestAuthenticateJWKS:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": ""}
@@ -497,9 +497,9 @@ class TestAuthenticateJWKS:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch(
-                "hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode",
+                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
                 side_effect=RuntimeError("unexpected internal error"),
             ),
         ):
@@ -636,8 +636,8 @@ class TestAuthenticateCommon:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": "not-a-uuid"}
@@ -651,8 +651,8 @@ class TestAuthenticateCommon:
         ext, _ = _setup_jwks_ext()
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": "'; DROP TABLE users;--"}
@@ -677,8 +677,8 @@ class TestSupabaseTenantExtensionSchemaManagement:
         ext._context = mock_context
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": VALID_UUID}
@@ -696,8 +696,8 @@ class TestSupabaseTenantExtensionSchemaManagement:
         ext._context = mock_context
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": VALID_UUID}
@@ -717,8 +717,8 @@ class TestSupabaseTenantExtensionSchemaManagement:
         ext._context = mock_context
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": VALID_UUID}
@@ -753,8 +753,8 @@ class TestSupabaseTenantExtensionListTenants:
         ext._context = mock_context
 
         with (
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_api.extensions.builtin.supabase_tenant.pyjwt.decode") as mock_decode,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": VALID_UUID}
@@ -804,7 +804,7 @@ class TestSupabaseTenantExtensionLoader:
     def test_load_via_extension_loader(self, monkeypatch):
         monkeypatch.setenv(
             "HINDSIGHT_API_TENANT_EXTENSION",
-            "hindsight_api.extensions.builtin.supabase_tenant:SupabaseTenantExtension",
+            "hindsight_ext_supabase_tenant.extension:SupabaseTenantExtension",
         )
         monkeypatch.setenv("HINDSIGHT_API_TENANT_SUPABASE_URL", "https://test.supabase.co")
         monkeypatch.setenv("HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY", "test-key")
@@ -822,7 +822,7 @@ class TestSupabaseTenantExtensionLoader:
         """Extension should load without service key — JWKS mode doesn't need it."""
         monkeypatch.setenv(
             "HINDSIGHT_API_TENANT_EXTENSION",
-            "hindsight_api.extensions.builtin.supabase_tenant:SupabaseTenantExtension",
+            "hindsight_ext_supabase_tenant.extension:SupabaseTenantExtension",
         )
         monkeypatch.setenv("HINDSIGHT_API_TENANT_SUPABASE_URL", "https://test.supabase.co")
         monkeypatch.delenv("HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY", raising=False)

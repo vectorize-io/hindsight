@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ...config import get_config
 from ..db.ops import UpdatedWindow
-from ..memory_engine import fq_table, get_current_schema
+from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
-from .bm25_term_selection import select_selective_bm25_tokens
+from .bm25_term_selection import build_bm25_query_text
 from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import GRAPH_SEED_LIMIT, LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
@@ -278,36 +278,16 @@ async def retrieve_semantic_bm25_combined_sql(
     # --- BM25 UNION ALL arms (one per fact_type, only when tokens present) ---
     if _include_bm25:
         text_ext = config.text_search_extension
-        max_query_terms = config.bm25_max_query_terms
-        bm25_tokens = tokens
-        # Native tsvector has no IDF and ranks every `@@` match, so a long OR
-        # query over common terms scans and ranks a large fraction of the bank
-        # (the +60s prod timeout). Keep only the most selective terms — lowest
-        # tenant-wide document frequency, read for free from pg_stats — which
-        # bounds both the match set and the per-row rank cost while preserving
-        # the high-signal terms a blunt first-N cap would discard. PG-native
-        # only; best-effort (falls back to first-N when stats are unavailable).
-        # Opt out via bm25_selective_terms to cap by position instead.
-        if (
-            text_ext == "native"
-            and max_query_terms > 0
-            and len(tokens) > max_query_terms
-            and config.bm25_selective_terms
-            and getattr(conn, "backend_type", "postgresql") == "postgresql"
-        ):
-            bm25_tokens = await select_selective_bm25_tokens(
-                conn,
-                tokens,
-                schema=get_current_schema(),
-                table="memory_units",
-                language=config.text_search_extension_native_language,
-                max_terms=max_query_terms,
-            )
-        bm25_text_param: str = dialect.prepare_bm25_text(
-            bm25_tokens,
-            query_text,
-            text_search_extension=text_ext,
-            max_query_terms=max_query_terms,
+        # Shared with knowledge search (search_knowledge_pages) so the two BM25
+        # paths cannot drift apart on query shape again — see build_bm25_query_text.
+        bm25_text_param: str = await build_bm25_query_text(
+            conn,
+            dialect,
+            tokens=tokens,
+            query_text=query_text,
+            table="memory_units",
+            language=config.text_search_extension_native_language,
+            config=config,
         )
         for i, ft in enumerate(fact_types):
             arms.append(

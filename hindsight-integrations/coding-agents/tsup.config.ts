@@ -3,6 +3,9 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    // opencode v2 (`opencode2`) loads this via the package's root index.js, which re-exports it.
+    // Its plugin contract shares nothing with v1's, so it is a separate entry — see src/opencode2.ts.
+    opencode2: "src/opencode2.ts",
     // Kilo CLI (an opencode fork) loads this as its persistent plugin — see src/kilo.ts.
     kilo: "src/kilo.ts",
     deepen: "src/deepen.ts",
@@ -22,15 +25,24 @@ export default defineConfig({
     cline: "src/cline.ts",
     // DeepSeek Harness loads this as a native Cordis plugin — see src/dsh.ts.
     dsh: "src/dsh.ts",
-    // Prime Agent loads this module as an extension (default export) by absolute path from its
-    // settings.json `extensions` array, so it must be self-contained like the hook bins.
+    // pi and its fork Prime Agent each load their own module as an extension (default export) by
+    // absolute path from their settings.json `extensions` array, so both must be self-contained
+    // like the hook bins. They share src/harness/pi-extension.ts, which `splitting: false` inlines
+    // into each bundle rather than a shared chunk.
+    pi: "src/pi.ts",
     "prime-agent": "src/prime-agent.ts",
+    "qwen-hook": "src/qwen-hook.ts",
+    "qwen-sessionstart-hook": "src/qwen-sessionstart-hook.ts",
+    "qwen-stop-hook": "src/qwen-stop-hook.ts",
     "grok-hook": "src/grok-hook.ts",
     "grok-sessionstart-hook": "src/grok-sessionstart-hook.ts",
     "grok-stop-hook": "src/grok-stop-hook.ts",
     "codex-hook": "src/codex-hook.ts",
     "codex-sessionstart-hook": "src/codex-sessionstart-hook.ts",
     "codex-stop-hook": "src/codex-stop-hook.ts",
+    "dcode-hook": "src/dcode-hook.ts",
+    "dcode-sessionstart-hook": "src/dcode-sessionstart-hook.ts",
+    "dcode-stop-hook": "src/dcode-stop-hook.ts",
     "antigravity-hook": "src/antigravity-hook.ts",
     "antigravity-stop-hook": "src/antigravity-stop-hook.ts",
     "antigravity-statusline": "src/antigravity-statusline.ts",

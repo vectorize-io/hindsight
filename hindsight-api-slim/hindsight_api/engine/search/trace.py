@@ -58,25 +58,6 @@ class WeightComponents(BaseModel):
     frequency_contribution: float = Field(description="0.15 * frequency")
 
 
-class LinkInfo(BaseModel):
-    """Information about a link to a neighbor."""
-
-    to_node_id: str = Field(description="Target node ID")
-    link_type: Literal["temporal", "semantic", "entity"] = Field(description="Type of link")
-    link_weight: float = Field(
-        description="Weight of the link (can exceed 1.0 when aggregating multiple connections)", ge=0.0
-    )
-    entity_id: str | None = Field(default=None, description="Entity ID if link_type is 'entity'")
-    new_activation: float | None = Field(
-        default=None, description="Activation that would be passed to neighbor (None for supplementary links)"
-    )
-    followed: bool = Field(description="Whether this link was followed (or pruned)")
-    prune_reason: str | None = Field(default=None, description="Why link was not followed (if not followed)")
-    is_supplementary: bool = Field(
-        default=False, description="Whether this is a supplementary link (multiple connections to same node)"
-    )
-
-
 class NodeVisit(BaseModel):
     """Information about visiting a node during search."""
 
@@ -88,31 +69,12 @@ class NodeVisit(BaseModel):
 
     # How this node was reached
     is_entry_point: bool = Field(description="Whether this is an entry point")
-    parent_node_id: str | None = Field(default=None, description="Node that led to this one")
-    link_type: Literal["temporal", "semantic", "entity"] | None = Field(
-        default=None, description="Type of link from parent"
-    )
-    link_weight: float | None = Field(default=None, description="Weight of link from parent")
 
     # Weights
     weights: WeightComponents = Field(description="Weight calculation breakdown")
 
-    # Neighbors discovered from this node
-    neighbors_explored: list[LinkInfo] = Field(default_factory=list, description="Links explored from this node")
-
     # Ranking
     final_rank: int | None = Field(default=None, description="Final rank in results (1-based, None if not in top-k)")
-
-
-class PruningDecision(BaseModel):
-    """Records when a node was considered but not visited."""
-
-    node_id: str = Field(description="Node that was pruned")
-    reason: Literal["already_visited", "activation_too_low", "budget_exhausted"] = Field(
-        description="Why it was pruned"
-    )
-    activation: float = Field(description="Activation value when pruned")
-    would_have_been_step: int = Field(description="What step it would have been if visited")
 
 
 class SearchPhaseMetrics(BaseModel):
@@ -172,17 +134,11 @@ class SearchSummary(BaseModel):
     """Summary statistics about the search."""
 
     total_nodes_visited: int = Field(description="Total nodes visited")
-    total_nodes_pruned: int = Field(description="Total nodes pruned")
     entry_points_found: int = Field(description="Number of entry points")
-    budget_used: int = Field(description="How much budget was used")
-    budget_remaining: int = Field(description="How much budget remained")
+    budget_used: int = Field(description="Nodes scored against the budget")
+    budget_remaining: int = Field(description="Budget left after scoring")
     total_duration_seconds: float = Field(description="Total search duration")
     results_returned: int = Field(description="Number of results returned")
-
-    # Link statistics
-    temporal_links_followed: int = Field(default=0, description="Temporal links followed")
-    semantic_links_followed: int = Field(default=0, description="Semantic links followed")
-    entity_links_followed: int = Field(default=0, description="Entity links followed")
 
     # Phase timings
     phase_metrics: list[SearchPhaseMetrics] = Field(default_factory=list, description="Metrics for each phase")
@@ -207,7 +163,6 @@ class SearchTrace(BaseModel):
     visits: list[NodeVisit] = Field(
         default_factory=list, description="All nodes visited during search (legacy, for graph viz)"
     )
-    pruned: list[PruningDecision] = Field(default_factory=list, description="Nodes that were pruned (legacy)")
 
     summary: SearchSummary = Field(description="Summary statistics")
 

@@ -23,7 +23,7 @@ from hindsight_api.engine.consolidation.consolidator import (
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.schema import fq_table
 from hindsight_api.engine.transfer import import_documents
-from hindsight_api.engine.transfer.importer import parse_archive
+from hindsight_api.engine.transfer.importer import _EMBED_BATCH_SIZE, _embed_in_batches, parse_archive
 from hindsight_api.engine.transfer.schema import (
     SCHEMA_VERSION,
     TransferCausalRelation,
@@ -2279,3 +2279,40 @@ async def test_a_sql_backed_bank_is_not_read_through_the_store():
     with pytest.raises(Exception) as ei:  # noqa: PT011 - backend=None fails once SQL is reached
         await export_documents(None, "bank-x", None, memories=_SqlMemories())
     assert "list_documents" not in str(ei.value), "a SQL bank must not be read through the store"
+
+
+class _RecordingEmbedder:
+    """Minimal embeddings backend that records the size of every encode call."""
+
+    dimension = 2
+
+    def __init__(self):
+        self.batch_sizes: list[int] = []
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        self.batch_sizes.append(len(texts))
+        return [[float(len(text)), 0.0] for text in texts]
+
+
+@pytest.mark.asyncio
+async def test_embed_in_batches_bounds_call_size_and_keeps_order():
+    """Import embeds bank-sized lists; nothing below it bounds an in-process provider.
+
+    Without this slice, ``_import_observations`` hands the embedder every observation in
+    the bank in a single call and peak memory scales with the bank (issue #3891).
+    """
+    embedder = _RecordingEmbedder()
+    texts = [f"observation {index}" for index in range(_EMBED_BATCH_SIZE * 2 + 5)]
+
+    vectors = await _embed_in_batches(embedder, texts)
+
+    assert embedder.batch_sizes == [_EMBED_BATCH_SIZE, _EMBED_BATCH_SIZE, 5]
+    assert vectors == [[float(len(text)), 0.0] for text in texts]
+
+
+@pytest.mark.asyncio
+async def test_embed_in_batches_handles_empty_input():
+    embedder = _RecordingEmbedder()
+
+    assert await _embed_in_batches(embedder, []) == []
+    assert embedder.batch_sizes == []

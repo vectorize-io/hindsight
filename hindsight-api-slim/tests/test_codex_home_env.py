@@ -107,3 +107,68 @@ def test_codex_llm_loads_from_codex_home(tmp_path, monkeypatch):
 
     assert llm.access_token == "at-llm"
     assert llm._auth_file == codex_home / "auth.json"
+
+
+# ---------------------------------------------------------------------------
+# Explicit ``codex_home`` — per-provider credential store (issue #3793)
+# ---------------------------------------------------------------------------
+
+
+def test_default_auth_file_explicit_home_wins_over_env(tmp_path, monkeypatch):
+    """An explicit ``codex_home`` overrides the process-wide ``CODEX_HOME``."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "env-home"))
+
+    assert default_codex_auth_file(str(tmp_path / "explicit")) == tmp_path / "explicit" / "auth.json"
+
+
+def test_default_auth_file_empty_explicit_home_falls_back_to_env(tmp_path, monkeypatch):
+    """An empty string is treated as unset, like the env var itself."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "env-home"))
+
+    assert default_codex_auth_file("") == tmp_path / "env-home" / "auth.json"
+
+
+def test_codex_llm_loads_from_explicit_codex_home(tmp_path, monkeypatch):
+    """``codex_home=`` selects the auth store even when ``CODEX_HOME`` differs."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "env-home"))
+    profile = tmp_path / "profile-b"
+    _write_auth(profile, access_token="at-profile-b")
+
+    llm = CodexLLM(
+        provider="codex",
+        api_key="ignored",
+        base_url="",
+        model="gpt-5-codex",
+        codex_home=str(profile),
+    )
+
+    assert llm.access_token == "at-profile-b"
+    assert llm._auth_file == profile / "auth.json"
+
+
+def test_two_codex_llms_hold_independent_profiles(tmp_path, monkeypatch):
+    """Two instances in one process authenticate as two different accounts.
+
+    This is what makes a Codex-to-Codex failover chain meaningful: without a
+    per-instance store both members would read the same ``auth.json`` and a
+    quota-exhausted profile would just be retried.
+    """
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    primary = tmp_path / "primary"
+    secondary = tmp_path / "secondary"
+    _write_auth(primary, access_token="at-primary")
+    _write_auth(secondary, access_token="at-secondary")
+
+    def _build(home):
+        return CodexLLM(
+            provider="codex",
+            api_key="ignored",
+            base_url="",
+            model="gpt-5-codex",
+            codex_home=str(home),
+        )
+
+    a, b = _build(primary), _build(secondary)
+
+    assert (a.access_token, b.access_token) == ("at-primary", "at-secondary")
+    assert a._auth_file != b._auth_file

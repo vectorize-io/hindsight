@@ -3,9 +3,15 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getProjectRootFromGit, projectNameOf } from "./bank";
+import { projectNameOf, resolveProjectRoot } from "./bank";
 
 const fixtures: string[] = [];
+
+/** The resolved root, or "" — these fixtures are all real repositories, so anything else fails. */
+function rootOf(directory: string): string {
+  const projectRoot = resolveProjectRoot(directory);
+  return projectRoot.status === "resolved" ? projectRoot.root : "";
+}
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
@@ -39,8 +45,8 @@ describe("bare-hub project resolution", () => {
     const { hub, worktree } = createBareHub(root, bareName);
     const canonicalHub = realpathSync(hub);
 
-    expect(getProjectRootFromGit(hub)).toBe(canonicalHub);
-    expect(getProjectRootFromGit(worktree)).toBe(canonicalHub);
+    expect(rootOf(hub)).toBe(canonicalHub);
+    expect(rootOf(worktree)).toBe(canonicalHub);
     expect(projectNameOf(join(worktree, "nested"))).toBe(basename(canonicalHub));
   });
 
@@ -50,7 +56,7 @@ describe("bare-hub project resolution", () => {
     const bare = join(root, "myproject.git");
     git(root, ["init", "--bare", "-q", bare]);
 
-    expect(getProjectRootFromGit(bare)).toBe(realpathSync(bare));
+    expect(rootOf(bare)).toBe(realpathSync(bare));
     expect(projectNameOf(bare)).toBe("myproject.git");
   });
 
@@ -65,7 +71,7 @@ describe("bare-hub project resolution", () => {
     const worktree = join(root, "feature");
     git(repo, ["worktree", "add", "-q", "-b", "feature", worktree]);
 
-    expect(getProjectRootFromGit(repo)).toBe(realpathSync(repo));
-    expect(getProjectRootFromGit(worktree)).toBe(realpathSync(repo));
+    expect(rootOf(repo)).toBe(realpathSync(repo));
+    expect(rootOf(worktree)).toBe(realpathSync(repo));
   });
 });

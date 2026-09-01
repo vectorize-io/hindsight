@@ -15,7 +15,13 @@ were resolved into ``HindsightConfig`` but never reached the provider, so a conf
 
 import pytest
 
-from hindsight_api.config import DEFAULT_LLM_TIMEOUT
+from hindsight_api.config import (
+    DEFAULT_LLM_TIMEOUT,
+    DEFAULT_REFLECT_LLM_TIMEOUT,
+    ENV_LLM_TIMEOUT,
+    ENV_REFLECT_LLM_TIMEOUT,
+    _resolve_reflect_llm_timeout,
+)
 from hindsight_api.engine.llm_wrapper import LLMConfig
 
 
@@ -46,6 +52,82 @@ def test_openai_compatible_provider_impl_receives_timeout():
     """The OpenAI-compatible path (openai/groq/ollama/...) carries the timeout too."""
     llm = LLMConfig(provider="openai", api_key="k", base_url="", model="gpt-4o-mini", timeout=250.0)
     assert llm._provider_impl.timeout == 250.0
+
+
+@pytest.mark.parametrize(
+    "provider,extra",
+    [
+        ("openai-codex", {}),
+        ("anthropic", {}),
+        ("gemini", {}),
+        ("github-copilot", {}),
+        ("llamacpp", {}),
+    ],
+)
+def test_every_network_provider_receives_the_resolved_timeout(provider, extra, monkeypatch):
+    """Every provider carries the resolved timeout, whether or not it uses it (#3898).
+
+    Codex had no ``timeout`` at all — the factory never passed one and the class
+    never read one — so a runaway response was read until the backend gave up.
+    Gemini hardcoded its deadline at the call site and Anthropic fell back to its
+    own 300 s default, both ignoring what the operator configured. Parametrized so
+    a provider added later cannot quietly drop the value again.
+    """
+    from unittest.mock import patch
+
+    from hindsight_api.engine.providers.codex_llm import CodexLLM
+
+    with (
+        patch.object(CodexLLM, "_load_codex_auth", return_value=("token", "account")),
+        patch.object(CodexLLM, "_load_codex_refresh_token", return_value=None),
+    ):
+        llm = LLMConfig(provider=provider, api_key="k", base_url="", model="m", timeout=222.0, **extra)
+    assert llm._provider_impl.timeout == 222.0
+
+
+def test_gemini_uses_the_resolved_timeout_at_the_call_site():
+    """Gemini's ``asyncio.wait_for`` deadline comes from config, not a literal.
+
+    The 90 s literal used to be written at both call sites, so a configured
+    timeout was carried and then ignored — the attribute check above would have
+    passed anyway.
+    """
+    llm = LLMConfig(provider="gemini", api_key="k", base_url="", model="m", timeout=45.0)
+    assert llm._provider_impl._request_timeout == 45.0
+
+
+def test_gemini_deadline_falls_back_when_unconfigured():
+    from hindsight_api.engine.providers.gemini_llm import _DEFAULT_GEMINI_TIMEOUT
+
+    llm = LLMConfig(provider="gemini", api_key="k", base_url="", model="m")
+    assert llm._provider_impl._request_timeout == _DEFAULT_GEMINI_TIMEOUT
+
+
+def test_anthropic_passes_the_resolved_timeout_to_its_sdk_client():
+    """Anthropic silently used its own 300 s default because none was threaded."""
+    llm = LLMConfig(provider="anthropic", api_key="k", base_url="", model="claude-sonnet-4-20250514", timeout=45.0)
+    assert llm._provider_impl._client.timeout == 45.0
+
+
+def test_anthropic_timeout_falls_back_when_unconfigured():
+    from hindsight_api.engine.providers.anthropic_llm import _DEFAULT_ANTHROPIC_TIMEOUT
+
+    llm = LLMConfig(provider="anthropic", api_key="k", base_url="", model="claude-sonnet-4-20250514")
+    assert llm._provider_impl._client.timeout == _DEFAULT_ANTHROPIC_TIMEOUT
+
+
+def test_codex_deadline_falls_back_when_unconfigured():
+    """An unconfigured Codex provider keeps its historical 120 s bound."""
+    from unittest.mock import patch
+
+    from hindsight_api.engine.providers.codex_llm import _DEFAULT_CODEX_TIMEOUT, CodexLLM
+
+    with (
+        patch.object(CodexLLM, "_load_codex_auth", return_value=("token", "account")),
+        patch.object(CodexLLM, "_load_codex_refresh_token", return_value=None),
+    ):
+        llm = LLMConfig(provider="openai-codex", api_key="k", base_url="", model="m")
+    assert llm._provider_impl._request_timeout == _DEFAULT_CODEX_TIMEOUT
 
 
 def test_timeout_none_falls_back_to_provider_default():
@@ -173,7 +255,48 @@ def test_memory_engine_per_op_defaults_to_global_default(_clean_timeout_env):
         engine._reflect_llm_config,
         engine._consolidation_llm_config,
     ):
-        assert cfg.timeout == DEFAULT_LLM_TIMEOUT
         assert cfg.max_retries == DEFAULT_LLM_MAX_RETRIES
         assert cfg.initial_backoff == DEFAULT_LLM_INITIAL_BACKOFF
         assert cfg.max_backoff == DEFAULT_LLM_MAX_BACKOFF
+
+    # The deadline is the one default that is not uniform: reflect answers a waiting
+    # caller, so it gets its own shorter one (see TestReflectDeadlineDefault).
+    assert engine._llm_config.timeout == DEFAULT_LLM_TIMEOUT
+    assert engine._retain_llm_config.timeout == DEFAULT_LLM_TIMEOUT
+    assert engine._consolidation_llm_config.timeout == DEFAULT_LLM_TIMEOUT
+    assert engine._reflect_llm_config.timeout == DEFAULT_REFLECT_LLM_TIMEOUT
+
+
+class TestReflectDeadlineDefault:
+    """Reflect's per-request deadline defaults below the global one.
+
+    Reflect is the only interactive operation — a caller holds an HTTP request open
+    while it makes several sequential LLM calls — so a per-call deadline equal to the
+    whole global budget lets ONE stalled provider call outlive the caller. That is not
+    hypothetical: raising Gemini's effective deadline from its hardcoded 90s to the
+    configured 120s (#3946) took a stalled reflect iteration from ~84s to ~122s, which
+    is past the 120s budget the client suites allow, and turned them red.
+
+    Retain and consolidation keep the 120s: they run in the background against a queue,
+    where the deadline exists to stop runaway generation, not to keep a caller waiting.
+    """
+
+    def test_defaults_below_the_global_deadline(self, monkeypatch):
+        monkeypatch.delenv(ENV_REFLECT_LLM_TIMEOUT, raising=False)
+        monkeypatch.delenv(ENV_LLM_TIMEOUT, raising=False)
+
+        assert _resolve_reflect_llm_timeout() == DEFAULT_REFLECT_LLM_TIMEOUT
+        assert DEFAULT_REFLECT_LLM_TIMEOUT < DEFAULT_LLM_TIMEOUT
+
+    def test_an_explicit_global_is_inherited(self, monkeypatch):
+        """An operator who set a global deadline meant it — reflect must not cap it."""
+        monkeypatch.delenv(ENV_REFLECT_LLM_TIMEOUT, raising=False)
+        monkeypatch.setenv(ENV_LLM_TIMEOUT, "300")
+
+        assert _resolve_reflect_llm_timeout() is None  # None = inherit llm_timeout
+
+    def test_the_reflect_override_wins(self, monkeypatch):
+        monkeypatch.setenv(ENV_LLM_TIMEOUT, "300")
+        monkeypatch.setenv(ENV_REFLECT_LLM_TIMEOUT, "45")
+
+        assert _resolve_reflect_llm_timeout() == 45.0

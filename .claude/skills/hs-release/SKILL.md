@@ -69,7 +69,12 @@ uv run --directory hindsight-dev generate-changelog <version>
 ```
 
 LLM-summarizes the commits between the previous tag and `v<version>` and prepends an entry to
-`hindsight-docs/src/pages/changelog/index.md`. Requires `OPENAI_API_KEY` (already in the repo
+`hindsight-docs/src/pages/changelog/index.md`.
+
+The entry ends with a **Database Migrations** section listing every Alembic migration added in the
+range, each linking to the PR that introduced it. That section is enumerated deterministically from
+git (`--diff-filter=A` over `hindsight_api/alembic/versions/`), not by the LLM — don't hand-edit it,
+and if a migration is missing, check that its commit actually added the file in the tag range. Requires `OPENAI_API_KEY` (already in the repo
 `.env`). It excludes `hindsight-integrations/` source, but new integrations whose commits also
 touched docs will still appear — that matches precedent, leave them in the **changelog**.
 

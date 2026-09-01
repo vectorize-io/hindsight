@@ -1,4 +1,33 @@
 /** Small shared helpers (no harness or Hindsight coupling). */
+import { accessSync, constants } from "node:fs";
+import { delimiter, join } from "node:path";
+
+/**
+ * Is `bin` runnable? A path (contains "/") -> exists + executable; a bare name -> found on PATH.
+ *
+ * Resolved by hand rather than by spawning: the callers use this to DECIDE whether to spawn, and
+ * `which`/`where` is itself a process launch on a path where the answer is usually "no".
+ */
+export function binOnPath(bin: string): boolean {
+  try {
+    if (bin.includes("/")) {
+      accessSync(bin, constants.X_OK);
+      return true;
+    }
+    for (const dir of (process.env.PATH || "").split(delimiter)) {
+      if (!dir) continue;
+      try {
+        accessSync(join(dir, bin), constants.X_OK);
+        return true;
+      } catch {
+        /* keep scanning PATH */
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

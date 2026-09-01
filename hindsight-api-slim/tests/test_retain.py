@@ -2647,7 +2647,6 @@ def test_chunks_extraction_mode():
             extract_facts_from_contents(
                 contents=contents,
                 llm_config=None,  # Must not be called
-                agent_name="TestAgent",
                 config=_get_raw_config(),
             )
         )
@@ -2714,7 +2713,6 @@ async def test_verbatim_extraction_mode():
         facts, chunks, _ = await extract_facts_from_contents(
             contents=contents,
             llm_config=llm_config,
-            agent_name="TestAgent",
             config=_get_raw_config(),
         )
 
@@ -2967,7 +2965,6 @@ def test_strategy_overrides_extraction_mode_for_chunks():
         extract_facts_from_contents(
             contents=contents,
             llm_config=None,  # chunks must not call the LLM
-            agent_name="TestAgent",
             config=strategy_config,
         )
     )

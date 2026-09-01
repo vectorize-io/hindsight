@@ -24,7 +24,82 @@ console = Console()
 GITHUB_REPO = "vectorize-io/hindsight"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_COMMIT_URL = f"https://github.com/{GITHUB_REPO}/commit"
+GITHUB_PULL_URL = f"https://github.com/{GITHUB_REPO}/pull"
 REPO_PATH = Path(__file__).parent.parent.parent
+# Alembic migrations are enumerated deterministically from git (never via the LLM).
+MIGRATIONS_DIR = "hindsight-api-slim/hindsight_api/alembic/versions"
+
+
+@dataclass(frozen=True)
+class VolumeTier:
+    """How much data a table holds, and how that is labelled in the changelog."""
+
+    label: str
+    color: str
+
+
+# Tiers in descending volume; the order doubles as the sort order in a migration line.
+HIGH_VOLUME = VolumeTier("high volume", "var(--ifm-color-danger)")
+MEDIUM_VOLUME = VolumeTier("medium", "var(--ifm-color-warning-darker)")
+LOW_VOLUME = VolumeTier("small", "var(--ifm-color-emphasis-600)")
+VOLUME_ORDER = (HIGH_VOLUME, MEDIUM_VOLUME, LOW_VOLUME)
+
+# How much data a table holds in a real deployment, which is what decides how long a
+# migration touching it runs and how wide the lock it takes is. This is a property of
+# the schema, not of any one release, so it is a reviewed map rather than a per-run
+# LLM judgement: the same table must never be labelled differently in two releases.
+# `tests/test_generate_changelog_migrations.py` fails if a migration creates a table
+# that is missing here, so new tables have to be classified deliberately.
+TABLE_VOLUME: dict[str, VolumeTier] = {
+    # Grows with every retained fact, link and entity; can reach millions of rows.
+    "memory_units": HIGH_VOLUME,
+    "memory_units_bm25": HIGH_VOLUME,
+    "memory_links": HIGH_VOLUME,
+    "unit_entities": HIGH_VOLUME,
+    "entities": HIGH_VOLUME,
+    "entity_cooccurrences": HIGH_VOLUME,
+    "chunks": HIGH_VOLUME,
+    "invalidated_memory_units": HIGH_VOLUME,
+    "observation_history": HIGH_VOLUME,
+    "llm_requests": HIGH_VOLUME,
+    "audit_log": HIGH_VOLUME,
+    # Grows with documents, operations and consolidated knowledge.
+    "documents": MEDIUM_VOLUME,
+    "mental_models": MEDIUM_VOLUME,
+    "mental_model_history": MEDIUM_VOLUME,
+    "mental_model_versions": MEDIUM_VOLUME,
+    "observation_sources": MEDIUM_VOLUME,
+    "async_operations": MEDIUM_VOLUME,
+    "knowledge_pages": MEDIUM_VOLUME,
+    "learnings": MEDIUM_VOLUME,
+    "directives": MEDIUM_VOLUME,
+    "pinned_reflections": MEDIUM_VOLUME,
+    "graph_maintenance_queue": MEDIUM_VOLUME,
+    "entity_maintenance_queue": MEDIUM_VOLUME,
+    "file_storage": MEDIUM_VOLUME,
+    # Configuration-sized: a handful of rows per bank or tenant.
+    "banks": LOW_VOLUME,
+    "webhooks": LOW_VOLUME,
+    "bank_stats_cache": LOW_VOLUME,
+}
+
+# Table positions in Alembic ops and in raw SQL. Matches are intersected with
+# TABLE_VOLUME, so prose and column names picked up by the SQL patterns drop out.
+_TABLE_PATTERNS = (
+    r"op\.(?:create_table|drop_table|add_column|drop_column|alter_column|rename_table)\(\s*[\"']([a-z_][a-z0-9_]*)[\"']",
+    r"table_name=[\"']([a-z_][a-z0-9_]*)[\"']",
+    r"(?i)\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:\{schema\}|\"[^\"]*\"\.)?\"?([a-z_][a-z0-9_]*)",
+    r"(?i)\b(?:CREATE|DROP)\s+(?:MATERIALIZED\s+VIEW|TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:\{schema\}|\"[^\"]*\"\.)?\"?([a-z_][a-z0-9_]*)",
+    r"(?i)\bON\s+(?:ONLY\s+)?(?:\{schema\}|\"[^\"]*\"\.)?\"?([a-z_][a-z0-9_]*)\"?\s*(?:USING|\()",
+    r"(?i)\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:\{schema\}|\"[^\"]*\"\.)?\"?([a-z_][a-z0-9_]*)",
+)
+
+# `DROP INDEX idx_memory_units_embedding` names no table but takes ACCESS EXCLUSIVE on
+# one, so the table is recovered from the index identifier (longest known name wins).
+_INDEX_PATTERNS = (
+    r"(?i)\b(?:CREATE|DROP)\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:\{schema\}|\"[^\"]*\"\.)?\"?([a-z_][a-z0-9_]*)",
+    r"op\.(?:create_index|drop_index)\(\s*[\"']([a-z_][a-z0-9_]*)[\"']",
+)
 CHANGELOG_PATH = REPO_PATH / "hindsight-docs" / "src" / "pages" / "changelog" / "index.md"
 INTEGRATION_CHANGELOG_DIR = REPO_PATH / "hindsight-docs" / "src" / "pages" / "changelog" / "integrations"
 
@@ -116,6 +191,152 @@ class Commit:
 
     hash: str
     message: str
+
+
+@dataclass(frozen=True)
+class Migration:
+    """An Alembic migration added in a release, enumerated from git history."""
+
+    revision: str
+    description: str
+    path: str
+    commit: str
+    pr: int | None
+    tables: tuple[str, ...] = ()
+
+
+def _pr_number_from_subject(subject: str) -> int | None:
+    """Extract the merge PR number from a squash-merge commit subject.
+
+    Subjects end with the PR that merged them, e.g.
+    `fix(x): ... (#3361, #3273) (#3622)` -> 3622. Earlier `(#N)` groups are
+    issue references, so the *last* match is the PR.
+    """
+    matches = re.findall(r"\(#(\d+)\)", subject)
+    return int(matches[-1]) if matches else None
+
+
+def _file_at_ref(ref: str, path: str) -> str | None:
+    """Read a file's contents at a git ref, or None if it doesn't exist there."""
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{path}"],
+        cwd=REPO_PATH,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+def _strip_prose(source: str) -> str:
+    """Drop the module docstring and `#` comments so prose can't look like a table.
+
+    Only the *module* docstring is removed: migration SQL lives in triple-quoted
+    strings further down, and stripping every triple-quoted block would throw away
+    the statements this scan exists to read.
+    """
+    without_docstring = re.sub(r'\A\s*(?:"""|\'\'\')(?:.|\n)*?(?:"""|\'\'\')', "", source)
+    return re.sub(r"(?m)#.*$", "", without_docstring)
+
+
+def extract_tables(source: str) -> tuple[str, ...]:
+    """Return the known tables a migration touches, ordered by volume then name.
+
+    Intersected with TABLE_VOLUME: the SQL patterns are deliberately loose (an
+    index expression or a stray identifier can match), and a reviewed table list
+    is a cheaper filter than trying to parse every dialect's DDL.
+    """
+    body = _strip_prose(source)
+    found = {match for pattern in _TABLE_PATTERNS for match in re.findall(pattern, body)}
+    known = found & TABLE_VOLUME.keys()
+    for pattern in _INDEX_PATTERNS:
+        for index_name in re.findall(pattern, body):
+            owners = [table for table in TABLE_VOLUME if table in index_name]
+            if owners:
+                known.add(max(owners, key=len))
+    return tuple(sorted(known, key=lambda table: (VOLUME_ORDER.index(TABLE_VOLUME[table]), table)))
+
+
+@dataclass(frozen=True)
+class MigrationDoc:
+    """The revision id and one-line description read out of a migration file."""
+
+    revision: str
+    description: str
+
+
+def _parse_migration_file(source: str, path: str) -> MigrationDoc:
+    """Read the revision id and description from a migration file's contents."""
+    revision_match = re.search(r"^revision:\s*str\s*=\s*[\"']([^\"']+)[\"']", source, re.MULTILINE)
+    revision = revision_match.group(1) if revision_match else Path(path).name.split("_", 1)[0]
+
+    docstring_match = re.search(r'^\s*"""(.*?)$', source, re.MULTILINE)
+    if docstring_match and docstring_match.group(1).strip():
+        description = docstring_match.group(1).strip()
+    else:
+        # Fall back to the filename slug: `abc123_add_foo_index.py` -> `add foo index`
+        stem = Path(path).stem.split("_", 1)
+        description = stem[1].replace("_", " ") if len(stem) > 1 else Path(path).stem
+    return MigrationDoc(revision=revision, description=description)
+
+
+def get_new_migrations(from_ref: str | None, to_ref: str) -> list[Migration]:
+    """Enumerate Alembic migrations added between two refs, oldest commit first.
+
+    Deterministic: this reads git history directly, it never goes through the LLM.
+    Migrations added and later removed within the same range are skipped (they
+    don't exist at `to_ref`).
+    """
+    range_arg = f"{from_ref}..{to_ref}" if from_ref else to_ref
+    result = subprocess.run(
+        [
+            "git",
+            "log",
+            "--diff-filter=A",
+            "--no-merges",
+            "--format=%x00%h|%s",
+            "--name-only",
+            range_arg,
+            "--",
+            MIGRATIONS_DIR,
+        ],
+        cwd=REPO_PATH,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    migrations: list[Migration] = []
+    seen_paths: set[str] = set()
+    for block in result.stdout.split("\0"):
+        lines = [line for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+        commit_hash, _, subject = lines[0].partition("|")
+        pr = _pr_number_from_subject(subject)
+        for path in sorted(lines[1:]):
+            if not path.endswith(".py") or Path(path).name == "__init__.py":
+                continue
+            if path in seen_paths:
+                continue
+            source = _file_at_ref(to_ref, path)
+            if source is None:
+                continue
+            seen_paths.add(path)
+            doc = _parse_migration_file(source, path)
+            migrations.append(
+                Migration(
+                    revision=doc.revision,
+                    description=doc.description,
+                    path=path,
+                    commit=commit_hash,
+                    pr=pr,
+                    tables=extract_tables(source),
+                )
+            )
+
+    # git log is newest-first; present migrations in the order they were applied.
+    migrations.reverse()
+    return migrations
 
 
 def parse_semver(version: str) -> tuple[int, int, int]:
@@ -343,6 +564,61 @@ def _render_entry_meta(commit_id: str, commit_url: str, login: str | None) -> st
     return "".join(parts)
 
 
+def _render_migration_meta(migration: Migration) -> str:
+    """Render the trailing link for a migration: · #PR (or the commit as fallback)."""
+    sep = '<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span>'
+    if migration.pr is not None:
+        href = f"{GITHUB_PULL_URL}/{migration.pr}"
+        label = f"#{migration.pr}"
+    else:
+        href = f"{GITHUB_COMMIT_URL}/{migration.commit}"
+        label = migration.commit
+    link = (
+        f'<a href="{href}" target="_blank" rel="noopener noreferrer" '
+        f'style={{{{fontFamily: "var(--ifm-font-family-monospace, monospace)", '
+        f'fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}}}>{label}</a>'
+    )
+    return sep + link
+
+
+def _render_tables(tables: tuple[str, ...]) -> str:
+    """Render the tables a migration touches, each tagged with its data volume."""
+    if not tables:
+        return ""
+    sep = '<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span>'
+    rendered = []
+    for table in tables:
+        tier = TABLE_VOLUME[table]
+        rendered.append(
+            f"<code>{table}</code>"
+            f'<span style={{{{fontSize: "0.75em", color: "{tier.color}", marginLeft: "0.25em"}}}}>'
+            f"{tier.label}</span>"
+        )
+    return sep + " ".join(rendered)
+
+
+def render_migrations_section(migrations: list[Migration]) -> list[str]:
+    """Render the deterministic "Database Migrations" section lines."""
+    if not migrations:
+        return []
+    lines = ["**Database Migrations**", ""]
+    hot = sorted({t for m in migrations for t in m.tables if TABLE_VOLUME[t] is HIGH_VOLUME})
+    if hot:
+        lines.append(
+            f"This release alters high-volume tables ({', '.join(f'`{t}`' for t in hot)}). "
+            "Migrations run on startup, so allow extra time on large deployments."
+        )
+        lines.append("")
+    for migration in migrations:
+        lines.append(
+            f"- `{migration.revision}` — {_escape_mdx_text(migration.description)}"
+            f"{_render_tables(migration.tables)}"
+            f"{_render_migration_meta(migration)}"
+        )
+    lines.append("")
+    return lines
+
+
 def analyze_commits_with_llm(
     client: OpenAI,
     model: str,
@@ -403,6 +679,7 @@ def build_changelog_markdown(
     entries: list[ChangelogEntry],
     integration: str | None = None,
     authors: dict[str, str] | None = None,
+    migrations: list[Migration] | None = None,
 ) -> str:
     """Build markdown changelog from structured entries."""
     tag_url = (
@@ -444,7 +721,10 @@ def build_changelog_markdown(
                 lines.append(f"- {_escape_mdx_text(entry.summary)}{meta}")
             lines.append("")
 
-    if not has_entries:
+    migration_lines = render_migrations_section(migrations or [])
+    lines.extend(migration_lines)
+
+    if not has_entries and not migration_lines:
         lines.append("*This release contains internal maintenance and infrastructure changes only.*")
         lines.append("")
 
@@ -560,7 +840,15 @@ def generate_changelog_entry(
     unique = sorted(set(authors.values()))
     console.print(f"[blue]Found {len(unique)} contributors: {', '.join('@' + c for c in unique)}[/blue]")
 
-    new_entry = build_changelog_markdown(display_version, tag, entries, authors=authors)
+    console.print("[blue]Enumerating new database migrations...[/blue]")
+    migrations = get_new_migrations(previous_tag, actual_tag)
+    for migration in migrations:
+        pr = f"#{migration.pr}" if migration.pr else migration.commit
+        console.print(f"  {migration.revision} {migration.description} ({pr})")
+    if not migrations:
+        console.print("[blue]No new migrations in this release[/blue]")
+
+    new_entry = build_changelog_markdown(display_version, tag, entries, authors=authors, migrations=migrations)
 
     default_header = """---
 hide_table_of_contents: true

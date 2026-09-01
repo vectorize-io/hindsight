@@ -40,6 +40,9 @@ const noRuntimeAdapter = (name: string, hint: string): HarnessAdapter => ({
 
 export const HARNESS_NAMES = [
   "opencode",
+  // opencode v2 (binary `opencode2`) — a ground-up rewrite of the plugin API, loaded from the
+  // package's root index.js (src/opencode2.ts). Like opencode it has NO hook binary.
+  "opencode2",
   // Kilo CLI is an opencode fork loaded as a persistent plugin (src/kilo.ts), so like opencode it
   // has NO hook binary — deliberately absent from HOOK_BINS below.
   "kilo",
@@ -48,33 +51,43 @@ export const HARNESS_NAMES = [
   // DeepSeek Harness loads dist/dsh.js as a native Cordis plugin (src/dsh.ts). Its Claude Code /
   // Codex hook bridges are optional packages, so there is no hook binary to install either.
   "dsh",
-  // Prime Agent loads dist/prime-agent.js as an extension (src/prime-agent.ts); no hook binary.
+  // pi loads dist/pi.js as an extension (src/pi.ts), and Prime Agent — a fork of pi — loads
+  // dist/prime-agent.js the same way (src/prime-agent.ts). Neither has a hook binary.
+  "pi",
   "prime-agent",
   "claude-code",
   "cursor-cli",
   "codex",
+  "dcode",
   "antigravity-cli",
   "devin-cli",
   "copilot-cli",
   "grok-build",
+  "qwen-code",
 ];
 
 const HOOK_BINS: Record<string, string> = {
   "claude-code": "hindsight-claude-hook",
   "cursor-cli": "hindsight-cursor-hook",
   codex: "hindsight-codex-hook",
+  dcode: "hindsight-dcode-hook",
   "antigravity-cli": "hindsight-antigravity-hook",
   "devin-cli": "hindsight-devin-hook",
   "copilot-cli": "hindsight-copilot-hook",
   "grok-build": "hindsight-grok-hook",
+  "qwen-code": "hindsight-qwen-hook",
   // more hook harnesses: add a HookSpec entry point (see src/cursor-hook.ts) + a registration here.
 };
 
-/** Where each persistent-plugin harness's runtime is actually built (see the branch below). */
-const PLUGIN_ENTRYPOINTS: Record<string, string> = {
+/** Where each persistent-plugin harness's runtime is actually built (see the branch below).
+ *  Exported so a test can assert, over the whole family, that each of those files reports the
+ *  harness mapped to it here — see registry.test.ts. */
+export const PLUGIN_ENTRYPOINTS: Record<string, string> = {
   opencode: "src/index.ts",
+  opencode2: "src/opencode2.ts",
   kilo: "src/kilo.ts",
   "cline-cli": "src/cline.ts",
+  pi: "src/pi.ts",
   "prime-agent": "src/prime-agent.ts",
   dsh: "src/dsh.ts",
 };

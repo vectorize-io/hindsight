@@ -8,8 +8,9 @@ name: Security Scan
 # Two jobs, answering two different questions:
 #   scan-published  — do the images users are running right now have a fix
 #                     available? (seconds; no build)
-#   scan-next-build — would an image built from main today be clean? (one build;
-#                     catches a regression before it reaches a release tag)
+#   scan-next-build — would an image built from main today be clean? (one build
+#                     per runtime base; catches a regression before it reaches
+#                     a release tag)
 on:
   schedule:
     # 05:30 UTC daily, after Debian's usual security-update publication window.
@@ -49,9 +50,13 @@ jobs:
         TRIVY_PLATFORM: ${{ matrix.platform }}
 
   scan-next-build:
-    name: Scan a fresh build of main
+    name: Scan a fresh build of main (${{ matrix.target }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [api-only, cp-only, standalone]
 
     steps:
     - uses: actions/checkout@v6
@@ -70,28 +75,31 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
 
-    # The slim api image is the smallest one covering the Debian family: it
-    # shares its runtime base with the full and standalone images and its locked
-    # Python environment with all of them, so a finding in any of those shows up
-    # here for a fraction of the build time. The alpine control-plane image
-    # shares none of that and is covered by scan-published only.
-    - name: Build api-slim image
+    # One leg per runtime base, because they do not share a vulnerable surface:
+    # api-only is the Debian Python runtime, cp-only is the alpine Node runtime,
+    # and standalone carries both. api-only alone still covers the Debian family
+    # (it shares its runtime base with the full and standalone images and its
+    # locked Python environment with all of them), but it contains no Node at
+    # all, so on its own this job could not catch a Node-side regression before
+    # it reached a release tag. The local-models build args are unused by
+    # cp-only and keep the other two legs to the slim runtime surface.
+    - name: Build ${{ matrix.target }} image
       uses: docker/build-push-action@v7
       with:
         context: .
         file: docker/standalone/Dockerfile
-        target: api-only
+        target: ${{ matrix.target }}
         build-args: |
           INCLUDE_LOCAL_MODELS=false
           PRELOAD_ML_MODELS=false
         push: false
         load: true
-        tags: hindsight-api-slim:scan
+        tags: hindsight-${{ matrix.target }}:scan
 
     - name: Scan freshly built image
       uses: aquasecurity/trivy-action@v0.36.0
       with:
-        image-ref: hindsight-api-slim:scan
+        image-ref: hindsight-${{ matrix.target }}:scan
         scanners: vuln
         severity: HIGH,CRITICAL
         ignore-unfixed: true

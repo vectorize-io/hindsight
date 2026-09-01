@@ -14,6 +14,7 @@
  * No opencode/claude specifics live here — only the memory logic.
  */
 import type { Config } from "./config";
+import { maybeAutoUpdate } from "./auto-update";
 import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
@@ -112,6 +113,10 @@ export class RuntimeCore {
     // `runSessionStartHook` is a hook-only wrapper, so calling `buildSessionStartContext` directly
     // (as every plugin harness does) skipped the ensure entirely.
     await ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
+    // Same session-start housekeeping the hook harnesses do in `runSessionStartHook`: a persistent
+    // plugin host is a session start too, and leaving it out would mean opencode/Kilo/Cline users
+    // never got an update — the parity gap `ensureDaemon` above already had to be fixed for.
+    void maybeAutoUpdate(this.cfg);
     try {
       const out = await buildSessionStartContext({
         cwd: repoPath || process.cwd(),

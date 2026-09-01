@@ -651,7 +651,70 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
         return [frozenset()]
     if parsed == "combined" or parsed is None:
         return [frozenset(tags)]
-    return [frozenset(s) for s in parsed]  # explicit list[list[str]]
+    # Explicit list[list[str]]. An *empty* list resolves to no passes at all, and
+    # the pass loop (``if obs_tags_list:``) then falls back to the combined
+    # single pass over the memory's own tags — so report that scope here too,
+    # or the group takes no lock for the scope it actually writes.
+    return [frozenset(s) for s in parsed] or [frozenset(tags)]
+
+
+def _batch_scope_signature(memory: dict[str, Any]) -> tuple[tuple[str, ...], ...]:
+    """The exact set of observation scopes consolidating this memory will write.
+
+    Derived from the pass loop rather than from the grouping key, so it can be
+    used to *check* the key: a truthy ``_resolve_obs_tags_list`` yields one pass
+    per resolved scope (each written with that ``obs_tags_override``), and a
+    falsy one — ``None`` from ``combined``, or a degenerate empty explicit list —
+    yields the single combined pass whose tags come from the memory's own tag set.
+
+    Two memories may share an LLM call only if their signatures are equal, because
+    the batch resolves its scope once from ``sub_batch[0]`` and applies it to all.
+    """
+    obs_tags_list = _resolve_obs_tags_list(memory)
+    if not obs_tags_list:
+        return (tuple(sorted(memory.get("tags") or [])),)
+    return tuple(sorted(tuple(sorted(scope)) for scope in obs_tags_list))
+
+
+def _consolidation_batch_key(memory: dict[str, Any]) -> tuple[str, ...]:
+    """Return the key that decides which memories may share an LLM batch.
+
+    The real security requirement is "memories targeting different observation
+    scopes must never share an LLM call" — every branch below keys on the
+    memory's *resolved* scope(s), never on raw tags, so two memories with the
+    same native tags but different ``observation_scopes`` modes can never
+    collide into the same group:
+
+    - default ``combined`` (``resolved is None``), and the degenerate empty
+      resolution (an explicit ``[]``, which the pass loop below treats as
+      combined because ``if obs_tags_list:`` is falsy): the memory's target
+      scope *is* its own tag set, so it keys on those tags.
+    - a single alternate scope (``shared``, an explicit one-scope list, or
+      ``per_tag`` with exactly one tag): keys on that resolved scope instead,
+      so it batches with any other memory naming the identical scope
+      regardless of native tags — that is the whole point of requesting it.
+    - fan-out to *multiple* scopes (``per_tag`` with more than one tag,
+      ``all_combinations``, or a multi-scope explicit list): writes several
+      observations from one LLM call, so it keys on the full resolved
+      scope-list, not native tags — two fan-out memories only share a batch
+      when every one of their target scopes matches exactly. A distinct
+      leading marker per branch keeps e.g. a ``combined`` memory tagged
+      ``["a","b"]`` out of the same key as a ``per_tag`` memory tagged
+      ``["a","b"]``, even though both would otherwise sort to ``("a","b")``.
+    """
+    resolved = _resolve_obs_tags_list(memory)
+    if not resolved:
+        # ``None`` (combined) and ``[]`` (an explicit empty scope list) both fall
+        # through to the combined pass downstream — ``if obs_tags_list:`` is
+        # falsy for each — so they must key the same way. Testing ``is None``
+        # alone sent ``[]`` down the fan-out branch, where every such memory
+        # keyed to the tag-free ``("fanout",)`` and pooled with memories of
+        # unrelated tags; ``obs_tags_override`` then being ``None``, the whole
+        # group took ``memories[0]``'s tags and leaked across scopes.
+        return ("combined", *sorted(memory.get("tags") or []))
+    if len(resolved) == 1:
+        return ("scope", *sorted(resolved[0]))
+    return ("fanout", *sorted("\x1f".join(sorted(scope)) for scope in resolved))
 
 
 def _scope_sort_key(scope: frozenset[str]) -> tuple[str, ...]:
@@ -1433,11 +1496,15 @@ async def _run_consolidation_job(
         if not memories:
             break  # No more unconsolidated memories
 
-        # Group memories by exact tag set before batching — security requirement:
-        # memories with different tags must never share an LLM call.
+        # Group memories by target observation scope before batching — security
+        # requirement: memories targeting different scopes must never share an
+        # LLM call. See _consolidation_batch_key for why that's scope, not raw
+        # tags: a memory requesting observation_scopes="shared" (or another
+        # single-scope override) targets a scope that can differ from its own
+        # tags, and must only batch with peers naming that same scope (#3924).
         tag_groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
         for m in memories:
-            tag_key = tuple(sorted(m.get("tags") or []))
+            tag_key = _consolidation_batch_key(m)
             tag_groups.setdefault(tag_key, []).append(dict(m))
 
         # Split each tag group into LLM batches respecting llm_batch_size, keeping
@@ -1490,6 +1557,30 @@ async def _run_consolidation_job(
             pending: list[list[dict[str, Any]]] = [llm_batch_local]
             while pending:
                 sub_batch = pending.pop(0)
+
+                # Defence in depth. Everything below writes the sub-batch at ONE
+                # resolved scope, read off ``sub_batch[0]``. If a memory with a
+                # different scope ever reaches this batch — a regression in
+                # ``_consolidation_batch_key``, or in how groups are split into
+                # batches — that single read stamps one memory's scope onto
+                # another's observation: an untagged, globally recallable
+                # observation built from a tagged fact, or a dropped override
+                # (#3953). So verify the invariant against the scopes the pass
+                # loop will actually write, independently of the grouping key,
+                # and split instead of trusting it. The cost in the case that
+                # must never happen is one extra LLM call.
+                if len(sub_batch) > 1:
+                    by_scope: dict[tuple[tuple[str, ...], ...], list[dict[str, Any]]] = {}
+                    for m in sub_batch:
+                        by_scope.setdefault(_batch_scope_signature(m), []).append(m)
+                    if len(by_scope) > 1:
+                        logger.error(
+                            f"[CONSOLIDATION] bank={bank_id} sub-batch of {len(sub_batch)} memories mixes"
+                            f" {len(by_scope)} observation scopes {sorted(by_scope)} — splitting it."
+                            " LLM batches must be scope-homogeneous; this is a grouping bug."
+                        )
+                        pending[0:0] = list(by_scope.values())
+                        continue
 
                 # No connection is held across the batch: recall, the main LLM call, the
                 # per-action embeds, and dedup adjudication all run connection-free. Only then
