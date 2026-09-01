@@ -1047,16 +1047,16 @@ async def _extract_and_embed(
     """
     set_stage("retain.extract_and_embed")
     step_start = time.time()
-    # No narrator. `agent_name` primes a "Narrator: {name}" line that extraction stamps
-    # into the who-dimension of every first-person fact, so whatever is passed here ends up
-    # verbatim in stored fact text. Retain used to pass the bank's `name` — a display label
-    # (#1680 already had to suppress it when it defaulted to the bank_id, itself typically a
-    # routing key), which leaked project/tenant names like "AuditProject_0825" into memories
-    # that never mentioned them (#3962). A caller that genuinely wants to name the speaker
-    # says so in the item's `context`, which extraction already reads and which the dry-run
+    # No narrator: extraction takes none from this path at all. A "Narrator: {name}" line is
+    # stamped into the who-dimension of every first-person fact, so whatever primes it ends up
+    # verbatim in stored fact text. Retain used to prime it with the bank's `name` — a display
+    # label (#1680 already had to suppress it when it defaulted to the bank_id, itself typically
+    # a routing key), which leaked project/tenant names like "AuditProject_0825" into memories
+    # that never mentioned them (#3962). A caller that genuinely wants to name the speaker says
+    # so in the item's `context`, which extraction already reads and which the dry-run
     # `agent_name` override is deprecated in favour of.
     extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, None, config, pool, operation_id, schema
+        contents, llm_config, config, pool, operation_id, schema
     )
     log_buffer.append(
         f"  Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks "

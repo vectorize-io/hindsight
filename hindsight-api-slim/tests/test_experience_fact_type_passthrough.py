@@ -48,7 +48,6 @@ async def test_extract_facts_preserves_experience_type():
         facts, _chunks, _usage = await extract_facts_from_contents(
             contents=contents,
             llm_config=None,
-            agent_name="TestAgent",
             config=_get_raw_config(),
         )
 

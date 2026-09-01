@@ -64,28 +64,34 @@ def _fast_retain_env(monkeypatch):
     clear_config_cache()
 
 
-class _NarratorSpy:
-    """Records the ``agent_name`` retain hands to fact extraction."""
+class _PromptSpy:
+    """Captures every extraction prompt retain builds.
+
+    Asserting on the prompt rather than on an ``agent_name`` argument is deliberate:
+    retain no longer *has* a narrator parameter to inspect, and the prompt is the thing
+    that actually decides what ends up in a fact.
+    """
 
     def __init__(self) -> None:
-        self.narrators: list[object] = []
+        self.messages: list[str] = []
 
     def install(self, monkeypatch) -> None:
-        original = fact_extraction.extract_facts_from_contents
+        original = fact_extraction._build_user_message
 
-        async def _spy(contents, llm_config, agent_name, *args, **kwargs):
-            self.narrators.append(agent_name)
-            return await original(contents, llm_config, agent_name, *args, **kwargs)
+        def _spy(*args, **kwargs):
+            message = original(*args, **kwargs)
+            self.messages.append(message)
+            return message
 
-        monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", _spy)
+        monkeypatch.setattr(fact_extraction, "_build_user_message", _spy)
 
 
 @pytest.mark.asyncio
-async def test_retain_passes_no_narrator_for_a_named_bank(memory, request_context, monkeypatch):
+async def test_retain_primes_no_narrator_for_a_named_bank(memory, request_context, monkeypatch):
     """#3962: a bank named after a project must not prime extraction with that name."""
     bank_id = f"test_narrator_named_bank_{datetime.now(timezone.utc).timestamp()}"
     project_name = "AuditProject_0825"
-    spy = _NarratorSpy()
+    spy = _PromptSpy()
     try:
         await memory.update_bank(bank_id, name=project_name, request_context=request_context)
         spy.install(monkeypatch)
@@ -96,8 +102,10 @@ async def test_retain_passes_no_narrator_for_a_named_bank(memory, request_contex
             request_context=request_context,
         )
 
-        assert spy.narrators, "fact extraction was never called — the test proves nothing"
-        assert all(n is None for n in spy.narrators), f"retain primed extraction with a narrator: {spy.narrators}"
+        assert spy.messages, "no extraction prompt was built — the test proves nothing"
+        for message in spy.messages:
+            assert "Narrator:" not in message, f"retain primed a narrator: {message}"
+            assert project_name not in message, "the bank's display name reached the prompt"
 
         units = await memory.list_memory_units(bank_id, limit=100, request_context=request_context)
         stored = "\n".join(str(u) for u in units["items"])

@@ -10680,9 +10680,9 @@ class MemoryEngine(MemoryEngineInterface):
             text=content,
             event_date=event_date,
             llm_config=retain_llm,
-            agent_name=agent_name or "",
             config=resolved_config,
             context=context,
+            agent_name=agent_name,
         )
 
         extracted = [
