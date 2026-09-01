@@ -555,6 +555,8 @@ class PostgresMemories(MemoriesExtension):
         mentioned_at,
         entity_ids: list[str] | None,
         entity_names: list[str] | None = None,  # noqa: ARG002 — this store's registry is SQL; the host already minted+linked, so entity_ids is authoritative.
+        embedding=None,
+        current_fact_type: str | None = None,  # noqa: ARG002 — one UPDATE writes every field, so a fact-type change needs no different path.
     ) -> None:
         await writes.apply_edit(
             conn=conn,
@@ -569,6 +571,7 @@ class PostgresMemories(MemoriesExtension):
             event_date=event_date,
             mentioned_at=mentioned_at,
             entity_ids=entity_ids,
+            embedding=embedding,
         )
 
     async def list_entities(

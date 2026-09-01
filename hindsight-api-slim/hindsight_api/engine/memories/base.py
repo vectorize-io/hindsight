@@ -1737,14 +1737,29 @@ class MemoriesExtension(Extension, ABC):
         mentioned_at,
         entity_ids: list[str] | None,
         entity_names: list[str] | None = None,
+        embedding=None,
+        current_fact_type: str | None = None,
     ) -> None:
         """Apply a curation field edit to a live memory.
 
         Writes the new text / context / fact_type / occurred window, resets the
         consolidation markers (the memory re-consolidates) and stamps the edit
-        time, and drops the memory's derived links (they are recomputed). The
-        embedding is *not* written here — the caller re-embeds from the new fields
-        and calls :meth:`set_memory_embedding` after.
+        time, and drops the memory's derived links (they are recomputed).
+
+        ``embedding`` is the vector the caller re-embedded from the new fields, and
+        writing it is **part of applying the edit** — an implementation writes it
+        alongside the fields above rather than leaving it for a following
+        :meth:`set_memory_embedding`. Where a write is a durable append rather than
+        a row update, a separate call is a second write of the row this one just
+        wrote and doubles what an edit costs. ``None`` leaves the stored vector
+        alone. (:meth:`set_memory_embedding` remains for the paths that write a
+        vector without editing fields, such as restoring an invalidated memory.)
+
+        ``current_fact_type`` is the memory's fact_type BEFORE this edit, which the
+        caller has just read under this transaction. A fact-type change is the one
+        part of an edit that some stores cannot apply as a partial update, and
+        discovering it here would cost a read the caller has already paid for. It
+        may be ``None``, from a caller that does not have it.
 
         The new entity set for the memory is supplied one of two ways, and a store
         uses whichever fits how it keeps its registry:
