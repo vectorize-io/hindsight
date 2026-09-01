@@ -37,10 +37,11 @@
  * missing binary or a spawn failure must silently no-op, never crash the caller.
  */
 import { spawn as realSpawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { binOnPath } from "./util";
 
 /** Deterministic doc ids of the survey's findings (its fixed titles slugified by
  *  hindsight_ingest_document). Their presence in the bank = the survey actually FINISHED —
@@ -114,28 +115,6 @@ function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
       return process.env.HINDSIGHT_ANTIGRAVITY_BIN || "agy";
     case "opencode":
       return process.env.HINDSIGHT_OPENCODE_BIN || "opencode";
-  }
-}
-
-/** Is `bin` runnable? A path (contains "/") -> exists + executable; a bare name -> found on PATH. */
-function binExists(bin: string): boolean {
-  try {
-    if (bin.includes("/")) {
-      accessSync(bin, constants.X_OK);
-      return true;
-    }
-    for (const dir of (process.env.PATH || "").split(delimiter)) {
-      if (!dir) continue;
-      try {
-        accessSync(join(dir, bin), constants.X_OK);
-        return true;
-      } catch {
-        /* keep scanning PATH */
-      }
-    }
-    return false;
-  } catch {
-    return false;
   }
 }
 
@@ -318,7 +297,7 @@ export function startCodebaseSurvey(
 ): void {
   try {
     const spawnFn = opts.spawn ?? realSpawn;
-    const exists = opts.exists ?? binExists;
+    const exists = opts.exists ?? binOnPath;
     const mcpServerPath =
       opts.mcpServerPath ?? join(dirname(fileURLToPath(import.meta.url)), "mcp-server.js");
 

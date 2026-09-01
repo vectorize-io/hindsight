@@ -1212,6 +1212,22 @@ describe("runtime staging", () => {
     expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(false);
   });
 
+  // The marker is what core/auto-update.ts reads to decide whether it may replace this runtime,
+  // so staging has to write it — an absent marker fails closed and auto-update never runs.
+  it("records where the runtime was staged from", () => {
+    const ctx = makeCtx();
+    const cache = mkdtempSync(join(tmpdir(), "npx-cache-"));
+    homes.push(cache);
+    const src = join(cache, "_npx", "abc123", "node_modules", "coding-agents");
+    Object.assign(ctx, fakePackage(src));
+
+    run(["install", "claude-code"], ctx);
+    const origin = readJson(
+      join(ctx.home, ".hindsight", "coding-agents", ".install-origin.json")
+    ) as { source: string };
+    expect(origin.source).toBe(src);
+  });
+
   // A checkout whose dist was never built has nothing to copy; wiring the source path is better
   // than pointing every hook at a directory that does not exist.
   it("wires in place when there is nothing to stage", () => {

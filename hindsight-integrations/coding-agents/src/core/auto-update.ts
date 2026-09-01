@@ -15,6 +15,12 @@
  * Deliberately narrow:
  *   - it runs ONLY from the staged copy. A checkout or an `npx` run is somebody's development or
  *     one-off invocation, and overwriting it with a published build would destroy their work.
+ *   - it replaces ONLY a runtime it can prove npx downloaded (`installOrigin` below). A copy staged
+ *     from `npm i -g`, from a project dependency, or from a local checkout belongs to whoever
+ *     manages that source: updating it behind their back would leave `npm ls -g` reporting a
+ *     version that is no longer what runs, or would silently overwrite a developer's built dist.
+ *   - it needs `npx` on PATH, since that is how the updater is fetched. Without it there is
+ *     nothing to spawn, so it says so once a day rather than failing a spawn each time.
  *   - it stages only. Rewiring hosts unattended would mean choosing which agents to install for,
  *     and that is the user's call (`install` spells it out for exactly this reason).
  *   - `autoUpdate: false` in ~/.hindsight/coding-agent.json (or HINDSIGHT_AUTO_UPDATE=false) turns
@@ -41,6 +47,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config";
 import { log } from "./log";
+import { binOnPath } from "./util";
 
 export const PACKAGE_NAME = "@vectorize-io/hindsight-coding-agents";
 
@@ -95,7 +102,9 @@ export function stagedVersion(pkgRoot: string): string {
  *
  * A deliberately small comparison rather than a semver dependency: this package ships
  * zero-dependency (the installer must run from a bare `npx`), and the only question asked here is
- * "did the release number go up". A PRERELEASE suffix loses to the same numbers without one, which
+ * "did the release number go up". NOT `util.ts`'s `semverGte`, which answers a different question
+ * for capability probes: it is true on equality and strips pre-release suffixes, so it would both
+ * re-update a machine that is already current and drag a release onto its own release candidate. A PRERELEASE suffix loses to the same numbers without one, which
  * is what keeps a machine on `1.2.0` from being pulled onto `1.2.0-rc.1`; two prereleases of the
  * same version compare as equal, so neither drags the other around.
  */
@@ -126,6 +135,36 @@ function dueForCheck(file: string, now: number): boolean {
     return typeof state.lastCheck !== "number" || now - state.lastCheck >= CHECK_INTERVAL_MS;
   } catch {
     return true;
+  }
+}
+
+/** Written by installer.ts `stageRuntime`, naming the directory this runtime was copied from. */
+const ORIGIN_FILE = ".install-origin.json";
+
+/**
+ * May this runtime be replaced automatically?
+ *
+ * Only when it was staged from an npx download — the documented install path, where no other tool
+ * is tracking the version. `npm i -g` and a project dependency are managed by npm (an unattended
+ * re-stage would leave `npm ls -g` naming a version that is no longer what runs, with no way for
+ * the user to reconcile the two), and a checkout is a developer's build, which a published release
+ * would silently overwrite.
+ *
+ * Missing marker = no. It is written on every `install`/`update` from the version that introduced
+ * auto-update onward, and a machine has to re-install once to get this code at all — so a runtime
+ * old enough to lack the marker is also too old to be running this check. Failing closed here
+ * costs one manual install; failing open costs somebody their working tree.
+ */
+export function selfUpdatable(runtimeDir: string): boolean {
+  try {
+    const origin = JSON.parse(readFileSync(join(runtimeDir, ORIGIN_FILE), "utf8")) as {
+      source?: string;
+    };
+    if (typeof origin.source !== "string" || !origin.source) return false;
+    // npx unpacks into a `_npx/<hash>/node_modules/...` cache directory; nothing else does.
+    return origin.source.split(/[\\/]/).includes("_npx");
+  } catch {
+    return false; // absent or unreadable — see above, this fails closed on purpose
   }
 }
 
@@ -235,6 +274,9 @@ export interface AutoUpdateOptions {
   runtimeDir?: string;
   /** Cross-process updater lock (tests); defaults to one in the OS temp dir. */
   lockFile?: string;
+  /** Seams for the two ownership guards (tests). */
+  selfUpdatable?: (runtimeDir: string) => boolean;
+  binOnPath?: (bin: string) => boolean;
   spawn?: typeof realSpawn;
   fetch?: typeof fetch;
   now?: number;
@@ -267,6 +309,20 @@ export async function maybeAutoUpdate(
 
     const current = stagedVersion(pkgRoot);
     if (!current) return ""; // cannot tell what is installed — never guess and overwrite it
+    // Both guards sit after the interval gate and stamp like any other "checked, nothing to do"
+    // outcome, so each states its reason at most once a day instead of on every session start.
+    if (!(opts.selfUpdatable ?? selfUpdatable)(runtime)) {
+      log.info("auto-update", "runtime is managed outside npx — leaving its version alone");
+      stampCheck(file, now, "");
+      return "";
+    }
+    // Probed BEFORE the registry call: with no npx there is nothing to spawn, so asking npm for a
+    // version we could not install anyway is a request for nothing.
+    if (!(opts.binOnPath ?? binOnPath)("npx")) {
+      log.info("auto-update", "npx is not on PATH — skipping the update check");
+      stampCheck(file, now, "");
+      return "";
+    }
 
     // Claimed before the registry call, so a burst of simultaneous session starts makes ONE
     // request and can only ever produce one updater.

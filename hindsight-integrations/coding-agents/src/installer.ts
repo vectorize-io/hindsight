@@ -716,6 +716,9 @@ export function runtimeDir(home: string): string {
   return join(home, ".hindsight", "coding-agents");
 }
 
+/** Names the directory `stageRuntime` copied from — read by core/auto-update.ts. */
+export const ORIGIN_FILE = ".install-origin.json";
+
 /**
  * Copy the runtime out of wherever this was executed from and into a stable location, then point
  * the wiring at the copy.
@@ -759,6 +762,16 @@ function stageRuntime(c: InstallCtx): InstallCtx {
       const source = join(c.pkgRoot, resource);
       if (existsSync(source)) cpSync(source, join(target, resource), { recursive: true });
     }
+    // Record WHERE this copy came from, LAST — the marker means "a complete copy landed here".
+    // core/auto-update.ts will only replace a runtime it can prove was downloaded by npx: a copy
+    // staged from a global `npm i -g`, a project dependency or a local checkout belongs to whoever
+    // manages that source, and silently overwriting it would either fight their package manager
+    // (leaving `npm ls -g` reporting a version that is no longer what runs) or destroy a
+    // developer's locally-built dist.
+    writeFileSync(
+      join(target, ORIGIN_FILE),
+      JSON.stringify({ source: c.pkgRoot, stagedAt: new Date().toISOString() })
+    );
     c.log?.(`runtime staged at ${target}`);
     return { ...c, pkgRoot: target, dist: join(target, "dist") };
   } catch (error) {

@@ -8,6 +8,7 @@ import {
   CHECK_INTERVAL_MS,
   isNewer,
   maybeAutoUpdate,
+  selfUpdatable,
   stateFile,
 } from "./auto-update";
 
@@ -74,6 +75,8 @@ describe("maybeAutoUpdate", () => {
       fetch?: unknown;
       now?: number;
       lockFile?: string;
+      selfUpdatable?: (dir: string) => boolean;
+      binOnPath?: (bin: string) => boolean;
     }
   ): AutoUpdateOptions => ({
     pkgRoot: runtime,
@@ -84,6 +87,10 @@ describe("maybeAutoUpdate", () => {
     spawn: extra.spawn ? asSpawn(extra.spawn) : undefined,
     fetch: asFetch(extra.fetch),
     now: extra.now,
+    // Default the ownership guards open so each test exercises the behaviour it is about; the
+    // guards themselves have their own tests below.
+    selfUpdatable: extra.selfUpdatable ?? (() => true),
+    binOnPath: extra.binOnPath ?? (() => true),
   });
 
   it("spawns a detached stage-only update when the registry is ahead", async () => {
@@ -241,6 +248,45 @@ describe("maybeAutoUpdate", () => {
     ).toBe("0.4.3");
   });
 
+  // A user who runs `npm i -g` (or vendors the package as a project dependency) manages its
+  // version with npm. Re-staging behind their back would leave `npm ls -g` naming a version that
+  // is no longer what runs, with no way to reconcile the two.
+  it("leaves a runtime alone when it was not staged from an npx download", async () => {
+    const { runtime, spawn, fetchOk } = staged("0.4.2");
+    const fetchImpl = fetchOk("0.4.3");
+    expect(
+      await maybeAutoUpdate(
+        { autoUpdate: true },
+        opts(runtime, { spawn, fetch: fetchImpl, selfUpdatable: () => false })
+      )
+    ).toBe("");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("skips the check entirely when npx is not on PATH — there would be nothing to spawn", async () => {
+    const { runtime, spawn, fetchOk } = staged("0.4.2");
+    const fetchImpl = fetchOk("0.4.3");
+    expect(
+      await maybeAutoUpdate(
+        { autoUpdate: true },
+        opts(runtime, { spawn, fetch: fetchImpl, binOnPath: (bin) => bin !== "npx" })
+      )
+    ).toBe("");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("stamps both refusals, so neither repeats its reason on every session start", async () => {
+    const { runtime, spawn, fetchOk } = staged("0.4.2");
+    const t0 = 1_000_000_000;
+    await maybeAutoUpdate(
+      { autoUpdate: true },
+      opts(runtime, { spawn, fetch: fetchOk("0.4.3"), now: t0, selfUpdatable: () => false })
+    );
+    expect(JSON.parse(readFileSync(stateFile(runtime), "utf8")).lastCheck).toBe(t0);
+  });
+
   it("stays out of the survey's own headless session", async () => {
     const { runtime, spawn, fetchOk } = staged("0.4.2");
     process.env.HINDSIGHT_DISABLE_HOOKS = "1";
@@ -315,5 +361,61 @@ describe("every session-start path checks for updates", () => {
       (rel) => !readFileSync(join(SRC, rel), "utf8").includes("maybeAutoUpdate")
     );
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * The origin marker is what separates "we downloaded this" from "somebody else's copy". It fails
+ * closed on purpose: a wrong `true` overwrites a global install or a developer's built dist, while
+ * a wrong `false` costs one manual `install`.
+ */
+describe("selfUpdatable", () => {
+  const dirs: string[] = [];
+  const tmp = () => {
+    const d = mkdtempSync(join(tmpdir(), "hs-origin-"));
+    dirs.push(d);
+    return d;
+  };
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  const withOrigin = (source: unknown): string => {
+    const d = tmp();
+    writeFileSync(join(d, ".install-origin.json"), JSON.stringify({ source }));
+    return d;
+  };
+
+  it("accepts a runtime staged from an npx cache", () => {
+    expect(
+      selfUpdatable(
+        withOrigin("/Users/u/.npm/_npx/a1b2c3/node_modules/@vectorize-io/hindsight-coding-agents")
+      )
+    ).toBe(true);
+    // Windows separators reach the same verdict — the marker records whatever path staged it.
+    expect(
+      selfUpdatable(withOrigin("C:\\Users\\u\\AppData\\npm-cache\\_npx\\a1\\node_modules\\pkg"))
+    ).toBe(true);
+  });
+
+  it("refuses a global install, a project dependency and a checkout", () => {
+    expect(
+      selfUpdatable(withOrigin("/usr/local/lib/node_modules/@vectorize-io/hindsight-coding-agents"))
+    ).toBe(false);
+    expect(
+      selfUpdatable(withOrigin("/home/u/proj/node_modules/@vectorize-io/hindsight-coding-agents"))
+    ).toBe(false);
+    expect(
+      selfUpdatable(withOrigin("/home/u/dev/hindsight/hindsight-integrations/coding-agents"))
+    ).toBe(false);
+  });
+
+  it("refuses a runtime with no marker, an unreadable one, or an empty source", () => {
+    expect(selfUpdatable(tmp())).toBe(false);
+    const broken = tmp();
+    writeFileSync(join(broken, ".install-origin.json"), "not json");
+    expect(selfUpdatable(broken)).toBe(false);
+    expect(selfUpdatable(withOrigin(""))).toBe(false);
+    expect(selfUpdatable(withOrigin(42))).toBe(false);
   });
 });
