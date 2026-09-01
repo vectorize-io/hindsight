@@ -7,7 +7,6 @@ from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from hindsight_api.extensions import (
-    ApiKeyTenantExtension,
     AuthenticationError,
     BankReadContext,
     BankReadOperation,
@@ -33,6 +32,7 @@ from hindsight_api.extensions import (
     ValidationResult,
     load_extension,
 )
+from hindsight_api.extensions.builtin.tenant import ApiKeyTenantExtension
 
 
 class TestExtensionLoader:
