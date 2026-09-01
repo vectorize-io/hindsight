@@ -22,7 +22,7 @@ import random
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
@@ -510,6 +510,8 @@ if TYPE_CHECKING:
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoryScopeWatermark
+    from .retain.image_content import RetainImage
+    from .retain.image_store import StoredImage
     from .transfer import BankImportResult, ImportResult
     from .vector_index_health import CoverageTrigger
 
@@ -6142,6 +6144,40 @@ class MemoryEngine(MemoryEngineInterface):
             return await self._file_storage.retrieve(storage_key)
         except FileNotFoundError:
             return None
+
+    async def store_retain_images(
+        self,
+        bank_id: str,
+        images: "Sequence[RetainImage]",
+        request_context: "RequestContext",
+    ) -> "list[StoredImage]":
+        """Persist the images of a multimodal retain item, content-addressed.
+
+        Called at the API ingress, before the retain itself is submitted. That
+        ordering is the point: the canonical content carries only placeholders, so
+        the raw bytes never reach an async operation's payload — a base64
+        screenshot would otherwise be inlined into the operations row and copied
+        again into every retry.
+
+        Both writes key on the content hash and are idempotent, so persisting
+        before the retain commits is safe. If the retain then fails, the blob is
+        simply reused by the next retain of the same image.
+
+        The bank row is created first because ``bank_images`` references it; the
+        same thing ``import_documents_async`` does before stashing its archive.
+        """
+        from .retain.image_store import store_images
+
+        if not images:
+            return []
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        await self._ensure_bank_exists(bank_id, request_context)
+
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                return await store_images(self._file_storage, conn, bank_id, images)
 
     async def import_bank_async(
         self,

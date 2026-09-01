@@ -6,6 +6,8 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import os
@@ -15,7 +17,7 @@ import uuid
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -193,6 +195,14 @@ from hindsight_api.engine.response_models import (
     TemporalWindow,
     TokenUsage,
 )
+from hindsight_api.engine.retain.image_content import (
+    CanonicalContent,
+    RetainImage,
+    RetainText,
+    canonicalize,
+    compute_image_hash,
+)
+from hindsight_api.engine.retain.image_content import ContentBlock as CanonicalBlock
 from hindsight_api.engine.search.tag_resolution import needs_resolution
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.structured_output import validate_response_schema
@@ -666,6 +676,126 @@ class EntityInput(BaseModel):
     type: str | None = Field(default=None, description="Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')")
 
 
+#: Image formats every mainstream vision model accepts. Deliberately a short
+#: allowlist rather than a blocklist: the bytes are handed to a third-party model
+#: and served back to browsers, so an unrecognised type is refused, not guessed at.
+ALLOWED_IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+
+
+class Base64ImageSource(BaseModel):
+    """Inline image bytes, base64-encoded.
+
+    The only source type in this version. ``url`` (server-side fetch) and
+    ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
+    is modelled as a discriminated union on ``type`` rather than as bare fields.
+    """
+
+    type: Literal["base64"] = "base64"
+    media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"] = Field(
+        description=f"MIME type of the image. One of: {', '.join(ALLOWED_IMAGE_MEDIA_TYPES)}."
+    )
+    data: str = Field(description="Base64-encoded image bytes (no data: URI prefix).")
+
+    def decode(self) -> bytes:
+        """Decode the payload, raising ``ValueError`` on malformed base64.
+
+        Not a validator: decoding a large image is expensive enough that it should
+        happen once, at the point the bytes are actually needed, rather than on
+        every model construction. The retain handler calls this inside its
+        request-validation block so a bad payload is still a 400, not a 500.
+        """
+        try:
+            return base64.b64decode(self.data, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise ValueError(f"image source data is not valid base64: {e}") from e
+
+
+class TextContentBlock(BaseModel):
+    """A run of text within a multimodal item, in the position the caller wrote it."""
+
+    type: Literal["text"]
+    text: str
+
+
+class ImageContentBlock(BaseModel):
+    """An image within a multimodal item, in the position the caller wrote it."""
+
+    type: Literal["image"]
+    source: Base64ImageSource
+
+
+#: One element of a multimodal ``content`` array. Discriminated on ``type`` so a
+#: malformed block reports which variant it failed against instead of dumping
+#: every variant's errors.
+ContentBlock = Annotated[TextContentBlock | ImageContentBlock, Field(discriminator="type")]
+
+
+def canonicalize_item_content(
+    content: str | list[ContentBlock],
+    *,
+    item_index: int,
+    config: HindsightConfig,
+) -> CanonicalContent:
+    """Flatten a retain item's content to the canonical text the pipeline stores.
+
+    A plain string passes through untouched, so nothing about the text-only path
+    changes. A block list becomes one body with an atomic placeholder standing in
+    for each image, plus the decoded images themselves — which the caller persists
+    content-addressed before the retain is submitted.
+
+    Raises ``HTTPException(400)`` for anything wrong with the caller's images:
+    these are request errors, and the caller needs to know which item and which
+    block to fix.
+    """
+    if isinstance(content, str):
+        return CanonicalContent(text=content, images=())
+
+    blocks: list[CanonicalBlock] = []
+    image_count = 0
+    for block_index, block in enumerate(content):
+        if isinstance(block, TextContentBlock):
+            blocks.append(RetainText(block.text))
+            continue
+
+        image_count += 1
+        if image_count > config.retain_image_max_count:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"items[{item_index}] carries more than {config.retain_image_max_count} images. "
+                    f"Split the content across several items."
+                ),
+            )
+        try:
+            data = block.source.decode()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"items[{item_index}].content[{block_index}]: {e}") from e
+        if not data:
+            raise HTTPException(
+                status_code=400,
+                detail=f"items[{item_index}].content[{block_index}]: image source data is empty",
+            )
+        if len(data) > config.retain_image_max_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"items[{item_index}].content[{block_index}]: image is "
+                    f"{len(data) / (1024 * 1024):.1f}MB, exceeding the "
+                    f"{config.retain_image_max_size_mb}MB limit for a single image."
+                ),
+            )
+        blocks.append(
+            RetainImage(
+                image_hash=compute_image_hash(data),
+                media_type=block.source.media_type,
+                data=data,
+                block_index=block_index,
+            )
+        )
+
+    return canonicalize(blocks)
+
+
 class MemoryItem(BaseModel):
     """Single memory item for retain."""
 
@@ -683,7 +813,18 @@ class MemoryItem(BaseModel):
         },
     )
 
-    content: str
+    content: str | list[ContentBlock] = Field(
+        description=(
+            "The raw content to retain. Either a plain string, or an ordered list of "
+            "content blocks so images sit inline where they actually appear:\n\n"
+            '  [{"type": "text", "text": "click the button shown:"},\n'
+            '   {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},\n'
+            '   {"type": "text", "text": "...then reconnect."}]\n\n'
+            "The block form requires a vision-capable retain LLM; a retain carrying images "
+            "against a text-only model is rejected rather than silently dropping them. "
+            "A single text block is equivalent to the plain string form."
+        )
+    )
     timestamp: datetime | str | None = Field(
         default=None,
         description=(
@@ -722,8 +863,19 @@ class MemoryItem(BaseModel):
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v: str) -> str:
-        if not v.strip():
+    def validate_content(cls, v: str | list[ContentBlock]) -> str | list[ContentBlock]:
+        if isinstance(v, str):
+            if not v.strip():
+                raise ValueError("content cannot be empty")
+            return v
+
+        if not v:
+            raise ValueError("content cannot be empty")
+        # An all-text block list must clear the same bar as the string form. A list
+        # carrying an image is never empty, whatever its text blocks say.
+        if not any(isinstance(block, ImageContentBlock) for block in v) and not any(
+            block.text.strip() for block in v if isinstance(block, TextContentBlock)
+        ):
             raise ValueError("content cannot be empty")
         return v
 
@@ -8069,13 +8221,26 @@ def _register_routes(app: FastAPI):
         metrics = get_metrics_collector()
 
         try:
+            # Flatten any multimodal item to canonical placeholder text, and commit
+            # its images to content-addressed storage, BEFORE anything is submitted.
+            # Downstream — sync or async, the operations payload, every retry — then
+            # carries text only; raw screenshot bytes never enter the pipeline.
+            config = get_config()
+            canonical_contents = [
+                canonicalize_item_content(item.content, item_index=index, config=config)
+                for index, item in enumerate(request.items)
+            ]
+            retained_images = [image for canonical in canonical_contents for image in canonical.images]
+            if retained_images:
+                await app.state.memory.store_retain_images(bank_id, retained_images, request_context)
+
             # Group items by strategy
             strategy_groups: dict[str | None, list[dict]] = {}
-            for item in request.items:
+            for item, canonical in zip(request.items, canonical_contents, strict=True):
                 effective = item.strategy
                 if effective not in strategy_groups:
                     strategy_groups[effective] = []
-                content_dict: dict = {"content": item.content}
+                content_dict: dict = {"content": canonical.text}
                 if item.timestamp == "unset":
                     content_dict["event_date"] = None
                 elif item.timestamp:
@@ -8135,9 +8300,6 @@ def _register_routes(app: FastAPI):
                 )
             else:
                 # Check if batch API is enabled - if so, require async mode
-                from hindsight_api.config import get_config
-
-                config = get_config()
                 if config.retain_batch_enabled:
                     raise HTTPException(
                         status_code=400,
@@ -8212,7 +8374,17 @@ def _register_routes(app: FastAPI):
             # Create a summary of the input for debugging
             input_summary = []
             for i, item in enumerate(request.items):
-                content_preview = item.content[:100] + "..." if len(item.content) > 100 else item.content
+                # Summarize the block form structurally: the raw content may be a
+                # list whose image blocks hold megabytes of base64, and this string
+                # goes into a log line and an error body.
+                if isinstance(item.content, str):
+                    raw_preview = item.content
+                else:
+                    raw_preview = " ".join(
+                        block.text if isinstance(block, TextContentBlock) else f"<{block.source.media_type}>"
+                        for block in item.content
+                    )
+                content_preview = raw_preview[:100] + "..." if len(raw_preview) > 100 else raw_preview
                 input_summary.append(
                     f"  [{i}] content={content_preview!r}, context={item.context}, timestamp={item.timestamp}"
                 )
