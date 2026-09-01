@@ -72,11 +72,20 @@ Marcus felt anxious about the upcoming interview.
 
         await assert_meets_criteria(
             response=all_facts_text,
+            # The threshold leads, and the three states are a checklist under it. Stated the
+            # other way round — the three first, "at least two" trailing — judges anchored on
+            # the one that was missing and voted not-met on facts that plainly carried the
+            # other two ("Sarah seemed disappointed...", "Marcus felt anxious..."), which is
+            # a false negative against the criteria's own rule. It reproduced across all
+            # three attempts in CI, so it was the wording, not a coin flip.
             criteria=(
-                "The extracted facts preserve emotional states from the input: the speaker's "
-                "excitement/thrill about positive feedback, Sarah's disappointment about the delay, "
-                "and Marcus's anxiety about the interview. At least two of these emotional dimensions "
-                "should be present (exact wording doesn't matter — 'elated' for 'thrilled' is fine)."
+                "PASS if AT LEAST TWO of the following three emotional states appear anywhere in "
+                "the facts; missing one of the three is still a PASS. (1) The speaker being "
+                "thrilled/excited about the positive feedback. (2) Sarah being disappointed about "
+                "the delay. (3) Marcus being anxious about the interview. Exact wording is "
+                "irrelevant — any synonym counts ('elated' for 'thrilled', 'seemed disappointed' "
+                "for 'was disappointed'). FAIL only if two or more of them were stripped down to "
+                "the bare event with no feeling attached."
             ),
             context=(
                 "Input mentioned: being thrilled about positive feedback on a presentation, "
