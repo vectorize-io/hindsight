@@ -3627,13 +3627,29 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             payload_bytes = str(raw_payload).encode()
 
+        # User-supplied headers are spread FIRST so the Hindsight-controlled headers
+        # below always win: a custom header must never be able to forge the event type
+        # or overwrite a signature. Content-Type stays overridable -- some receivers
+        # insist on a vendor media type, and the body is JSON either way.
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "X-Hindsight-Event": event_type,
             **http_config.headers,
+            "X-Hindsight-Event": event_type,
         }
         if secret and self._webhook_manager:
-            headers["X-Hindsight-Signature"] = self._webhook_manager._sign_payload(secret, payload_bytes)
+            signature = self._webhook_manager._sign_payload(secret, payload_bytes)
+            headers["X-Hindsight-Signature"] = signature
+            # Byte-identical to the header above. `sha256=<hex>` over the raw body is
+            # the construction GitHub popularised, so emitting the conventional name
+            # too lets stock receivers verify without a Hindsight-specific shim.
+            headers["X-Hub-Signature-256"] = signature
+            # Timestamped signature (signed at attempt time, so it moves on retries).
+            # The body-only signatures above have no notion of freshness, which leaves
+            # a captured delivery replayable forever; receivers that check `t` against
+            # a tolerance window get replay protection.
+            headers["X-Hindsight-Signature-V2"] = self._webhook_manager._sign_payload_v2(
+                secret, payload_bytes, int(datetime.now(UTC).timestamp())
+            )
 
         if self._http_client is None:
             raise RuntimeError("HTTP client not initialized")
