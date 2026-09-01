@@ -3805,20 +3805,26 @@ jobs:
       with:
         python-version-file: ".python-version"
 
-    - name: Build supabase-tenant extension
-      working-directory: ./hindsight-extensions/supabase-tenant
-      run: uv build
-
     # No --frozen: the lock is not checked in, because tool.uv.sources resolves
     # hindsight-api-slim from the local checkout and its dependency tree moves
     # with core.
     - name: Install dependencies
       working-directory: ./hindsight-extensions/supabase-tenant
-      run: uv sync --extra dev
+      run: uv sync
 
     - name: Run tests
       working-directory: ./hindsight-extensions/supabase-tenant
       run: uv run pytest tests -v
+
+    # The Dockerfile IS the distribution mechanism — its final `import` step is
+    # the only thing proving the extension is reachable from the interpreter the
+    # server runs. Build it from the repo root, where the sources are in context.
+    - name: Build the extension image
+      run: |
+        docker build \
+          -f hindsight-extensions/supabase-tenant/Dockerfile \
+          --build-arg HINDSIGHT_IMAGE=ghcr.io/vectorize-io/hindsight:latest-slim \
+          -t hindsight-with-supabase .
 
   test-crewai-integration:
     needs: [detect-changes]

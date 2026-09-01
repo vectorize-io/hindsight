@@ -1,4 +1,4 @@
-# hindsight-ext-supabase-tenant
+# Supabase tenant extension
 
 A Hindsight `TenantExtension` that authenticates requests with [Supabase](https://supabase.com)
 Auth JWTs and gives every user their own PostgreSQL schema, so memories are isolated
@@ -11,19 +11,24 @@ at the database level.
 - **No user management**: your existing Supabase project is the source of identity.
 
 > This extension shipped inside the Hindsight server up to **0.9.2** as
-> `hindsight_api.extensions.builtin.supabase_tenant`. It is now a separate package —
-> see [Migrating](#migrating-from-the-built-in-extension).
+> `hindsight_api.extensions.builtin.supabase_tenant`. It is no longer bundled — see
+> [Migrating](#migrating-from-the-built-in-extension).
 
 ## Install
 
-Install it into the same environment as the Hindsight server:
+Extensions are not published to PyPI. Build an image with this one in it, from the
+repository root:
 
 ```bash
-pip install hindsight-ext-supabase-tenant
+docker build -f hindsight-extensions/supabase-tenant/Dockerfile -t hindsight-with-supabase .
 ```
 
-Requires `hindsight-api-slim >= 0.9.2`. For Docker, see the [Dockerfile](./Dockerfile)
-and the [packaging guide](../README.md#docker-packaging).
+See the [Dockerfile](./Dockerfile) for what it does, and the
+[packaging guide](../README.md#packaging-an-extension) for the general pattern.
+
+To run the server outside Docker, put `hindsight_ext_supabase_tenant/` on the
+`PYTHONPATH` of the environment Hindsight runs in and install `PyJWT[crypto]` and
+`httpx` there.
 
 ## Configure
 
@@ -56,22 +61,21 @@ curl -H "Authorization: Bearer <supabase_jwt>" \
 
 ## Migrating from the built-in extension
 
-Installs that set the old path get a startup error naming these two steps:
+Add the extension to your image (above), then update the extension path:
 
 ```diff
 -HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.supabase_tenant:SupabaseTenantExtension
 +HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_supabase_tenant:SupabaseTenantExtension
 ```
 
-plus `pip install hindsight-ext-supabase-tenant`. Every `HINDSIGHT_API_TENANT_*`
-setting keeps its name and meaning, the schema naming is unchanged, and existing
-tenant schemas are picked up as they were before — this is a packaging move, not a
-behaviour change.
+Every `HINDSIGHT_API_TENANT_*` setting keeps its name and meaning, the schema naming is
+unchanged, and existing tenant schemas are picked up as they were before — this is a
+packaging move, not a behaviour change.
 
 ## Develop
 
 ```bash
-uv sync --extra dev
+uv sync
 uv run pytest tests -v
 ```
 

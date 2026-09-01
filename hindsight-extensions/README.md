@@ -5,19 +5,21 @@ authentication, extra HTTP endpoints, extra MCP tools, and hooks around
 retain/recall/reflect. They are ordinary Python packages that the server imports by
 path at startup.
 
-This directory is the **registry**. Each subdirectory is an extension distributed
-separately from the server, so installing Hindsight does not drag in a third-party
-vendor's client library, and shipping an extension does not require a Hindsight
-release.
+This directory is the **registry**. Each subdirectory is an extension that lives
+outside the server, so installing Hindsight does not drag in a third-party vendor's
+client library and changing an extension does not require a Hindsight release.
+
+Extensions here are not published to PyPI. You ship one by building an image on top of
+Hindsight that copies the extension in — see [Packaging](#packaging-an-extension).
 
 ## Registry
 
-| Extension | Slot | Package | What it does |
-| --- | --- | --- | --- |
-| [`supabase-tenant`](./supabase-tenant) | `TENANT` | `hindsight-ext-supabase-tenant` | Validates [Supabase](https://supabase.com) Auth JWTs and gives each user their own Postgres schema |
+| Extension | Slot | What it does |
+| --- | --- | --- |
+| [`supabase-tenant`](./supabase-tenant) | `TENANT` | Validates [Supabase](https://supabase.com) Auth JWTs and gives each user their own Postgres schema |
 
 Extensions maintained outside this repository can be listed here too — open a PR
-adding a row that links to your repository and package.
+adding a row that links to yours.
 
 ### What stays in the server
 
@@ -118,9 +120,9 @@ Layout — one directory per extension, mirroring `supabase-tenant/`:
 
 ```
 hindsight-extensions/<name>/
-├── pyproject.toml            # distribution: hindsight-ext-<name>
-├── README.md                 # config reference + install
-├── Dockerfile                # example derived image
+├── pyproject.toml            # test harness only — not a published distribution
+├── README.md                 # config reference + how to build an image with it
+├── Dockerfile                # the image that ships it
 ├── hindsight_ext_<name>/
 │   ├── __init__.py           # re-export the class for a short import path
 │   └── extension.py
@@ -132,42 +134,55 @@ Naming keeps the env var short and unambiguous:
 | | |
 | --- | --- |
 | Directory | `hindsight-extensions/supabase-tenant/` |
-| Distribution | `hindsight-ext-supabase-tenant` |
 | Import package | `hindsight_ext_supabase_tenant` |
 | Env value | `hindsight_ext_supabase_tenant:SupabaseTenantExtension` |
 
-### Depend on the server only for development
+There is no version number, no wheel and no release step. The unit of distribution is
+the image you build, so the extension is exactly as current as the checkout you built
+it from.
 
-**Do not put `hindsight-api-slim` in `dependencies`.** The server is the host process
-that imports your extension, not something your extension installs. Declaring it means
-a `pip install` of your extension into a running deployment can silently upgrade or
-downgrade the server it is being added to.
+### The pyproject is for tests, not packaging
 
-Declare only what your own code imports, and take the server as a dev extra:
+The `pyproject.toml` exists so `uv run pytest` works. It declares `package = false`,
+so uv puts the dependencies in a virtualenv and leaves the sources on the path without
+building anything:
 
 ```toml
+[project]
+name = "hindsight-ext-<name>"
+version = "0"
+requires-python = ">=3.11"
 dependencies = [
-    "PyJWT[crypto]>=2.12.0",
+    "PyJWT[crypto]>=2.12.0",   # whatever your extension imports
     "httpx>=0.27.0",
+    "hindsight-api-slim",      # test-time only: the interfaces you write against
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
 ]
 
-[project.optional-dependencies]
-dev = ["hindsight-api-slim>=0.9.2", "pytest>=7.0.0", "pytest-asyncio>=0.21.0"]
+[tool.uv]
+package = false
 
 [tool.uv.sources]
-# Development only — uv sources are not written into the published wheel.
 hindsight-api-slim = { path = "../../hindsight-api-slim", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
 ```
 
-State the server version you support in your README instead; the extension interfaces
-are stable within a minor release.
+`hindsight-api-slim` belongs here and **only** here. At runtime the server is the host
+process that imports your extension, not something your extension installs — an
+extension that pulled the server in as a dependency could move the server version
+underneath the deployment it was being added to.
 
 ### Develop and test
 
 From the extension directory:
 
 ```bash
-uv sync --extra dev      # installs the extension plus the server from ../../hindsight-api-slim
+uv sync                  # deps plus the server from ../../hindsight-api-slim
 uv run pytest tests -v
 ```
 
@@ -175,94 +190,78 @@ Extension tests are plain unit tests — construct the class with a config dict,
 whatever it talks to, and assert on the `TenantContext` / `ValidationResult` it
 returns. They do not need a database.
 
-To run a real server against it:
+To run a real server against your extension without building an image:
 
 ```bash
 cd ../../hindsight-api-slim
+PYTHONPATH=../hindsight-extensions/myauth \
 HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_myauth:MyTenantExtension \
 HINDSIGHT_API_TENANT_SECRET=dev-secret \
-uv run --with-editable ../hindsight-extensions/myauth hindsight-api
-```
-
-### Publish
-
-```bash
-uv build            # -> dist/hindsight_ext_<name>-<version>-py3-none-any.whl
-uv publish
+uv run hindsight-api
 ```
 
 ---
 
 ## Docker packaging
 
-The Hindsight image does not carry extensions. Build a derived image that adds yours
-to the same Python environment the server runs in — `/app/api/.venv`.
-
-Two rules make this work, both inherited from the image's layout:
-
-1. **Install with `uv pip install --python /app/api/.venv/bin/python`.** The image's
-   virtualenv was created by `uv sync` and ships no `pip` of its own, so a bare
-   `pip install` lands in user site-packages where the server will never see it.
-2. **Never let the install resolve `hindsight-api-slim`.** Pin the extension's own
-   dependencies explicitly and add the extension itself with `--no-deps`, so a
-   packaging slip cannot replace the server inside its own image.
-
-`Dockerfile` — the published extension, installed by name:
+The Hindsight image does not carry extensions. Ship yours by building an image on top
+of it that installs the extension's dependencies and copies the extension in.
 
 ```dockerfile
 FROM ghcr.io/vectorize-io/hindsight:latest
 
+# Install into the server's virtualenv explicitly. It was created by `uv sync`
+# and ships no `pip` of its own, so a bare `pip install` would land in user
+# site-packages and be invisible to the running server.
 RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
-      'PyJWT[crypto]>=2.12.0' 'httpx>=0.27.0' \
- && uv pip install --python /app/api/.venv/bin/python --no-cache --no-deps \
-      hindsight-ext-supabase-tenant \
- && /app/api/.venv/bin/python -c "import hindsight_ext_supabase_tenant"
+      'PyJWT[crypto]>=2.12.0' \
+      'httpx>=0.27.0'
+
+# /app/extensions is ours — the image does not use it — so nothing the server
+# ships can be shadowed by what lands here.
+COPY hindsight-extensions/supabase-tenant/hindsight_ext_supabase_tenant \
+     /app/extensions/hindsight_ext_supabase_tenant
+ENV PYTHONPATH=/app/extensions
+
+# Fail the build, rather than the first authenticated request.
+RUN /app/api/.venv/bin/python -c "import hindsight_ext_supabase_tenant"
 ```
 
-The final `import` line matters: it turns a packaging mistake into a failed build
-instead of a server that crashes on its first authenticated request.
+That last `import` line is the one worth keeping: without it a packaging mistake ships
+happily and only surfaces when a request reaches the extension.
 
-To ship an extension you have not published, `uv build` it and copy the wheel in:
-
-```dockerfile
-COPY dist/hindsight_ext_supabase_tenant-*.whl /tmp/
-RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
-      'PyJWT[crypto]>=2.12.0' 'httpx>=0.27.0' \
- && uv pip install --python /app/api/.venv/bin/python --no-cache --no-deps /tmp/*.whl \
- && rm /tmp/*.whl \
- && /app/api/.venv/bin/python -c "import hindsight_ext_supabase_tenant"
-```
-
-Use `ghcr.io/vectorize-io/hindsight:latest-slim` as the base instead if you do not need
-the bundled local embedding/reranking models.
-
-Build and run it:
+Build from the repository root, so the extension sources are in the build context:
 
 ```bash
-docker build -t hindsight-with-supabase .
+docker build -f hindsight-extensions/supabase-tenant/Dockerfile -t hindsight-with-supabase .
 
-docker run -p 8000:8000 \
+docker run -p 8888:8888 \
   -e HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_supabase_tenant:SupabaseTenantExtension \
   -e HINDSIGHT_API_TENANT_SUPABASE_URL=https://xxx.supabase.co \
   -e HINDSIGHT_API_DATABASE_URL=postgresql://... \
   hindsight-with-supabase
 ```
 
-Same shape in `docker-compose.yml` — point the service at the derived image and pass
-the extension's variables as environment:
+Use `ghcr.io/vectorize-io/hindsight:latest-slim` as the base if you do not need the
+bundled local embedding/reranking models.
+
+Same shape in `docker-compose.yml` — build the image and pass the extension's variables
+as environment:
 
 ```yaml
 services:
   hindsight-api:
-    build: ./my-extension          # the Dockerfile above
+    build:
+      context: .                                                  # repository root
+      dockerfile: hindsight-extensions/supabase-tenant/Dockerfile
     environment:
       HINDSIGHT_API_TENANT_EXTENSION: hindsight_ext_supabase_tenant:SupabaseTenantExtension
       HINDSIGHT_API_TENANT_SUPABASE_URL: https://xxx.supabase.co
 ```
 
-A worker deployment loads the same tenant extension as the API, so give both
-containers the identical extension variables — otherwise the worker cannot enumerate
-tenant schemas and background consolidation stops for every tenant.
+A worker deployment loads the same tenant extension as the API, so give both containers
+the identical extension variables — otherwise the worker cannot enumerate tenant
+schemas and background consolidation stops for every tenant.
 
 > Do not install extensions at container start (an entrypoint that runs `pip install`).
 > That resolves unpinned code over the network into a running server on every restart.
@@ -275,7 +274,7 @@ Open a PR adding `hindsight-extensions/<name>/` with the layout above:
 
 - a `README.md` documenting every environment variable it reads,
 - tests that exercise the extension through its base-class interface,
-- a `Dockerfile` showing how to add it to the image,
+- a `Dockerfile` that builds an image with it,
 - a row in the registry table above.
 
 Extensions here are owned by their contributors. If you would rather host yours

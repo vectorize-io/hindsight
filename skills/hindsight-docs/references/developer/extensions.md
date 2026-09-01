@@ -19,12 +19,12 @@ HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTen
 HINDSIGHT_API_TENANT_API_KEY=your-secret-key
 ```
 
-**Separately packaged: SupabaseTenantExtension**
+**No longer built in: SupabaseTenantExtension**
 
-Validates [Supabase](https://supabase.com) JWTs and gives each authenticated user their own PostgreSQL schema. It ships as its own package, `hindsight-ext-supabase-tenant` — see [`hindsight-extensions/supabase-tenant`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-extensions/supabase-tenant) for configuration and installation.
+Validates [Supabase](https://supabase.com) JWTs and gives each authenticated user their own PostgreSQL schema. It now lives in the [extensions registry](https://github.com/vectorize-io/hindsight/tree/main/hindsight-extensions/supabase-tenant), which documents its configuration and ships a Dockerfile that builds an image with it.
 
-:::note Moved in 0.10
-Up to 0.9.2 this extension was built in, at `hindsight_api.extensions.builtin.supabase_tenant`. Installs still using that path now fail at startup with migration instructions: `pip install hindsight-ext-supabase-tenant` and set `HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_supabase_tenant:SupabaseTenantExtension`. All `HINDSIGHT_API_TENANT_*` settings and the schema naming are unchanged.
+:::warning Breaking change in 0.9.3
+Up to 0.9.2 this extension was built in, at `hindsight_api.extensions.builtin.supabase_tenant`. That path no longer exists, so an install still pointing at it fails at startup with `ModuleNotFoundError`. Add the extension to your image and set `HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_supabase_tenant:SupabaseTenantExtension`. All `HINDSIGHT_API_TENANT_*` settings and the schema naming are unchanged.
 :::
 
 For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT-based auth), implement a custom `TenantExtension`.
@@ -309,19 +309,24 @@ class MyMCPExtension(MCPExtension):
 
 ### With Docker
 
-Extensions are not bundled in the image, so build one that adds yours to the environment the server runs from. Install into the image's virtualenv explicitly — it was created by `uv sync` and ships no `pip` of its own:
+Extensions are not bundled in the image. Build one on top of Hindsight that installs your extension's dependencies and copies it in. Install into the image's virtualenv explicitly — it was created by `uv sync` and ships no `pip` of its own, so a bare `pip install` lands where the server can't see it:
 
 ```dockerfile
 FROM ghcr.io/vectorize-io/hindsight:latest
 
 RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
-      hindsight-ext-supabase-tenant \
- && /app/api/.venv/bin/python -c "import hindsight_ext_supabase_tenant"
+      'PyJWT[crypto]>=2.12.0' 'httpx>=0.27.0'
+
+COPY my_extension /app/extensions/my_extension
+ENV PYTHONPATH=/app/extensions
+
+# Fail the build, not the first request, if it isn't importable.
+RUN /app/api/.venv/bin/python -c "import my_extension"
 ```
 
 Then point the service at that image and pass the extension's variables as environment. Give the API and worker containers the same extension configuration — the worker uses the tenant extension to enumerate schemas for background consolidation.
 
-See the [extensions registry README](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md#docker-packaging) for the full recipe, including unpublished extensions and dependency pinning.
+See the [extensions registry README](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md#docker-packaging) for the full recipe.
 
 ### Bare Metal
 
@@ -356,6 +361,6 @@ Custom extensions that solve common use cases are welcome contributions to the H
 - Metrics exporters (Datadog, New Relic, etc.)
 - Custom HTTP endpoints for specific platforms
 
-Add it to the [extensions registry](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md) — either as a package under `hindsight-extensions/`, or as a registry entry linking to your own repository. That README covers the package layout, the development and publishing workflow, and Docker packaging.
+Add it to the [extensions registry](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md) — either as a directory under `hindsight-extensions/`, or as a registry entry linking to your own repository. That README covers the layout, the development workflow, and Docker packaging.
 
-Extensions live outside the server so that installing Hindsight does not pull in a vendor's client library, and so an extension can be released without a Hindsight release. Only extensions that add no dependencies and are useful to any deployment (`ApiKeyTenantExtension`, `MemoryDefenseRegexExtension`) stay in `hindsight_api.extensions.builtin`.
+Extensions live outside the server so that installing Hindsight does not pull in a vendor's client library, and so changing an extension does not require a Hindsight release. Only extensions that add no dependencies and are useful to any deployment (`ApiKeyTenantExtension`, `MemoryDefenseRegexExtension`) stay in `hindsight_api.extensions.builtin`.

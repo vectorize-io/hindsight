@@ -1,10 +1,8 @@
 """
 Supabase Tenant Extension for Hindsight
 
-Distributed separately from the Hindsight server as ``hindsight-ext-supabase-tenant``.
-Install it into the same environment as the server:
-
-    pip install hindsight-ext-supabase-tenant
+Ships separately from the Hindsight server: build an image on top of Hindsight
+that copies this package in (see the Dockerfile beside it).
 
 Validates Supabase JWTs and maps authenticated users to isolated memory banks.
 Each user gets their own PostgreSQL schema based on their Supabase user ID.
