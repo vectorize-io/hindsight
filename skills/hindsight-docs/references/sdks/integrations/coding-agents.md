@@ -449,7 +449,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `retainTags`            | —                                    | extra tags on every document written by the integration, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `manageBankConfig`      | `true`                               | let the plugin shape the bank's own configuration — the retain strategies it writes under, the `knowledge` entity-label group, and, on a bank that has none, the missions. Writing is strictly **additive**: it adds what the bank does not define and never overwrites what is there, so your control-plane edits survive. Set `false` to keep it out of the bank config entirely — see **A bank you shape yourself** below                                                                                                                                                                                                                                                                 |
-| `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`; `"per_source"` adds a scope per `source:` kind alongside the global one, so commit knowledge and conversation knowledge consolidate apart                                                                                                                                                                                                                                                                                                                 |
 | `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `reflectTimeoutMs`      | `120000`                             | **automatic** session-reflect timeout (hook harnesses additionally cap it at 25s to fit the host's hook window); on timeout the session runs without reflect (recorded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `reflectToolTimeoutMs`  | `330000`                             | timeout for the agent-invoked `hindsight_reflect` tool — a call the agent waits on, whose high-budget synthesis on a populated bank runs for minutes. Defaults above the server's own reflect wall timeout (`HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, 300s) so the server decides when to give up. Unset, it inherits an explicitly raised `reflectTimeoutMs`, but a short one never lowers it                                                                                                                                                                                                                                                                                                   |
@@ -634,6 +634,36 @@ scope per bank, which is what a bank already is — one project's memory. Set th
   },
 }
 ```
+
+### Splitting code from conversation — `per_source`
+
+`shared` puts every document a repo produces into one belief set. `"per_source"` keeps that set and
+adds one per origin, so "what the commits say" and "what was decided in conversation" can be asked
+apart:
+
+```jsonc
+{ "observationScopes": "per_source" }
+```
+
+Each document consolidates into the global scope **plus** one named for each `source:` tag it
+carries — `[[], ["source:chat"]]` for a session transcript, `[[], ["source:git"]]` for a commit
+diff. Read an axis back with `tags: ["source:git"], tags_match: "exact"`, and the merged view with
+`tags: [], tags_match: "exact"`.
+
+A document carrying two `source:` tags gets a scope for each, and that is deliberate rather than
+duplication. The commit-message seed is tagged `source:git` and `source:git-log`, so
+`source:git-log` is fed only by the seed — what the commit _messages_ say — while `source:git` also
+collects every per-commit diff under `gitIngest: "full"`. Two questions, two answers, each
+deduplicated within itself by consolidation. A fact belonging to more than one axis is the point.
+
+This cannot be expressed as a scope list. The server treats an explicit `list[list[str]]` as
+unconditional — it is not filtered against the memory's own tags — so a configured
+`[[], ["source:git"], ["source:chat"]]` writes every document into all three, and the `source:git`
+scope fills with beliefs built from chat transcripts. Only a per-document decision separates them.
+
+It costs one extra consolidation pass per document, and it reads only `source:`, so a volatile
+provenance tag never becomes a scope. The global scope is still written first and unchanged, so the
+untagged observations knowledge pages read are unaffected.
 
 `"per_tag"` and `"all_combinations"` split further still, and an explicit `[["project:demo"], …]`
 declares the scopes literally. `HINDSIGHT_OBSERVATION_SCOPES` sets the scalar modes; a scope list is

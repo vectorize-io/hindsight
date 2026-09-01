@@ -34,7 +34,12 @@ export interface KnowledgeNode {
  * retain API). The scalar modes are the server's; a `string[][]` declares the scopes explicitly.
  */
 export type ObservationScopes =
-  "shared" | "combined" | "per_tag" | "all_combinations" | "per_source" | string[][];
+  | "shared"
+  | "combined"
+  | "per_tag"
+  | "all_combinations"
+  | "per_source"
+  | string[][];
 
 /**
  * `per_source` is resolved HERE, per document, and never reaches the server: it expands to the
