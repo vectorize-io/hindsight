@@ -7873,13 +7873,12 @@ def _register_routes(app: FastAPI):
         from fastapi.responses import Response
 
         try:
-            resolved = await app.state.memory.retrieve_bank_image(bank_id, image_hash, request_context)
-            if resolved is None:
+            image = await app.state.memory.retrieve_bank_image(bank_id, image_hash, request_context)
+            if image is None:
                 raise HTTPException(status_code=404, detail="Image not found")
-            media_type, data = resolved
             return Response(
-                content=data,
-                media_type=media_type,
+                content=image.data,
+                media_type=image.media_type,
                 # Content-addressed: the bytes at this URL can never change, so it
                 # is safe to cache indefinitely. Private, because the URL is only
                 # meaningful with the bank's credentials.

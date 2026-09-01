@@ -21,6 +21,19 @@ except metadata.PackageNotFoundError:
     _CLIENT_VERSION = "0.0.0"
 
 DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
+
+#: One element of a multimodal retain item's content.
+#:
+#: Retain accepts either a plain string or an ordered list of these, so an image
+#: sits inline where it actually appears and the extractor reads it alongside the
+#: prose that refers to it::
+#:
+#:     [{"type": "text", "text": "click the button shown:"},
+#:      {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}]
+#:
+#: Requires a vision-capable retain LLM server-side; otherwise the retain is
+#: refused with 422 rather than silently dropping the images.
+ContentBlock = dict[str, Any]
 from hindsight_client_api.api import (
     banks_api,
     directives_api,
@@ -331,7 +344,7 @@ class Hindsight:
     def retain(
         self,
         bank_id: str,
-        content: str,
+        content: str | list[ContentBlock],
         timestamp: datetime | None = None,
         context: str | None = None,
         document_id: str | None = None,
@@ -348,7 +361,10 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            content: Memory content
+            content: Memory content. Either a plain string, or an ordered list of
+                content blocks so an image sits inline where it actually appears —
+                see :data:`ContentBlock`. The block form needs a vision-capable
+                retain LLM server-side.
             timestamp: Optional event timestamp
             context: Optional context description
             document_id: Optional document ID for grouping
@@ -927,6 +943,7 @@ class Hindsight:
         Returns:
             RetainResponse with success status and item count
         """
+        from hindsight_client_api.models.content import Content
         from hindsight_client_api.models.entity_input import EntityInput
         from hindsight_client_api.models.observation_scopes import ObservationScopes
         from hindsight_client_api.models.timestamp import Timestamp
@@ -943,7 +960,11 @@ class Hindsight:
                 obs_scopes = ObservationScopes(actual_instance=item["observation_scopes"])
             memory_items.append(
                 memory_item.MemoryItem(
-                    content=item["content"],
+                    # `content` is a generated anyOf wrapper since retain accepted
+                    # inline images (str | ContentBlock[]), so it is constructed the
+                    # same way as the Timestamp/ObservationScopes unions below.
+                    # Passing the raw value straight through fails validation.
+                    content=Content(actual_instance=item["content"]),
                     timestamp=timestamp_val,
                     context=item.get("context"),
                     metadata=item.get("metadata"),
@@ -973,7 +994,7 @@ class Hindsight:
     async def aretain(
         self,
         bank_id: str,
-        content: str,
+        content: str | list[ContentBlock],
         timestamp: datetime | None = None,
         context: str | None = None,
         document_id: str | None = None,
@@ -990,7 +1011,10 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            content: Memory content
+            content: Memory content. Either a plain string, or an ordered list of
+                content blocks so an image sits inline where it actually appears —
+                see :data:`ContentBlock`. The block form needs a vision-capable
+                retain LLM server-side.
             timestamp: Optional event timestamp
             context: Optional context description
             document_id: Optional document ID for grouping

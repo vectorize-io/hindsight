@@ -10,6 +10,7 @@ import json
 import logging
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -623,16 +624,24 @@ def _iter_recursive_splits(text: str, max_chars: int, separators: list[str]) -> 
     yield from _flush()
 
 
-def _iter_placeholder_segments(text: str) -> Iterator[tuple[str, bool]]:
-    """Split ``text`` into ``(segment, is_image)`` runs at image-placeholder edges."""
+@dataclass(frozen=True)
+class _ChunkSegment:
+    """One run of a document body: either prose, or a single image placeholder."""
+
+    text: str
+    is_image: bool
+
+
+def _iter_placeholder_segments(text: str) -> Iterator[_ChunkSegment]:
+    """Split ``text`` into prose / image-placeholder runs, in order."""
     cursor = 0
     for match in image_content.PLACEHOLDER_RE.finditer(text):
         if match.start() > cursor:
-            yield text[cursor : match.start()], False
-        yield match.group(0), True
+            yield _ChunkSegment(text=text[cursor : match.start()], is_image=False)
+        yield _ChunkSegment(text=match.group(0), is_image=True)
         cursor = match.end()
     if cursor < len(text):
-        yield text[cursor:], False
+        yield _ChunkSegment(text=text[cursor:], is_image=False)
 
 
 def _iter_image_aware_chunks(
@@ -673,25 +682,25 @@ def _iter_image_aware_chunks(
             if packed:
                 yield packed
 
-    for segment, is_image in _iter_placeholder_segments(text):
-        if is_image:
+    for segment in _iter_placeholder_segments(text):
+        if segment.is_image:
             if buffered and (cost + image_cost_chars > max_chars or images + 1 > max_images_per_chunk):
                 yield from _flush()
-            buffered.append(segment)
+            buffered.append(segment.text)
             cost += image_cost_chars
             images += 1
             continue
 
-        if cost + len(segment) <= max_chars:
-            buffered.append(segment)
-            cost += len(segment)
+        if cost + len(segment.text) <= max_chars:
+            buffered.append(segment.text)
+            cost += len(segment.text)
             continue
 
         # The run does not fit alongside what is already buffered. Close the open
         # chunk, then split the run on its own with the ordinary sentence-aware
         # splitter, whose boundaries are the ones delta retain already matches.
         yield from _flush()
-        pieces = list(_iter_recursive_splits(segment, max_chars, _RECURSIVE_TEXT_SEPARATORS))
+        pieces = list(_iter_recursive_splits(segment.text, max_chars, _RECURSIVE_TEXT_SEPARATORS))
         if not pieces:
             continue
         # All but the last go out immediately; the last stays open so a following

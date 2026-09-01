@@ -5,12 +5,15 @@ Regression test for a bug where the client passed async_=True (invalid kwarg)
 instead of var_async=True, causing async mode to be silently ignored.
 """
 
+from hindsight_client_api.models.content import Content
 from hindsight_client_api.models.memory_item import MemoryItem
 from hindsight_client_api.models.retain_request import RetainRequest
 
 
 def _make_item():
-    return MemoryItem(content="test content")
+    # `content` is a generated anyOf wrapper since retain accepted inline images
+    # (str | ContentBlock[]); a bare string no longer validates.
+    return MemoryItem(content=Content(actual_instance="test content"))
 
 
 def test_retain_request_async_true_serialized():

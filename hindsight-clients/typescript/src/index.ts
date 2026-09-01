@@ -29,6 +29,8 @@ import { createClient, createConfig } from "../generated/client";
 import type { Client } from "../generated/client";
 import * as sdk from "../generated/sdk.gen";
 import type {
+  TextContentBlock,
+  ImageContentBlock,
   RetainRequest,
   RetainResponse,
   RecallRequest,
@@ -120,8 +122,20 @@ export interface EntityInput {
   type?: string;
 }
 
+/**
+ * One element of a multimodal retain item's content.
+ *
+ * Retain accepts either a plain string or an ordered list of these, so an image
+ * sits inline where it actually appears and the extractor reads it alongside the
+ * prose that refers to it. Requires a vision-capable retain LLM server-side.
+ *
+ * Re-exported from the generated types rather than redeclared, so the allowed
+ * media types stay whatever the API actually accepts.
+ */
+export type ContentBlock = TextContentBlock | ImageContentBlock;
+
 export interface MemoryItemInput {
-  content: string;
+  content: string | ContentBlock[];
   timestamp?: string | Date;
   context?: string;
   metadata?: Record<string, string>;
@@ -280,7 +294,7 @@ export class HindsightClient {
    */
   async retain(
     bankId: string,
-    content: string,
+    content: string | ContentBlock[],
     options?: {
       timestamp?: Date | string;
       context?: string;
