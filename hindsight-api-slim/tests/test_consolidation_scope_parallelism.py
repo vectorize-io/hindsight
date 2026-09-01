@@ -282,6 +282,58 @@ async def test_shared_mode_pools_different_native_tags_into_one_llm_batch(memory
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
+async def test_combined_and_per_tag_same_tags_do_not_share_a_batch(memory: MemoryEngine, request_context):
+    """Regression test: a ``combined`` memory and a ``per_tag`` memory that
+    happen to share the same native tags must never land in the same
+    ``tag_groups`` bucket.
+
+    Before this fix, ``_consolidation_batch_key`` fell back to native tags
+    whenever a memory's resolved scope list had length != 1 (the per_tag/
+    all_combinations/multi-scope-explicit fan-out branch), so a combined
+    memory and a same-tagged per_tag memory both sorted to the same native
+    tag tuple and collided into one group. Whichever memory then happened to
+    land as ``sub_batch[0]`` after the ``llm_batch_size`` split decided the
+    scope for *both* — silently dropping the per_tag fan-out, or wrongly
+    fanning the combined memory out per tag.
+    """
+    bank_id = f"test-combined-per-tag-collision-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memory(conn, bank_id, "Alice likes tea and coffee", ["a", "b"], None)
+            await _insert_memory(conn, bank_id, "Bob likes tea and coffee too", ["a", "b"], "per_tag")
+
+        wrapper, _ = _mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+        try:
+            with (
+                _override_config(memory, consolidation_llm_parallelism=2, consolidation_llm_batch_size=2),
+                patch.object(memory, "submit_async_consolidation"),
+            ):
+                result = await run_consolidation_job(
+                    memory_engine=memory, bank_id=bank_id, request_context=request_context
+                )
+        finally:
+            memory._consolidation_llm_config = original_llm
+
+        assert result["status"] == "completed"
+        tag_sets = _ag_sorted(await _fetch_observation_tag_sets(memory, bank_id, request_context))
+        # combined memory -> one observation over its full tag set; per_tag
+        # memory -> one observation per tag. Neither scope leaks into the other.
+        assert tag_sets == _ag_sorted(
+            [
+                frozenset({"a", "b"}),
+                frozenset({"a"}),
+                frozenset({"b"}),
+            ]
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: MemoryEngine, request_context):
     """per_tag with tags [a, b] → two observations, tagged [a] and [b] respectively.
 

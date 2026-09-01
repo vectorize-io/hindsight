@@ -658,22 +658,32 @@ def _consolidation_batch_key(memory: dict[str, Any]) -> tuple[str, ...]:
     """Return the key that decides which memories may share an LLM batch.
 
     The real security requirement is "memories targeting different observation
-    scopes must never share an LLM call" — tags are only a proxy for that in
-    the default ``combined`` mode, where a memory's target scope *is* its own
-    tag set. A memory that names a single alternate scope (``shared``, an
-    explicit one-scope list, or ``per_tag`` with exactly one tag) targets that
-    scope instead, so it batches with any other memory naming the identical
-    scope regardless of native tags — that is the whole point of requesting
-    it. A memory that fans out to *multiple* scopes (``per_tag`` with more
-    than one tag, ``all_combinations``, or a multi-scope explicit list) writes
-    several observations from one LLM call; there is no single target scope
-    to key on, so it keeps grouping by native tags like the default case
-    (unchanged from before this function existed).
+    scopes must never share an LLM call" — every branch below keys on the
+    memory's *resolved* scope(s), never on raw tags, so two memories with the
+    same native tags but different ``observation_scopes`` modes can never
+    collide into the same group:
+
+    - default ``combined`` (``resolved is None``): the memory's target scope
+      *is* its own tag set, so it keys on those tags.
+    - a single alternate scope (``shared``, an explicit one-scope list, or
+      ``per_tag`` with exactly one tag): keys on that resolved scope instead,
+      so it batches with any other memory naming the identical scope
+      regardless of native tags — that is the whole point of requesting it.
+    - fan-out to *multiple* scopes (``per_tag`` with more than one tag,
+      ``all_combinations``, or a multi-scope explicit list): writes several
+      observations from one LLM call, so it keys on the full resolved
+      scope-list, not native tags — two fan-out memories only share a batch
+      when every one of their target scopes matches exactly. A distinct
+      leading marker per branch keeps e.g. a ``combined`` memory tagged
+      ``["a","b"]`` out of the same key as a ``per_tag`` memory tagged
+      ``["a","b"]``, even though both would otherwise sort to ``("a","b")``.
     """
     resolved = _resolve_obs_tags_list(memory)
-    if resolved is not None and len(resolved) == 1:
-        return tuple(sorted(resolved[0]))
-    return tuple(sorted(memory.get("tags") or []))
+    if resolved is None:
+        return ("combined", *sorted(memory.get("tags") or []))
+    if len(resolved) == 1:
+        return ("scope", *sorted(resolved[0]))
+    return ("fanout", *sorted("\x1f".join(sorted(scope)) for scope in resolved))
 
 
 def _scope_sort_key(scope: frozenset[str]) -> tuple[str, ...]:
