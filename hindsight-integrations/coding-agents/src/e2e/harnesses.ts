@@ -39,6 +39,23 @@ export const opencodeDockerSetup: HarnessDockerSetup = {
 };
 
 /**
+ * opencode2 — opencode v2's separate `opencode2` binary, installed ALONGSIDE v1.
+ *
+ * It shares v1's credential file (`~/.local/share/opencode/auth.json`) and its config file, so the
+ * setup differs from opencode's only in the CLI it drives and the harness it reports. `run` prints
+ * the reply on stdout for the shared runner to capture, exactly as v1 does.
+ */
+export const opencode2DockerSetup: HarnessDockerSetup = {
+  name: "opencode2",
+  hindsightHarness: "opencode2",
+  credentialPath: () =>
+    authPath("OPENCODE_E2E_AUTH_PATH", ".local", "share", "opencode", "auth.json"),
+  credentialTarget: "/root/.local/share/opencode/auth.json",
+  installCommand: "hindsight-coding-agents install opencode2",
+  command: (prompt) => ["opencode2", "run", prompt],
+};
+
+/**
  * Kilo CLI — an opencode fork, so same shape; its own plugin entry.
  *
  * Borrows the OPENCODE subscription file. Kilo's own `auth.json` is account-bound and reports zero
@@ -288,6 +305,7 @@ export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   codexDockerSetup,
   dcodeDockerSetup,
   opencodeDockerSetup,
+  opencode2DockerSetup,
   kiloDockerSetup,
   claudeCodeDockerSetup,
   cursorDockerSetup,

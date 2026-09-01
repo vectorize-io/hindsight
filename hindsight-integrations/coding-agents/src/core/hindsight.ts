@@ -33,7 +33,45 @@ export interface KnowledgeNode {
  * How consolidation scopes the observations a retained memory feeds (`observation_scopes` on the
  * retain API). The scalar modes are the server's; a `string[][]` declares the scopes explicitly.
  */
-export type ObservationScopes = "shared" | "combined" | "per_tag" | "all_combinations" | string[][];
+export type ObservationScopes =
+  | "shared"
+  | "combined"
+  | "per_tag"
+  | "all_combinations"
+  | "per_source"
+  | string[][];
+
+/**
+ * `per_source` is resolved HERE, per document, and never reaches the server: it expands to the
+ * global scope plus one named for that document's own `source:` tag.
+ *
+ * It cannot be expressed as configuration. The server treats an explicit scope list as
+ * unconditional — consolidation returns it verbatim without filtering it against the memory's own
+ * tags — so a configured `[[], ["source:git"], ["source:chat"]]` writes EVERY document into all
+ * three, and the `source:git` scope fills up with beliefs built from chat transcripts. Only a
+ * per-document decision separates "what the commits say" from "what was discussed".
+ *
+ * `per_tag` would split on the right axis but also on every other one: it reinstates the per-agent
+ * `harness:` fork that `shared` exists to prevent, and any volatile tag (a session id in
+ * `retainTags`) becomes its own scope, which is the fragmentation bug itself. Reading only
+ * `source:` is what keeps this safe.
+ *
+ * A document may carry more than one source tag — the commit-message seed is both `source:git` and
+ * `source:git-log`, because the cold-repo check filters on `source:git` — so every distinct one
+ * gets a scope. Taking all of them, sorted, is the only rule that needs no arbitrary tie-break and
+ * does not silently depend on the order the caller assembled its tags in.
+ *
+ * The empty scope is always first and always present, so the untagged observations that knowledge
+ * pages read (they match with `tags_match: "all"`) keep being written exactly as under `shared`.
+ */
+export function resolveRetainScopes(
+  tags: string[] | undefined,
+  configured: ObservationScopes
+): ObservationScopes {
+  if (configured !== "per_source") return configured;
+  const sources = [...new Set((tags ?? []).filter((t) => t.startsWith("source:")))].sort();
+  return [[], ...sources.map((s) => [s])];
+}
 
 /**
  * One global scope for everything this plugin writes.
@@ -271,7 +309,7 @@ export class HindsightClient {
       // Sent on EVERY retain, including the server default `combined`, so the scoping a bank's
       // observations were built under is a property of the write rather than of whichever server
       // version happened to process it. Servers older than 0.4.15 ignore the field.
-      observation_scopes: this.observationScopes,
+      observation_scopes: resolveRetainScopes(tags, this.observationScopes),
     };
     if (opts.timestamp) item.timestamp = opts.timestamp;
     if (opts.metadata) item.metadata = opts.metadata;

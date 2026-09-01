@@ -9,6 +9,7 @@ describe("HARNESS_NAMES", () => {
     expect(HARNESS_NAMES).toEqual(
       expect.arrayContaining([
         "opencode",
+        "opencode2",
         "kilo",
         "cline-cli",
         "pi",
@@ -25,7 +26,7 @@ describe("HARNESS_NAMES", () => {
         "qwen-code",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(15);
+    expect(HARNESS_NAMES).toHaveLength(16);
   });
 });
 
@@ -55,6 +56,15 @@ describe("getHarness", () => {
     // directly, bypassing this registry. Lock it so a future change can't silently make this look
     // functional.
     expect(() => adapter.createRuntime({} as never)).toThrow();
+  });
+
+  it("resolves opencode2 as its own plugin harness, separate from v1", async () => {
+    // Same no-runtime shape as opencode above, but a DIFFERENT entrypoint: v2's plugin contract
+    // shares nothing with v1's, so handing either host the other's export loads a plugin that
+    // registers nothing and reports no error.
+    const adapter = await getHarness("opencode2");
+    expect(adapter.name).toBe("opencode2");
+    expect(() => adapter.createRuntime({} as never)).toThrow(/src\/opencode2\.ts/);
   });
 
   it("resolves Cline as a native-plugin harness rather than a hook binary", async () => {
@@ -127,11 +137,14 @@ describe("registry covers every installable harness", () => {
 describe("every plugin entrypoint reports the harness the registry maps it to", () => {
   const PKG = fileURLToPath(new URL("../..", import.meta.url));
 
-  /** The two idioms an entrypoint uses to name itself: the argument it hands the shared factory
-   *  (opencode/Kilo via createPluginEntry, pi/Prime Agent via createPiExtension), or its own module
-   *  constant (Cline and dsh, which build their runtime themselves). */
+  /** The two idioms an entrypoint uses to name itself: the argument it hands its shared factory
+   *  (opencode/Kilo via createPluginEntry, opencode 2 via createOpencode2PluginEntry, pi/Prime Agent
+   *  via createPiExtension), or its own module constant (Cline and dsh, which build their runtime
+   *  themselves). Matching the factory NAMES rather than a generic call keeps the guard honest: an
+   *  entrypoint that names itself some new way fails here until this list is widened, which is
+   *  exactly the review that a new host needs.  */
   const DECLARES_HARNESS =
-    /(?:createPluginEntry|createPiExtension)\("([^"]+)"\)|const HARNESS = "([^"]+)"/;
+    /(?:createPluginEntry|createOpencode2PluginEntry|createPiExtension)\("([^"]+)"\)|const HARNESS = "([^"]+)"/;
 
   it.each(Object.entries(PLUGIN_ENTRYPOINTS))("%s (%s)", (harness, entry) => {
     const declaration = readFileSync(join(PKG, entry), "utf8").match(DECLARES_HARNESS);

@@ -167,7 +167,7 @@ describe("local history import", () => {
 
   it("reports SQLite-backed harnesses as unsupported with a reason, not an empty success", () => {
     const h = newHome();
-    for (const harness of ["opencode", "kilo", "cursor-cli", "cline-cli"]) {
+    for (const harness of ["opencode", "opencode2", "kilo", "cursor-cli", "cline-cli"]) {
       const r = importLocalHistory(harness, "/repo/mine", h);
       expect(r.supported).toBe(false);
       expect(r.reason).toMatch(/SQLite/);

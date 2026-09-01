@@ -46,6 +46,7 @@
   "files": [
     "skill",
     "dist",
+    "index.js",
     "cordis.patch.yml",
     "plugin.json",
     "hooks"
@@ -84,6 +85,7 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.9",
+    "@opencode-ai/plugin-v2": "npm:@opencode-ai/plugin@0.0.0-beta-18743",
     "@opencode-ai/sdk": "^1.18.9",
     "@types/node": "^26.1.0",
     "tsup": "^8.3.0",

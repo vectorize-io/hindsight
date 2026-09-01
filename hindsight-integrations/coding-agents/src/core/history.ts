@@ -487,6 +487,8 @@ export function importLocalHistory(
     case "prime-agent":
       return primeAgentHistory(repoDir, home);
     case "opencode":
+    // opencode v2 keeps sessions in the SAME `opencode.db` v1 does.
+    case "opencode2":
     case "kilo":
     case "cursor-cli":
     case "cline-cli":

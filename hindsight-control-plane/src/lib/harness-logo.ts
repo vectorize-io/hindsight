@@ -90,6 +90,10 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
   "grok-build": { id: "grok-build", label: "Grok Build", src: "/img/harness/grok-build.svg" },
   kilo: { id: "kilo", label: "Kilo CLI", src: "/img/harness/kilo.svg" },
   opencode: { id: "opencode", label: "OpenCode", src: "/img/harness/opencode.png" },
+  // opencode v2 ships as a separate `opencode2` binary alongside v1 and reports
+  // its own harness id, but it is the same product — so it deliberately shares
+  // v1's brand mark rather than inventing a second one.
+  opencode2: { id: "opencode2", label: "OpenCode 2", src: "/img/harness/opencode.png" },
   // pi ships no brand mark of its own, so this is the letter the agent is named
   // for, drawn in the same monochrome style as the Prime Agent mark below (the
   // fork of pi) rather than a logo invented for it.

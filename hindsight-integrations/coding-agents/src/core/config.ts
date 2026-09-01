@@ -265,7 +265,15 @@ function resolveReflectBudget(raw: RawConfig): "low" | "mid" | "high" {
 }
 
 /** The server's scalar scoping modes; anything else in this field has to be an explicit scope list. */
-const OBSERVATION_SCOPE_MODES = ["shared", "combined", "per_tag", "all_combinations"] as const;
+// `per_source` is this plugin's own mode, resolved per document in `resolveRetainScopes` and never
+// sent to the server; the rest are the server's.
+const OBSERVATION_SCOPE_MODES = [
+  "shared",
+  "combined",
+  "per_tag",
+  "all_combinations",
+  "per_source",
+] as const;
 
 /**
  * Validate `observationScopes`, falling back to the default on anything unrecognized.

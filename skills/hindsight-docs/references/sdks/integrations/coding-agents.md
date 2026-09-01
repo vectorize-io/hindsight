@@ -4,7 +4,7 @@
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**opencode**, **Kilo CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**, **Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **Antigravity CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Devin CLI**, **Grok Build**). Ingestion is fully
+(**opencode**, **opencode 2**, **Kilo CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**, **Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **Antigravity CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Devin CLI**, **Grok Build**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -86,6 +86,23 @@ npx @vectorize-io/hindsight-coding-agents install opencode
 ```
 
 A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP needed.
+
+####  opencode 2
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install opencode2
+```
+
+opencode v2 (`npm @opencode-ai/cli@beta`) installs its `opencode2` binary **alongside** v1 and
+rewrote the plugin API, so it is a harness of its own. It writes the same plugin entry to the same
+`~/.config/opencode/opencode.json` — the two CLIs share that file, and v1 rejects the whole config
+if it sees v2's `plugins` key — and each CLI then loads its own entry point from the one registered
+path. So installing either harness wires both, and uninstalling either removes the shared entry.
+
+Two differences from v1, both because of the host: the one-time codebase survey runs under another
+installed agent's CLI (v2 plugins cannot define the read-only agent the survey needs), and the seed
+banner is written to the plugin log instead of a TUI toast (v2 plugins cannot raise one). Recall,
+injection, the native `hindsight_*` tools and session write-back are identical.
 
 ####  Kilo CLI
 
@@ -221,11 +238,14 @@ removes only our entries. On Claude Code the install also ships a **companion sk
 "store this in hindsight" should do, the tool surface, per-repo configuration, debugging — so users
 can ask the agent itself. Manual wiring per harness, if you prefer:
 
-**opencode** installs directly — point `opencode.json` at the package dir:
+**opencode** and **opencode 2** install directly — point `opencode.json` at the package dir:
 
 ```json
 { "plugin": ["/path/to/hindsight-coding-agents"] }
 ```
+
+One entry, both CLIs: v1 resolves that directory through `package.json` `main`, v2 through its
+`index.js`, so each loads its own plugin.
 
 **Claude Code** and **Codex** get their full three-hook + MCP wiring from this package's own
 installer — `npx @vectorize-io/hindsight-coding-agents install claude-code` / `install codex`. This package's `bin`
@@ -280,7 +300,7 @@ to read; an older Node skips the import with that reason rather than silently im
 Dcode's transcripts record no directory at all — the working directory lives only in its LangGraph
 checkpoint database — so the repo comes from `dcode threads list --json`, a declared, versioned
 command contract rather than that internal schema; with the `dcode` CLI unavailable the import is
-skipped with that reason. The other harnesses (opencode, Kilo, Cursor, Cline, Copilot, Devin) keep
+skipped with that reason. The other harnesses (opencode, opencode 2, Kilo, Cursor, Cline, Copilot, Devin) keep
 history in internal SQLite databases with unversioned schemas and are skipped with a reason.
 
 **Nothing else is translated.** The old plugin's behavioural settings — 12 `recall*`, 7 `retain*`,
@@ -381,7 +401,7 @@ what reads it:
 | host                                                                                                        | reads the file                                                      | an edit applies            |
 | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------- |
 | hook harnesses (Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, Grok Build, Antigravity CLI, Devin) | once per hook invocation — each hook is its own short-lived process | on your next prompt        |
-| persistent plugins (opencode, Kilo CLI, Cline CLI, pi, Prime Agent, DeepSeek Harness)                       | once per workspace, when the host loads the plugin                  | after restarting the agent |
+| persistent plugins (opencode, opencode 2, Kilo CLI, Cline CLI, pi, Prime Agent, DeepSeek Harness)           | once per workspace, when the host loads the plugin                  | after restarting the agent |
 | the MCP server behind the `hindsight_*` tools                                                               | once at startup                                                     | in your next session       |
 
 `apiToken` is the exception. Every host re-reads it when the server rejects a request, so enabling
@@ -451,7 +471,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `retainTags`            | —                                    | extra tags on every document written by the integration, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `manageBankConfig`      | `true`                               | let the plugin shape the bank's own configuration — the retain strategies it writes under, the `knowledge` entity-label group, and, on a bank that has none, the missions. Writing is strictly **additive**: it adds what the bank does not define and never overwrites what is there, so your control-plane edits survive. Set `false` to keep it out of the bank config entirely — see **A bank you shape yourself** below                                                                                                                                                                                                                                                                 |
-| `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`; `"per_source"` adds a scope per `source:` kind alongside the global one, so commit knowledge and conversation knowledge consolidate apart                                                                                                                                                                                                                                                                                                                 |
 | `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `reflectTimeoutMs`      | `120000`                             | **automatic** session-reflect timeout (hook harnesses additionally cap it at 25s to fit the host's hook window); on timeout the session runs without reflect (recorded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `reflectToolTimeoutMs`  | `330000`                             | timeout for the agent-invoked `hindsight_reflect` tool — a call the agent waits on, whose high-budget synthesis on a populated bank runs for minutes. Defaults above the server's own reflect wall timeout (`HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, 300s) so the server decides when to give up. Unset, it inherits an explicitly raised `reflectTimeoutMs`, but a short one never lowers it                                                                                                                                                                                                                                                                                                   |
@@ -466,7 +486,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `surveyModel`           | `haiku`                              | model for the survey — Claude recipe only (`claude -p --model`); other agents use their configured default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `surveyBudgetUsd`       | `2`                                  | survey spend cap — Claude recipe only (`claude -p --max-budget-usd`); other agents rely on their read-only sandbox                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `surveyRefreshCommits`  | `20`                                 | re-run the survey at SessionStart once this many commits have accrued since the last one, so the structural pages track an architecture that keeps moving (`0` = survey a cold repo only, never again)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `retainSessions`        | `true`                               | session write-back, honored by every harness: hook harnesses write the transcript on Stop, plugin harnesses (opencode, Kilo) upsert it every turn plus an idle flush that captures the reply the per-turn pass can't see. Set `false` — globally, per harness, or per bank — to stop writing transcripts (the background history import stops with it) while recall, git ingest and the memory tools keep working                                                                                                                                                                                                                                                                            |
+| `retainSessions`        | `true`                               | session write-back, honored by every harness: hook harnesses write the transcript on Stop, plugin harnesses (opencode, opencode 2, Kilo) upsert it every turn plus an idle flush that captures the reply the per-turn pass can't see. Set `false` — globally, per harness, or per bank — to stop writing transcripts (the background history import stops with it) while recall, git ingest and the memory tools keep working                                                                                                                                                                                                                                                                |
 | `maxParallelRetains`    | `10`                                 | cap on concurrent retain-related requests: drain()'s per-op polls plus deepen's chat/git retain pools. The API rate-limits bursts, not single requests — if you see 429s, lower this rather than raising it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `autoUpdate`            | `true`                               | keep the installed runtime current by itself: once a day a session start asks npm for the published version and, when it is newer, re-stages `~/.hindsight/coding-agents` in the background. It rewires no host config, so a release adding a **new** hook entry point still needs a manual `install`. Set `false` to pin the installed version; `disabled` stops it too, since an inert plugin should stay inert. Only ever replaces a runtime installed the documented way, via `npx` — a copy installed with `npm i -g`, vendored as a project dependency, or built from a checkout is left to whoever manages it (update those the way you installed them), and it needs `npx` on `PATH` |
@@ -636,6 +656,36 @@ scope per bank, which is what a bank already is — one project's memory. Set th
   },
 }
 ```
+
+### Splitting code from conversation — `per_source`
+
+`shared` puts every document a repo produces into one belief set. `"per_source"` keeps that set and
+adds one per origin, so "what the commits say" and "what was decided in conversation" can be asked
+apart:
+
+```jsonc
+{ "observationScopes": "per_source" }
+```
+
+Each document consolidates into the global scope **plus** one named for each `source:` tag it
+carries — `[[], ["source:chat"]]` for a session transcript, `[[], ["source:git"]]` for a commit
+diff. Read an axis back with `tags: ["source:git"], tags_match: "exact"`, and the merged view with
+`tags: [], tags_match: "exact"`.
+
+A document carrying two `source:` tags gets a scope for each, and that is deliberate rather than
+duplication. The commit-message seed is tagged `source:git` and `source:git-log`, so
+`source:git-log` is fed only by the seed — what the commit _messages_ say — while `source:git` also
+collects every per-commit diff under `gitIngest: "full"`. Two questions, two answers, each
+deduplicated within itself by consolidation. A fact belonging to more than one axis is the point.
+
+This cannot be expressed as a scope list. The server treats an explicit `list[list[str]]` as
+unconditional — it is not filtered against the memory's own tags — so a configured
+`[[], ["source:git"], ["source:chat"]]` writes every document into all three, and the `source:git`
+scope fills with beliefs built from chat transcripts. Only a per-document decision separates them.
+
+It costs one extra consolidation pass per document, and it reads only `source:`, so a volatile
+provenance tag never becomes a scope. The global scope is still written first and unchanged, so the
+untagged observations knowledge pages read are unaffected.
 
 `"per_tag"` and `"all_combinations"` split further still, and an explicit `[["project:demo"], …]`
 declares the scopes literally. `HINDSIGHT_OBSERVATION_SCOPES` sets the scalar modes; a scope list is

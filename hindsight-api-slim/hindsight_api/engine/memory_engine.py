@@ -7234,14 +7234,36 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 if len(merged_candidates) > max_candidates:
                     # Sort by RRF score (boosted per-strategy if configured) and take top
-                    # candidates. The weighted-RRF boost keeps boosted-arm candidates from
-                    # being trimmed out of the reranker's global budget.
+                    # candidates. The rank-space boost reaches deeper into a boosted arm
+                    # before the cut without displacing the head of the other arms (#3956).
                     from .search.recall_boost import boosted_rrf_score
 
                     strategy_boosts = get_config().recall_strategy_boosts
                     merged_candidates.sort(key=lambda mc: boosted_rrf_score(mc, strategy_boosts), reverse=True)
                     pre_filtered_count = len(merged_candidates) - max_candidates
                     merged_candidates = merged_candidates[:max_candidates]
+                    if tracer:
+                        # Surface the cut in the trace: which arms actually made it into
+                        # the reranker's budget, and whether a boost shaped that. Ranking
+                        # complaints land on the trace first, and without this the boost
+                        # is only visible in server logs (issue #3956). Cheap: source_ranks
+                        # is already in memory and payloads are not materialized until below.
+                        arm_composition: dict[str, int] = {}
+                        for mc in merged_candidates:
+                            for key in mc.source_ranks:
+                                arm = key.removesuffix("_rank")
+                                arm_composition[arm] = arm_composition.get(arm, 0) + 1
+                        tracer.add_phase_metric(
+                            "rerank_prefilter",
+                            0.0,
+                            {
+                                "kept": len(merged_candidates),
+                                "dropped": pre_filtered_count,
+                                "max_candidates": max_candidates,
+                                "strategy_boosts": dict(strategy_boosts) if strategy_boosts else None,
+                                "arm_composition": arm_composition,
+                            },
+                        )
 
                 # Materialize the payload for the candidates that survived fusion, for a store
                 # that returned scores rather than payloads. THIS is why ranking can be cheap: the

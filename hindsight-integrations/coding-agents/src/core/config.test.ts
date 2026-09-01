@@ -370,6 +370,11 @@ describe("observationScopes", () => {
     }
   });
 
+  it("takes per_source, the one scoping an explicit list cannot express", () => {
+    writeJson(globalCfg, { observationScopes: "per_source" });
+    expect(loadConfig({ path: globalCfg }).observationScopes).toBe("per_source");
+  });
+
   it("takes an explicit scope list, dropping non-string entries", () => {
     expect(
       resolveConfig({ observationScopes: [["project:demo"], ["team:eng", "x"]] }).observationScopes

@@ -218,7 +218,10 @@ describe("retryAfterMs", () => {
 });
 
 describe("HindsightClient.retain — observation scoping", () => {
-  async function retainItem(client: HindsightClient): Promise<Record<string, unknown>> {
+  async function retainItem(
+    client: HindsightClient,
+    tags: string[] = ["source:chat", "harness:claude-code"]
+  ): Promise<Record<string, unknown>> {
     let sent: string | undefined;
     vi.stubGlobal(
       "fetch",
@@ -227,13 +230,7 @@ describe("HindsightClient.retain — observation scoping", () => {
         return jsonResponse(200, { operation_id: "op-1" });
       })
     );
-    await client.retain(
-      "c",
-      "ctx",
-      "doc-1",
-      ["source:chat", "harness:claude-code"],
-      "conversation"
-    );
+    await client.retain("c", "ctx", "doc-1", tags, "conversation");
     const body = JSON.parse(String(sent)) as { items: Record<string, unknown>[] };
     return body.items[0];
   }
@@ -255,6 +252,78 @@ describe("HindsightClient.retain — observation scoping", () => {
       new HindsightClient({ apiUrl: "http://x", bank: "b", observationScopes: [["project:demo"]] })
     );
     expect(explicit.observation_scopes).toEqual([["project:demo"]]);
+  });
+});
+
+/**
+ * `per_source` is the one scoping a static config cannot express. The server treats an explicit
+ * scope list as UNCONDITIONAL — `_resolve_obs_tags_list` returns it verbatim without filtering
+ * against the memory's own tags — so configuring `[[], ["source:git"], ["source:chat"]]` writes
+ * every document into all three, and the `source:git` scope fills with beliefs built from chat
+ * transcripts. Deriving the scope per document from its own `source:` tag is the only way to get
+ * "what the commits say" apart from "what was discussed" while keeping the merged global set.
+ *
+ * It reads ONLY `source:`, so volatile provenance tags (a session id in `retainTags`) can never
+ * become a scope — the failure mode `per_tag` would reintroduce.
+ */
+describe("HindsightClient.retain — per_source scoping", () => {
+  async function retainItem(
+    client: HindsightClient,
+    tags: string[]
+  ): Promise<Record<string, unknown>> {
+    let sent: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent = String(init.body);
+        return jsonResponse(200, { operation_id: "op-1" });
+      })
+    );
+    await client.retain("c", "ctx", "doc-1", tags, "conversation");
+    const body = JSON.parse(String(sent)) as { items: Record<string, unknown>[] };
+    return body.items[0];
+  }
+
+  const perSource = () =>
+    new HindsightClient({ apiUrl: "http://x", bank: "b", observationScopes: "per_source" });
+
+  it("keeps the global scope and adds the document's own source scope", async () => {
+    const item = await retainItem(perSource(), ["source:chat", "harness:claude-code"]);
+    expect(item.observation_scopes).toEqual([[], ["source:chat"]]);
+  });
+
+  it("scopes a git document apart from a chat one", async () => {
+    const item = await retainItem(perSource(), ["source:git", "harness:claude-code"]);
+    expect(item.observation_scopes).toEqual([[], ["source:git"]]);
+  });
+
+  it("falls back to the global scope alone when a document carries no source tag", async () => {
+    const item = await retainItem(perSource(), ["knowledge:convention"]);
+    expect(item.observation_scopes).toEqual([[]]);
+  });
+
+  // The commit-message seed carries `source:git` AND `source:git-log` (git.ts keeps
+  // both so the cold-repo check can find it), so it writes to both scopes. That is
+  // not duplication: `source:git-log` is fed only by the seed — what the commit
+  // MESSAGES say — while `source:git` also collects every per-commit diff under
+  // gitIngest: "full". Two questions, two answers, each deduplicated within itself.
+  // A fact belonging to more than one axis is the design working, not a leak.
+  it("gives a document carrying two source tags a scope for each", async () => {
+    const item = await retainItem(perSource(), ["source:git", "source:git-log", "gitlog-head:abc"]);
+    expect(item.observation_scopes).toEqual([[], ["source:git"], ["source:git-log"]]);
+  });
+
+  it("orders the scopes independently of the order the tags arrive in", async () => {
+    const item = await retainItem(perSource(), ["source:git-log", "source:git"]);
+    expect(item.observation_scopes).toEqual([[], ["source:git"], ["source:git-log"]]);
+  });
+
+  it("never lets a volatile provenance tag become a scope", async () => {
+    const item = await retainItem(perSource(), [
+      "source:chat",
+      "hermes-session:20260829_101500_abc",
+    ]);
+    expect(item.observation_scopes).toEqual([[], ["source:chat"]]);
   });
 });
 
@@ -420,7 +489,9 @@ describe("every memory write goes through the one call site that scopes it", () 
     // Everything between retain()'s signature and the POST is the body it builds; the scoping
     // has to be set in there, not left to whatever the server defaults to.
     const body = src.slice(src.indexOf("async retain("), src.indexOf('bankUrl("/memories")'));
-    expect(body).toContain("observation_scopes: this.observationScopes");
+    // The scoping may be derived per document (see `per_source`), but it must still be set on the
+    // item here and still come from the configured value — not from a server default.
+    expect(body).toMatch(/observation_scopes: .*this\.observationScopes/);
   });
 });
 
