@@ -102,3 +102,42 @@ async def test_a_config_read_back_does_not_go_through_the_cache(memory: MemoryEn
         "value it replaced on any pod that did not serve the write"
     )
     assert state.config.get("retain_chunk_size") == 4321, "the resolved config came from the cache too"
+
+
+@pytest.mark.asyncio
+async def test_recall_reads_its_config_through_the_cache(memory: MemoryEngine, request_context):
+    """Freshness belongs to the caller that needs it, not to `get_bank_config` itself.
+
+    `recall_async` and `retain_batch_async` resolve the bank's config per request. Making the
+    method itself uncached to fix read-your-writes on the CONFIG ENDPOINT put a pool acquire on
+    both hot paths -- and an acquire costs more than the query it carries, because the pool runs
+    five `set_config` calls on checkout and a `RESET ALL` on release.
+
+    Asserted as the property (a warm second read issues no query) rather than by counting call
+    sites, so a new hot-path caller that forces a read fails here.
+    """
+    bank_id = _bank("cache_hot_path")
+    await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+
+    resolver = memory._config_resolver
+    await resolver.get_bank_config(bank_id, request_context)  # warm
+
+    reads = 0
+    original = resolver._load_bank_config
+
+    async def _counting(bank, *, cached=True):
+        nonlocal reads
+        if not cached:
+            reads += 1
+        return await original(bank, cached=cached)
+
+    resolver._load_bank_config = _counting
+    try:
+        await resolver.get_bank_config(bank_id, request_context)
+    finally:
+        resolver._load_bank_config = original
+
+    assert reads == 0, (
+        "get_bank_config forced an uncached bank-config read; recall and retain call this per "
+        "request, so that is a pool acquire on every one of them"
+    )

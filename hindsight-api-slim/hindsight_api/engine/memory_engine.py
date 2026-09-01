@@ -12178,10 +12178,11 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
     ) -> BankConfigState:
         """Load config after the caller has established tenant and operation access."""
-        config = await self._config_resolver.get_bank_config(bank_id, request_context)
-        # Fresh, like the resolved config above: `overrides` is what the UI renders as "Bank
-        # override", so a cached read here answers a successful config edit with the values it
-        # replaced on any pod that did not serve the write.
+        # Both fresh: this is what the bank-config ENDPOINT answers with, and `overrides` is what
+        # the UI renders as "Bank override". A cached read here answers a successful config edit
+        # with the values it replaced, on any pod that did not serve the write. The hot-path
+        # callers (`recall_async`, `retain_batch_async`) take the cached default instead.
+        config = await self._config_resolver.get_bank_config(bank_id, request_context, cached=False)
         overrides = await self._config_resolver._load_bank_config(bank_id, cached=False)
         return BankConfigState(config=config, overrides=overrides)
 
