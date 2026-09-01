@@ -150,3 +150,18 @@ def test_non_hooks_are_untouched():
     instrument_operation_validator(v)
     assert v.name == before
     assert not inspect.iscoroutinefunction(getattr(v, "name", None))
+
+
+@pytest.mark.asyncio
+async def test_an_unwrappable_validator_does_not_break_construction(collector):
+    """The extension is loaded from an env var and is someone else's class. Instrumentation must
+    degrade to "not timed" rather than fail the engine that takes it."""
+
+    class _Unhashable(_Validator):
+        __hash__ = None  # type: ignore[assignment]
+
+    v = _Unhashable({})
+    assert instrument_operation_validator(v) is v
+
+    await v.validate_recall(None)  # still callable, simply untimed
+    assert collector.recorded == []

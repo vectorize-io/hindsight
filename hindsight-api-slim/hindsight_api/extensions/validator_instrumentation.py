@@ -47,6 +47,8 @@ _HOOK_PREFIXES = ("validate_", "on_", "precheck", "filter_")
 def _is_hook(name: str, attr: Any) -> bool:
     if name.startswith("_"):
         return False
+    if hasattr(attr, "__wrapped__"):  # already timed (a validator wrapped without being tracked)
+        return False
     if not any(name == p or name.startswith(p) for p in _HOOK_PREFIXES):
         return False
     return inspect.iscoroutinefunction(attr)
@@ -60,7 +62,14 @@ def instrument_operation_validator(validator: T) -> T:
     """
     if validator is None:
         return validator
-    if validator in _INSTRUMENTED:
+    # Instrumenting must never be the thing that breaks the engine it measures: the extension is
+    # loaded from an env var and is someone else's class, so an unhashable, weakref-less or
+    # slotted one degrades to "not timed" rather than failing construction.
+    try:
+        if validator in _INSTRUMENTED:
+            return validator
+    except TypeError:  # unhashable extension -- cannot be tracked, so cannot be wrapped safely
+        logger.debug("operation validator is not hashable; hooks left untimed")
         return validator
 
     wrapped = 0
@@ -71,10 +80,17 @@ def instrument_operation_validator(validator: T) -> T:
             continue
         if not _is_hook(name, attr):
             continue
-        setattr(validator, name, _timed(name, attr))
+        try:
+            setattr(validator, name, _timed(name, attr))
+        except (AttributeError, TypeError):  # __slots__ or a read-only attribute
+            logger.debug("could not instrument hook %s", name)
+            continue
         wrapped += 1
 
-    _INSTRUMENTED.add(validator)
+    try:
+        _INSTRUMENTED.add(validator)
+    except TypeError:  # not weak-referenceable: wrapping stands, idempotence is by __wrapped__
+        pass
     logger.debug("instrumented %d operation-validator hooks on %s", wrapped, type(validator).__name__)
     return validator
 
@@ -86,11 +102,11 @@ def _timed(hook_name: str, fn):
 
     @functools.wraps(fn)
     async def _wrapper(*args, **kwargs):
-        started = time.time()
+        started = time.perf_counter()
         try:
             return await fn(*args, **kwargs)
         finally:
-            _record(operation, hook, time.time() - started)
+            _record(operation, hook, time.perf_counter() - started)
 
     # `functools.wraps` sets `__wrapped__`, which is what makes a wrapped hook identifiable --
     # both to `inspect.signature` and to the test that asserts every hook is covered.
