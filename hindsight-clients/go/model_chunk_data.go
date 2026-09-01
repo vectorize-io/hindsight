@@ -26,6 +26,7 @@ type ChunkData struct {
 	ChunkIndex int32 `json:"chunk_index"`
 	// Whether the chunk text was truncated due to token limits
 	Truncated *bool `json:"truncated,omitempty"`
+	Images []ChunkImage `json:"images,omitempty"`
 }
 
 type _ChunkData ChunkData
@@ -158,6 +159,39 @@ func (o *ChunkData) SetTruncated(v bool) {
 	o.Truncated = &v
 }
 
+// GetImages returns the Images field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ChunkData) GetImages() []ChunkImage {
+	if o == nil {
+		var ret []ChunkImage
+		return ret
+	}
+	return o.Images
+}
+
+// GetImagesOk returns a tuple with the Images field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ChunkData) GetImagesOk() ([]ChunkImage, bool) {
+	if o == nil || IsNil(o.Images) {
+		return nil, false
+	}
+	return o.Images, true
+}
+
+// HasImages returns a boolean if a field has been set.
+func (o *ChunkData) HasImages() bool {
+	if o != nil && !IsNil(o.Images) {
+		return true
+	}
+
+	return false
+}
+
+// SetImages gets a reference to the given []ChunkImage and assigns it to the Images field.
+func (o *ChunkData) SetImages(v []ChunkImage) {
+	o.Images = v
+}
+
 func (o ChunkData) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -173,6 +207,9 @@ func (o ChunkData) ToMap() (map[string]interface{}, error) {
 	toSerialize["chunk_index"] = o.ChunkIndex
 	if !IsNil(o.Truncated) {
 		toSerialize["truncated"] = o.Truncated
+	}
+	if o.Images != nil {
+		toSerialize["images"] = o.Images
 	}
 	return toSerialize, nil
 }

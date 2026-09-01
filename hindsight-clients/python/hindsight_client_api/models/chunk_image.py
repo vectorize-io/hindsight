@@ -17,22 +17,20 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.chunk_image import ChunkImage
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ChunkData(BaseModel):
+class ChunkImage(BaseModel):
     """
-    Chunk data for a single chunk.
+    An image referenced by a chunk's text, and where to fetch it.
     """ # noqa: E501
-    id: StrictStr
-    text: StrictStr
-    chunk_index: StrictInt
-    truncated: Optional[StrictBool] = Field(default=False, description="Whether the chunk text was truncated due to token limits")
-    images: Optional[List[ChunkImage]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "chunk_index", "truncated", "images"]
+    hash: StrictStr = Field(description="sha256 of the image bytes; the id inside the chunk text's placeholder.")
+    media_type: StrictStr = Field(description="MIME type of the image.")
+    byte_size: StrictInt = Field(description="Size of the image in bytes.")
+    url: StrictStr = Field(description="Bank-scoped API path serving the image bytes. Requires the same authorization as the bank.")
+    __properties: ClassVar[List[str]] = ["hash", "media_type", "byte_size", "url"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -52,7 +50,7 @@ class ChunkData(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ChunkData from a JSON string"""
+        """Create an instance of ChunkImage from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,23 +71,11 @@ class ChunkData(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in images (list)
-        _items = []
-        if self.images:
-            for _item_images in self.images:
-                if _item_images:
-                    _items.append(_item_images.to_dict())
-            _dict['images'] = _items
-        # set to None if images (nullable) is None
-        # and model_fields_set contains the field
-        if self.images is None and "images" in self.model_fields_set:
-            _dict['images'] = None
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ChunkData from a dict"""
+        """Create an instance of ChunkImage from a dict"""
         if obj is None:
             return None
 
@@ -97,11 +83,10 @@ class ChunkData(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "id": obj.get("id"),
-            "text": obj.get("text"),
-            "chunk_index": obj.get("chunk_index"),
-            "truncated": obj.get("truncated") if obj.get("truncated") is not None else False,
-            "images": [ChunkImage.from_dict(_item) for _item in obj["images"]] if obj.get("images") is not None else None
+            "hash": obj.get("hash"),
+            "media_type": obj.get("media_type"),
+            "byte_size": obj.get("byte_size"),
+            "url": obj.get("url")
         })
         return _obj
 

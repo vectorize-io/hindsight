@@ -285,6 +285,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_TEMPERATURE_RETAIN` | Temperature for fact extraction during retain. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.1` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` | Temperature for the reflect "thinking" step. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.9` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` | Temperature for consolidation (mental-model delta and dedup). Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
+| `HINDSIGHT_API_LLM_VISION` | Whether the configured LLM can read images, overriding what the provider reports about itself. Leave unset and each provider answers for itself: Anthropic and Gemini report yes, OpenAI reports yes, `none` reports no, and every gateway-style backend (LiteLLM, Ollama, LM Studio, OpenRouter, an OpenAI-compatible proxy) reports *unknown*, because its catalogue mixes vision-capable and text-only models. A retain carrying [inline images](#inline-images-in-retain) is refused with `422` on both "no" and "unknown" — dropping an image silently would leave a document that looks retained with the information the caller cared about gone. Set `true` when you are running a vision model behind such a gateway; set `false` to refuse images against an endpoint that rejects them despite its model name. | Provider decides |
 | `HINDSIGHT_API_LLM_SEND_BANK_AS_USER` | Tag outbound LLM and embedding calls with `user=<bank_id>` so gateways (OpenRouter usage accounting, LiteLLM, Helicone) can attribute spend per bank. When enabled, the bank id is transmitted to the upstream provider as the end-user identifier. | `false` |
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
@@ -1462,6 +1463,10 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | Max completion tokens for fact extraction LLM calls | `64000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_SIZE` | Max characters per chunk for fact extraction. Larger chunks extract fewer LLM calls but may lose context. | `3000` |
 | `HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE` | Max characters for a single JSONL line or conversation turn to keep whole. Unset uses `HINDSIGHT_API_RETAIN_CHUNK_SIZE`. Must be a positive integer when set. | - |
+| `HINDSIGHT_API_RETAIN_IMAGE_MAX_SIZE_MB` | Max decoded size of a single image sent as inline retain content. Above every mainstream provider's own per-image ceiling, so the provider's limit binds first for a legitimate image while an abusive upload is refused at the ingress. | `20` |
+| `HINDSIGHT_API_RETAIN_IMAGE_MAX_COUNT` | Max inline images in one retain item. Split larger documents across several items. | `50` |
+| `HINDSIGHT_API_RETAIN_IMAGE_CHUNK_COST_CHARS` | What one inline image costs against `HINDSIGHT_API_RETAIN_CHUNK_SIZE`. The chunk budget is measured in characters of text, but an image consumes model context too, so an image-bearing chunk must carry proportionally less prose. Must be **less than** `HINDSIGHT_API_RETAIN_CHUNK_SIZE` — otherwise no image could ever share a chunk with the sentence that introduces it, which is the whole point of inline images. Configurable per bank. | `1500` |
+| `HINDSIGHT_API_RETAIN_MAX_IMAGES_PER_CHUNK` | Hard cap on images in one extraction chunk, applied alongside the character budget: many small images can satisfy the arithmetic and still exceed a provider's per-request image limit. Configurable per bank. | `8` |
 | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, `verbatim`, `chunks`, or `custom` | `concise` |
 | `HINDSIGHT_API_RETAIN_MISSION` | What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode. | - |
 | `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Full prompt override for fact extraction (only used when mode is `custom`). Replaces built-in extraction rules entirely. | - |
@@ -1484,6 +1489,53 @@ Controls the retain (memory ingestion) pipeline.
 > **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, `gemini`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
 >
 > **Gemini** uses the [Gemini Batch API](https://ai.google.dev/gemini-api/docs/batch-api) (flat 50% input + output discount, 24h SLA — typically minutes). It needs no extra settings beyond `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` and an API-key `gemini` provider; Vertex AI (`vertexai`) is not batch-capable.
+
+#### Inline images in retain
+
+A retain item's `content` can be a plain string, as it always could, or an ordered
+list of text and image blocks so an image sits where it actually appears:
+
+```json
+{
+  "content": [
+    {"type": "text",  "text": "To reset the VPN, click the button shown:"},
+    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+    {"type": "text",  "text": "...then reconnect."}
+  ]
+}
+```
+
+The point is *position*. Extraction runs the interleaved text and images through a
+vision model, so the model reads a screenshot beside the sentence that introduces
+it, rather than being handed a caption you produced beforehand. That is the same
+bargain the rest of Hindsight offers for text: hand it the raw content and trust
+the extractor.
+
+This is distinct from [`POST /files/retain`](#file-conversion), which converts a
+whole file to markdown as its **own** document — still the right tool for scanned
+PDFs and office documents, but it separates an image from the prose around it.
+
+What happens to the bytes:
+
+- They are hashed (sha256) and stored **content-addressed**, so the same image
+  across many documents or re-ingests is stored once, and re-retaining an
+  unchanged document is a no-op.
+- Storage goes through the same backend as uploaded files — `native` (PostgreSQL),
+  `s3`, `gcs`, `azure`. See [File storage](#file-storage).
+- The document's stored text keeps a placeholder (`⟦hs-image:sha256:...⟧`) where
+  the image sat, so chunking, idempotency, `update_mode=append` and re-extraction
+  behave exactly as they do for text.
+- Recall returns the images a chunk references on `chunks[].images[]`, each with a
+  bank-authorized `url` serving the original bytes — so a multimodal agent can show
+  or reason over the picture behind an image-derived fact.
+
+Two things will refuse the retain outright, both with `422`, rather than dropping
+images silently:
+
+- The retain LLM is not vision-capable, or Hindsight cannot tell that it is. See
+  [`HINDSIGHT_API_LLM_VISION`](#llm-configuration).
+- `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true`. The batch path builds provider
+  request bodies directly and never sees the interleaved content.
 
 #### Fireworks batch inference
 
