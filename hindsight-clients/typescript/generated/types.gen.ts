@@ -589,6 +589,18 @@ export type BankTemplateConfig = {
    */
   retain_chunk_batch_size?: number | null;
   /**
+   * Retain Image Chunk Cost Chars
+   *
+   * Chars one inline image costs against retain_chunk_size
+   */
+  retain_image_chunk_cost_chars?: number | null;
+  /**
+   * Retain Max Images Per Chunk
+   *
+   * Hard cap on inline images in a single extraction chunk
+   */
+  retain_max_images_per_chunk?: number | null;
+  /**
    * Mcp Enabled Tools
    *
    * MCP tool allowlist for this bank (None = all tools)

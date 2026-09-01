@@ -2996,6 +2996,12 @@ class BankTemplateConfig(BaseModel):
     retain_chunk_batch_size: int | None = Field(
         default=None, description="Max chunks per streaming batch (0 disables batching)"
     )
+    retain_image_chunk_cost_chars: int | None = Field(
+        default=None, description="Chars one inline image costs against retain_chunk_size"
+    )
+    retain_max_images_per_chunk: int | None = Field(
+        default=None, description="Hard cap on inline images in a single extraction chunk"
+    )
     mcp_enabled_tools: list[str] | None = Field(
         default=None, description="MCP tool allowlist for this bank (None = all tools)"
     )
