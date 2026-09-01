@@ -45,8 +45,8 @@ def test_captures_the_fields_that_used_to_go_missing():
 
 def test_excludes_what_a_reprocess_supplies_itself():
     """Replaying these would fight the reprocess: content is the stored
-    original_text, and document_id/update_mode/tags are set by the reprocess."""
-    p = _params(content="x", document_id="d1", update_mode="append", tags=["a"], context="ctx")
+    original_text, and document_id/update_mode/tags/force_reextract are set by the reprocess."""
+    p = _params(content="x", document_id="d1", update_mode="append", tags=["a"], force_reextract=True, context="ctx")
     assert set(p) == {"context"}
 
 

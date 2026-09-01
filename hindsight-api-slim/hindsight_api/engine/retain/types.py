@@ -117,6 +117,7 @@ class RetainContentDict(TypedDict, total=False):
         Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
     )  # Observation scopes for consolidation
     update_mode: Literal["replace", "append"]
+    force_reextract: bool  # Force full re-extraction bypassing delta and crash-recovery deduplication
 
 
 @dataclass

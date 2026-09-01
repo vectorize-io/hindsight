@@ -11421,6 +11421,7 @@ class MemoryEngine(MemoryEngineInterface):
             "content": original_text,
             "document_id": document_id,
             "update_mode": "replace",
+            "force_reextract": True,
         }
         # Replay everything the original retain supplied. Enumerating fields here
         # is what let `strategy`, `entities` and `resolve_entities` go missing one
@@ -11434,10 +11435,11 @@ class MemoryEngine(MemoryEngineInterface):
         # on the item, so retain_params came back without it and the NEXT reprocess
         # fell back to the bank default again.
         content_dict.update(retain_params)
-        # These three are the reprocess's own and must win over anything stored.
+        # These four are the reprocess's own and must win over anything stored.
         content_dict["content"] = original_text
         content_dict["document_id"] = document_id
         content_dict["update_mode"] = "replace"
+        content_dict["force_reextract"] = True
 
         tags = doc.get("tags") or []
         if tags:

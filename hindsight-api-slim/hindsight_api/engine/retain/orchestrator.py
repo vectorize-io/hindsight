@@ -383,7 +383,7 @@ def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
 # and only the resulting facts are wrong. Inverting it makes the safe case the
 # default — a new retain field round-trips unless someone deliberately excludes it,
 # and the single source of truth becomes what api_retain puts on the content dict.
-_RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags"})
+_RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags", "force_reextract"})
 
 
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
@@ -1708,10 +1708,16 @@ async def retain_batch(
     # entities against Postgres and takes its document lock on a `documents` row that store-owned
     # banks no longer have: `current_hash` comes back None, the stale-chunk guard never fires, and
     # delta ran with no concurrency control at all.
+    #
+    # Deduplication and crash recovery are document-scoped (delta diffing and recovery checks gate
+    # on `effective_doc_id` and the document's `content_hash`). Aggregating `force_reextract` across
+    # the batch is intentional: if any item requests full extraction, the entire document bypasses
+    # delta/recovery shortcuts and re-extracts every chunk wholesale.
+    force_reextract = any(bool(item.get("force_reextract")) for item in contents_dicts)
     from ..memories import get_memories as _get_memories_delta
 
     _delta_provider = _get_memories_delta()
-    if attempts_delta_retain(_delta_provider, bank_id, is_first_batch):
+    if not force_reextract and attempts_delta_retain(_delta_provider, bank_id, is_first_batch):
         delta_result = await _try_delta_retain(
             pool,
             embeddings_model,
@@ -1736,6 +1742,7 @@ async def retain_batch(
             document_body_override=document_body_override,
             delta_full_body=_delta_full_body,
             append_base_hash=append_base_hash,
+            force_reextract=force_reextract,
         )
         if delta_result is not None:
             return delta_result
@@ -1815,6 +1822,7 @@ async def retain_batch(
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
+        force_reextract=force_reextract,
     )
 
 
@@ -2233,6 +2241,7 @@ async def _streaming_retain_batch(
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
+    force_reextract: bool = False,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -2299,31 +2308,32 @@ async def _streaming_retain_batch(
         sanitized_content = ""
     is_recovery = False
 
-    # Same reason as the stale-request check above: the recovery probe reads the SQL `documents`
-    # row and the SQL chunk rows, and a store that owns its documents has neither -- so this found
-    # nothing, `is_recovery` stayed False, and it cost a pool acquire and a query per document.
-    from ..memories import get_memories as _get_memories_recov
+    if not force_reextract:
+        # Same reason as the stale-request check above: the recovery probe reads the SQL `documents`
+        # row and the SQL chunk rows, and a store that owns its documents has neither -- so this found
+        # nothing, `is_recovery` stayed False, and it cost a pool acquire and a query per document.
+        from ..memories import get_memories as _get_memories_recov
 
-    _sql_recovery_possible = not _get_memories_recov().store_owned_for(bank_id)
-    try:
-        if _sql_recovery_possible:
-            async with acquire_with_retry(pool) as conn:
-                doc_row = await conn.fetchrow(
-                    f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                    effective_doc_id,
-                    bank_id,
-                )
-                if doc_row and doc_row["content_hash"] == new_content_hash:
-                    existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
-                    existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
-                    if existing_chunk_hashes:
-                        is_recovery = True
-                        log_buffer.append(
-                            f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
-                            f"will skip matching and preserve existing data"
-                        )
-    except Exception:
-        pass  # If we can't load, just process all chunks
+        _sql_recovery_possible = not _get_memories_recov().store_owned_for(bank_id)
+        try:
+            if _sql_recovery_possible:
+                async with acquire_with_retry(pool) as conn:
+                    doc_row = await conn.fetchrow(
+                        f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                        effective_doc_id,
+                        bank_id,
+                    )
+                    if doc_row and doc_row["content_hash"] == new_content_hash:
+                        existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
+                        existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
+                        if existing_chunk_hashes:
+                            is_recovery = True
+                            log_buffer.append(
+                                f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
+                                f"will skip matching and preserve existing data"
+                            )
+        except Exception:
+            pass  # If we can't load, just process all chunks
 
     # ---------------------------------------------------------------------------
     # Document tracking is DEFERRED to the first consumer batch TXN.
@@ -2553,7 +2563,7 @@ async def _streaming_retain_batch(
         try:
             for i, chunk_text in enumerate(all_pre_chunks):
                 chunk_hash = chunk_storage.compute_chunk_hash(chunk_text)
-                if chunk_hash in existing_chunk_hashes:
+                if not force_reextract and chunk_hash in existing_chunk_hashes:
                     # Memory: skipped chunks aren't needed either.
                     all_pre_chunks[i] = ""
                     skipped_total += 1
@@ -3451,6 +3461,7 @@ async def _try_delta_retain(
     # `document_body_override`, which an append fills with only the new tail.
     delta_full_body: str | None = None,
     append_base_hash: str | None = None,
+    force_reextract: bool = False,
 ) -> tuple[list[list[str]], TokenUsage, int | None] | None:
     """
     Attempt delta retain for a document upsert. Returns result tuple if delta
@@ -3461,6 +3472,8 @@ async def _try_delta_retain(
     (``0`` if the submission matched prior content exactly and nothing was
     re-extracted).
     """
+    if force_reextract:
+        return None
     # Delta RUNS for a store-owned (PG-free) bank. It did not always: the two things this path
     # relies on are absent for such a bank, and each had to be replaced rather than assumed.
     #
