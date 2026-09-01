@@ -6887,7 +6887,15 @@ class MemoryEngine(MemoryEngineInterface):
                 # The store's own per-stage timings become this recall's phase breakdown.
                 # Without this the trace goes dark exactly where the work moved to, and the
                 # only thing left to compare between the two paths is a total.
-                if enable_trace and tracer:
+                #
+                # Recorded unconditionally, like `backend_acquisition` and
+                # `generate_query_embedding` above. It used to sit behind `enable_trace`, which
+                # meant a store-answered recall reported those two phases and nothing else on
+                # ordinary traffic: the phase histogram covered ~7% of the request and the rest
+                # showed up as an unattributed remainder, on the one path where the work is not
+                # in this process to begin with. `store_*` are the store's own stages, `full_recall`
+                # is the whole hop including the Python either side of it.
+                if tracer:
                     for _name, _micros in (_store_result.store_stages or {}).items():
                         tracer.add_phase_metric(f"store_{_name}", _micros / 1_000_000)
                     tracer.add_phase_metric(
@@ -6895,6 +6903,9 @@ class MemoryEngine(MemoryEngineInterface):
                         _full_elapsed,
                         {"results": len(_store_result.results)},
                     )
+                # Assembling the trace OBJECT stays behind the caller's flag: it dumps every
+                # result, which is the expensive half and the reason tracing is opt-in.
+                if enable_trace and tracer:
                     _trace = tracer.finalize([r.model_dump() for r in _store_result.results])
                     _store_result.trace = _trace.to_dict() if _trace else None
                 return _store_result
