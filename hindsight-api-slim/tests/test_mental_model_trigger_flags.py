@@ -50,6 +50,17 @@ async def _refresh_with_trigger(
         trigger={"mode": "delta", **trigger},
         request_context=request_context,
     )
+    # A real memory in the model's scope, retained after it: a refresh with nothing to
+    # read skips the reflect loop entirely (#3875), and every assertion here is about
+    # what reaches that call. Tagged to match, and written after the model's creation
+    # timestamp, so it falls inside the delta window these tests run in.
+    await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[{"content": "The recall endpoint accepts a tags_match parameter."}],
+        document_tags=["team:core"],
+        request_context=request_context,
+    )
+    await memory.wait_for_background_tasks()
     reflect_calls = patch_reflect(memory, text="## Ops\n\nCandidate.\n", facts=_FACTS)
     llm_calls = patch_llm_call(memory, returns=_APPEND_OP)
 

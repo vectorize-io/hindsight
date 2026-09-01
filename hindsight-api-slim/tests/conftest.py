@@ -671,7 +671,7 @@ async def api_client(memory):
 
 
 def stub_refresh_has_sources(monkeypatch, memory) -> None:
-    """Tell a mental-model refresh that its scope holds something to read.
+    """Tell a mental-model refresh that its bank holds something to read.
 
     A refresh whose scope is empty skips the reflect loop outright (#3875): running
     the agent over nothing is its worst case, not a cheap one. Tests that stub
@@ -679,12 +679,16 @@ def stub_refresh_has_sources(monkeypatch, memory) -> None:
     short-circuit would pre-empt the stub instead of the test exercising it — so any
     test that fakes retrieval has to say the bank is not empty. Tests that are about
     the short-circuit itself let the real check run (``TestRefreshSkipsEmptyScope``).
+
+    Answered on the sibling-documents leg, which is the one that runs when no memory
+    is in scope: that is the state these tests are in, and it needs no fake timestamps
+    to line up against a delta window.
     """
 
-    async def _has_sources(*args, **kwargs) -> bool:
+    async def _has_document(*args, **kwargs) -> bool:
         return True
 
-    monkeypatch.setattr(memory, "_mental_model_refresh_has_sources", _has_sources)
+    monkeypatch.setattr(memory, "_bank_has_readable_document", _has_document)
 
 
 def enable_audit_default(memory, enabled: bool) -> None:
