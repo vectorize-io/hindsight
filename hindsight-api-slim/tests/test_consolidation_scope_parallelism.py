@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from collections import defaultdict
@@ -452,6 +453,103 @@ async def test_explicit_scope_list_parallel_writes_declared_scopes(memory: Memor
         assert tag_sets == {frozenset({"scope_a"}), frozenset({"scope_b", "scope_c"})}
         # And NOT the memory's own tag.
         assert frozenset({"tag_ignored"}) not in tag_sets
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_empty_explicit_scope_list_does_not_pool_across_tags(memory: MemoryEngine, request_context):
+    """An explicit ``observation_scopes: []`` resolves to no passes, so the pass
+    loop falls back to the combined single pass over the memory's own tags. It
+    must therefore batch as ``combined`` — keying it as a multi-scope fan-out
+    gave every such memory the same tag-free key, pooling unrelated tag sets
+    into one call whose ``obs_tags_override`` was then ``None``: both
+    observations took ``memories[0]``'s tags and alice's observation carried
+    bob's fact (or vice versa)."""
+    bank_id = f"test-empty-scope-list-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memory(conn, bank_id, "Alice likes tea", ["user:alice"], [])
+            await _insert_memory(conn, bank_id, "Bob bikes daily", ["user:bob"], [])
+
+        wrapper, _ = _mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+        try:
+            with (
+                _override_config(memory, consolidation_llm_parallelism=2, consolidation_llm_batch_size=2),
+                patch.object(memory, "submit_async_consolidation"),
+            ):
+                result = await run_consolidation_job(
+                    memory_engine=memory, bank_id=bank_id, request_context=request_context
+                )
+        finally:
+            memory._consolidation_llm_config = original_llm
+
+        assert result["status"] == "completed"
+        tag_sets = _ag_sorted(await _fetch_observation_tag_sets(memory, bank_id, request_context))
+        assert tag_sets == _ag_sorted([frozenset({"user:alice"}), frozenset({"user:bob"})])
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_heterogeneous_batch_is_split_not_leaked(memory: MemoryEngine, request_context, caplog):
+    """Defence in depth: even with the grouping key deliberately broken, a batch
+    is never written at another memory's scope.
+
+    ``_consolidation_batch_key`` is patched to a constant — the shape of every
+    bug in this class, including the original #3953 native-tag key — so all four
+    memories land in one group and one ``llm_batch_size=4`` batch. The sub-batch
+    loop must notice the mixed scopes, split on the scopes the pass loop will
+    actually write, and log the grouping bug, leaving every observation at its
+    own scope: no untagged observation built from a tagged fact, no dropped
+    ``shared`` override."""
+    bank_id = f"test-hetero-split-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memory(conn, bank_id, "A session note", ["user:alice"], "shared")
+            await _insert_memory(conn, bank_id, "Alice's salary is private", ["user:alice"], None)
+            await _insert_memory(conn, bank_id, "Bob bikes daily", ["user:bob"], None)
+            await _insert_memory(conn, bank_id, "Carol reads books", ["user:carol", "team:x"], "per_tag")
+
+        wrapper, _ = _mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+        try:
+            with (
+                _override_config(memory, consolidation_llm_parallelism=1, consolidation_llm_batch_size=4),
+                patch.object(memory, "submit_async_consolidation"),
+                patch(
+                    "hindsight_api.engine.consolidation.consolidator._consolidation_batch_key",
+                    lambda _memory: ("everything-collides",),
+                ),
+                caplog.at_level(logging.ERROR, logger="hindsight_api.engine.consolidation.consolidator"),
+            ):
+                result = await run_consolidation_job(
+                    memory_engine=memory, bank_id=bank_id, request_context=request_context
+                )
+        finally:
+            memory._consolidation_llm_config = original_llm
+
+        assert result["status"] == "completed"
+        assert any("scope-homogeneous" in r.message for r in caplog.records), (
+            "the broken grouping should have been reported"
+        )
+        tag_sets = _ag_sorted(await _fetch_observation_tag_sets(memory, bank_id, request_context))
+        assert tag_sets == _ag_sorted(
+            [
+                frozenset(),  # the shared memory, at the untagged scope
+                frozenset({"user:alice"}),
+                frozenset({"user:bob"}),
+                frozenset({"user:carol"}),  # per_tag fan-out, one per tag
+                frozenset({"team:x"}),
+            ]
+        )
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
