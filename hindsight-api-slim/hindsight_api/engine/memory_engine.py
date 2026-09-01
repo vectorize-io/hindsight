@@ -518,7 +518,7 @@ if TYPE_CHECKING:
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoryScopeWatermark
-    from .retain.image_content import RetainImage
+    from .retain.image_content import LoadedImage, RetainImage
     from .retain.image_store import StoredImage
     from .transfer import BankImportResult, ImportResult
     from .vector_index_health import CoverageTrigger
@@ -6231,7 +6231,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         image_hash: str,
         request_context: "RequestContext",
-    ) -> "tuple[str, bytes] | None":
+    ) -> "LoadedImage | None":
         """Fetch one image's media type and bytes, authorized against ``bank_id``.
 
         Returns ``None`` both when the bank is not visible to the caller and when
@@ -6245,8 +6245,13 @@ class MemoryEngine(MemoryEngineInterface):
         record = records.get(image_hash)
         if record is None:
             return None
+        from .retain.image_content import LoadedImage
+
         try:
-            return record.media_type, await self._file_storage.retrieve(record.storage_key)
+            return LoadedImage(
+                media_type=record.media_type,
+                data=await self._file_storage.retrieve(record.storage_key),
+            )
         except FileNotFoundError:
             return None
 
