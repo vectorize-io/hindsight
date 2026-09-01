@@ -34,6 +34,29 @@ export function renderSessionJsonl(refId: string, turns: TransportTurn[], baseTs
     .join("\n");
 }
 
+/**
+ * Per-run cap on history import — the conversation counterpart of deepen's `DIFF_BATCH` (#3990).
+ *
+ * Much smaller than DIFF_BATCH's 50 because the units are not comparable: a commit contributes one
+ * diff, a session contributes a whole compacted transcript. Session history also has no natural
+ * window (git deepening has `DEEPEN_DIFF_TARGET`) — it accumulates for as long as the agent is used
+ * — so uncapped, the size of one unattended run is set by however much history happens to exist.
+ */
+export const DEFAULT_CHAT_BATCH = 5;
+
+/**
+ * The next batch of a backlog: the `batch` MOST RECENT sessions, or all of them when `batch` is 0
+ * (uncapped) or the backlog already fits. Later runs take the rest — dedup by `chat:<id>` is what
+ * makes that progress, exactly as git deepening filters out already-ingested shas.
+ *
+ * Slices the TAIL, not the head: this list is CHRONOLOGICAL (ingestChats relies on that to stagger
+ * synthesized timestamps, since a later chat may amend an earlier one), so the newest sessions sit
+ * at the END. Taking the head would ingest the OLDEST N and leave recent decisions for last.
+ */
+export function nextChatBatch(sessions: ChatSession[], batch: number): ChatSession[] {
+  return batch > 0 && sessions.length > batch ? sessions.slice(-batch) : sessions;
+}
+
 /** Backfill: ingest past sessions RAW as JSON transcripts under the `conversation` strategy. */
 export async function ingestChats(
   client: HindsightClient,

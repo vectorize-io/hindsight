@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SEED_LIMIT } from "./seed";
+import { DEFAULT_CHAT_BATCH } from "./chat";
 import { isOptedIn } from "./bank";
 import { log } from "./log";
 import { DEFAULT_OBSERVATION_SCOPES, type ObservationScopes } from "./hindsight";
@@ -118,6 +119,10 @@ export interface RawConfig {
   pageTriggerCron?: string;
   autoSeed?: boolean; // SessionStart: auto-seed a cold repo's bank from git history (default true)
   seedLimit?: number; // SessionStart auto-seed: most-recent-N-commits cap (default 300)
+  /** Per-run cap on conversation history import: the N most recent not-yet-ingested sessions, later
+   *  runs taking the rest (default 5; 0 = no cap). The conversation counterpart of the per-commit
+   *  diff batch — see core/chat.ts's DEFAULT_CHAT_BATCH for why it is so much smaller. */
+  chatBatch?: number;
   codebaseSurvey?: boolean; // SessionStart: spawn a headless claude to survey a cold repo's structure (default true)
   surveyModel?: string; // model passed to the headless survey's `claude -p --model` (default "haiku")
   surveyBudgetUsd?: number; // spend cap passed to the headless survey's `claude -p --max-budget-usd` (default 2)
@@ -191,6 +196,7 @@ export interface Config {
   pageTriggerCron?: string;
   autoSeed: boolean;
   seedLimit: number;
+  chatBatch: number;
   codebaseSurvey: boolean;
   surveyModel: string;
   surveyBudgetUsd: number;
@@ -321,6 +327,8 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     pageTriggerCron: raw.pageTriggerCron?.trim() || undefined,
     autoSeed: raw.autoSeed ?? true,
     seedLimit: raw.seedLimit || DEFAULT_SEED_LIMIT,
+    // `??`, not `||`: 0 is a meaningful value here (no per-run cap), unlike seedLimit above.
+    chatBatch: raw.chatBatch ?? DEFAULT_CHAT_BATCH,
     codebaseSurvey: raw.codebaseSurvey ?? true,
     surveyModel: raw.surveyModel || "haiku",
     surveyBudgetUsd: raw.surveyBudgetUsd || 2,
@@ -428,6 +436,7 @@ const ENV_KEYS = {
   pageTriggerCron: "HINDSIGHT_PAGE_TRIGGER_CRON",
   autoSeed: "HINDSIGHT_AUTO_SEED",
   seedLimit: "HINDSIGHT_SEED_LIMIT",
+  chatBatch: "HINDSIGHT_CHAT_BATCH",
   codebaseSurvey: "HINDSIGHT_CODEBASE_SURVEY",
   surveyModel: "HINDSIGHT_SURVEY_MODEL",
   surveyBudgetUsd: "HINDSIGHT_SURVEY_BUDGET_USD",
@@ -462,6 +471,7 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "reflectToolTimeoutMs",
   "pageRefreshEveryTurns",
   "seedLimit",
+  "chatBatch",
   "surveyBudgetUsd",
   "surveyRefreshCommits",
 ]);

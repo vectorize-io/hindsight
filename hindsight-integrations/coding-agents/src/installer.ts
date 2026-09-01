@@ -1473,13 +1473,23 @@ function importConversations(harness: string, ctx: InstallCtx): void {
       `this runs extraction and may take a while`
   );
   try {
-    execFileSync("node", [join(ctx.dist, "deepen.js"), "--repo", repo, "--conversations", file], {
-      stdio: "inherit",
-    });
+    // `--chat-batch 0` opts out of deepen's per-run conversation cap (#3990): that cap paces the
+    // UNATTENDED runs, whereas this one was asked for explicitly, names how many sessions it is
+    // about to import, and warns that it takes a while — silently importing 5 of them and leaving
+    // the rest to a path that never runs on its own would be the worse surprise.
+    execFileSync(
+      "node",
+      [join(ctx.dist, "deepen.js"), "--repo", repo, "--conversations", file, "--chat-batch", "0"],
+      {
+        stdio: "inherit",
+      }
+    );
   } catch {
     // The wiring is already in place; a failed backfill must not make `install` look failed.
     ctx.log?.(`${harness}: conversation import did not finish — re-run it any time with:`);
-    ctx.log?.(`  node "${join(ctx.dist, "deepen.js")}" --repo "${repo}" --conversations "${file}"`);
+    ctx.log?.(
+      `  node "${join(ctx.dist, "deepen.js")}" --repo "${repo}" --conversations "${file}" --chat-batch 0`
+    );
   }
 }
 

@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
-import { ingestChats, renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
+import {
+  DEFAULT_CHAT_BATCH,
+  ingestChats,
+  nextChatBatch,
+  renderSessionJsonl,
+  retainLiveSession,
+  type TransportTurn,
+} from "./chat";
 import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
 describe("renderSessionJsonl", () => {
@@ -103,6 +110,32 @@ describe("ingestChats", () => {
       chat: "s-import",
       ref_id: "chat:s-import",
     });
+  });
+});
+
+describe("nextChatBatch", () => {
+  const backlog = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `s${i}`,
+      turns: [{ role: "user", text: `t${i}` }],
+    }));
+
+  it("takes the MOST RECENT batch — the tail, since the backlog is chronological", () => {
+    // Slicing the head would ingest the oldest sessions first and leave recent decisions for last.
+    expect(nextChatBatch(backlog(10), 3).map((s) => s.id)).toEqual(["s7", "s8", "s9"]);
+  });
+
+  it("keeps a backlog that already fits, and preserves its chronological order", () => {
+    expect(nextChatBatch(backlog(3), 5).map((s) => s.id)).toEqual(["s0", "s1", "s2"]);
+  });
+
+  it("treats 0 as uncapped, so the attended import can still take everything in one run", () => {
+    expect(nextChatBatch(backlog(9), 0)).toHaveLength(9);
+  });
+
+  it("defaults far below the 50-commit diff batch: a session costs a whole transcript", () => {
+    expect(DEFAULT_CHAT_BATCH).toBeLessThan(50);
+    expect(DEFAULT_CHAT_BATCH).toBeGreaterThan(0);
   });
 });
 

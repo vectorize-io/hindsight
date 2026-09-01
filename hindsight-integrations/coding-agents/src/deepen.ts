@@ -9,7 +9,8 @@
  *      reset path)
  *   2. ingest conversations not yet in the bank (`--conversations` file via the harness's
  *      chatReader; dedup by `chat:<id>` document id — live sessions arrive via write-back, so this
- *      is history import, not sync)
+ *      is history import, not sync), newest first and capped at `chatBatch` per run so a long
+ *      session history is paced across runs instead of landing in one unbounded ingest
  *   3. seed the aggregated commit-message history (ONE cheap document) if absent
  *   4. progressively DEEPEN: ingest the next batch of not-yet-ingested commits individually with
  *      their full diffs, NEWEST first (recent decisions matter most), up to DIFF_BATCH per run and
@@ -24,7 +25,7 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveBankId } from "./core/bank";
-import { ingestChats } from "./core/chat";
+import { ingestChats, nextChatBatch } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { commitsSince, repoNameOf, retainCommit, syncGitLog } from "./core/git";
 import { SURVEY_DOC_IDS } from "./core/survey";
@@ -65,6 +66,10 @@ const API_URL = arg("api-url") ?? cfg.apiUrl;
 const API_TOKEN = arg("api-token") ?? cfg.apiToken;
 const CONV = arg("conversations");
 const GITLOG_LIMIT = arg("gitlog-limit") ? Number(arg("gitlog-limit")) : (cfg.seedLimit ?? 300);
+// Per-run conversation cap (#3990). The flag exists for the callers that mean "all of it now": the
+// installer's attended `--import-conversations`, and the benchmark/e2e suites that want a
+// deterministic one-shot ingest regardless of user config.
+const CHAT_BATCH = arg("chat-batch") ? Number(arg("chat-batch")) : cfg.chatBatch;
 // harness override (benchmark/e2e want deterministic depth regardless of user config)
 const GIT_INGEST =
   (["message", "full", "none"] as const).find((m) => m === arg("git-ingest")) ?? cfg.gitIngest;
@@ -72,7 +77,7 @@ const GIT_INGEST =
 if (!REPO || !BANK) {
   console.error(
     "usage: node deepen.js --repo <path> [--bank <id>] [--harness <name>] " +
-      "[--conversations f.json] [--api-url U] [--api-token X] [--config path] [--gitlog-limit N] [--git-ingest message|full|none]\n" +
+      "[--conversations f.json] [--api-url U] [--api-token X] [--config path] [--gitlog-limit N] [--chat-batch N] [--git-ingest message|full|none]\n" +
       `harnesses: ${HARNESS_NAMES.join(", ")}`
   );
   process.exit(1);
@@ -176,11 +181,23 @@ async function main() {
         .listDocumentIds("source:chat", "all_strict")
         .catch(() => new Set<string>());
       const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
-      sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
-      if (all.length !== sessions.length)
+      const pending = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
+      if (all.length !== pending.length)
         log(
-          `[chat] ${all.length - sessions.length} conversations already ingested — skipping those`
+          `[chat] ${all.length - pending.length} conversations already ingested — skipping those`
         );
+      // PROGRESSIVE, like the diff deepening below: take only the newest CHAT_BATCH per run so a
+      // long session history cannot turn one unattended run into an extraction job whose size is
+      // set by however much history happens to exist (#3990). Later runs take the rest — dedup by
+      // `chat:<id>` is what makes them advance.
+      sessions = nextChatBatch(pending, CHAT_BATCH);
+      if (sessions.length < pending.length)
+        log(
+          `[chat] ingesting the ${sessions.length} most recent of ${pending.length} pending ` +
+            `conversations (chatBatch=${CHAT_BATCH}) — the rest follow on later runs`
+        );
+      else if (all.length && !pending.length)
+        log(`[chat] conversation history fully ingested (${all.length} sessions)`);
     }
     const chatFails = await ingestChats(client, sessions, {
       concurrency: cfg.maxParallelRetains,

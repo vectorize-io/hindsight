@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, applyBankConfig, readEnvConfig, resolveConfig } from "./config";
+import { DEFAULT_CHAT_BATCH } from "./chat";
 
 let root: string;
 let globalCfg: string;
@@ -77,6 +78,41 @@ describe("loadConfig layering", () => {
   it("pageRefreshEveryTurns override wins over the default", () => {
     writeJson(globalCfg, { pageRefreshEveryTurns: 25 });
     expect(loadConfig({ path: globalCfg }).pageRefreshEveryTurns).toBe(25);
+  });
+});
+
+describe("chatBatch", () => {
+  const ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ENV };
+  });
+
+  it("defaults to the per-run conversation cap", () => {
+    expect(loadConfig({ harness: "claude-code" }).chatBatch).toBe(DEFAULT_CHAT_BATCH);
+  });
+
+  it("config file value wins over the default", () => {
+    writeJson(globalCfg, { chatBatch: 2 });
+    expect(loadConfig({ path: globalCfg }).chatBatch).toBe(2);
+  });
+
+  it("keeps an explicit 0 (no cap) instead of falling back to the default", () => {
+    // `||` would swallow it — 0 is the documented way to ask for an uncapped import.
+    writeJson(globalCfg, { chatBatch: 0 });
+    expect(loadConfig({ path: globalCfg }).chatBatch).toBe(0);
+  });
+
+  it("reads HINDSIGHT_CHAT_BATCH as a number", () => {
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_CHAT_BATCH = "3";
+    expect(loadConfig({ path: globalCfg }).chatBatch).toBe(3);
+  });
+
+  it("is overridable per bank, like every other resolved field", () => {
+    writeJson(globalCfg, { chatBatch: 5, banks: { "coding-agent::big-mono": { chatBatch: 1 } } });
+    const cfg = loadConfig({ path: globalCfg });
+    expect(applyBankConfig(cfg, "coding-agent::big-mono").cfg.chatBatch).toBe(1);
+    expect(applyBankConfig(cfg, "coding-agent::other").cfg.chatBatch).toBe(5);
   });
 });
 
