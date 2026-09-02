@@ -1630,12 +1630,13 @@
     "textNotStoredWarning": "O texto bruto do documento não será armazenado neste servidor — apenas as memórias extraídas são mantidas.",
     "composeText": "Text",
     "composeBlocks": "Blocks",
-    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source, so the extractor reads each attachment beside the text that introduces it. Needs a vision-capable model.",
-    "blockAddText": "Add text",
-    "blockAddAttachment": "Add attachment",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
     "blockRemove": "Remove block",
     "blockMoveUp": "Move block up",
-    "blockMoveDown": "Move block down"
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
   "dashboard": {
     "welcome": "Bem-vindo ao Hindsight",

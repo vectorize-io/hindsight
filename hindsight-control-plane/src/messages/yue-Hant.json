@@ -1630,12 +1630,13 @@
     "textNotStoredWarning": "呢個伺服器唔會儲存文件原始文字，淨係保留擷取到嘅記憶。",
     "composeText": "Text",
     "composeBlocks": "Blocks",
-    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source, so the extractor reads each attachment beside the text that introduces it. Needs a vision-capable model.",
-    "blockAddText": "Add text",
-    "blockAddAttachment": "Add attachment",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
     "blockRemove": "Remove block",
     "blockMoveUp": "Move block up",
-    "blockMoveDown": "Move block down"
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
   "dashboard": {
     "welcome": "歡迎使用 Hindsight",
