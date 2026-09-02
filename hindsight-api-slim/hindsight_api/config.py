@@ -737,6 +737,11 @@ ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
 
 # Database migrations
 ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
+# Whether migrations run in a subprocess instead of in the calling process.
+# "auto" (default) isolates only on a free-threaded interpreter, where alembic's
+# psycopg2 would otherwise re-enable the GIL for the life of the process; "always"
+# and "never" force it either way. See migrations._should_isolate_migrations.
+ENV_MIGRATION_ISOLATION = "HINDSIGHT_API_MIGRATION_ISOLATION"
 ENV_MIGRATION_CONCURRENCY = "HINDSIGHT_API_MIGRATION_CONCURRENCY"
 
 # Database connection pool
@@ -1449,6 +1454,9 @@ DEFAULT_OBSERVATION_SCOPE_LIMITS: list | None = None
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
+# "auto" | "always" | "never" — see ENV_MIGRATION_ISOLATION.
+DEFAULT_MIGRATION_ISOLATION = "auto"
+MIGRATION_ISOLATION_CHOICES = ("auto", "always", "never")
 # Number of tenant schemas to migrate concurrently. Each schema runs in its own
 # process (Alembic's command.upgrade() is not thread-safe); within a schema the
 # work is always sequential. 1 = fully sequential (the safe default).
@@ -2870,6 +2878,7 @@ class HindsightConfig:
 
     # Database migrations
     run_migrations_on_startup: bool
+    migration_isolation: str
     migration_concurrency: int
 
     # Database connection pool
@@ -4259,6 +4268,7 @@ class HindsightConfig:
             memory_defense=None,
             # Database migrations
             run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
+            migration_isolation=_parse_migration_isolation(),
             migration_concurrency=int(os.getenv(ENV_MIGRATION_CONCURRENCY, str(DEFAULT_MIGRATION_CONCURRENCY))),
             # Database connection pool
             db_pool_min_size=int(os.getenv(ENV_DB_POOL_MIN_SIZE, str(DEFAULT_DB_POOL_MIN_SIZE))),
@@ -4580,6 +4590,21 @@ class HindsightConfig:
 
 # Cached config instance
 _config_cache: HindsightConfig | None = None
+
+
+def _parse_migration_isolation() -> str:
+    """Validate HINDSIGHT_API_MIGRATION_ISOLATION, defaulting to "auto".
+
+    Rejects an unknown value rather than silently falling back: getting this wrong
+    means migrations quietly run in the wrong process, which is invisible until
+    something else breaks.
+    """
+    raw = os.getenv(ENV_MIGRATION_ISOLATION, DEFAULT_MIGRATION_ISOLATION).strip().lower()
+    if raw not in MIGRATION_ISOLATION_CHOICES:
+        raise ValueError(
+            f"{ENV_MIGRATION_ISOLATION} must be one of {', '.join(MIGRATION_ISOLATION_CHOICES)}, got {raw!r}"
+        )
+    return raw
 
 
 def get_config() -> StaticConfigProxy:

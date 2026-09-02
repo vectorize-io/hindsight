@@ -16,7 +16,12 @@ No alembic.ini required - all configuration is done programmatically.
 """
 
 import hashlib
+import json
 import logging
+import os
+import subprocess
+import sys
+import sysconfig
 import threading
 import time
 from pathlib import Path
@@ -40,10 +45,14 @@ from ._vector_index import (
     should_defer_index_creation,
     uses_per_bank_vector_indexes,
 )
+from .config import ENV_MIGRATION_ISOLATION, get_config
 from .db_url import is_oracle_url, to_libpq_url
 from .utils import mask_network_location
 
 logger = logging.getLogger(__name__)
+
+#: Set in the migration child's env so it does not spawn a child of its own.
+_CHILD_MARKER = "_HINDSIGHT_MIGRATION_CHILD"
 
 # Advisory lock ID for migrations (arbitrary unique number)
 MIGRATION_LOCK_ID = 123456789
@@ -238,6 +247,68 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     logger.info(f"Database migrations completed successfully for schema '{schema_name}'")
 
 
+def _should_isolate_migrations() -> bool:
+    """Whether to run the migration in a subprocess instead of in this process.
+
+    Controlled by ``HINDSIGHT_API_MIGRATION_ISOLATION``:
+
+        auto    (default) isolate only on a free-threaded interpreter
+        always  isolate everywhere — useful to keep alembic's import graph and its
+                sync engine out of a long-lived server process regardless
+        never   never isolate; the historical behaviour
+
+    "auto" exists because of psycopg2. Alembic drives PostgreSQL through SQLAlchemy's
+    sync engine, and psycopg2 has no free-threaded build: importing it on a
+    ``python3.14t`` interpreter re-enables the GIL for the life of the process. A
+    server that migrates on startup would therefore spend the rest of its life
+    single-threaded, having done the damage before serving a single request.
+
+    ``_CHILD_MARKER`` stops the child from recursing.
+    """
+    if os.environ.get(_CHILD_MARKER):
+        return False
+    mode = get_config().migration_isolation
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+
+
+def _run_in_migration_child(target: str, kwargs: dict) -> None:
+    """Run the migration in a subprocess so this process never imports psycopg2.
+
+    Alembic drives PostgreSQL through SQLAlchemy's sync engine, i.e. psycopg2, which
+    has no free-threaded build. Importing it on a ``python3.14t`` interpreter re-enables
+    the GIL for the life of the process -- so a server that migrates on startup would
+    spend the rest of its life single-threaded, having done the damage before it served
+    a single request.
+
+    The boundary is the whole migration entrypoint rather than each ``create_engine``
+    call: schema migration also reaches ``ensure_embedding_dimension`` and the vector /
+    text-search extension helpers, each of which opens its own sync engine. Isolating the
+    entrypoint covers all of them in one child instead of one spawn apiece.
+
+    The migration itself is short, rare and not on any hot path, so paying a process
+    spawn for it is free.
+    """
+    payload = json.dumps({"target": target, "kwargs": kwargs})
+    env = {**os.environ, ENV_MIGRATION_ISOLATION: "never", _CHILD_MARKER: "1"}
+    logger.info("Running migrations in a subprocess (free-threaded build; psycopg2 needs the GIL)")
+    result = subprocess.run(
+        [sys.executable, "-m", "hindsight_api.migrations", payload],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout.strip():
+        logger.info("migration child stdout:\n%s", result.stdout.strip())
+    if result.returncode != 0:
+        raise RuntimeError(f"Migration subprocess failed (exit {result.returncode}).\n{result.stderr.strip()}")
+    if result.stderr.strip():
+        logger.debug("migration child stderr:\n%s", result.stderr.strip())
+
+
 def run_migrations(
     database_url: str,
     script_location: str | None = None,
@@ -286,6 +357,20 @@ def run_migrations(
     # ineffective when the app URL goes through a pooler.  Configure
     # HINDSIGHT_API_MIGRATION_DATABASE_URL to the direct PostgreSQL endpoint
     # (e.g. hindsight-pg-rw) to restore correct locking behaviour.
+    # On a free-threaded interpreter, keep psycopg2 out of this process entirely.
+    # ``_CHILD_MARKER`` stops the child from recursing.
+    if _should_isolate_migrations():
+        _run_in_migration_child(
+            "run_migrations",
+            {
+                "database_url": database_url,
+                "script_location": script_location,
+                "schema": schema,
+                "migration_database_url": migration_database_url,
+            },
+        )
+        return
+
     raw_url = migration_database_url or database_url
     # Oracle URLs are passed through to SQLAlchemy unchanged; only PG URLs
     # need the libpq normalization (asyncpg → psycopg2 driver, ssl → sslmode).
@@ -1269,6 +1354,26 @@ def run_migrations_for_schemas(
     Failures are collected per schema and re-raised together so one bad tenant
     does not hide the status of the others.
     """
+    # Free-threaded build: keep psycopg2 (and every sync engine this reaches --
+    # ensure_embedding_dimension, the vector and text-search extension helpers) out of
+    # the caller's process. One child covers the whole sweep.
+    if _should_isolate_migrations():
+        _run_in_migration_child(
+            "run_migrations_for_schemas",
+            {
+                "database_url": database_url,
+                "schemas": schemas,
+                "concurrency": concurrency,
+                "migration_database_url": migration_database_url,
+                "embedding_dimension": embedding_dimension,
+                "vector_extension": vector_extension,
+                "text_search_extension": text_search_extension,
+                "pg_search_tokenizer": pg_search_tokenizer,
+                "ensure_extensions": ensure_extensions,
+            },
+        )
+        return
+
     if not schemas:
         return
 
@@ -1308,3 +1413,34 @@ def run_migrations_for_schemas(
         raise RuntimeError(
             f"Database migrations failed for {len(errors)} of {len(schemas)} schema(s): {failed}"
         ) from next(iter(errors.values()))
+
+
+def _main() -> None:
+    """Entry point for the migration subprocess (see ``_run_migrations_in_child``).
+
+    Invoked as ``python -m hindsight_api.migrations '<json>'``. Kept deliberately thin:
+    it exists only so the psycopg2 import happens in a process that is allowed to have
+    the GIL, and it re-enters ``run_migrations`` with ``_CHILD_MARKER`` set so the
+    subprocess branch is skipped.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m hindsight_api.migrations")
+    parser.add_argument("payload", help="JSON object of run_migrations() arguments")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    payload = json.loads(args.payload)
+    os.environ[_CHILD_MARKER] = "1"
+    targets = {
+        "run_migrations": run_migrations,
+        "run_migrations_for_schemas": run_migrations_for_schemas,
+    }
+    target = payload["target"]
+    if target not in targets:
+        parser.error(f"unknown migration target {target!r}; expected one of {sorted(targets)}")
+    targets[target](**payload["kwargs"])
+
+
+if __name__ == "__main__":
+    _main()
