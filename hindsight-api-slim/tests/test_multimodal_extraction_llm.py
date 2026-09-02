@@ -93,9 +93,7 @@ def _content_with_image(before: str, image_bytes: bytes, after: str):
         block_index=1,
     )
     canonical = canonicalize([RetainText(before), image, RetainText(after)])
-    loader = _StubImageLoader(
-        {short_image_id(image.image_hash): LoadedImage(media_type="image/png", data=image_bytes)}
-    )
+    loader = _StubImageLoader({short_image_id(image.image_hash): LoadedImage(media_type="image/png", data=image_bytes)})
     return canonical.text, loader
 
 

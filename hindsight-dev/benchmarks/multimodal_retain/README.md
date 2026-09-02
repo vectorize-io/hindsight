@@ -74,28 +74,33 @@ LLM calls without sharpening it.
 
 ## Baseline
 
-`baseline_report.json`, from the branch that introduced inline images
-(gemini-2.5-flash for both retain and judging):
+Three full runs on this branch, gemini-2.5-flash for both retain and judging:
 
-| Arm | Image facts recalled | Correct | Wrong | Abstained |
-|---|---|---|---|---|
-| multimodal | 7/8 (88%) | 5/6 (83%) | 0 | 1 |
-| text-only | 0/8 (0%) | 0/6 (0%) | 4 | 2 |
+| Arm | Image facts recalled | Correct | Wrong |
+|---|---|---|---|
+| multimodal | 4/8, 7/8, 4/8 (50–88%) | 4/6, 5/6, 3/6 (50–83%) | 0, 0, 0 |
+| text-only | 0/8, 0/8, 0/8 (0%) | 0/6, 0/6, 0/6 (0%) | 4, 2, 2 |
 
-Read it as: without inline images, none of the picture-borne detail survives, and
-the majority of answers are confidently wrong rather than absent. With them, most
-of it survives and nothing is confidently wrong.
+`baseline_report.json` holds one of those runs. **Read the gap, not the
+multimodal number.** The text-only arm scored exactly zero on every run and every
+article — no picture-borne detail survives without inline images, and several
+answers are confidently wrong rather than absent. The multimodal arm's absolute
+score swings by nearly 40 points between runs of identical code.
 
-Two caveats worth keeping in view:
+That spread is the model re-reading the same rendered image, not the pipeline:
+the interleaving was verified directly (one chunk, image part spliced between the
+two text parts, full PNG bytes in the prompt) on a run that scored 0/3 for its
+article. Do not treat a single run as a regression signal — reproduce first.
 
-- **The remaining multimodal miss is a small supporting label**, not a primary
-  one. Button captions and diagram nodes are extracted reliably; the smaller
-  subtitle lines (`Profile: corp-eu-west`) are the ones that get dropped. That is
-  model behaviour on a rendered image, not a pipeline gap — the image reaches the
-  model in position either way.
-- **Run-to-run variance is real.** The Wrong/Abstained split in the text-only arm
-  moved between runs of the same build; the 0%-vs-88% gap did not. Treat the gap
-  as the signal and the split as directional.
+Where the variance lives:
+
+- **Primary labels are reliable.** Button captions and diagram nodes ("Reset VPN
+  Tunnel", "Tier 3 Platform") are extracted in nearly every run.
+- **Small supporting lines are not.** The muted subtitle text (`Profile:
+  corp-eu-west`, `Period: Q3 2025`, `Rows: 18,420`) is what gets dropped, and
+  `billing-export` scores worst because two of its three claims live there. That
+  is a real property worth knowing — inline images recover what a picture *says*
+  far more reliably than its fine print.
 
 ### On judging
 
