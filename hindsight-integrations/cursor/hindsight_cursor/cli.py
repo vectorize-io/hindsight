@@ -31,6 +31,13 @@ _PLUGIN_FILES = [
 # project .cursor/hooks.json. Commands point at this install path.
 _HOOK_MARKER = ".cursor-plugin/hindsight-memory"
 
+# Artefacts the sessionStart hook writes into the workspace. Kept in sync with
+# scripts/lib/rules_file.py by hand — the CLI deliberately does not import the
+# plugin scripts, which ship as data rather than as an importable package.
+_SESSION_RULES_RELPATH = Path(".cursor") / "rules" / "hindsight-session.mdc"
+_GITIGNORE_COMMENT = "# Added by hindsight-cursor plugin"
+_GITIGNORE_LINE = "/.cursor/rules/hindsight-session.mdc"
+
 _USER_CONFIG_DIR = Path.home() / ".hindsight"
 _USER_CONFIG_FILE = _USER_CONFIG_DIR / "cursor.json"
 
@@ -41,16 +48,35 @@ def _plugin_data_dir() -> Path:
 
 
 def _copy_plugin(dest: Path) -> None:
-    """Copy plugin files into *dest*, creating directories as needed."""
+    """Copy plugin files into *dest*, creating directories as needed.
+
+    Aborts if anything is missing from the bundled payload. A partial copy is
+    never useful — ``session_start.py`` imports every ``lib/`` module, so a
+    single absent file turns each hook invocation into a silent ImportError.
+    Reporting "Done!" over an install that copied nothing is how #3864 stayed
+    invisible for so long.
+    """
     src_root = _plugin_data_dir()
+    missing = [rel for rel in _PLUGIN_FILES if not (src_root / rel).exists()]
+    if missing:
+        print(
+            f"Error: bundled plugin payload is incomplete ({len(missing)} of "
+            f"{len(_PLUGIN_FILES)} files missing under {src_root}):",
+            file=sys.stderr,
+        )
+        for rel in missing:
+            print(f"  - {rel}", file=sys.stderr)
+        print(
+            "This build is broken. Install the published package "
+            "(`pip install hindsight-cursor`) rather than a source checkout.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     for rel in _PLUGIN_FILES:
-        src = src_root / rel
-        if not src.exists():
-            print(f"  warning: missing bundled file {rel}, skipping", file=sys.stderr)
-            continue
         dst = dest / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        shutil.copy2(src_root / rel, dst)
 
 
 def _scaffold_config(api_url: str | None, api_token: str | None, bank_id: str) -> None:
@@ -112,24 +138,57 @@ def _hindsight_hook_entry(definition: dict) -> bool:
     return _HOOK_MARKER in json.dumps(definition)
 
 
+def _hook_interpreter() -> str:
+    """Interpreter name to invoke the hook scripts with.
+
+    Windows ships ``python.exe`` and has no ``python3`` on PATH, so a
+    hardcoded ``python3`` makes every hook a silent no-op there. Cursor runs
+    hooks through the shell, so a bare name (resolved off PATH) is what we
+    want — not ``sys.executable``, which points at whatever interpreter
+    happened to run ``init`` and may live in a throwaway virtualenv.
+    """
+    return "python" if sys.platform == "win32" else "python3"
+
+
 def _project_hooks_block() -> dict:
     """Hooks Cursor loads from the project ``.cursor/hooks.json``.
 
     Paths are workspace-relative so they work without ``CURSOR_PLUGIN_ROOT``
     (which is only set for packages installed under ``~/.cursor/plugins``).
+
+    ``retain.py`` is registered on both ``stop`` and ``sessionEnd``:
+
+    * ``stop`` fires each time an agent loop ends — the granularity that
+      periodic auto-retain wants.
+    * ``sessionEnd`` fires once when the conversation ends, and carries the
+      same ``transcript_path``. It is the final flush.
+
+    Without the flush, every conversation shorter than ``retainEveryNTurns``
+    is lost outright: at the default of 10, a seven-turn chat fires ``stop``
+    seven times, the turn gate rejects all seven, and nothing is ever stored.
+
+    Both events land in the same script; ``retain.py`` skips a run with no
+    new messages since the last retain, so the overlap cannot double-store.
     """
+    python = _hook_interpreter()
     return {
         "version": 1,
         "hooks": {
             "sessionStart": [
                 {
-                    "command": f"python3 {_HOOK_MARKER}/scripts/session_start.py",
+                    "command": f"{python} {_HOOK_MARKER}/scripts/session_start.py",
                     "timeout": 15,
                 }
             ],
             "stop": [
                 {
-                    "command": f"python3 {_HOOK_MARKER}/scripts/retain.py",
+                    "command": f"{python} {_HOOK_MARKER}/scripts/retain.py",
+                    "timeout": 15,
+                }
+            ],
+            "sessionEnd": [
+                {
+                    "command": f"{python} {_HOOK_MARKER}/scripts/retain.py",
                     "timeout": 15,
                 }
             ],
@@ -208,6 +267,46 @@ def _remove_hooks(project: Path) -> None:
             print(f"  Removed {hooks_file}")
 
 
+def _remove_session_rules(project: Path) -> None:
+    """Delete the generated session rules file and its .gitignore entry.
+
+    ``sessionStart`` regenerates the rules file on every run, so leaving it
+    behind after ``uninstall`` would keep injecting a dead session's memories
+    into every agent turn — the file is ``alwaysApply: true``.
+    """
+    rules_file = project / _SESSION_RULES_RELPATH
+    if rules_file.exists():
+        try:
+            rules_file.unlink()
+            print(f"  Removed {rules_file}")
+        except OSError:
+            pass
+
+    gitignore = project / ".gitignore"
+    if not gitignore.exists():
+        return
+    try:
+        lines = gitignore.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+
+    kept = [
+        line for line in lines if line.strip() != _GITIGNORE_LINE and not line.strip().startswith(_GITIGNORE_COMMENT)
+    ]
+    if len(kept) == len(lines):
+        return
+
+    # Drop a trailing blank run left behind by removing the block.
+    while kept and not kept[-1].strip():
+        kept.pop()
+
+    try:
+        gitignore.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8")
+        print(f"  Removed hindsight entry from {gitignore}")
+    except OSError:
+        pass
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Install the Hindsight plugin into a Cursor project."""
     project = Path(args.project).resolve()
@@ -269,6 +368,7 @@ def cmd_uninstall(args: argparse.Namespace) -> None:
             pass
 
     _remove_hooks(project)
+    _remove_session_rules(project)
 
 
 def main() -> None:

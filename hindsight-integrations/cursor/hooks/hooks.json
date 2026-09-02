@@ -12,6 +12,12 @@
         "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/retain.py\"",
         "timeout": 15
       }
+    ],
+    "sessionEnd": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/retain.py\"",
+        "timeout": 15
+      }
     ]
   }
 }
