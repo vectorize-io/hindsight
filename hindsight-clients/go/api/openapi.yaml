@@ -7615,6 +7615,7 @@ components:
           - value
           - multi-values
           - text
+          - multi-text
           - map
           title: Type
           type: string
@@ -7655,6 +7656,7 @@ components:
           - value
           - multi-values
           - text
+          - multi-text
           - map
           title: Type
           type: string
@@ -7921,6 +7923,7 @@ components:
           default: text
           enum:
           - text
+          - multi-text
           - value
           - multi-values
           - map
@@ -7949,6 +7952,7 @@ components:
           default: text
           enum:
           - text
+          - multi-text
           - value
           - multi-values
           - map

@@ -54,7 +54,7 @@ def _extract_map_entities(
                         validated_entities,
                         existing_texts_lower,
                     )
-        elif map_field.type == "multi-values":
+        elif map_field.type in ("multi-values", "multi-text"):
             vals = field_val if isinstance(field_val, list) else [field_val]
             for v in vals:
                 if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
@@ -1167,6 +1167,8 @@ def _append_map_fields_prompt(fields: dict[str, "MapField"], lines: list[str], i
         if map_field.type == "map" and map_field.fields:
             lines.append(f"{pad}• {field_name} (object){field_desc}")
             _append_map_fields_prompt(map_field.fields, lines, indent + 4)
+        elif map_field.type == "multi-text":
+            lines.append(f"{pad}• {field_name} (list of free text, [] if none){field_desc}")
         elif map_field.type == "multi-values":
             vals = ", ".join(v.value for v in map_field.values if v.value)
             type_hint = f"multi-values: {vals}" if vals else "multi-values"
@@ -1221,6 +1223,9 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
         if attr.type == "text":
             # Free-text: no predefined values — LLM writes any relevant string or null
             lines.append(f"- {attr.key} (free text or null): {attr.description}")
+        elif attr.type == "multi-text":
+            # Open vocabulary: no predefined values — LLM writes as many strings as the content warrants
+            lines.append(f"- {attr.key} (list of free text, empty list if none): {attr.description}")
         else:
             mode = "multi-value (list)" if attr.type == "multi-values" else "single value or null"
             lines.append(f"- {attr.key} ({mode}): {attr.description}")
@@ -1822,7 +1827,7 @@ async def _extract_facts_from_chunk(
                                 if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                                     continue
                                 label_str = f"{group.key}:{v.strip()}"
-                                if group.type == "text":
+                                if group.type in ("text", "multi-text"):
                                     if label_str.lower() not in existing_texts_lower:
                                         validated_entities.append(label_str)
                                         existing_texts_lower.add(label_str.lower())
@@ -2665,7 +2670,7 @@ async def extract_facts_from_contents_batch_api(
                             if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                                 continue
                             label_str = f"{group.key}:{v.strip()}"
-                            if group.type == "text":
+                            if group.type in ("text", "multi-text"):
                                 if label_str.lower() not in existing_texts_lower:
                                     validated_entities.append(label_str)
                                     existing_texts_lower.add(label_str.lower())

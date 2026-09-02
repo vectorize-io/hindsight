@@ -64,6 +64,7 @@ import type {
   KnowledgePageResponse,
   KnowledgePageSearchResponse,
   KnowledgeTreeResponse,
+  LabelGroupInput,
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
@@ -737,6 +738,16 @@ export class HindsightClient {
       retainCustomInstructions?: string;
       retainChunkSize?: number;
       retainStructuredChunkSize?: number;
+      /**
+       * Controlled vocabulary for entity labels. Each group classifies a fact under a
+       * `key`: `"value"`/`"multi-values"` pick from the group's declared `values`, while
+       * `"text"`/`"multi-text"` are open-vocabulary (one string / any number of strings).
+       * With `tag: true` the extracted `key:value` labels are also written as tags, so
+       * they are filterable via `tags`/`tagsMatch` at recall.
+       */
+      entityLabels?: LabelGroupInput[];
+      /** Allow entities outside `entityLabels`. False is labels-only mode. */
+      entitiesAllowFreeForm?: boolean;
       enableObservations?: boolean;
       observationsMission?: string;
       /** Run the keyword (BM25) retrieval arm during recall. False leaves pure vector search. */
@@ -766,6 +777,9 @@ export class HindsightClient {
     if (options.retainChunkSize !== undefined) updates.retain_chunk_size = options.retainChunkSize;
     if (options.retainStructuredChunkSize !== undefined)
       updates.retain_structured_chunk_size = options.retainStructuredChunkSize;
+    if (options.entityLabels !== undefined) updates.entity_labels = options.entityLabels;
+    if (options.entitiesAllowFreeForm !== undefined)
+      updates.entities_allow_free_form = options.entitiesAllowFreeForm;
     if (options.enableObservations !== undefined)
       updates.enable_observations = options.enableObservations;
     if (options.observationsMission !== undefined)
@@ -1591,6 +1605,7 @@ export type {
   KnowledgePageResponse,
   KnowledgePageSearchResponse,
   KnowledgeTreeResponse,
+  LabelGroupInput,
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,

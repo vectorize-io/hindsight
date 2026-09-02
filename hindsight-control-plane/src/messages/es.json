@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "¿Eliminar la estrategia \"{name}\"?",
     "deleteStrategyDescription": "Esto eliminará la estrategia y todas sus anulaciones. Esta acción no se puede deshacer.",
     "fieldTypeText": "Texto",
+    "fieldTypeMultiText": "Múltiples textos",
     "fieldTypeValue": "Valor único",
     "fieldTypeMultiValues": "Múltiples valores",
     "fieldTypeMap": "Mapa",

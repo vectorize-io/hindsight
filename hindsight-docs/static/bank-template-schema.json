@@ -747,6 +747,7 @@
             "value",
             "multi-values",
             "text",
+            "multi-text",
             "map"
           ],
           "title": "Type",
@@ -811,6 +812,7 @@
           "default": "text",
           "enum": [
             "text",
+            "multi-text",
             "value",
             "multi-values",
             "map"

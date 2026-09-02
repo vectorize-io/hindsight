@@ -178,3 +178,55 @@ def test_create_bank_omits_recall_pipeline_toggles_when_unset(monkeypatch):
     body = captured["body"]
     for name in ("enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking"):
         assert name not in body
+
+
+def test_update_bank_config_forwards_entity_labels(monkeypatch):
+    """Entity-label groups must reach the request body unflattened.
+
+    The wrapper enumerates config fields, so a label group that never lands in
+    `updates` is silently dropped — the bank keeps extracting nothing. The
+    TypeScript wrapper has the mirror of this test in
+    tests/bank_config_entity_labels_mapping.test.ts; the two must stay in step.
+    """
+    captured: dict[str, object] = {}
+
+    async def fake_update(self, bank_id, updates):
+        captured["updates"] = updates
+        return {"bank_id": bank_id, "config": {}, "overrides": updates}
+
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", fake_update)
+
+    labels = [
+        {
+            "key": "name",
+            "type": "multi-text",
+            "tag": True,
+            "description": "Every name the subject of this fact is known by.",
+        },
+        {"key": "topic", "type": "value", "values": [{"value": "infra"}]},
+    ]
+
+    client = Hindsight(base_url="http://example.invalid")
+    client.update_bank_config("test-bank", entity_labels=labels, entities_allow_free_form=False)
+
+    assert captured["updates"] == {
+        "entity_labels": labels,
+        "entities_allow_free_form": False,
+    }
+
+
+def test_update_bank_config_omits_entity_labels_when_unset(monkeypatch):
+    """An unset entity_labels must not clear the bank's existing vocabulary."""
+    captured: dict[str, object] = {}
+
+    async def fake_update(self, bank_id, updates):
+        captured["updates"] = updates
+        return {"bank_id": bank_id, "config": {}, "overrides": updates}
+
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", fake_update)
+
+    client = Hindsight(base_url="http://example.invalid")
+    client.update_bank_config("test-bank", retain_chunk_size=1000)
+
+    assert "entity_labels" not in captured["updates"]
+    assert "entities_allow_free_form" not in captured["updates"]

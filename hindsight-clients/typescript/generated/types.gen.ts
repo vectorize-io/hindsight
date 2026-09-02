@@ -2670,7 +2670,7 @@ export type LabelGroupInput = {
   /**
    * Type
    */
-  type?: "value" | "multi-values" | "text" | "map";
+  type?: "value" | "multi-values" | "text" | "multi-text" | "map";
   /**
    * Optional
    */
@@ -2708,7 +2708,7 @@ export type LabelGroupOutput = {
   /**
    * Type
    */
-  type?: "value" | "multi-values" | "text" | "map";
+  type?: "value" | "multi-values" | "text" | "multi-text" | "map";
   /**
    * Optional
    */
@@ -2913,7 +2913,7 @@ export type MapFieldInput = {
   /**
    * Type
    */
-  type?: "text" | "value" | "multi-values" | "map";
+  type?: "text" | "multi-text" | "value" | "multi-values" | "map";
   /**
    * Description
    */
@@ -2939,7 +2939,7 @@ export type MapFieldOutput = {
   /**
    * Type
    */
-  type?: "text" | "value" | "multi-values" | "map";
+  type?: "text" | "multi-text" | "value" | "multi-values" | "map";
   /**
    * Description
    */

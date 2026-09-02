@@ -1954,7 +1954,7 @@ class Hindsight:
         retain_default_strategy: str | None = None,
         retain_strategies: dict[str, Any] | None = None,
         # Entity settings
-        entity_labels: list[str] | None = None,
+        entity_labels: list[dict[str, Any]] | None = None,
         entities_allow_free_form: bool | None = None,
         # Observation / consolidation settings
         enable_observations: bool | None = None,
@@ -1993,8 +1993,12 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             retain_default_strategy: Default retain strategy name.
             retain_strategies: Named strategy definitions (dict of strategy name to config).
-            entity_labels: Controlled vocabulary for entity type classification.
-                When set, extracted entities are classified into these labels.
+            entity_labels: Controlled vocabulary for entity labels — a list of label-group
+                dicts, each with a ``key`` and a ``type``: ``"value"``/``"multi-values"`` pick
+                from the group's declared ``values``, while ``"text"``/``"multi-text"`` are
+                open-vocabulary (one string / any number of strings). With ``tag: True`` the
+                extracted ``key:value`` labels are also written as tags, so they are
+                filterable via ``tags``/``tags_match`` at recall.
             entities_allow_free_form: Whether to allow entity types outside entity_labels (default: True).
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations.
