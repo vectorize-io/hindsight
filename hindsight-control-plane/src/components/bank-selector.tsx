@@ -9,6 +9,12 @@ import { bankRoute } from "@/lib/bank-url";
 import { withBasePath } from "@/lib/base-path";
 import { client } from "@/lib/api";
 import type { RetainContentBlock as ContentBlock } from "@/lib/api";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 /** One element of a document composed as an ordered block list. */
 type DocBlock =
@@ -1022,9 +1028,14 @@ function BankSelectorInner() {
                       {docBlocks.map((block, index) => (
                         <div
                           key={index}
-                          className="flex items-start gap-2 rounded border border-border p-2 bg-muted/20"
+                          className="group relative rounded border border-border bg-muted/20 p-2"
                         >
-                          <div className="flex flex-col gap-1 pt-0.5">
+                          {/* Controls overlay the block rather than sitting in a
+                              column beside it: at this width a fixed gutter of
+                              arrows and a close button squeezed the content into
+                              a sliver. Revealed on hover and on keyboard focus,
+                              so they stay reachable without a pointer. */}
+                          <div className="absolute top-1 right-1 flex items-center gap-0.5 rounded bg-background/80 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                             <button
                               type="button"
                               aria-label={tAddDocument("blockMoveUp")}
@@ -1036,7 +1047,7 @@ function BankSelectorInner() {
                                   return next;
                                 })
                               }
-                              className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-25"
                             >
                               <ChevronUp className="h-3.5 w-3.5" />
                             </button>
@@ -1051,49 +1062,48 @@ function BankSelectorInner() {
                                   return next;
                                 })
                               }
-                              className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-25"
                             >
                               <ChevronDown className="h-3.5 w-3.5" />
                             </button>
+                            <button
+                              type="button"
+                              aria-label={tAddDocument("blockRemove")}
+                              onClick={() =>
+                                setDocBlocks((current) => current.filter((_, i) => i !== index))
+                              }
+                              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           </div>
 
-                          <div className="flex-1 min-w-0">
-                            {block.kind === "text" ? (
-                              <Textarea
-                                value={block.text}
-                                onChange={(e) =>
-                                  setDocBlocks((current) =>
-                                    current.map((b, i) =>
-                                      i === index && b.kind === "text"
-                                        ? { ...b, text: e.target.value }
-                                        : b
-                                    )
+                          {block.kind === "text" ? (
+                            <Textarea
+                              value={block.text}
+                              onChange={(e) =>
+                                setDocBlocks((current) =>
+                                  current.map((b, i) =>
+                                    i === index && b.kind === "text"
+                                      ? { ...b, text: e.target.value }
+                                      : b
                                   )
-                                }
-                                placeholder={tAddDocument("contentPlaceholder")}
-                                className="min-h-[80px] resize-y"
-                              />
-                            ) : (
-                              <div className="flex items-center gap-2 text-sm">
-                                <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="truncate">{block.name}</span>
-                                <span className="text-xs text-muted-foreground shrink-0">
-                                  {block.mediaType} · {(block.size / 1024).toFixed(0)} KB
-                                </span>
-                              </div>
-                            )}
-                          </div>
-
-                          <button
-                            type="button"
-                            aria-label={tAddDocument("blockRemove")}
-                            onClick={() =>
-                              setDocBlocks((current) => current.filter((_, i) => i !== index))
-                            }
-                            className="text-muted-foreground hover:text-foreground pt-0.5"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
+                                )
+                              }
+                              placeholder={tAddDocument("contentPlaceholder")}
+                              // Room for the overlay so the first line never runs
+                              // underneath it.
+                              className="min-h-[80px] resize-y border-0 bg-transparent p-0 pr-20 shadow-none focus-visible:ring-0"
+                            />
+                          ) : (
+                            <div className="flex items-center gap-2 pr-20 text-sm">
+                              <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span className="truncate">{block.name}</span>
+                              <span className="shrink-0 text-xs text-muted-foreground">
+                                {(block.size / 1024).toFixed(0)} KB
+                              </span>
+                            </div>
+                          )}
                         </div>
                       ))}
 
@@ -1133,27 +1143,31 @@ function BankSelectorInner() {
                           e.target.value = "";
                         }}
                       />
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setDocBlocks((current) => [...current, { kind: "text", text: "" }])
-                          }
-                        >
-                          {tAddDocument("blockAddText")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => document.getElementById("doc-attachment-input")?.click()}
-                        >
-                          <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-                          {tAddDocument("blockAddAttachment")}
-                        </Button>
-                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button type="button" variant="outline" size="sm">
+                            <Plus className="mr-1.5 h-3.5 w-3.5" />
+                            {tAddDocument("blockAdd")}
+                            <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              setDocBlocks((current) => [...current, { kind: "text", text: "" }])
+                            }
+                          >
+                            {tAddDocument("blockAddText")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              document.getElementById("doc-attachment-input")?.click()
+                            }
+                          >
+                            {tAddDocument("blockAddAttachment")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   )}
                 </TabsContent>

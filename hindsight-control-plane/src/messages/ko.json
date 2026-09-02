@@ -1630,12 +1630,13 @@
     "textNotStoredWarning": "이 서버에는 문서 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다.",
     "composeText": "Text",
     "composeBlocks": "Blocks",
-    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source, so the extractor reads each attachment beside the text that introduces it. Needs a vision-capable model.",
-    "blockAddText": "Add text",
-    "blockAddAttachment": "Add attachment",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
     "blockRemove": "Remove block",
     "blockMoveUp": "Move block up",
-    "blockMoveDown": "Move block down"
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
   "dashboard": {
     "welcome": "Hindsight에 오신 것을 환영합니다",
