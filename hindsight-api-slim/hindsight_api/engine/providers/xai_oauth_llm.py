@@ -934,11 +934,27 @@ class XaiOAuthLLM(LLMInterface):
         and :meth:`_close_when_drained` closes them on the way out.
         """
         draining = list(self._draining)
+        # Captured before cancelling: _close_when_drained's `finally` pops each entry
+        # out of _drained on its way through, so after the awaits below this map is
+        # empty whether or not the close actually happened.
+        retired = list(self._drained)
         for task in draining:
             task.cancel()
         for task in draining:
             with suppress(asyncio.CancelledError):
                 await task
+
+        # A cancelled drain task cannot be relied on to have closed its client. The
+        # cancellation is delivered at that task's next await -- which is the
+        # `await stale.aclose()` in its `finally` -- so the close never runs, and
+        # CancelledError is a BaseException, so the `suppress(Exception)` there does
+        # not catch it either. The client then leaked its connections on shutdown.
+        # Closing here is where it is actually guaranteed to happen; aclose() is
+        # idempotent, so a drain that did complete on its own costs nothing.
+        for stale in retired:
+            with suppress(Exception):
+                await stale.aclose()
+
         await self._client.aclose()
         self._auth.close()
 
