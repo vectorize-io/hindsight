@@ -284,7 +284,7 @@ from . import (
     link_creation,
 )
 from . import timing as _timing
-from .embedding_coalescer import CoalescingEmbedder
+from .embedding_coalescer import acquire_shared, release_shared
 from .memory_budget import RetainMemoryBudget, estimate_chunk_bytes
 from .types import (
     CausalRelation,
@@ -2474,7 +2474,13 @@ async def _streaming_retain_batch(
     # The coalescer keeps the fan-out and batches the concurrent embedding calls
     # underneath it. One per retain: the backends read the ambient bank id for cost
     # attribution, so texts from different banks must not share a request.
-    coalescing_embedder = CoalescingEmbedder(embeddings_model)
+    # Shared by every concurrent retain of THIS bank, not built per call. The constraint the
+    # per-call scope protected is that texts from different BANKS must not share a request (the
+    # backends read the ambient bank id for cost attribution); texts from the same bank may. Per
+    # call, a seed's concurrent retains could never merge with each other, so each request carried
+    # only what one call had ready -- measured at 6.7 texts of an allowed 32, while the request
+    # COUNT grew with client concurrency to 42 in flight against an optimum of 8.
+    coalescing_embedder = acquire_shared(bank_id, embeddings_model)
 
     # ---- LLM Producer ----
     # Fires all chunk extractions as concurrent tasks (bounded by the LLM
@@ -2563,8 +2569,10 @@ async def _streaming_retain_batch(
             # Same reasoning for the coalescer: its dispatcher is a task of its own and
             # a cancelled fan-out would otherwise leave it — and anything parked on
             # it — alive for the life of the process.
-            coalescing_embedder.close()
+            # Release rather than close: other retains of this bank may still be using it, and
+            # the last one out is what closes it.
             log_buffer.append(f"[streaming] {coalescing_embedder.stats.describe()}")
+            release_shared(bank_id)
 
     # ---- DB Consumer ----
     # Drains enriched chunks from the queue in batches and runs

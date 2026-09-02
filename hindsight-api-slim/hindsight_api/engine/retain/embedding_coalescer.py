@@ -97,6 +97,66 @@ def resolve_max_batch_size(embeddings_backend: EmbeddingsBackend, slots: int = 1
     return backend_batch_size * requests_per_slot
 
 
+_GLOBAL_SLOTS: asyncio.Semaphore | None = None
+_GLOBAL_SLOTS_SIZE = 0
+
+
+def _global_slots(size: int) -> asyncio.Semaphore:
+    """One in-flight bound for the whole process, not one per caller.
+
+    The per-instance semaphore bounds ONE coalescer. Concurrent retains each held their own,
+    so total in-flight was callers x slots with nothing watching the sum: measured at 42
+    concurrent requests of 6.7 texts against an embedder whose optimum is 8 requests of 32,
+    which is the worst corner of its throughput curve -- 877 texts/s against a 2,080 ceiling.
+    A shared bound is what makes client concurrency safe to raise.
+    """
+    global _GLOBAL_SLOTS, _GLOBAL_SLOTS_SIZE
+    if _GLOBAL_SLOTS is None or _GLOBAL_SLOTS_SIZE != size:
+        _GLOBAL_SLOTS = asyncio.Semaphore(size)
+        _GLOBAL_SLOTS_SIZE = size
+    return _GLOBAL_SLOTS
+
+
+class _SharedEntry:
+    __slots__ = ("coalescer", "refs")
+
+    def __init__(self, coalescer: "CoalescingEmbedder") -> None:
+        self.coalescer = coalescer
+        self.refs = 0
+
+
+_SHARED: dict[str, _SharedEntry] = {}
+
+
+def acquire_shared(bank_id: str, embeddings_backend: EmbeddingsBackend) -> "CoalescingEmbedder":
+    """A coalescer shared by every concurrent retain of ONE bank.
+
+    Scoped to the bank rather than to the retain call because the bank is what the constraint
+    is actually about: the backends read the ambient bank id for cost attribution, so texts
+    from different banks must not share a request -- texts from the same bank may. Per-call
+    scope meant a seed's concurrent retains could never merge with each other, so each request
+    carried only what one call had ready (6.7 texts of an allowed 32) while the number of
+    requests grew with client concurrency. Sharing turns that into full batches.
+    """
+    entry = _SHARED.get(bank_id)
+    if entry is None or entry.coalescer._closed:
+        entry = _SharedEntry(CoalescingEmbedder(embeddings_backend))
+        _SHARED[bank_id] = entry
+    entry.refs += 1
+    return entry.coalescer
+
+
+def release_shared(bank_id: str) -> None:
+    """Drop one user's claim; the last one out closes and removes it."""
+    entry = _SHARED.get(bank_id)
+    if entry is None:
+        return
+    entry.refs -= 1
+    if entry.refs <= 0:
+        _SHARED.pop(bank_id, None)
+        entry.coalescer.close()
+
+
 class CoalescingEmbedder:
     """Batches concurrent document-embedding requests into shared backend calls.
 
@@ -121,6 +181,10 @@ class CoalescingEmbedder:
             embeddings_backend, slots=max_concurrent_requests
         )
         self._slots = asyncio.Semaphore(max_concurrent_requests)
+        # The process-wide ceiling. Taken from the backend so it tracks the embedder's own
+        # optimum rather than being a second thing to tune.
+        limit = getattr(embeddings_backend, "max_concurrent_requests", None)
+        self._global_limit = limit if isinstance(limit, int) and limit > 0 else max_concurrent_requests
         self._pending: deque[_Waiter] = deque()
         self._dispatcher: asyncio.Task | None = None
         self._in_flight: set[asyncio.Task] = set()
@@ -175,15 +239,19 @@ class CoalescingEmbedder:
         delay — just enough for the callers that are already runnable (the producer
         schedules its whole chunk fan-out in one go) to join this batch.
         """
+        gslots = _global_slots(self._global_limit)
         while self._pending:
             await self._slots.acquire()
+            await gslots.acquire()
             try:
                 await asyncio.sleep(0)
                 batch = self._take_batch()
             except BaseException:
+                gslots.release()
                 self._slots.release()
                 raise
             if not batch:
+                gslots.release()
                 self._slots.release()
                 return
             request = asyncio.create_task(self._run_request(batch))
@@ -233,6 +301,7 @@ class CoalescingEmbedder:
                     waiter.future.set_result(embeddings[offset : offset + count])
                 offset += count
         finally:
+            _global_slots(self._global_limit).release()
             self._slots.release()
             # A waiter that arrived after the dispatch loop drained the list has no
             # dispatcher to pick it up; restart one now that a slot is free again.
