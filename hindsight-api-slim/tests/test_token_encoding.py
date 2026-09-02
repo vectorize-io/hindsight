@@ -11,7 +11,7 @@ from hindsight_api.config import DEFAULT_TOKENIZER_ENCODING, ENV_TOKENIZER_ENCOD
 from hindsight_api.engine.token_encoding import (
     BUNDLED_ENCODINGS,
     count_tokens,
-    get_token_encoding,
+    _load_encoding,
     truncate_to_tokens,
 )
 
@@ -22,7 +22,7 @@ SPECIAL_TOKEN_TEXT = "the model emits <|endoftext|> and <|fim_prefix|> markers"
 def encoding_env(monkeypatch):
     """Select an encoding for one test, and undo both caches afterwards.
 
-    ``get_token_encoding`` is lru_cached and the config is globally cached, so a
+    ``_load_encoding`` is lru_cached and the config is globally cached, so a
     test that sets the variable without clearing both would either read a stale
     encoding itself or leak one into the next test.
     """
@@ -33,14 +33,14 @@ def encoding_env(monkeypatch):
         else:
             monkeypatch.setenv(ENV_TOKENIZER_ENCODING, name)
         clear_config_cache()
-        get_token_encoding.cache_clear()
-        return get_token_encoding()
+        _load_encoding.cache_clear()
+        return _load_encoding()
 
     yield _set
 
     monkeypatch.delenv(ENV_TOKENIZER_ENCODING, raising=False)
     clear_config_cache()
-    get_token_encoding.cache_clear()
+    _load_encoding.cache_clear()
 
 
 def test_defaults_to_o200k_base(encoding_env):
@@ -115,7 +115,7 @@ def test_counting_agrees_with_the_ids_truncation_uses():
         "🧠 naïve café 東京 مرحبا",
         "def f(x: int) -> str:\n    return f'{x!r}'  # ok\n",
     ):
-        enc = get_token_encoding()
+        enc = _load_encoding()
         assert count_tokens(text) == len(enc.encode_ordinary(text)), repr(text)
 
 

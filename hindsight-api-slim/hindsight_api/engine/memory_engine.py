@@ -580,7 +580,7 @@ from .task_backend import TaskBackend
 RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
 from .retain import timing as _retain_timing_mod
 from .token_encoding import count_tokens as _token_encoding_count
-from .token_encoding import get_token_encoding, truncate_to_tokens
+from .token_encoding import truncate_to_tokens
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
@@ -2338,8 +2338,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Configurable via HINDSIGHT_API_RETAIN_STORE_MAX_CONCURRENT.
         self._store_put_semaphore = asyncio.Semaphore(get_config().retain_store_max_concurrent)
 
-        # initialize encoding eagerly to avoid delaying the first time
-        get_token_encoding()
+        # Load the vocabulary now rather than inside the first retain/recall — it
+        # parses a few megabytes, and the tokenizer is cached from here on.
+        count_tokens("")
 
         # Store operation validator extension (optional). Wrapped so every hook is timed: the
         # validator runs outside the operation's own timer, so nothing else can see what it costs.

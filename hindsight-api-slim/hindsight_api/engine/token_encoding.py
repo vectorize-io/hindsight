@@ -42,8 +42,9 @@ a literal such as ``<|endoftext|>`` — which reached users as an HTTP 500 on
 retain/recall (issue #1883). Neither operation here can hit that: ``count()`` never
 applies the check, and truncation encodes with ``encode_ordinary()``, which has no
 special-token machinery at all. This is the one reason to keep using the two
-functions below rather than reaching for ``get_token_encoding().encode()`` — that
-call is the raising one, and #1883 is what it looks like in production.
+two functions below rather than the tokenizer's own ``encode()`` — that call is
+the raising one, and #1883 is what it looks like in production. It is also why the
+tokenizer itself is not part of this module's interface.
 """
 
 from dataclasses import dataclass
@@ -58,13 +59,13 @@ BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony")
 
 
 @lru_cache(maxsize=1)
-def get_token_encoding() -> "toktok._Tokenizer":
+def _load_encoding() -> "toktok._Tokenizer":
     """The tokenizer for ``HINDSIGHT_API_TOKENIZER_ENCODING``.
 
-    Prefer :func:`count_tokens` and :func:`truncate_to_tokens`; this is public only
-    so startup can load the vocabulary eagerly, and so tests can name the encoding
-    in play. Note that its ``encode()`` raises on special-token literals — see the
-    module docstring.
+    Private: the interface is :func:`count_tokens` and :func:`truncate_to_tokens`.
+    Handing the raw tokenizer out invites ``encode()``, which is the one spelling
+    that raises on special-token literals (#1883). Tests reach for it to name the
+    encoding in play and to clear the cache below.
 
     Cached: the tokenizer is immutable and loading one parses a multi-megabyte
     vocabulary. Because the encoding name is read here, changing
@@ -101,7 +102,7 @@ def count_tokens(text: str) -> int:
     approximate answer, since a fixed character cut can split a token. ``count()``
     removes the reason for both: it allocates nothing and it is exact.
     """
-    return get_token_encoding().count(text)
+    return _load_encoding().count(text)
 
 
 @dataclass(frozen=True)
@@ -121,7 +122,7 @@ def truncate_to_tokens(text: str, max_tokens: int) -> TokenTruncation:
     ``original_tokens`` is the input's token count (so the caller can report how
     much was dropped) whether or not truncation occurred.
     """
-    enc = get_token_encoding()
+    enc = _load_encoding()
     # Count first: the common case is "fits", and that costs no id list at all.
     original_tokens = enc.count(text)
     if original_tokens <= max_tokens:
