@@ -40,12 +40,11 @@ variable to ``cl100k_base`` to restore the previous counts exactly.
 **Special-token literals.** A tiktoken-shaped ``encode()`` defaults to
 ``disallowed_special="all"``, which makes it *raise* on content that merely mentions
 a literal such as ``<|endoftext|>`` — which reached users as an HTTP 500 on
-retain/recall (issue #1883). Neither operation here can hit that: ``count()`` never
-applies the check, and truncation encodes with ``encode_ordinary()``, which has no
-special-token machinery at all. This is the one reason to keep using the two
-two functions below rather than the tokenizer's own ``encode()`` — that call is
-the raising one, and #1883 is what it looks like in production. It is also why the
-tokenizer itself is not part of this module's interface.
+retain/recall (issue #1883). Neither operation here can hit that: both go through
+toktok's ``count``/``truncate``, which have no special-token machinery to trigger.
+That is the reason to keep using the functions below rather than the tokenizer's own
+``encode()`` — that call is the raising one, and #1883 is what it looks like in
+production. It is also why the tokenizer itself is not part of this interface.
 """
 
 from collections.abc import Sequence
@@ -67,7 +66,7 @@ def _load_encoding() -> "toktok._Tokenizer":
     Private: the interface is :func:`count_tokens` and :func:`truncate_to_tokens`.
     Handing the raw tokenizer out invites ``encode()``, which is the one spelling
     that raises on special-token literals (#1883). Tests reach for it to name the
-    encoding in play and to clear the cache below.
+    encoding in play and to clear this cache.
 
     Cached: the tokenizer is immutable and loading one parses a multi-megabyte
     vocabulary. Because the encoding name is read here, changing
@@ -78,10 +77,12 @@ def _load_encoding() -> "toktok._Tokenizer":
 
     name = get_config().tokenizer_encoding
     try:
-        # toktok's supported API is ``batch_count``; ``_encoding`` is the escape
-        # hatch its own docstring points at, "for anyone who knowingly wants the
-        # full encode/decode surface". Truncation needs decode, so we take it —
-        # knowingly, and in this module only.
+        # toktok's supported API is ``batch_count``/``truncate``, both of which
+        # take an encoding *name*. Holding the loaded tokenizer instead lets
+        # count_tokens call ``count`` directly — no per-call list to wrap a single
+        # string in — and is where the resolved ``.name`` the other two need comes
+        # from. ``_encoding`` is the escape hatch toktok's own docstring points at,
+        # taken knowingly, and in this module only.
         return toktok._encoding(name)
     except Exception as err:
         raise ValueError(
@@ -143,8 +144,8 @@ def truncate_many_to_tokens(texts: Sequence[str], max_tokens: int) -> list[Token
     """:func:`truncate_to_tokens` over a list, in one call.
 
     The two callers that truncate a whole list — every reranker document, every
-    embedding input — get the cut done in Rust with the GIL released instead of a
-    Python loop, and one scratch buffer per thread instead of one per text.
+    embedding input — get the cut done in Rust across threads with the GIL
+    released, instead of one Python call per text.
     """
     return [
         TokenTruncation(text=truncated, original_tokens=original_tokens)

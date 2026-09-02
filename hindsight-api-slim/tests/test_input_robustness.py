@@ -42,9 +42,9 @@ def test_count_tokens_handles_special_token_literal():
 
 
 def test_truncation_round_trips_a_special_token_literal():
-    # Truncation is the only operation that needs ids, so it is the only one that
-    # could still reach the tokenizer's raising encode(). A budget this generous
-    # truncates nothing, so the text must come back byte-for-byte.
+    # The other half of #1883: truncation must treat the literal as ordinary text
+    # too. A budget this generous truncates nothing, so it must come back
+    # byte-for-byte.
     assert truncate_to_tokens(SPECIAL_TOKEN_TEXT, 10_000).text == SPECIAL_TOKEN_TEXT
 
 

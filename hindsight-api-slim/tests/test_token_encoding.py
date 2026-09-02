@@ -94,19 +94,19 @@ def test_count_tokens_tolerates_special_token_literals():
 
 
 def test_truncation_tolerates_special_token_literals():
-    """Truncation is the only operation that needs ids, so it is the only one that
-    could still hit the tokenizer's ``encode()`` check. It must not."""
+    """The other half of #1883: truncation must treat the literal as ordinary text
+    too, not reject it. A budget this generous cuts nothing, so it must come back
+    byte-for-byte."""
     assert truncate_to_tokens(SPECIAL_TOKEN_TEXT, 10_000).text == SPECIAL_TOKEN_TEXT
 
 
-def test_counting_agrees_with_the_ids_truncation_uses():
-    """``count()`` is the fast path for the same number ``len(encode_ordinary())``
-    gives.
+def test_counting_agrees_with_what_truncation_reports():
+    """``count_tokens`` and ``truncate``'s ``original_tokens`` must be one number.
 
-    Every budget in the engine counts one way and truncates the other, so a
-    divergence here would show up as an off-by-N in the wrong direction. It is a
-    real risk: the tokenizer has *two* id-producing spellings, and only
-    ``encode_ordinary`` agrees with ``count`` on special-token literals.
+    They come from two different toktok entry points, and the engine mixes them:
+    ``_truncate_inputs`` decides it truncated by comparing ``original_tokens``
+    against a cap that other code arrived at with ``count_tokens``. A divergence
+    would show up as an off-by-N in a budget, not as an error.
     """
     for text in (
         "",
@@ -116,8 +116,7 @@ def test_counting_agrees_with_the_ids_truncation_uses():
         "🧠 naïve café 東京 مرحبا",
         "def f(x: int) -> str:\n    return f'{x!r}'  # ok\n",
     ):
-        enc = _load_encoding()
-        assert count_tokens(text) == len(enc.encode_ordinary(text)), repr(text)
+        assert count_tokens(text) == truncate_to_tokens(text, 1_000_000).original_tokens, repr(text)
 
 
 # --- truncation ---------------------------------------------------------------
