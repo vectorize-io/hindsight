@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -37,6 +39,20 @@ _VALID_ACTIONS = {a.value for a in DefenseAction}
 # new cloud detector just to avoid 422-ing a write it never interprets. We
 # only require ``on`` to be a non-empty string; entitlement and dispatch are
 # the loaded extension's ``screen()`` job.
+#
+# Dispatch being the extension's job does not make an undispatched rule
+# invisible: an extension declares the roster it implements (see
+# ``MemoryDefenseExtension.implemented_detectors``) and
+# ``warn_unimplemented_detectors`` logs, once per name, any rule outside it.
+# Parsing stays permissive; only the silence goes away.
+
+# The detector this module's ``apply_redaction`` implements. Named once so the
+# regex extension, the document-body scrubber and the roster below cannot
+# drift apart.
+SENSITIVE_DATA_DETECTOR = "sensitive_data"
+
+# The roster the OSS regex screening honours — the whole of it.
+REGEX_DETECTORS: frozenset[str] = frozenset({SENSITIVE_DATA_DETECTOR})
 
 
 @dataclass(frozen=True)
@@ -273,6 +289,49 @@ def apply_redaction(content: str) -> RedactionResult:
     return RedactionResult(content=content, matched_types=matched, hits=hits)
 
 
+# Detector names already warned about. The retain path screens every item
+# written, so warning per screened item would put the same line in the log
+# thousands of times for one misconfigured rule; warn once per name instead.
+# The set is bounded by the number of distinct detector names operators
+# actually configure, so it cannot grow with traffic. The lock is there
+# because screening runs on worker threads as well as the event loop and
+# check-then-add is not atomic: without it a concurrent pair of writes could
+# log the same name twice. Process-local, like any log-dedup state — a restart
+# warns again, which is what an operator reading a fresh log wants.
+_warned_detectors: set[str] = set()
+_warned_detectors_lock = threading.Lock()
+
+
+def warn_unimplemented_detectors(policy: DefensePolicy, implemented: Collection[str]) -> None:
+    """Log once per policy rule naming a detector this build does not implement.
+
+    The parser accepts any detector name on purpose (see the note above
+    :class:`PolicyRule`), so a well-formed policy can name a detector no loaded
+    extension dispatches. Such a rule is inert: the PATCH returns 200, the rule
+    is stored, and nothing ever screens for it. This makes that visible in the
+    log; it changes no decision and gates no write.
+
+    Only the detector name and the implemented roster are logged. Screened
+    content and every other field of the policy stay out of the line.
+    """
+    if not policy.enabled:
+        return
+    for rule in policy.rules:
+        if rule.on in implemented:
+            continue
+        with _warned_detectors_lock:
+            if rule.on in _warned_detectors:
+                continue
+            _warned_detectors.add(rule.on)
+        # Logged outside the lock: emitting to a handler under it would
+        # serialize screening on log I/O.
+        logger.warning(
+            f"Memory Defense policy names detector '{rule.on}', which this build does not implement. "
+            f"The rule is ignored and nothing is screened for it. "
+            f"Detectors implemented here: {sorted(implemented)}."
+        )
+
+
 class MemoryDefenseExtension(Extension, ABC):
     """Abstract base for Memory Defense extensions.
 
@@ -281,6 +340,14 @@ class MemoryDefenseExtension(Extension, ABC):
     applies the returned decision (redacts content / drops blocked items) and
     fires a webhook for non-allow decisions when one is configured.
     """
+
+    # Detector names this extension's ``screen()`` actually dispatches. A rule
+    # naming anything else is a no-op here, so ``screen()`` runs the policy
+    # through :func:`warn_unimplemented_detectors` against this roster to say
+    # so once. Downstream extensions declare their own roster; the default is
+    # empty so an implementation that forgets to declare one warns about every
+    # rule rather than silently swallowing them.
+    implemented_detectors: frozenset[str] = frozenset()
 
     @abstractmethod
     async def screen(

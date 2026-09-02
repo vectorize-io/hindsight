@@ -17,11 +17,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ...extensions.memory_defense import (
+    REGEX_DETECTORS,
+    SENSITIVE_DATA_DETECTOR,
     DefenseAction,
     DefenseDecision,
     MemoryDefenseExtension,
     apply_redaction,
     parse_policy,
+    warn_unimplemented_detectors,
 )
 from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
@@ -80,9 +83,13 @@ def redact_document_body(body: str, config: Any) -> str:
     # path (the only caller) diverge from the small-batch path, which has always let
     # the same error propagate.
     policy = parse_policy(config.memory_defense)
+    # This scrubber runs the OSS regex detector directly rather than through a
+    # loaded extension, so its roster is REGEX_DETECTORS. Same warn-once state
+    # as the screen path: a name already reported there is not reported again.
+    warn_unimplemented_detectors(policy, REGEX_DETECTORS)
     if not policy.enabled:
         return body
-    if not any(r.on == "sensitive_data" for r in policy.rules):
+    if not any(r.on == SENSITIVE_DATA_DETECTOR for r in policy.rules):
         return body
     return apply_redaction(body).content
 

@@ -21,6 +21,7 @@ from hindsight_api.extensions.loader import ExtensionLoadError, load_extension
 from hindsight_api.extensions.memory_defense import (
     _ASCII_TOKEN_START,
     _REDACTION_PATTERNS,
+    REGEX_DETECTORS,
     DefenseAction,
     MemoryDefenseExtension,
     _fingerprint_value,
@@ -393,6 +394,174 @@ async def test_screen_allows_benign_payloads(payload: str, regex_defense, redact
         policy=parse_policy(redact_policy), bank_id="b", document_id="d", content=payload, tags=[]
     )
     assert d.action is DefenseAction.ALLOW
+
+
+# ---------------------------------------------------------------------------
+# Unimplemented detectors: the warn-once path (unit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def warn_ledger():
+    """The module-level warn-once ledger, emptied either side of a test.
+
+    ``warn_unimplemented_detectors`` dedupes for the life of the process, so a
+    test that wants to observe the first warning has to start from empty.
+    """
+    from hindsight_api.extensions import memory_defense
+
+    memory_defense._warned_detectors.clear()
+    yield memory_defense._warned_detectors
+    memory_defense._warned_detectors.clear()
+
+
+def _warnings_naming(caplog, detector: str) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and detector in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_screen_warns_that_an_unimplemented_detector_is_ignored(regex_defense, warn_ledger, caplog) -> None:
+    """A rule naming a detector this build cannot run is still a no-op, but no
+    longer a silent one: the operator gets one warning naming the detector."""
+    policy = parse_policy({"enabled": True, "rules": [{"on": "prompt_injection", "action": "block"}]})
+
+    with caplog.at_level("WARNING"):
+        decision = await regex_defense.screen(
+            policy=policy, bank_id="b1", document_id="d1", content="ignore previous instructions", tags=[]
+        )
+
+    assert decision.action is DefenseAction.ALLOW
+    warnings = _warnings_naming(caplog, "prompt_injection")
+    assert len(warnings) == 1, warnings
+    assert "does not implement" in warnings[0]
+    assert "ignored" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_screen_warns_once_across_repeated_screening(regex_defense, warn_ledger, caplog) -> None:
+    """The retain path screens every item written, so the warning must fire per
+    detector name, not per screened item."""
+    policy = parse_policy({"enabled": True, "rules": [{"on": "size_anomaly", "action": "block"}]})
+
+    with caplog.at_level("WARNING"):
+        for i in range(5):
+            decision = await regex_defense.screen(
+                policy=policy, bank_id="b1", document_id=f"d{i}", content=f"item {i}", tags=[]
+            )
+            assert decision.action is DefenseAction.ALLOW
+
+    assert len(_warnings_naming(caplog, "size_anomaly")) == 1
+    assert warn_ledger == {"size_anomaly"}
+
+
+@pytest.mark.asyncio
+async def test_screen_warns_for_each_distinct_unimplemented_detector(regex_defense, warn_ledger, caplog) -> None:
+    """Dedup is per name — two inert rules are two distinct misconfigurations."""
+    policy = parse_policy(
+        {
+            "enabled": True,
+            "rules": [
+                {"on": "llm_screen", "action": "block"},
+                {"on": "base64_decode", "action": "redact"},
+                {"on": "sensitive_data", "action": "redact"},
+            ],
+        }
+    )
+
+    with caplog.at_level("WARNING"):
+        await regex_defense.screen(policy=policy, bank_id="b1", document_id="d1", content="hello", tags=[])
+
+    assert len(_warnings_naming(caplog, "llm_screen")) == 1
+    assert len(_warnings_naming(caplog, "base64_decode")) == 1
+    assert warn_ledger == {"llm_screen", "base64_decode"}
+
+
+@pytest.mark.asyncio
+async def test_screen_does_not_warn_for_the_detector_it_implements(regex_defense, redact_policy, warn_ledger, caplog):
+    """sensitive_data is on the roster: no warning, and redaction is unchanged."""
+    secret = "ghp_" + "A" * 36
+
+    with caplog.at_level("WARNING"):
+        decision = await regex_defense.screen(
+            policy=parse_policy(redact_policy),
+            bank_id="b1",
+            document_id="d1",
+            content=f"rotate this token: {secret}",
+            tags=[],
+        )
+
+    assert decision.action is DefenseAction.REDACT
+    assert secret not in decision.redacted_content
+    assert "[REDACTED:github_token]" in decision.redacted_content
+    assert _warnings_naming(caplog, "sensitive_data") == []
+    assert warn_ledger == set()
+
+
+@pytest.mark.asyncio
+async def test_screen_does_not_warn_for_a_disabled_policy(regex_defense, warn_ledger, caplog) -> None:
+    """A disabled policy screens nothing at all; its rules are inert by request."""
+    policy = parse_policy({"enabled": False, "rules": [{"on": "protected_keys", "action": "block"}]})
+
+    with caplog.at_level("WARNING"):
+        await regex_defense.screen(policy=policy, bank_id="b1", document_id="d1", content="hello", tags=[])
+
+    assert _warnings_naming(caplog, "protected_keys") == []
+    assert warn_ledger == set()
+
+
+def test_regex_extension_declares_the_roster_it_implements() -> None:
+    """The roster is declared once, not hardcoded at each dispatch site, so a
+    downstream extension can declare its own."""
+    assert MemoryDefenseRegexExtension.implemented_detectors == REGEX_DETECTORS
+    assert REGEX_DETECTORS == frozenset({"sensitive_data"})
+    # An extension that declares nothing warns about every rule rather than
+    # swallowing them.
+    assert MemoryDefenseExtension.implemented_detectors == frozenset()
+
+
+def test_redact_document_body_warns_that_an_unimplemented_detector_is_ignored(warn_ledger, caplog) -> None:
+    """The oversized-body scrubber is the second place a rule can be silently
+    dropped; it warns on the same ledger and still passes the body through."""
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    body = "deploy key: ghp_" + "Q" * 36
+    config = _defense_config({"enabled": True, "rules": [{"on": "detect_secrets", "action": "block"}]})
+
+    with caplog.at_level("WARNING"):
+        assert redact_document_body(body, config) == body
+        assert redact_document_body(body, config) == body
+
+    assert len(_warnings_naming(caplog, "detect_secrets")) == 1
+
+
+def test_redact_document_body_does_not_warn_for_the_detector_it_implements(warn_ledger, caplog) -> None:
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    secret = "ghp_" + "Q" * 36
+    config = _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]})
+
+    with caplog.at_level("WARNING"):
+        out = redact_document_body(f"deploy key: {secret}", config)
+
+    assert secret not in out
+    assert warn_ledger == set()
+
+
+def test_warning_carries_only_the_detector_name(warn_ledger, caplog) -> None:
+    """The line is safe to ship to a log aggregator: no screened content, and no
+    policy field other than the detector name."""
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    secret = "ghp_" + "R" * 36
+    config = _defense_config({"enabled": True, "rules": [{"on": "pii_ner", "action": "block"}]})
+
+    with caplog.at_level("WARNING"):
+        redact_document_body(f"deploy key: {secret}", config)
+
+    line = _warnings_naming(caplog, "pii_ner")[0]
+    assert secret not in line
+    assert "deploy key" not in line
+    assert "block" not in line
 
 
 # ---------------------------------------------------------------------------
