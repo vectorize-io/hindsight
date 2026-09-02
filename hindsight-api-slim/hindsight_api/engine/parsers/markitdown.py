@@ -1,6 +1,7 @@
 """Markitdown parser implementation."""
 
 import asyncio
+import importlib.util
 import logging
 import tempfile
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ from hindsight_api.config import DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
 from .base import FileParser
 
 if TYPE_CHECKING:
-    from markitdown import StreamInfo
+    from markitdown import MarkItDown, StreamInfo
 
 logger = logging.getLogger(__name__)
 
@@ -74,31 +75,45 @@ class MarkitdownParser(FileParser):
         ocr_prompt: str | None = None,
         ocr_default_headers: dict[str, str] | None = None,
     ):
-        """Initialize markitdown parser."""
-        # Lazy import to avoid requiring markitdown for all users
-        try:
-            from markitdown import MarkItDown
-        except ImportError as e:
-            raise ImportError(
-                "markitdown package is required for file parsing. Install with: pip install markitdown"
-            ) from e
+        """Initialize markitdown parser.
 
+        The ``markitdown`` package itself is NOT imported here -- only checked for.
+        ``MemoryEngine.initialize()`` constructs this parser eagerly at startup, so
+        importing markitdown (which pulls in bs4 -> lxml) cost ~400ms of every server
+        start even when no file was ever converted.
+
+        ``find_spec`` answers "is it installed?" without executing the package, so
+        registration keeps raising ImportError at exactly the same point as before
+        while the import itself is deferred to the first ``convert()`` call.
+        """
+        if importlib.util.find_spec("markitdown") is None:
+            raise ImportError("markitdown package is required for file parsing. Install with: pip install markitdown")
+
+        self._markitdown: "MarkItDown | None" = None
         self._ocr_enabled = ocr_enabled
-        if ocr_enabled:
-            ocr_options = self._build_ocr_options(
-                api_key=ocr_api_key,
-                base_url=ocr_base_url,
-                model=ocr_model,
-                prompt=ocr_prompt,
-                default_headers=ocr_default_headers,
-            )
-            self._markitdown = MarkItDown(
-                llm_client=ocr_options.llm_client,
-                llm_model=ocr_options.llm_model,
-                llm_prompt=ocr_options.llm_prompt,
-            )
-        else:
-            self._markitdown = MarkItDown()
+        self._ocr_kwargs = dict(
+            api_key=ocr_api_key,
+            base_url=ocr_base_url,
+            model=ocr_model,
+            prompt=ocr_prompt,
+            default_headers=ocr_default_headers,
+        )
+
+    def _get_markitdown(self) -> "MarkItDown":
+        """Build the MarkItDown instance on first use (see __init__ for why)."""
+        if self._markitdown is None:
+            from markitdown import MarkItDown
+
+            if self._ocr_enabled:
+                ocr_options = self._build_ocr_options(**self._ocr_kwargs)
+                self._markitdown = MarkItDown(
+                    llm_client=ocr_options.llm_client,
+                    llm_model=ocr_options.llm_model,
+                    llm_prompt=ocr_options.llm_prompt,
+                )
+            else:
+                self._markitdown = MarkItDown()
+        return self._markitdown
 
     def _build_ocr_options(
         self,
@@ -168,7 +183,7 @@ class MarkitdownParser(FileParser):
         try:
             # Parse using markitdown, passing an explicit charset hint for text
             # files to avoid markitdown's sample-based (and crash-prone) detection.
-            result = self._markitdown.convert(tmp_path, stream_info=self._utf8_stream_info(file_data, filename))
+            result = self._get_markitdown().convert(tmp_path, stream_info=self._utf8_stream_info(file_data, filename))
 
             if not result or not result.text_content:
                 raise RuntimeError(f"No content extracted from '{filename}'")
