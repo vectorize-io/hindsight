@@ -144,8 +144,12 @@ def test_persistent_too_many_requests_exhausts_retry_budget() -> None:
     assert isinstance(exc_info.value.__context__, httpx.HTTPStatusError)
 
 
-def test_default_tei_batch_size_is_32() -> None:
-    """Unset env keeps the historical 32 texts per /embed request."""
+def test_default_tei_batch_size_is_8() -> None:
+    """Unset env sizes a /embed request for fan-out, not for one big serial request.
+
+    TEI sustains more throughput at 8 texts across 8 in-flight requests than at 32
+    serially, and 32 is its own hard --max-client-batch-size (issue #4039).
+    """
     import os
 
     from hindsight_api.config import HindsightConfig
@@ -154,7 +158,7 @@ def test_default_tei_batch_size_is_32() -> None:
     saved_batch = os.environ.pop("HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE", None)
     os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
     try:
-        assert HindsightConfig.from_env().embeddings_tei_batch_size == 32
+        assert HindsightConfig.from_env().embeddings_tei_batch_size == 8
     finally:
         if saved_batch is not None:
             os.environ["HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE"] = saved_batch

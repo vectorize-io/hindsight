@@ -411,6 +411,10 @@ ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE"
 ENV_EMBEDDINGS_OPENAI_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS"
 
+# How many embedding requests a remote provider keeps in flight for one encode()
+# call. Applies to every remote provider, not just one.
+ENV_EMBEDDINGS_MAX_CONCURRENT_REQUESTS = "HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS"
+
 # Retry/backoff for remote embedding APIs. Recall embeds its query inline on the
 # request path, so a single upstream 5xx must not surface as a user-visible 500.
 ENV_EMBEDDINGS_MAX_RETRIES = "HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES"
@@ -1068,10 +1072,17 @@ DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE = 32
 DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
-# Texts per TEI /embed request. Also the batch size the streaming retain producer
-# coalesces its per-chunk embedding calls up to (see embedding_coalescer), so raising
-# it is how a TEI deployment with headroom trades requests for larger ones.
-DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE = 32
+# Texts per TEI /embed request. Small on purpose: throughput against TEI comes from
+# concurrent requests, not large ones — measured on bge-small/L4, batch 8 at 8 in-flight
+# requests sustains ~2,080 texts/s while batch 32 peaks at ~1,904 and costs 140ms p50
+# against 30ms (issue #4039). 32 is also TEI's own default --max-client-batch-size, a
+# hard validation error rather than a soft cap, so there was no headroom above it.
+DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE = 8
+# Embedding requests a remote provider issues concurrently for one encode() call. This
+# is what actually buys embedder throughput: the same TEI server measured 903 texts/s at
+# one in-flight request and 2,080 at eight. Bounded here rather than at the caller
+# because the right value is a property of the embedding service.
+DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS = 8
 # Embedding retry defaults: 4 retries (5 attempts total) with 0.5s -> 4s exponential
 # backoff, plus a 15s ceiling on the time any single encode() call may spend retrying
 # so a synchronous recall degrades to a slow response instead of a long stall.
@@ -2981,6 +2992,7 @@ class HindsightConfig:
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
     embeddings_tei_batch_size: int = DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE
+    embeddings_max_concurrent_requests: int = DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS
     embeddings_openai_dimensions: int | None = None
     embeddings_query_prefix: str = DEFAULT_EMBEDDINGS_QUERY_PREFIX
     embeddings_passage_prefix: str = DEFAULT_EMBEDDINGS_PASSAGE_PREFIX
@@ -3771,6 +3783,11 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_TEI_BATCH_SIZE,
                 os.getenv(ENV_EMBEDDINGS_TEI_BATCH_SIZE),
                 DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE,
+            ),
+            embeddings_max_concurrent_requests=_parse_positive_int(
+                ENV_EMBEDDINGS_MAX_CONCURRENT_REQUESTS,
+                os.getenv(ENV_EMBEDDINGS_MAX_CONCURRENT_REQUESTS),
+                DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS,
             ),
             embeddings_openai_dimensions=_parse_optional_positive_int(
                 ENV_EMBEDDINGS_OPENAI_DIMENSIONS,
