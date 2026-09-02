@@ -455,11 +455,17 @@ class TransformerQueryAnalyzer(QueryAnalyzer):
                 "transformers is required for TransformerQueryAnalyzer. Install it with: pip install transformers"
             )
 
+        from .local_device import align_local_model_weights
+
         logger.info(f"Loading query analyzer model: {self.model_name}...")
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self._model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
         self._model.to(self.device)
         self._model.eval()
+        # Zero-copy safetensors weights can land on a sub-element byte offset, which
+        # corrupts the CPU matmul (see engine/local_device.py). `.to()` is a no-op for a
+        # CPU model, so it does not launder the alignment.
+        align_local_model_weights(self._model, label=f"QueryAnalyzer[{self.model_name}]")
         logger.info("Query analyzer model loaded")
 
     def _load_model(self):

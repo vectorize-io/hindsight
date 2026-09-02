@@ -38,6 +38,8 @@ from ..config import (
 )
 from .bank_attribution import reranker_bank_attribution_headers
 from .local_device import (
+    align_local_model_weights,
+    assert_finite_local_output,
     release_local_inference_memory,
     resolve_model_device_type,
     select_local_device,
@@ -230,6 +232,12 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                 # Restore original logging level
                 transformers_logger.setLevel(original_level)
 
+        # Safetensors weights are mapped zero-copy and can land on a byte offset that
+        # is not a multiple of the dtype size, which makes torch's vectorized CPU matmul
+        # return corrupt scores. See engine/local_device.py. The default reranker
+        # (ms-marco-MiniLM-L-6-v2) is one of the affected files.
+        align_local_model_weights(self._model.model, label=f"Reranker[{self.model_name}]")
+
         self._device_type = resolve_model_device_type(self._model)
 
         # FP16 inference: convert model weights to half precision.
@@ -237,6 +245,14 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         if self.fp16 and self._device_type != "cpu":
             self._model.model.half()
             logger.info("Reranker: FP16 inference enabled")
+
+        # Smoke-test the fully configured model (after any FP16 conversion). NaN logits
+        # are sanitized to 0.0 downstream, so startup is the last point at which a model
+        # that computes garbage is still observable.
+        assert_finite_local_output(
+            self._model.predict([("hindsight startup probe", "hindsight startup probe")]),
+            label=f"Reranker[{self.model_name}]",
+        )
 
         # Initialize shared executor (limited workers naturally limits concurrency)
         if LocalSTCrossEncoder._executor is None:

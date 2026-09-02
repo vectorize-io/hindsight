@@ -60,6 +60,8 @@ from ..config import (
 )
 from .bank_attribution import apply_bank_attribution
 from .local_device import (
+    align_local_model_weights,
+    assert_finite_local_output,
     release_local_inference_memory,
     resolve_model_device_type,
     select_local_device,
@@ -460,8 +462,21 @@ class LocalSTEmbeddings(Embeddings):
                 # Restore original logging level
                 transformers_logger.setLevel(original_level)
 
+        # See engine/local_device.py: zero-copy safetensors weights can land unaligned,
+        # which silently corrupts the CPU matmul. Whether a model file is affected is a
+        # property of its header length, so check every model rather than a known list.
+        align_local_model_weights(self._model, label=f"Embeddings[{self.model_name}]")
+
         self._dimension = self._model.get_sentence_embedding_dimension()
         self._device_type = resolve_model_device_type(self._model)
+
+        # Smoke-test before serving: a NaN embedding is invisible downstream (it
+        # normalizes away and pgvector stores it), so fail startup instead.
+        assert_finite_local_output(
+            self._model.encode(["hindsight startup probe"]),
+            label=f"Embeddings[{self.model_name}]",
+        )
+
         logger.info(f"Embeddings: local provider initialized (dim: {self._dimension}, device: {self._device_type})")
 
     def encode(self, texts: list[str]) -> list[list[float]]:

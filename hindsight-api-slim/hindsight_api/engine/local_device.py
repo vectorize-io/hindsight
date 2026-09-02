@@ -29,6 +29,28 @@ No released mitigation exists today: empty_cache(), synchronize(),
 PYTORCH_MPS_HIGH_WATERMARK_RATIO, and autorelease pools were all confirmed
 ineffective upstream. Revisit MPS-as-default once one of those knobs lands.
 
+**3. Weight alignment — safetensors tensors can land unaligned.**
+``transformers`` loads safetensors zero-copy: each parameter is a view onto the
+mapped file, so it inherits the byte offset of the file's data section. That
+offset is ``8 + len(json_header)``, which is not guaranteed to be a multiple of
+the dtype's size. When it is not, torch's vectorized CPU matmul reads the operand
+misaligned and returns wrong values — on arm64 with torch 2.10 a float32 matmul
+against a 2-byte-misaligned weight corrupts ~6% of the output columns, a few of
+which surface as NaN and the rest as plausible-looking finite garbage.
+
+The default reranker hits this: ``cross-encoder/ms-marco-MiniLM-L-6-v2`` has a
+12090-byte header, so its data starts at byte 12098 and every parameter lands at
+``ptr % 4 == 2``. Every logit came back NaN, which the reranker then sanitizes to
+0.0 — so reranking appeared to run, every score was 0, ranking silently fell back
+to fusion order (the ``is_passthrough_reranker`` seed does not fire for a real
+reranker), and any ``min_scores.reranker`` floor above 0 dropped every result.
+Whether a given model is affected is a property of its file, not of the model or
+the platform: ``BAAI/bge-small-en-v1.5`` has a 22200-byte header, lands at
+``ptr % 4 == 0``, and is fine — until someone re-uploads it with different
+metadata. So we normalize alignment at load for every local torch model, and
+smoke-test the loaded model so a NaN-producing one fails at startup instead of
+silently degrading recall.
+
 **2. Memory release after each batch.**
 Local CPU inference allocates large transient numpy/tensor buffers per call. The
 allocator keeps those freed pages as a high-water mark, so RSS grows monotonically
@@ -174,3 +196,80 @@ def release_local_inference_memory(device_type: str | None = None) -> None:
         gc.collect()
     _heap_trim()
     _empty_gpu_cache(device_type)
+
+
+def _misaligned(tensor) -> bool:
+    """True if ``tensor``'s data pointer is not a multiple of its element size.
+
+    Natural alignment is the boundary torch itself enforces (``Tensor.view`` to a
+    wider dtype refuses a storage offset that is not divisible by the target
+    element size) and the one the vectorized CPU kernels assume. Anything at or
+    above it was verified correct; only sub-element offsets corrupt results.
+    """
+    return tensor.data_ptr() % tensor.element_size() != 0
+
+
+def align_local_model_weights(model: object, *, label: str) -> int:
+    """Copy any misaligned parameter or buffer of ``model`` into owned memory.
+
+    Safetensors weights are mapped zero-copy and can land on a sub-element byte
+    offset, which makes torch's vectorized CPU matmul return wrong values (see the
+    module docstring). Cloning the affected tensors moves them onto freshly
+    allocated, naturally aligned storage.
+
+    Only misaligned tensors are copied, so the common case costs a pointer check
+    per tensor and no extra memory. Returns the number of tensors copied, and
+    raises ``RuntimeError`` if any tensor is still misaligned afterwards rather
+    than letting a model that would compute garbage reach production traffic.
+    """
+    named_parameters = getattr(model, "named_parameters", None)
+    named_buffers = getattr(model, "named_buffers", None)
+    if named_parameters is None or named_buffers is None:
+        raise TypeError(f"{label}: expected a torch module, got {type(model).__name__}")
+
+    tensors = list(named_parameters()) + list(named_buffers())
+    copied = 0
+    for _name, tensor in tensors:
+        if _misaligned(tensor):
+            # Reassigning .data rebinds the storage in place, so the module keeps
+            # holding the same Parameter/buffer object.
+            tensor.data = tensor.data.clone()
+            copied += 1
+
+    still_misaligned = [name for name, tensor in tensors if _misaligned(tensor)]
+    if still_misaligned:
+        raise RuntimeError(
+            f"{label}: {len(still_misaligned)} tensor(s) remain misaligned after copying "
+            f"(e.g. {still_misaligned[0]}). Local inference would return wrong values; "
+            f"refusing to serve with this model."
+        )
+
+    if copied:
+        logger.warning(
+            "%s: copied %d/%d misaligned tensor(s) out of memory-mapped storage. The "
+            "model file's data section is not naturally aligned; without this copy the "
+            "CPU matmul would return corrupt scores.",
+            label,
+            copied,
+            len(tensors),
+        )
+    return copied
+
+
+def assert_finite_local_output(values: object, *, label: str) -> None:
+    """Fail startup if a local model's smoke-test output is not all finite.
+
+    A healthy model always produces finite numbers for ordinary text. NaN here means
+    the loaded weights compute garbage, and every downstream consumer masks it —
+    reranking sanitizes NaN to 0.0, embeddings normalize it away — so the only place
+    it is still visible is right here at load time.
+    """
+    import numpy as np
+
+    array = np.asarray(values, dtype=np.float64)
+    if not np.isfinite(array).all():
+        raise RuntimeError(
+            f"{label}: smoke test produced {int((~np.isfinite(array)).sum())} non-finite "
+            f"value(s) of {array.size}. The loaded weights compute garbage; refusing to "
+            f"serve with this model."
+        )
