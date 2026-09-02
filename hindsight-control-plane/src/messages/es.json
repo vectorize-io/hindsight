@@ -1627,7 +1627,11 @@
     "observationScopesEmpty": "Añade etiquetas arriba para previsualizar los ámbitos de observación",
     "metadataHelpText": "Un <code>key: value</code> por línea",
     "entitiesHelpText": "Sugerencias separadas por comas que se combinan con las entidades extraídas automáticamente",
-    "textNotStoredWarning": "El texto original del documento no se almacenará en este servidor: solo se conservan las memorias extraídas."
+    "textNotStoredWarning": "El texto original del documento no se almacenará en este servidor: solo se conservan las memorias extraídas.",
+    "attachmentsLabel": "Attachments",
+    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
+    "attachmentsAdd": "Add attachment",
+    "attachmentsRemove": "Remove {name}"
   },
   "dashboard": {
     "welcome": "Bienvenido a Hindsight",

@@ -1627,7 +1627,11 @@
     "observationScopesEmpty": "Add tags above to preview observation scopes",
     "metadataHelpText": "One <code>key: value</code> per line",
     "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",
-    "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept."
+    "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept.",
+    "attachmentsLabel": "Attachments",
+    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
+    "attachmentsAdd": "Add attachment",
+    "attachmentsRemove": "Remove {name}"
   },
   "dashboard": {
     "welcome": "Welcome to Hindsight",

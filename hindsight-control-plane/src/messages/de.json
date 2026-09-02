@@ -1627,7 +1627,11 @@
     "observationScopesEmpty": "Fügen Sie oben Tags hinzu, um Beobachtungsbereiche vorzuschauen",
     "metadataHelpText": "Ein <code>key: value</code> pro Zeile",
     "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden",
-    "textNotStoredWarning": "Der Rohtext des Dokuments wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
+    "textNotStoredWarning": "Der Rohtext des Dokuments wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
+    "attachmentsLabel": "Attachments",
+    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
+    "attachmentsAdd": "Add attachment",
+    "attachmentsRemove": "Remove {name}"
   },
   "dashboard": {
     "welcome": "Willkommen bei Hindsight",
