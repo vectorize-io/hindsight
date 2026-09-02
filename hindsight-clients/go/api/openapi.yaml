@@ -5961,11 +5961,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
@@ -6941,11 +6943,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
@@ -7183,11 +7187,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -7226,11 +7232,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -8304,11 +8312,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -8347,11 +8357,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -8556,11 +8568,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
@@ -8723,11 +8737,13 @@ components:
         recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
@@ -8840,11 +8856,13 @@ components:
         recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
@@ -10003,6 +10021,7 @@ components:
     TagGroupLeaf:
       description: "A leaf tag filter: matches memories by tag list and match mode."
       example:
+        resolve: exact
         match: any_strict
         tags:
         - tags
@@ -10021,6 +10040,13 @@ components:
           - all_strict
           - exact
           title: Match
+          type: string
+        resolve:
+          default: exact
+          enum:
+          - exact
+          - fuzzy
+          title: Resolve
           type: string
       required:
       - tags
@@ -10319,11 +10345,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags

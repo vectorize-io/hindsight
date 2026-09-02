@@ -1106,7 +1106,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
-                    Mutually exclusive with tags.
+                    Mutually exclusive with tags. A leaf may add "resolve": "fuzzy" to match its tags against
+                    the bank's tags by trigram similarity instead of literally, so filtering on "typsecript"
+                    still reaches memories tagged "typescript".
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
                     Anchors relative temporal expressions and recency scoring.
                 min_scores: Optional per-stage score floors as an object with any of: "semantic", "keyword"
@@ -1202,7 +1204,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
-                    Mutually exclusive with tags.
+                    Mutually exclusive with tags. A leaf may add "resolve": "fuzzy" to match its tags against
+                    the bank's tags by trigram similarity instead of literally, so filtering on "typsecript"
+                    still reaches memories tagged "typescript".
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
                     Anchors relative temporal expressions and recency scoring.
                 min_scores: Optional per-stage score floors as an object with any of: "semantic", "keyword"

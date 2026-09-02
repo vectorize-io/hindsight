@@ -30,6 +30,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 TagsMatch = Literal["any", "all", "any_strict", "all_strict", "exact"]
 
+#: How a tag group leaf's tags are matched. Orthogonal to ``TagsMatch``: it says what the
+#: tags *are*, not how they are combined, so it composes with every mode instead of
+#: multiplying the enum. See ``tag_resolution`` for the rule.
+TagResolution = Literal["exact", "fuzzy"]
+
 
 def _parse_tags_match(match: TagsMatch) -> tuple[str, bool]:
     """
@@ -246,6 +251,11 @@ class TagGroupLeaf(BaseModel):
 
     tags: list[str]
     match: TagsMatch = "any_strict"
+    resolve: TagResolution = "exact"
+    """How ``tags`` are matched: literally (``exact``, the default), or by trigram
+    similarity against the bank's tags (``fuzzy``), so a filter on ``typsecript`` still
+    reaches the memory tagged ``typescript``. See ``tag_resolution`` for the rule and its
+    limits; it composes with every ``match`` mode."""
 
 
 class TagGroupAnd(BaseModel):

@@ -1978,3 +1978,129 @@ async def test_reflect_with_tag_groups_propagates_to_internal_recall(memory, req
     assert "MacBook" not in tool_payload, (
         f"Untagged 'MacBook' memory must NOT appear in the agent's tool results; got: {tool_payload[:1000]!r}"
     )
+
+
+# ============================================================================
+# Integration Tests for fuzzy tag resolution (#4026)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_tag_group_reaches_a_misspelled_tag(api_client):
+    """
+    A caller filtering by a token the query misspelled still reaches the memory.
+
+    Without resolution the exact filter removes the memory before ranking is consulted and
+    the recall comes back empty — the failure this feature exists to fix.
+    """
+    bank_id = f"tg_fuzzy_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": "The parser is written in TypeScript and ships as an npm package.", "tags": ["typescript"]},
+                {"content": "The cluster runs on Kubernetes across three regions.", "tags": ["kubernetes"]},
+            ]
+        },
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "what language is the parser written in",
+            "budget": "mid",
+            "tag_groups": [{"tags": ["typsecript"], "match": "any_strict", "resolve": "fuzzy"}],
+        },
+    )
+    assert response.status_code == 200
+
+    texts = [r["text"] for r in response.json()["results"]]
+    assert texts, "Fuzzy resolution should have reached the typescript-tagged memory"
+    assert not any("cluster" in t for t in texts), "Should not reach memories outside the resolved tag"
+
+
+@pytest.mark.asyncio
+async def test_exact_resolution_is_the_default_and_still_filters_out_typos(api_client):
+    """The default is unchanged: a misspelled tag matches nothing."""
+    bank_id = f"tg_exact_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": [{"content": "The parser is written in TypeScript.", "tags": ["typescript"]}]},
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "what language is the parser written in",
+            "budget": "mid",
+            "tag_groups": [{"tags": ["typsecript"], "match": "any_strict"}],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["results"] == []
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_token_matching_nothing_does_not_widen_the_recall(api_client):
+    """
+    A token that resolves to nothing must leave the filter unsatisfiable, not drop it.
+
+    This is the dangerous failure mode: an empty expansion would read as "no tag filtering"
+    and return the whole bank to a caller who asked for one tag.
+    """
+    bank_id = f"tg_fuzzy_miss_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": [{"content": "The parser is written in TypeScript.", "tags": ["typescript"]}]},
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "what language is the parser written in",
+            "budget": "mid",
+            "tag_groups": [{"tags": ["postgresql"], "match": "any_strict", "resolve": "fuzzy"}],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["results"] == [], "An unresolved token must not widen the recall to the whole bank"
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_all_requires_one_spelling_of_every_token(api_client):
+    """`all_strict` still means AND across tokens; each side is independently tolerant."""
+    bank_id = f"tg_fuzzy_all_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "The events service streams into the search index.",
+                    "tags": ["kubernetes", "typescript"],
+                },
+                {"content": "The billing service writes invoices nightly.", "tags": ["kubernetes"]},
+            ]
+        },
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "which service streams events",
+            "budget": "mid",
+            "tag_groups": [
+                {"tags": ["kubernets", "typsecript"], "match": "all_strict", "resolve": "fuzzy"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    texts = [r["text"] for r in response.json()["results"]]
+    assert not any("billing" in t for t in texts), "A memory carrying only one of the two tokens must not match"

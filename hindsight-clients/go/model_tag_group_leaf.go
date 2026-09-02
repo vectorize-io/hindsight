@@ -23,6 +23,7 @@ var _ MappedNullable = &TagGroupLeaf{}
 type TagGroupLeaf struct {
 	Tags []string `json:"tags"`
 	Match *string `json:"match,omitempty"`
+	Resolve *string `json:"resolve,omitempty"`
 }
 
 type _TagGroupLeaf TagGroupLeaf
@@ -36,6 +37,8 @@ func NewTagGroupLeaf(tags []string) *TagGroupLeaf {
 	this.Tags = tags
 	var match string = "any_strict"
 	this.Match = &match
+	var resolve string = "exact"
+	this.Resolve = &resolve
 	return &this
 }
 
@@ -46,6 +49,8 @@ func NewTagGroupLeafWithDefaults() *TagGroupLeaf {
 	this := TagGroupLeaf{}
 	var match string = "any_strict"
 	this.Match = &match
+	var resolve string = "exact"
+	this.Resolve = &resolve
 	return &this
 }
 
@@ -105,6 +110,38 @@ func (o *TagGroupLeaf) SetMatch(v string) {
 	o.Match = &v
 }
 
+// GetResolve returns the Resolve field value if set, zero value otherwise.
+func (o *TagGroupLeaf) GetResolve() string {
+	if o == nil || IsNil(o.Resolve) {
+		var ret string
+		return ret
+	}
+	return *o.Resolve
+}
+
+// GetResolveOk returns a tuple with the Resolve field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *TagGroupLeaf) GetResolveOk() (*string, bool) {
+	if o == nil || IsNil(o.Resolve) {
+		return nil, false
+	}
+	return o.Resolve, true
+}
+
+// HasResolve returns a boolean if a field has been set.
+func (o *TagGroupLeaf) HasResolve() bool {
+	if o != nil && !IsNil(o.Resolve) {
+		return true
+	}
+
+	return false
+}
+
+// SetResolve gets a reference to the given string and assigns it to the Resolve field.
+func (o *TagGroupLeaf) SetResolve(v string) {
+	o.Resolve = &v
+}
+
 func (o TagGroupLeaf) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -118,6 +155,9 @@ func (o TagGroupLeaf) ToMap() (map[string]interface{}, error) {
 	toSerialize["tags"] = o.Tags
 	if !IsNil(o.Match) {
 		toSerialize["match"] = o.Match
+	}
+	if !IsNil(o.Resolve) {
+		toSerialize["resolve"] = o.Resolve
 	}
 	return toSerialize, nil
 }

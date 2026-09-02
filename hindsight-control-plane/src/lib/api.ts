@@ -186,8 +186,10 @@ export interface OperationProgress {
 
 export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 
+export type TagResolution = "exact" | "fuzzy";
+
 export type TagGroup =
-  | { tags: string[]; match?: TagsMatch }
+  | { tags: string[]; match?: TagsMatch; resolve?: TagResolution }
   | { and: TagGroup[] }
   | { or: TagGroup[] }
   | { not: TagGroup };

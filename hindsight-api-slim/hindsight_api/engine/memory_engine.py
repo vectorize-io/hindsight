@@ -565,6 +565,7 @@ from .retain import bank_utils, embedding_utils
 from .retain.fold import FoldMemberRef
 from .retain.types import RetainContentDict
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
+from .search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
@@ -6512,6 +6513,10 @@ class MemoryEngine(MemoryEngineInterface):
                     tags_match = result.tags_match
                 if result.tag_groups is not None:
                     tag_groups = result.tag_groups
+
+        # Resolve fuzzy tag tokens into real tags before anything builds SQL. Runs after
+        # the validator so a validator-supplied tag_groups is resolved too.
+        tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
 
         # Map budget enum to thinking_budget number using bank-resolved config.
         # Function "fixed" preserves legacy {LOW: 100, MID: 300, HIGH: 1000}; function "adaptive"
@@ -13017,6 +13022,11 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_reflect(ctx))
 
+        # Resolve fuzzy tag tokens once, here: every tool the agentic loop runs
+        # (recall, mental-model search, source-fact reads) filters on these same groups,
+        # and each must see the same resolved tags.
+        tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+
         reflect_start = time.time()
         reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
         tags_info = f", tags={tags} ({tags_match})" if tags else ""
@@ -13601,6 +13611,46 @@ class MemoryEngine(MemoryEngineInterface):
             "total_edges": len(edges),
             "limit": limit,
         }
+
+    async def _resolve_fuzzy_tag_groups(
+        self,
+        bank_id: str,
+        tag_groups: list[TagGroup] | None,
+    ) -> list[TagGroup] | None:
+        """Rewrite ``resolve="fuzzy"`` leaves into exact ones for this bank.
+
+        Resolution happens here, above every SQL builder, so the retrieval arms, their
+        Python mirrors on the graph path, the ``GIN(tags)`` index and the store protocol
+        only ever see exact tags (#4026).
+
+        The vocabulary comes from the store's own ``list_tags``, so Oracle and store-owned
+        backends need no separate path. A bank holding more distinct tags than
+        ``MAX_VOCABULARY`` is rejected rather than resolved against a truncated
+        vocabulary, which would change which memories match with no signal to the caller.
+        """
+        if not tag_groups or not needs_resolution(tag_groups):
+            return tag_groups
+
+        from hindsight_api.extensions.operation_validator import OperationValidationError
+
+        from .memories import get_memories
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            page = await get_memories().list_tags(conn=conn, fq_table=fq_table, bank_id=bank_id, limit=MAX_VOCABULARY)
+
+        if page["total"] > MAX_VOCABULARY:
+            raise OperationValidationError(
+                f"Bank has {page['total']} distinct tags, above the {MAX_VOCABULARY} that "
+                f"fuzzy tag matching can resolve against. Use resolve='exact'.",
+                status_code=422,
+            )
+
+        vocabulary = [item["tag"] for item in page["items"]]
+        try:
+            return resolve_tag_groups(tag_groups, vocabulary)
+        except TagResolutionError as e:
+            raise OperationValidationError(str(e), status_code=422) from e
 
     async def list_tags(
         self,

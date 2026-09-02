@@ -13762,7 +13762,7 @@
               }
             ],
             "title": "Tag Groups",
-            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
+            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. A leaf may set resolve='fuzzy' to match its tags against the bank's tags by trigram similarity instead of literally, so a query that says 'typsecript' still reaches memories tagged 'typescript'."
           },
           "min_scores": {
             "anyOf": [
@@ -14519,7 +14519,7 @@
               }
             ],
             "title": "Tag Groups",
-            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags."
+            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags. A leaf may set resolve='fuzzy' to match its tags against the bank's tags by trigram similarity instead of literally, so a query that says 'typsecript' still reaches memories tagged 'typescript'."
           },
           "apply_all_directives": {
             "type": "boolean",
@@ -15144,6 +15144,15 @@
             ],
             "title": "Match",
             "default": "any_strict"
+          },
+          "resolve": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "fuzzy"
+            ],
+            "title": "Resolve",
+            "default": "exact"
           }
         },
         "type": "object",
