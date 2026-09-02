@@ -474,6 +474,11 @@ ENV_RERANKER_LITELLM_MAX_TOKENS_PER_DOC = "HINDSIGHT_API_RERANKER_LITELLM_MAX_TO
 # LiteLLM SDK configuration (direct API access, no proxy needed)
 ENV_EMBEDDINGS_LITELLM_SDK_API_KEY = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY"
 ENV_EMBEDDINGS_LITELLM_SDK_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL"
+# Optional explicit model id/ARN forwarded to litellm as its own `model_id` param
+# (the actual Bedrock invoke target), separate from ENV_EMBEDDINGS_LITELLM_SDK_MODEL
+# (used only for litellm's provider-family detection). Needed for AWS Bedrock
+# application inference profiles — see LiteLLMSDKEmbeddings's own docstring.
+ENV_EMBEDDINGS_LITELLM_SDK_MODEL_ID = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL_ID"
 ENV_EMBEDDINGS_LITELLM_SDK_API_BASE = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE"
 ENV_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS"
 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT"
@@ -2640,6 +2645,7 @@ class HindsightConfig:
     embeddings_litellm_dimensions: int | None
     embeddings_litellm_sdk_api_key: str | None
     embeddings_litellm_sdk_model: str
+    embeddings_litellm_sdk_model_id: str | None
     embeddings_litellm_sdk_api_base: str | None
     embeddings_litellm_sdk_output_dimensions: int | None
     embeddings_litellm_sdk_encoding_format: str | None
@@ -3847,6 +3853,7 @@ class HindsightConfig:
             embeddings_litellm_sdk_model=os.getenv(
                 ENV_EMBEDDINGS_LITELLM_SDK_MODEL, DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL
             ),
+            embeddings_litellm_sdk_model_id=os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_MODEL_ID) or None,
             embeddings_litellm_sdk_api_base=os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_API_BASE) or None,
             embeddings_litellm_sdk_output_dimensions=int(v)
             if (v := os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS))
