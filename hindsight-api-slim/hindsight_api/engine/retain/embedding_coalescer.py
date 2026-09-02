@@ -69,19 +69,32 @@ class CoalescerStats:
         )
 
 
-def resolve_max_batch_size(embeddings_backend: EmbeddingsBackend) -> int:
-    """Batch at the backend's own per-request limit, not above it.
+def resolve_max_batch_size(embeddings_backend: EmbeddingsBackend, slots: int = 1) -> int:
+    """Size one hand-off so the coalescer's slots together fill the backend, and no more.
 
-    Every remote backend splits an oversized list into ``batch_size``-sized requests
-    *inside one executor thread*, so handing it more than that trades N concurrent
-    requests for N sequential ones. Sizing the coalescer's batches from the backend
-    means TEI's ``HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE`` (and the OpenAI/Cohere/
-    ZeroEntropy equivalents) tunes the coalescer too, with no second knob.
+    A remote backend now splits an oversized list into ``batch_size``-sized requests and
+    issues up to ``max_concurrent_requests`` of them at once itself (see
+    ``Embeddings._encode_batched``, issue #4039). The two layers multiply: ``slots``
+    hand-offs, each producing ``ceil(hand-off / batch_size)`` requests. Sizing a hand-off
+    at the backend's full capacity would therefore put ``slots x`` that many requests on
+    the wire — four times the measured optimum for TEI, which answers overload with 429s.
+    So the backend's concurrency is divided across the slots instead: the slots stay,
+    which is what keeps the pipeline from stalling on the slowest request of a hand-off,
+    while the total in flight lands on the backend's own bound.
+
+    Sizing from the backend means TEI's ``HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE`` (and
+    the OpenAI/Cohere/ZeroEntropy equivalents) tunes the coalescer too, with no second
+    knob. A backend that does its own internal batching publishes no ``batch_size`` and
+    gets the flat fallback.
     """
     backend_batch_size = getattr(embeddings_backend, "batch_size", None)
-    if isinstance(backend_batch_size, int) and backend_batch_size > 0:
-        return backend_batch_size
-    return DEFAULT_MAX_BATCH_SIZE
+    if not isinstance(backend_batch_size, int) or backend_batch_size <= 0:
+        return DEFAULT_MAX_BATCH_SIZE
+    concurrency = getattr(embeddings_backend, "max_concurrent_requests", 1)
+    if not isinstance(concurrency, int) or concurrency < 1:
+        concurrency = 1
+    requests_per_slot = max(1, concurrency // max(1, slots))
+    return backend_batch_size * requests_per_slot
 
 
 class CoalescingEmbedder:
@@ -104,7 +117,9 @@ class CoalescingEmbedder:
         max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS,
     ) -> None:
         self._backend = embeddings_backend
-        self._max_batch_size = max_batch_size or resolve_max_batch_size(embeddings_backend)
+        self._max_batch_size = max_batch_size or resolve_max_batch_size(
+            embeddings_backend, slots=max_concurrent_requests
+        )
         self._slots = asyncio.Semaphore(max_concurrent_requests)
         self._pending: deque[_Waiter] = deque()
         self._dispatcher: asyncio.Task | None = None
