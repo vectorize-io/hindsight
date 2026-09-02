@@ -22,6 +22,26 @@ to the 1.2.2 copy we ship):
 3. When stripping the timezone does not change the string, the retry re-runs a
    computation whose result is already known to be ``[0, 0]``. **Skipped.**
 
+**Thread safety.** ``Locale.count_applicability`` reaches
+``Locale.clean_dictionary``, which deletes the sub-threshold keys from the locale's
+*cached* ``_split_dictionary`` in place. Two threads reaching a given locale for the
+first time therefore iterate and delete from the same dict at once:
+
+    RuntimeError: dictionary changed size during iteration
+
+and whichever caller loses dies. This is reachable today:
+``MemoryEngine.initialize()`` warms the analyzer with
+``await loop.run_in_executor(None, self.query_analyzer.load)``, so the warmup already
+runs on a thread pool — two engines initialising in one process race here.
+
+The mutation is idempotent -- once the short keys are gone the delete list is empty
+and nothing is written -- so the race window is first use per locale, and
+``_ensure_dictionary_warm`` closes it by doing that first use once under a lock.
+After warming, the hot path takes no lock: it is a concurrent read of a dict nobody
+mutates. Fixing it here rather than forking dateparser is enough because this module
+is the only route into locale applicability counting (``query_analyzer._find_dates``
+calls ``best_language``, never dateparser's own detector).
+
 Every transformation here is equivalence-preserving by construction, and
 ``tests/test_temporal_extraction.py`` asserts that directly: it runs this
 implementation and dateparser's side by side over the corpus plus thousands of
@@ -115,6 +135,30 @@ def _character_check(text: str, languages: list[Locale], settings: Settings) -> 
     return [lang for i, lang in enumerate(languages) if text_chars & tables.language_chars[i]]
 
 
+_WARM_ATTR = "_hindsight_split_dictionary_warm"
+_warm_lock = threading.Lock()
+
+
+def _ensure_dictionary_warm(locale: Locale, settings: Settings) -> None:
+    """Populate and clean ``locale``'s split dictionary exactly once, under a lock.
+
+    Marked on the Locale instance rather than in a set keyed by ``shortname``: the
+    same shortname can be a different object if dateparser's loader is rebuilt, and
+    warming is per-instance state.
+
+    The unlocked pre-check is the point -- after the first call this costs one
+    ``getattr`` and no synchronisation, so the per-query path is unaffected.
+    """
+    if getattr(locale, _WARM_ATTR, False):
+        return
+    with _warm_lock:
+        if getattr(locale, _WARM_ATTR, False):
+            return
+        # Any text works: this is called for the mutation it performs, not the count.
+        locale.count_applicability("a", strip_timezone=False, settings=settings)
+        setattr(locale, _WARM_ATTR, True)
+
+
 def best_language(text: str, languages: list[Locale], settings: Settings | None = None) -> str | None:
     """Return the detected locale shortname, or None.
 
@@ -138,6 +182,7 @@ def best_language(text: str, languages: list[Locale], settings: Settings | None 
 
     applicable: list[tuple[str, list[int]]] = []
     for language in candidates:
+        _ensure_dictionary_warm(language, settings)
         counts = language.count_applicability(text, strip_timezone=False, settings=settings)
         if counts[0] > 0 or counts[1] > 0:
             applicable.append((language.shortname, counts))
