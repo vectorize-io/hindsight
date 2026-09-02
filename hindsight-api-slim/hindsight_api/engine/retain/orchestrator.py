@@ -3884,6 +3884,8 @@ async def _try_delta_retain(
                     effective_doc_id,
                     merged_tags,
                     retain_params.get("metadata", {}),
+                    observation_scopes=retain_params.get("observation_scopes"),
+                    ops=pool.ops,
                 )
                 log_buffer.append(
                     f"  Updated tags and metadata on {updated_count} existing memory units "
@@ -4038,10 +4040,21 @@ async def _delta_metadata_only(
         # re-retain relabelled the document and left every unit on the OLD tags and metadata —
         # measured, v2 units still read ['team-a'] after a retain carrying ['team-b', 'important'].
         # This is the whole work of a metadata-only retain for such a bank, not a detail of it.
+        # In a transaction: relabelling can cascade into an observation sweep (see
+        # update_memory_units_metadata_and_tags), and that delete plus the requeue of the
+        # co-sources it strands has to land atomically or a crash between them leaves facts
+        # marked consolidated against observations that are gone.
         async with acquire_with_retry(pool) as conn:
-            await fact_storage.update_memory_units_metadata_and_tags(
-                conn, bank_id, document_id, merged_tags, retain_params.get("metadata", {})
-            )
+            async with conn.transaction():
+                await fact_storage.update_memory_units_metadata_and_tags(
+                    conn,
+                    bank_id,
+                    document_id,
+                    merged_tags,
+                    retain_params.get("metadata", {}),
+                    observation_scopes=retain_params.get("observation_scopes"),
+                    ops=pool.ops,
+                )
         if outbox_callback is not None:
             # The outbox is still SQL for every deployment, so it keeps its own connection.
             async with acquire_with_retry(pool) as conn:
@@ -4086,6 +4099,8 @@ async def _delta_metadata_only(
                 document_id,
                 merged_tags,
                 retain_params.get("metadata", {}),
+                observation_scopes=retain_params.get("observation_scopes"),
+                ops=pool.ops,
             )
             if outbox_callback is not None:
                 await outbox_callback(conn)

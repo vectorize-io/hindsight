@@ -400,18 +400,38 @@ async def _upsert_document_row(
     )
 
 
+def _normalize_scopes(value: list | str | None) -> list | str | None:
+    """Compare-ready form of an ``observation_scopes`` value.
+
+    The column is JSONB, so a read can hand it back as a JSON string
+    (``'"per_tag"'`` / ``'[["a"]]'``) while the retain call site supplies the
+    parsed value. Normalizing both through ``json.loads`` keeps the comparison
+    from reporting a change on the encoding alone. A bare word that is not JSON
+    ("per_tag" written unquoted) is already in compare-ready form.
+    """
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return value
+    return value
+
+
 async def update_memory_units_metadata_and_tags(
     conn,
     bank_id: str,
     document_id: str,
     tags: list[str],
     metadata: dict[str, Any],
+    *,
+    observation_scopes: list | str | None = None,
+    ops=None,
 ) -> int:
     """Update document-level attributes on existing memory units.
 
     Delta retain preserves unchanged chunks and their facts. Propagate the
-    current document tags and metadata so its optimized result matches a full
-    replace.
+    current document tags, metadata and observation scoping so its optimized
+    result matches a full replace.
 
     ``metadata`` arrives as the raw retain_params bag (the document row keeps
     the caller's input verbatim), so null-valued keys are dropped here — the
@@ -419,11 +439,24 @@ async def update_memory_units_metadata_and_tags(
     (issue #3209). Without it a re-retain would leave surviving units carrying
     nulls while the units around them do not.
 
+    Relabelling is not only a labelling change: consolidation scopes a memory by
+    its tag set and routes it by ``observation_scopes``, so an observation built
+    over these facts under the OLD scoping is no longer valid the moment either
+    one changes. ``MemoryEngine.update_document`` (the tags PATCH) has always run
+    that cascade; a re-retain carrying narrower tags took this path instead and
+    ran none of it, leaving observations — and the mental models citing them —
+    visible to a tag no live fact carries any more. So when the scoping of a
+    surviving unit actually changes, delete the observations standing on it and
+    requeue it (and their co-sources, which ``delete_stale_observations`` does)
+    for re-consolidation under the new scoping. Units whose scoping is unchanged
+    keep their observations: an ordinary delta edit must not re-consolidate the
+    whole document.
+
     Returns:
         Number of memory units updated.
     """
     from ..memories import MemoryPatch, get_memories
-    from ..memories.base import META_METADATA_JSON
+    from ..memories.base import META_METADATA_JSON, META_OBSERVATION_SCOPES
 
     store = get_memories()
     if store.store_owned_for(bank_id):
@@ -451,25 +484,77 @@ async def update_memory_units_metadata_and_tags(
             MemoryPatch(
                 unit_id=m.unit_id,
                 tags=list(tags or []),
-                metadata={META_METADATA_JSON: json.dumps(drop_null_values(metadata or {}))},
+                metadata={
+                    META_METADATA_JSON: json.dumps(drop_null_values(metadata or {})),
+                    META_OBSERVATION_SCOPES: json.dumps(observation_scopes),
+                },
             )
             for m in page.memories
         ]
         if patches:
             await store.update_memories(bank_id, patches)
+        rescoped = [
+            m.unit_id
+            for m in page.memories
+            if m.fact_type in ("experience", "world")
+            and (
+                set(m.tags or []) != set(tags or [])
+                or _normalize_scopes(m.observation_scopes) != _normalize_scopes(observation_scopes)
+            )
+        ]
+        if rescoped:
+            await delete_stale_observations_for_memories(conn, bank_id, rescoped, ops=ops)
+            # The rescoped units survive, so `delete_stale_observations` (which requeues only
+            # an observation's OTHER sources, the ones not being deleted) does not reach them.
+            await store.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=rescoped, when=None)
         return len(patches)
+
+    # Read the scoping the survivors carry BEFORE overwriting it — the cascade below has to
+    # know which units actually moved, and after the UPDATE that is no longer answerable.
+    prior = await conn.fetch(
+        f"""
+        SELECT id, fact_type, tags, observation_scopes
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1 AND document_id = $2
+        """,
+        bank_id,
+        document_id,
+    )
+    rescoped_ids = [
+        row["id"]
+        for row in prior
+        if row["fact_type"] in ("experience", "world")
+        and (
+            set(row["tags"] or []) != set(tags or [])
+            or _normalize_scopes(row["observation_scopes"]) != _normalize_scopes(observation_scopes)
+        )
+    ]
 
     result = await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
-        SET tags = $3, metadata = $4, updated_at = NOW()
+        SET tags = $3, metadata = $4, observation_scopes = $5, updated_at = NOW()
         WHERE bank_id = $1 AND document_id = $2
         """,
         bank_id,
         document_id,
         tags or [],
         json.dumps(drop_null_values(metadata)),
+        json.dumps(observation_scopes) if observation_scopes is not None else None,
     )
+
+    if rescoped_ids:
+        await delete_stale_observations_for_memories(conn, bank_id, rescoped_ids, ops=ops)
+        # The rescoped units survive this write, so the requeue inside
+        # `delete_stale_observations` — which only covers an observation's OTHER sources,
+        # the ones being deleted — skips them. Reset them here or they stay marked
+        # consolidated against an observation that no longer exists and are never selected
+        # into a batch again. Through the store's `mark_consolidated` rather than a raw
+        # UPDATE, the same call the store-owned branch and `update_document` make.
+        await store.mark_consolidated(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(uid) for uid in rescoped_ids], when=None
+        )
+
     # result is a status string like "UPDATE 5"
     try:
         return int(result.split()[-1])
