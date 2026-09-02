@@ -1650,6 +1650,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         self,
         api_key: str | None = None,
         model: str = DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
+        model_id: str | None = None,
         api_base: str | None = None,
         output_dimensions: int | None = None,
         batch_size: int = 100,
@@ -1665,7 +1666,22 @@ class LiteLLMSDKEmbeddings(Embeddings):
         Args:
             api_key: API key for the embedding provider (optional — omit for
                      providers that use ambient credentials, e.g. AWS Bedrock with IAM)
-            model: Model name with provider prefix (e.g., "cohere/embed-english-v3.0")
+            model: Model name with provider prefix (e.g., "cohere/embed-english-v3.0").
+                For Bedrock, this must be (or contain) a recognizable provider-family
+                name litellm can pattern-match (e.g. "amazon.titan-embed-text-v2:0") —
+                it's what litellm's own `get_bedrock_embedding_provider` inspects to
+                pick the right request/response shape, separate from `model_id` below.
+            model_id: Optional explicit model id/ARN passed straight through to
+                litellm as its own `model_id` param, used as the ACTUAL Bedrock
+                invoke target instead of `model` (litellm: "unencoded_model_id =
+                optional_params.pop('model_id', None) or model"). Needed for AWS
+                Bedrock application inference profiles: their ARN
+                (arn:aws:bedrock:...:application-inference-profile/<opaque-id>) has
+                no recognizable provider name for `model` to double as, unlike a
+                system cross-region inference profile id (e.g.
+                "eu.anthropic.claude-sonnet-4-5-...") which does. Bedrock chat/
+                Converse models don't need this split (Converse is provider-agnostic),
+                which is why only the embeddings path exposes it.
             api_base: Custom base URL for API (optional)
             output_dimensions: Optional output embedding dimensions (provider-dependent)
             batch_size: Maximum batch size for embedding requests (default: 100)
@@ -1679,6 +1695,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         """
         self.api_key = api_key
         self.model = model
+        self.model_id = model_id
         self.api_base = api_base
         self.output_dimensions = output_dimensions
         self.batch_size = batch_size
@@ -1725,6 +1742,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 # timeout, so a stalled provider would hang startup for minutes.
                 "timeout": self.timeout,
             }
+            if self.model_id:
+                embed_kwargs["model_id"] = self.model_id
             if self.api_key:
                 embed_kwargs["api_key"] = self.api_key
             if self.encoding_format:
@@ -1811,6 +1830,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                     # synchronous recall far past the retry budget.
                     "timeout": self.timeout,
                 }
+                if self.model_id:
+                    embed_kwargs["model_id"] = self.model_id
                 if self.api_key:
                     embed_kwargs["api_key"] = self.api_key
                 if self.encoding_format:
@@ -2239,6 +2260,7 @@ def create_embeddings_from_env() -> Embeddings:
         return LiteLLMSDKEmbeddings(
             api_key=config.embeddings_litellm_sdk_api_key or None,
             model=config.embeddings_litellm_sdk_model,
+            model_id=config.embeddings_litellm_sdk_model_id,
             api_base=config.embeddings_litellm_sdk_api_base,
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
             encoding_format=config.embeddings_litellm_sdk_encoding_format,
