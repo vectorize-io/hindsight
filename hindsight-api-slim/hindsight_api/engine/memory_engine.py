@@ -6257,10 +6257,10 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> "dict[str, list[StoredAttachment]]":
         """The attachments each chunk references, keyed by chunk_id.
 
-        This is also how a *memory* gets its attachments: a fact's text no longer
-        carries placeholders (they would be recalled as a content hash presented
-        as knowledge), so the chunk it was extracted from is what says which
-        attachments the model was looking at when it produced that fact.
+        A *memory* does not use this: a chunk's attachments belong to the chunk,
+        and one chunk usually yields several facts of which only some were read
+        off the screenshot. Per-fact provenance comes from
+        ``attachments_for_memories`` instead.
         """
         from .retain.attachment_content import iter_placeholder_ids
         from .retain.attachment_store import load_bank_attachments
@@ -6289,6 +6289,49 @@ class MemoryEngine(MemoryEngineInterface):
         return {
             chunk_id: [records[i] for i in ids if i in records]
             for chunk_id, ids in ids_by_chunk.items()
+            if any(i in records for i in ids)
+        }
+
+    async def attachments_for_memories(
+        self,
+        bank_id: str,
+        unit_ids: "Sequence[str]",
+        request_context: "RequestContext",
+    ) -> "dict[str, list[StoredAttachment]]":
+        """The attachments each memory was actually drawn from, keyed by unit id.
+
+        Recorded per fact at extraction time (``memory_attachments``) rather than
+        derived from the chunk, because a chunk holding a screenshot also holds
+        the prose around it: deriving would show the diagram against the policy
+        paragraph that never mentioned it. A fact stated in the text has no rows
+        here and correctly shows nothing.
+        """
+        from .retain.attachment_store import load_bank_attachments
+
+        if not unit_ids:
+            return {}
+        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if profile is None:
+            return {}
+        wanted_units = list(dict.fromkeys(str(u) for u in unit_ids))
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT unit_id::text AS unit_id, short_id FROM {fq_table('memory_attachments')} "
+                f"WHERE bank_id = $1 AND unit_id = ANY($2::uuid[])",
+                bank_id,
+                wanted_units,
+            )
+            if not rows:
+                return {}
+            ids_by_unit: dict[str, list[str]] = {}
+            for row in rows:
+                ids_by_unit.setdefault(row["unit_id"], []).append(row["short_id"])
+            records = await load_bank_attachments(conn, bank_id, [i for ids in ids_by_unit.values() for i in ids])
+
+        return {
+            unit_id: [records[i] for i in ids if i in records]
+            for unit_id, ids in ids_by_unit.items()
             if any(i in records for i in ids)
         }
 

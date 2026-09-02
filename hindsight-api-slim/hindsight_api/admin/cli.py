@@ -65,6 +65,9 @@ BACKUP_TABLES = [
     "entities",
     "chunks",
     "memory_units",
+    # After "memory_units": memory_attachments references it (the per-fact
+    # attachment edge), so the forward COPY needs the parent present.
+    "memory_attachments",
     "invalidated_memory_units",
     "unit_entities",
     "entity_cooccurrences",

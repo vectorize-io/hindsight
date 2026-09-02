@@ -257,6 +257,12 @@ class ExtractedFact:
     mentioned_at: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
+    # Short ids of the attachments this fact was drawn from, as the extractor
+    # attributed them. Empty for a fact stated in the prose — which is most of
+    # them, and the reason this is per-fact rather than per-chunk: every fact in
+    # a chunk used to inherit every attachment in it, so a sentence about
+    # recording a sync id carried the escalation PDF it never mentioned.
+    attachment_ids: list[str] = field(default_factory=list)
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
@@ -294,6 +300,11 @@ class ProcessedFact:
 
     # Causal relations
     causal_relations: list[CausalRelation] = field(default_factory=list)
+
+    # Short ids of the attachments this fact was drawn from, as the extractor
+    # attributed them. Empty for a fact stated in the surrounding prose — which
+    # is most of them, and the reason this is per-fact rather than per-chunk.
+    attachment_ids: list[str] = field(default_factory=list)
 
     # Chunk reference
     chunk_id: str | None = None
@@ -393,6 +404,7 @@ class ProcessedFact:
             metadata=extracted_fact.metadata,
             entities=entities,
             causal_relations=extracted_fact.causal_relations,
+            attachment_ids=list(extracted_fact.attachment_ids),
             chunk_id=chunk_id,
             content_index=extracted_fact.content_index,
             tags=extracted_fact.tags,

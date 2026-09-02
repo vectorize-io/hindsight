@@ -601,6 +601,14 @@ async def _insert_facts_and_links(
         )
         log_buffer.append(f"  Causal links: {causal_link_count} links in {time.time() - step_start:.3f}s")
 
+        # Per-fact attachment provenance. Written here, inside the same
+        # transaction, because the rows FK to memory_units and would otherwise be
+        # able to outlive a rolled-back insert.
+        step_start = time.time()
+        attachment_row_count = await fact_storage.insert_memory_attachments(conn, bank_id, unit_ids, processed_facts)
+        if attachment_row_count:
+            log_buffer.append(f"  Memory attachments: {attachment_row_count} rows in {time.time() - step_start:.3f}s")
+
     # Map results back to original content items. Use processed_facts (not
     # extracted_facts) because unit_ids has 1:1 alignment with processed_facts —
     # any upstream drop between extraction and processing would otherwise cause

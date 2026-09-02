@@ -99,6 +99,7 @@ _SKIP_TABLES = frozenset(
         # bytes into the archive — a deliberate feature, not a line in this set.
         "bank_attachments",
         "document_attachments",
+        "memory_attachments",
         # Curation archive of retired facts — local operational state, not part of
         # the live knowledge the export replays. Its rows mirror memory_units (stale
         # embedding) and snapshot source-bank entity ids that the import re-resolves
