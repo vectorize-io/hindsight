@@ -4,9 +4,20 @@
 # requirement is dropped: PEP 508 has no marker for "free-threaded build", so the
 # alternative would be forking pyproject.toml for one interpreter.
 #
-# orjson publishes no cp3XXt wheel and its build script refuses outright
-# ("orjson vX does not support free-threaded Python"). hindsight uses it in exactly
-# one place -- rendering pgvector literals in engine/retain/types.py -- which falls
-# back to the pre-orjson formatting when the import fails. PostgreSQL parses either
-# spelling into the same float32 bytes.
+# Both packages below are C extensions with no cp3XXt wheel, and both have a
+# runtime fallback in hindsight (see the modules named).
+
+# orjson's build script refuses free-threading outright ("orjson vX does not
+# support free-threaded Python"). Used only to render pgvector literals in
+# engine/retain/types.py, which falls back to the pre-orjson formatting.
+# PostgreSQL parses either spelling into the same float32 bytes.
 orjson; python_version < "0"
+
+# quicktok has no cp3XXt wheel and, built from source, would not declare
+# Py_MOD_GIL_NOT_USED — importing it re-enables the GIL for the whole process.
+# toktok-rs replaces it (byte-identical ids, ships cp3XXt wheels, declares
+# gil_used = false). quicktok is kept in pyproject only for the llama3/qwen3
+# vocabularies toktok does not bundle; engine/token_encoding.py imports both
+# optionally, so those two encodings are simply unavailable on a free-threaded
+# install and say so.
+quicktok-v1; python_version < "0"
