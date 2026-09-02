@@ -5,6 +5,7 @@ These dataclasses provide type safety throughout the retain operation,
 from content input to fact storage.
 """
 
+import functools
 import logging
 from array import array
 from collections.abc import Iterable, Sequence
@@ -14,7 +15,6 @@ from typing import Literal, TypedDict
 from uuid import UUID
 
 import numpy as np
-import orjson
 
 from ..metadata_utils import drop_null_values
 
@@ -45,40 +45,66 @@ EmbeddingLike = PackedEmbedding | Sequence[float] | str
 
 
 def _repr_literal(values: Iterable[object]) -> str:
-    """The pre-orjson formatting, kept as the fallback for non-finite and non-float inputs."""
+    """Per-element ``repr()`` formatting, kept for non-finite and non-numeric inputs."""
     return "[" + ",".join(repr(float(v)) for v in values) + "]"  # type: ignore[arg-type]
 
 
-def _dumps_or_repr_fallback(payload: np.ndarray | list | tuple) -> str:
-    """Serialize with orjson; fall back to repr() when the vector is non-finite.
+@functools.lru_cache(maxsize=64)
+def _literal_template(dim: int) -> str:
+    """``"[%.9g,%.9g,...]"`` for ``dim`` elements, built once per embedding width.
 
-    Finite-float JSON output consists only of [0-9.eE+-,[]], so the substring
-    "null" can only mean orjson encoded a NaN/Inf element as JSON null.
+    Nine significant digits is ``FLT_DECIMAL_DIG`` — the shortest fixed precision that
+    round-trips every float32 bit pattern — so a value narrowed to float32 renders and
+    parses back to exactly the bytes the ``vector`` column stores.
     """
-    try:
-        rendered = orjson.dumps(payload, option=orjson.OPT_SERIALIZE_NUMPY).decode("ascii")
-    except (orjson.JSONEncodeError, TypeError):
-        return _repr_literal(payload)
-    return _repr_literal(payload) if "null" in rendered else rendered
+    return "[" + ",".join(["%.9g"] * dim) + "]"
+
+
+def _format_literal(values: list[float]) -> str:
+    """Render float32-valued floats as a pgvector literal in one C-level format call.
+
+    Formatting the whole vector through a single ``str.__mod__`` keeps the per-element
+    work inside CPython's C formatter, rather than paying a Python-level ``repr()`` call
+    and a boxed ``PyFloat`` per dimension.
+    """
+    if not values:
+        return "[]"
+    rendered = _literal_template(len(values)) % tuple(values)
+    # Finite ``%.9g`` output is drawn only from [0-9.eE+-], so an "n" can only have come
+    # from "nan", "inf" or "-inf" — none of which pgvector accepts. Hand those to the
+    # repr formatting the link steps have always screened them out of.
+    return _repr_literal(values) if "n" in rendered else rendered
 
 
 def embedding_to_pgvector(embedding: EmbeddingLike) -> str:
     """Render an embedding as the ``'[0.1,0.2,...]'`` literal asyncpg binds to ``vector``.
 
     Handles every form a caller may hold: the packed array retain carries, a plain float
-    list (imports, re-embeds), or a literal that was already rendered. Uses orjson's SIMD
-    float serializer for fast formatting without per-element Python allocations.
+    list (imports, re-embeds), a NumPy array, or a literal that was already rendered.
 
-    Note: The formatted string uses float32 shortest representation when serialized via
-    the PackedEmbedding/NumPy fast-path (e.g. ``0.1`` vs legacy ``0.10000000149011612``).
-    When parsed back by PostgreSQL as a 32-bit float vector, the stored bytes are bit-identical.
+    Everything numeric is narrowed to float32 before formatting, because float32 is the
+    width the column stores. That narrowing has to happen exactly once: applying ``%.9g``
+    straight to a float64 rounds twice — once to nine digits, once to float32 — and the
+    two roundings disagree on ~0.8% of values, landing a neighbouring float32. Narrowing
+    first makes the single remaining rounding the same one PostgreSQL would have done.
+
+    The literal is fixed-width, not shortest-form: this used to render through orjson,
+    whose Ryu formatter emitted ``0.1`` where nine digits give ``0.100000001``. Both parse
+    to the same float32, so stored bytes are unchanged, but the text is ~12% longer and
+    query logs look different. orjson bought ~5x on this formatting and nothing else in
+    the API used it — see ``hindsight-dev/benchmarks/micro/vector_serialization.py``.
     """
     if isinstance(embedding, str):
         return embedding
     if isinstance(embedding, array) and embedding.typecode == "f":
-        return _dumps_or_repr_fallback(np.frombuffer(embedding, dtype=np.float32))
+        # Already float32, so ``tolist()`` hands over values ``%.9g`` renders exactly.
+        return _format_literal(embedding.tolist())
     if isinstance(embedding, (np.ndarray, list, tuple)):
-        return _dumps_or_repr_fallback(embedding)
+        # ``asarray`` without a dtype infers one: real numbers give a numeric kind, while
+        # objects that merely implement ``__float__`` give "O" and fall through to repr.
+        values = np.asarray(embedding)
+        if values.dtype.kind in "fiub":
+            return _format_literal(values.astype(np.float32, copy=False).tolist())
     return _repr_literal(embedding)
 
 
