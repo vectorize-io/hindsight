@@ -41,6 +41,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl ca-certificates libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Rust, for litellm. It publishes only abi3 wheels (cp310-abi3), and abi3 — the stable
+# ABI — does not apply to a free-threaded interpreter, so uv cannot use them here and
+# falls back to the sdist, which builds a Rust extension (litellm-rust). litellm is a
+# hard runtime dependency, so this is not optional. Confined to the builder stage: the
+# runtime image below copies only the venv and carries no toolchain.
+#
+# Drop this once litellm publishes cp3XXt wheels.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # There is no official free-threaded python image — the library/python tags ship the
