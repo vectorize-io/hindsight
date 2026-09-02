@@ -13,7 +13,7 @@ right to flag it.
 from dataclasses import dataclass, field
 
 from hindsight_api.config import (
-    DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK,
+    DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK,
     HindsightConfig,
 )
 from hindsight_api.engine.memory_engine import (
@@ -46,7 +46,7 @@ def collect_sub_batches(
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
-    max_images_per_chunk: int = DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK,
+    max_attachments_per_chunk: int = DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK,
 ) -> CollectedSplit:
     """Drain the raw splitter into a ``CollectedSplit``.
 
@@ -60,7 +60,7 @@ def collect_sub_batches(
         tokens_per_batch,
         chunk_size=chunk_size,
         structured_chunk_size=structured_chunk_size,
-        max_images_per_chunk=max_images_per_chunk,
+        max_attachments_per_chunk=max_attachments_per_chunk,
     ):
         collected.sub_batches.append(raw.contents)
         collected.origin_indices.append(raw.origins)

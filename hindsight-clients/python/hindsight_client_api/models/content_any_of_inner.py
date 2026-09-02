@@ -17,13 +17,14 @@ import json
 import pprint
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
 from typing import Any, List, Optional
+from hindsight_client_api.models.file_content_block import FileContentBlock
 from hindsight_client_api.models.image_content_block import ImageContentBlock
 from hindsight_client_api.models.text_content_block import TextContentBlock
 from pydantic import StrictStr, Field
 from typing import Union, List, Set, Optional, Dict
 from typing_extensions import Literal, Self
 
-CONTENTANYOFINNER_ONE_OF_SCHEMAS = ["ImageContentBlock", "TextContentBlock"]
+CONTENTANYOFINNER_ONE_OF_SCHEMAS = ["FileContentBlock", "ImageContentBlock", "TextContentBlock"]
 
 class ContentAnyOfInner(BaseModel):
     """
@@ -33,8 +34,10 @@ class ContentAnyOfInner(BaseModel):
     oneof_schema_1_validator: Optional[TextContentBlock] = None
     # data type: ImageContentBlock
     oneof_schema_2_validator: Optional[ImageContentBlock] = None
-    actual_instance: Optional[Union[ImageContentBlock, TextContentBlock]] = None
-    one_of_schemas: Set[str] = { "ImageContentBlock", "TextContentBlock" }
+    # data type: FileContentBlock
+    oneof_schema_3_validator: Optional[FileContentBlock] = None
+    actual_instance: Optional[Union[FileContentBlock, ImageContentBlock, TextContentBlock]] = None
+    one_of_schemas: Set[str] = { "FileContentBlock", "ImageContentBlock", "TextContentBlock" }
 
     model_config = ConfigDict(
         validate_assignment=True,
@@ -70,12 +73,17 @@ class ContentAnyOfInner(BaseModel):
             error_messages.append(f"Error! Input type `{type(v)}` is not `ImageContentBlock`")
         else:
             match += 1
+        # validate data type: FileContentBlock
+        if not isinstance(v, FileContentBlock):
+            error_messages.append(f"Error! Input type `{type(v)}` is not `FileContentBlock`")
+        else:
+            match += 1
         if match > 1:
             # more than 1 match
-            raise ValueError("Multiple matches found when setting `actual_instance` in ContentAnyOfInner with oneOf schemas: ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
+            raise ValueError("Multiple matches found when setting `actual_instance` in ContentAnyOfInner with oneOf schemas: FileContentBlock, ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
         elif match == 0:
             # no match
-            raise ValueError("No match found when setting `actual_instance` in ContentAnyOfInner with oneOf schemas: ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when setting `actual_instance` in ContentAnyOfInner with oneOf schemas: FileContentBlock, ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
         else:
             return v
 
@@ -102,13 +110,19 @@ class ContentAnyOfInner(BaseModel):
             match += 1
         except (ValidationError, ValueError) as e:
             error_messages.append(str(e))
+        # deserialize data into FileContentBlock
+        try:
+            instance.actual_instance = FileContentBlock.from_json(json_str)
+            match += 1
+        except (ValidationError, ValueError) as e:
+            error_messages.append(str(e))
 
         if match > 1:
             # more than 1 match
-            raise ValueError("Multiple matches found when deserializing the JSON string into ContentAnyOfInner with oneOf schemas: ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
+            raise ValueError("Multiple matches found when deserializing the JSON string into ContentAnyOfInner with oneOf schemas: FileContentBlock, ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
         elif match == 0:
             # no match
-            raise ValueError("No match found when deserializing the JSON string into ContentAnyOfInner with oneOf schemas: ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when deserializing the JSON string into ContentAnyOfInner with oneOf schemas: FileContentBlock, ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
         else:
             return instance
 
@@ -122,7 +136,7 @@ class ContentAnyOfInner(BaseModel):
         else:
             return json.dumps(self.actual_instance)
 
-    def to_dict(self) -> Optional[Union[Dict[str, Any], ImageContentBlock, TextContentBlock]]:
+    def to_dict(self) -> Optional[Union[Dict[str, Any], FileContentBlock, ImageContentBlock, TextContentBlock]]:
         """Returns the dict representation of the actual instance"""
         if self.actual_instance is None:
             return None

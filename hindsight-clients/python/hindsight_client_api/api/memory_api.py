@@ -948,10 +948,10 @@ class MemoryApi:
 
 
     @validate_call
-    async def get_bank_image(
+    async def get_bank_attachment(
         self,
         bank_id: StrictStr,
-        image_id: StrictStr,
+        attachment_id: StrictStr,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -966,14 +966,14 @@ class MemoryApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> object:
-        """Fetch an image retained inline with a document
+        """Fetch an attachment retained inline with a document
 
-        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+        Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads — so an agent can show or reason over the original behind an attachment-derived fact.  Bytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param image_id: (required)
-        :type image_id: str
+        :param attachment_id: (required)
+        :type attachment_id: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -998,9 +998,9 @@ class MemoryApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._get_bank_image_serialize(
+        _param = self._get_bank_attachment_serialize(
             bank_id=bank_id,
-            image_id=image_id,
+            attachment_id=attachment_id,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1024,10 +1024,10 @@ class MemoryApi:
 
 
     @validate_call
-    async def get_bank_image_with_http_info(
+    async def get_bank_attachment_with_http_info(
         self,
         bank_id: StrictStr,
-        image_id: StrictStr,
+        attachment_id: StrictStr,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1042,14 +1042,14 @@ class MemoryApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[object]:
-        """Fetch an image retained inline with a document
+        """Fetch an attachment retained inline with a document
 
-        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+        Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads — so an agent can show or reason over the original behind an attachment-derived fact.  Bytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param image_id: (required)
-        :type image_id: str
+        :param attachment_id: (required)
+        :type attachment_id: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1074,9 +1074,9 @@ class MemoryApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._get_bank_image_serialize(
+        _param = self._get_bank_attachment_serialize(
             bank_id=bank_id,
-            image_id=image_id,
+            attachment_id=attachment_id,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1100,10 +1100,10 @@ class MemoryApi:
 
 
     @validate_call
-    async def get_bank_image_without_preload_content(
+    async def get_bank_attachment_without_preload_content(
         self,
         bank_id: StrictStr,
-        image_id: StrictStr,
+        attachment_id: StrictStr,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1118,14 +1118,14 @@ class MemoryApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Fetch an image retained inline with a document
+        """Fetch an attachment retained inline with a document
 
-        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+        Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads — so an agent can show or reason over the original behind an attachment-derived fact.  Bytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param image_id: (required)
-        :type image_id: str
+        :param attachment_id: (required)
+        :type attachment_id: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1150,9 +1150,9 @@ class MemoryApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._get_bank_image_serialize(
+        _param = self._get_bank_attachment_serialize(
             bank_id=bank_id,
-            image_id=image_id,
+            attachment_id=attachment_id,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1171,10 +1171,10 @@ class MemoryApi:
         return response_data.response
 
 
-    def _get_bank_image_serialize(
+    def _get_bank_attachment_serialize(
         self,
         bank_id,
-        image_id,
+        attachment_id,
         authorization,
         _request_auth,
         _content_type,
@@ -1199,8 +1199,8 @@ class MemoryApi:
         # process the path parameters
         if bank_id is not None:
             _path_params['bank_id'] = bank_id
-        if image_id is not None:
-            _path_params['image_id'] = image_id
+        if attachment_id is not None:
+            _path_params['attachment_id'] = attachment_id
         # process the query parameters
         # process the header parameters
         if authorization is not None:
@@ -1214,7 +1214,7 @@ class MemoryApi:
             _header_params['Accept'] = self.api_client.select_header_accept(
                 [
                     'application/json', 
-                    'image/png'
+                    'application/octet-stream'
                 ]
             )
 
@@ -1225,7 +1225,7 @@ class MemoryApi:
 
         return self.api_client.param_serialize(
             method='GET',
-            resource_path='/v1/default/banks/{bank_id}/images/{image_id}',
+            resource_path='/v1/default/banks/{bank_id}/attachments/{attachment_id}',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,

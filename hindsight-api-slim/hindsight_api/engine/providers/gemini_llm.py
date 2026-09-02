@@ -122,9 +122,15 @@ def _to_gemini_parts(content: Any, genai_types: Any) -> list[Any]:
         if part.get("type") == "text":
             parts.append(genai_types.Part(text=part.get("text", "")))
             continue
-        if part.get("type") != "image_url":
+        # Gemini takes every attachment as inline_data — a PDF is the same shape
+        # as a PNG, differing only in mime_type — so images and files converge
+        # here rather than needing separate block types as they do on Anthropic.
+        if part.get("type") == "image_url":
+            url = (part.get("image_url") or {}).get("url", "")
+        elif part.get("type") == "file":
+            url = (part.get("file") or {}).get("file_data", "")
+        else:
             continue
-        url = (part.get("image_url") or {}).get("url", "")
         match = _DATA_URI_RE.match(url)
         if match is None:
             # Gemini has no fetch-this-URL part; surfacing the reference as text is

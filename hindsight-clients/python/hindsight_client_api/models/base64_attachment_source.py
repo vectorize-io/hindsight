@@ -17,21 +17,29 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ChunkImage(BaseModel):
+class Base64AttachmentSource(BaseModel):
     """
-    An image referenced by a chunk's text, and where to fetch it.
+    Inline attachment bytes, base64-encoded.  The only source type in this version. ``url`` (server-side fetch) and ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this is modelled as a discriminated union on ``type`` rather than as bare fields.
     """ # noqa: E501
-    id: StrictStr = Field(description="The id inside the chunk text's placeholder; a prefix of the bytes' sha256.")
-    hash: StrictStr = Field(description="Full sha256 of the image bytes.")
-    media_type: StrictStr = Field(description="MIME type of the image.")
-    byte_size: StrictInt = Field(description="Size of the image in bytes.")
-    url: StrictStr = Field(description="Bank-scoped API path serving the image bytes. Requires the same authorization as the bank.")
-    __properties: ClassVar[List[str]] = ["id", "hash", "media_type", "byte_size", "url"]
+    type: Optional[StrictStr] = 'base64'
+    media_type: StrictStr = Field(description="MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed type is accepted; whether the model can read it is the model's answer to give, and a provider that rejects it fails the retain with its own error.")
+    data: StrictStr = Field(description="Base64-encoded bytes (no data: URI prefix).")
+    __properties: ClassVar[List[str]] = ["type", "media_type", "data"]
+
+    @field_validator('type')
+    def type_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['base64']):
+            raise ValueError("must be one of enum values ('base64')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -51,7 +59,7 @@ class ChunkImage(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ChunkImage from a JSON string"""
+        """Create an instance of Base64AttachmentSource from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -76,7 +84,7 @@ class ChunkImage(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ChunkImage from a dict"""
+        """Create an instance of Base64AttachmentSource from a dict"""
         if obj is None:
             return None
 
@@ -84,11 +92,9 @@ class ChunkImage(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "id": obj.get("id"),
-            "hash": obj.get("hash"),
+            "type": obj.get("type") if obj.get("type") is not None else 'base64',
             "media_type": obj.get("media_type"),
-            "byte_size": obj.get("byte_size"),
-            "url": obj.get("url")
+            "data": obj.get("data")
         })
         return _obj
 

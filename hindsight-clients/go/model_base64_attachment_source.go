@@ -16,26 +16,26 @@ import (
 	"fmt"
 )
 
-// checks if the Base64ImageSource type satisfies the MappedNullable interface at compile time
-var _ MappedNullable = &Base64ImageSource{}
+// checks if the Base64AttachmentSource type satisfies the MappedNullable interface at compile time
+var _ MappedNullable = &Base64AttachmentSource{}
 
-// Base64ImageSource Inline image bytes, base64-encoded.  The only source type in this version. ``url`` (server-side fetch) and ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this is modelled as a discriminated union on ``type`` rather than as bare fields.
-type Base64ImageSource struct {
+// Base64AttachmentSource Inline attachment bytes, base64-encoded.  The only source type in this version. ``url`` (server-side fetch) and ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this is modelled as a discriminated union on ``type`` rather than as bare fields.
+type Base64AttachmentSource struct {
 	Type *string `json:"type,omitempty"`
-	// MIME type of the image. One of: image/png, image/jpeg, image/gif, image/webp.
+	// MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed type is accepted; whether the model can read it is the model's answer to give, and a provider that rejects it fails the retain with its own error.
 	MediaType string `json:"media_type"`
-	// Base64-encoded image bytes (no data: URI prefix).
+	// Base64-encoded bytes (no data: URI prefix).
 	Data string `json:"data"`
 }
 
-type _Base64ImageSource Base64ImageSource
+type _Base64AttachmentSource Base64AttachmentSource
 
-// NewBase64ImageSource instantiates a new Base64ImageSource object
+// NewBase64AttachmentSource instantiates a new Base64AttachmentSource object
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewBase64ImageSource(mediaType string, data string) *Base64ImageSource {
-	this := Base64ImageSource{}
+func NewBase64AttachmentSource(mediaType string, data string) *Base64AttachmentSource {
+	this := Base64AttachmentSource{}
 	var type_ string = "base64"
 	this.Type = &type_
 	this.MediaType = mediaType
@@ -43,18 +43,18 @@ func NewBase64ImageSource(mediaType string, data string) *Base64ImageSource {
 	return &this
 }
 
-// NewBase64ImageSourceWithDefaults instantiates a new Base64ImageSource object
+// NewBase64AttachmentSourceWithDefaults instantiates a new Base64AttachmentSource object
 // This constructor will only assign default values to properties that have it defined,
 // but it doesn't guarantee that properties required by API are set
-func NewBase64ImageSourceWithDefaults() *Base64ImageSource {
-	this := Base64ImageSource{}
+func NewBase64AttachmentSourceWithDefaults() *Base64AttachmentSource {
+	this := Base64AttachmentSource{}
 	var type_ string = "base64"
 	this.Type = &type_
 	return &this
 }
 
 // GetType returns the Type field value if set, zero value otherwise.
-func (o *Base64ImageSource) GetType() string {
+func (o *Base64AttachmentSource) GetType() string {
 	if o == nil || IsNil(o.Type) {
 		var ret string
 		return ret
@@ -64,7 +64,7 @@ func (o *Base64ImageSource) GetType() string {
 
 // GetTypeOk returns a tuple with the Type field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *Base64ImageSource) GetTypeOk() (*string, bool) {
+func (o *Base64AttachmentSource) GetTypeOk() (*string, bool) {
 	if o == nil || IsNil(o.Type) {
 		return nil, false
 	}
@@ -72,7 +72,7 @@ func (o *Base64ImageSource) GetTypeOk() (*string, bool) {
 }
 
 // HasType returns a boolean if a field has been set.
-func (o *Base64ImageSource) HasType() bool {
+func (o *Base64AttachmentSource) HasType() bool {
 	if o != nil && !IsNil(o.Type) {
 		return true
 	}
@@ -81,12 +81,12 @@ func (o *Base64ImageSource) HasType() bool {
 }
 
 // SetType gets a reference to the given string and assigns it to the Type field.
-func (o *Base64ImageSource) SetType(v string) {
+func (o *Base64AttachmentSource) SetType(v string) {
 	o.Type = &v
 }
 
 // GetMediaType returns the MediaType field value
-func (o *Base64ImageSource) GetMediaType() string {
+func (o *Base64AttachmentSource) GetMediaType() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -97,7 +97,7 @@ func (o *Base64ImageSource) GetMediaType() string {
 
 // GetMediaTypeOk returns a tuple with the MediaType field value
 // and a boolean to check if the value has been set.
-func (o *Base64ImageSource) GetMediaTypeOk() (*string, bool) {
+func (o *Base64AttachmentSource) GetMediaTypeOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -105,12 +105,12 @@ func (o *Base64ImageSource) GetMediaTypeOk() (*string, bool) {
 }
 
 // SetMediaType sets field value
-func (o *Base64ImageSource) SetMediaType(v string) {
+func (o *Base64AttachmentSource) SetMediaType(v string) {
 	o.MediaType = v
 }
 
 // GetData returns the Data field value
-func (o *Base64ImageSource) GetData() string {
+func (o *Base64AttachmentSource) GetData() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -121,7 +121,7 @@ func (o *Base64ImageSource) GetData() string {
 
 // GetDataOk returns a tuple with the Data field value
 // and a boolean to check if the value has been set.
-func (o *Base64ImageSource) GetDataOk() (*string, bool) {
+func (o *Base64AttachmentSource) GetDataOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -129,11 +129,11 @@ func (o *Base64ImageSource) GetDataOk() (*string, bool) {
 }
 
 // SetData sets field value
-func (o *Base64ImageSource) SetData(v string) {
+func (o *Base64AttachmentSource) SetData(v string) {
 	o.Data = v
 }
 
-func (o Base64ImageSource) MarshalJSON() ([]byte, error) {
+func (o Base64AttachmentSource) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
 		return []byte{}, err
@@ -141,7 +141,7 @@ func (o Base64ImageSource) MarshalJSON() ([]byte, error) {
 	return json.Marshal(toSerialize)
 }
 
-func (o Base64ImageSource) ToMap() (map[string]interface{}, error) {
+func (o Base64AttachmentSource) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	if !IsNil(o.Type) {
 		toSerialize["type"] = o.Type
@@ -151,7 +151,7 @@ func (o Base64ImageSource) ToMap() (map[string]interface{}, error) {
 	return toSerialize, nil
 }
 
-func (o *Base64ImageSource) UnmarshalJSON(data []byte) (err error) {
+func (o *Base64AttachmentSource) UnmarshalJSON(data []byte) (err error) {
 	// This validates that all required properties are included in the JSON object
 	// by unmarshalling the object into a generic map with string keys and checking
 	// that every required field exists as a key in the generic map.
@@ -174,53 +174,53 @@ func (o *Base64ImageSource) UnmarshalJSON(data []byte) (err error) {
 		}
 	}
 
-	varBase64ImageSource := _Base64ImageSource{}
+	varBase64AttachmentSource := _Base64AttachmentSource{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&varBase64ImageSource)
+	err = decoder.Decode(&varBase64AttachmentSource)
 
 	if err != nil {
 		return err
 	}
 
-	*o = Base64ImageSource(varBase64ImageSource)
+	*o = Base64AttachmentSource(varBase64AttachmentSource)
 
 	return err
 }
 
-type NullableBase64ImageSource struct {
-	value *Base64ImageSource
+type NullableBase64AttachmentSource struct {
+	value *Base64AttachmentSource
 	isSet bool
 }
 
-func (v NullableBase64ImageSource) Get() *Base64ImageSource {
+func (v NullableBase64AttachmentSource) Get() *Base64AttachmentSource {
 	return v.value
 }
 
-func (v *NullableBase64ImageSource) Set(val *Base64ImageSource) {
+func (v *NullableBase64AttachmentSource) Set(val *Base64AttachmentSource) {
 	v.value = val
 	v.isSet = true
 }
 
-func (v NullableBase64ImageSource) IsSet() bool {
+func (v NullableBase64AttachmentSource) IsSet() bool {
 	return v.isSet
 }
 
-func (v *NullableBase64ImageSource) Unset() {
+func (v *NullableBase64AttachmentSource) Unset() {
 	v.value = nil
 	v.isSet = false
 }
 
-func NewNullableBase64ImageSource(val *Base64ImageSource) *NullableBase64ImageSource {
-	return &NullableBase64ImageSource{value: val, isSet: true}
+func NewNullableBase64AttachmentSource(val *Base64AttachmentSource) *NullableBase64AttachmentSource {
+	return &NullableBase64AttachmentSource{value: val, isSet: true}
 }
 
-func (v NullableBase64ImageSource) MarshalJSON() ([]byte, error) {
+func (v NullableBase64AttachmentSource) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.value)
 }
 
-func (v *NullableBase64ImageSource) UnmarshalJSON(src []byte) error {
+func (v *NullableBase64AttachmentSource) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }

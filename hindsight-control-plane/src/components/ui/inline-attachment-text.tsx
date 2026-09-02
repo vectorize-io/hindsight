@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Render retained text that may carry inline-image placeholders.
+ * Render retained text that may carry inline-attachment placeholders.
  *
- * A document retained with inline images stores its text with an atomic
- * placeholder — `⟦hs-img:<id>⟧` — where each image sat. That token is
+ * A document retained with inline attachments stores its text with an atomic
+ * placeholder — `⟦hs-att:<id>⟧` — where each attachment sat. That token is
  * the real stored content, not a rendering artifact, but showing it raw would be
- * meaningless to a reader: the whole point of retaining images inline is that
+ * meaningless to a reader: the whole point of retaining attachments inline is that
  * they belong in position, next to the prose that refers to them.
  *
  * So the text is split on the placeholders and each one becomes the picture it
@@ -16,9 +16,9 @@
 import { useState } from "react";
 
 /** Matches an image placeholder and captures its short image id. */
-const PLACEHOLDER_RE = /⟦hs-img:([0-9a-f]{12})⟧/g;
+const PLACEHOLDER_RE = /⟦hs-att:([0-9a-f]{12})⟧/g;
 
-export function hasInlineImage(text: string): boolean {
+export function hasInlineAttachment(text: string): boolean {
   // `test` on a /g regex advances lastIndex; build a fresh matcher each call.
   return new RegExp(PLACEHOLDER_RE.source).test(text);
 }
@@ -31,7 +31,7 @@ function InlineImage({ bankId, imageId }: { bankId: string; imageId: string }) {
     // rather than leaving a silent gap the reader cannot interpret.
     return (
       <span className="inline-block my-1 px-2 py-1 rounded border border-dashed border-border text-[10px] text-muted-foreground">
-        image unavailable ({imageId})
+        attachment unavailable ({imageId})
       </span>
     );
   }
@@ -41,8 +41,8 @@ function InlineImage({ bankId, imageId }: { bankId: string; imageId: string }) {
   // the image optimizer to pre-resolve.
   return (
     <img
-      src={`/api/images?bank_id=${encodeURIComponent(bankId)}&id=${imageId}`}
-      alt="Retained inline image"
+      src={`/api/attachments?bank_id=${encodeURIComponent(bankId)}&id=${imageId}`}
+      alt="Retained inline attachment"
       onError={() => setFailed(true)}
       className="block my-2 max-h-64 max-w-full rounded border border-border object-contain"
     />

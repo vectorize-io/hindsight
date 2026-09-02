@@ -657,6 +657,10 @@ class XaiOAuthLLM(LLMInterface):
     # LLMInterface
     # ------------------------------------------------------------------
 
+    def supports_vision(self) -> bool:
+        """Grok models are multimodal."""
+        return True
+
     async def verify_connection(self) -> None:
         """Verify the lane with one tiny completion."""
         try:

@@ -15,7 +15,7 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.retain.image_content import compute_image_hash
+from hindsight_api.engine.retain.attachment_content import compute_attachment_hash
 
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -89,7 +89,7 @@ async def test_the_bytes_in_the_prompt_are_the_bytes_that_were_retained(api_clie
     payload = image_part["image_url"]["url"].split(",", 1)[1]
 
     assert base64.b64decode(payload) == PNG_BYTES
-    assert compute_image_hash(base64.b64decode(payload)) == compute_image_hash(PNG_BYTES)
+    assert compute_attachment_hash(base64.b64decode(payload)) == compute_attachment_hash(PNG_BYTES)
 
 
 @pytest.mark.asyncio
@@ -117,7 +117,7 @@ async def test_a_retain_llm_without_vision_is_refused_before_anything_is_written
     # Nothing was stored: not the blob row, not the document.
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
-        assert await conn.fetchval("SELECT count(*) FROM bank_images WHERE bank_id = $1", bank_id) == 0
+        assert await conn.fetchval("SELECT count(*) FROM bank_attachments WHERE bank_id = $1", bank_id) == 0
         assert await conn.fetchval("SELECT count(*) FROM documents WHERE bank_id = $1", bank_id) == 0
 
 

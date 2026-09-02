@@ -3493,13 +3493,13 @@ paths:
       summary: Export documents (async)
       tags:
       - Document Transfer
-  /v1/default/banks/{bank_id}/images/{image_id}:
+  /v1/default/banks/{bank_id}/attachments/{attachment_id}:
     get:
       description: |-
-        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
+        Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads — so an agent can show or reason over the original behind an attachment-derived fact.
 
-        Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
-      operationId: get_bank_image
+        Bytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.
+      operationId: get_bank_attachment
       parameters:
       - explode: false
         in: path
@@ -3511,10 +3511,10 @@ paths:
         style: simple
       - explode: false
         in: path
-        name: image_id
+        name: attachment_id
         required: true
         schema:
-          title: Image Id
+          title: Attachment Id
           type: string
         style: simple
       - explode: false
@@ -3530,15 +3530,15 @@ paths:
           content:
             application/json:
               schema: {}
-            image/png: {}
-          description: Image bytes
+            application/octet-stream: {}
+          description: Attachment bytes
         "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Fetch an image retained inline with a document
+      summary: Fetch an attachment retained inline with a document
       tags:
       - Memory
   /v1/default/files/download/{key}:
@@ -5382,7 +5382,7 @@ components:
         retain_chunk_batch_size:
           nullable: true
           type: integer
-        retain_max_images_per_chunk:
+        retain_max_attachments_per_chunk:
           nullable: true
           type: integer
         mcp_enabled_tools:
@@ -5657,9 +5657,9 @@ components:
       - name
       - source_query
       title: BankTemplateMentalModel
-    Base64ImageSource:
+    Base64AttachmentSource:
       description: |-
-        Inline image bytes, base64-encoded.
+        Inline attachment bytes, base64-encoded.
 
         The only source type in this version. ``url`` (server-side fetch) and
         ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
@@ -5672,23 +5672,20 @@ components:
           title: Type
           type: string
         media_type:
-          description: "MIME type of the image. One of: image/png, image/jpeg, image/gif,\
-            \ image/webp."
-          enum:
-          - image/png
-          - image/jpeg
-          - image/gif
-          - image/webp
+          description: "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'.\
+            \ Any well-formed type is accepted; whether the model can read it is the\
+            \ model's answer to give, and a provider that rejects it fails the retain\
+            \ with its own error."
           title: Media Type
           type: string
         data:
-          description: "Base64-encoded image bytes (no data: URI prefix)."
+          description: "Base64-encoded bytes (no data: URI prefix)."
           title: Data
           type: string
       required:
       - data
       - media_type
-      title: Base64ImageSource
+      title: Base64AttachmentSource
     Body_file_retain:
       properties:
         files:
@@ -5766,6 +5763,47 @@ components:
       - operation_id
       - status
       title: ChildOperationStatus
+    ChunkAttachment:
+      description: "An attachment referenced by retained text, and where to fetch\
+        \ it."
+      properties:
+        id:
+          description: The id inside the text's placeholder; a prefix of the bytes'
+            sha256.
+          title: Id
+          type: string
+        hash:
+          description: Full sha256 of the attachment bytes.
+          title: Hash
+          type: string
+        kind:
+          description: "'image' or 'file', as the caller sent it."
+          title: Kind
+          type: string
+        media_type:
+          description: MIME type of the attachment.
+          title: Media Type
+          type: string
+        byte_size:
+          description: Size of the attachment in bytes.
+          title: Byte Size
+          type: integer
+        filename:
+          nullable: true
+          type: string
+        url:
+          description: Bank-scoped API path serving the bytes. Requires the same authorization
+            as the bank.
+          title: Url
+          type: string
+      required:
+      - byte_size
+      - hash
+      - id
+      - kind
+      - media_type
+      - url
+      title: ChunkAttachment
     ChunkData:
       description: Chunk data for a single chunk.
       properties:
@@ -5783,9 +5821,9 @@ components:
           description: Whether the chunk text was truncated due to token limits
           title: Truncated
           type: boolean
-        images:
+        attachments:
           items:
-            $ref: '#/components/schemas/ChunkImage'
+            $ref: '#/components/schemas/ChunkAttachment'
           nullable: true
           type: array
       required:
@@ -5793,38 +5831,6 @@ components:
       - id
       - text
       title: ChunkData
-    ChunkImage:
-      description: "An image referenced by a chunk's text, and where to fetch it."
-      properties:
-        id:
-          description: The id inside the chunk text's placeholder; a prefix of the
-            bytes' sha256.
-          title: Id
-          type: string
-        hash:
-          description: Full sha256 of the image bytes.
-          title: Hash
-          type: string
-        media_type:
-          description: MIME type of the image.
-          title: Media Type
-          type: string
-        byte_size:
-          description: Size of the image in bytes.
-          title: Byte Size
-          type: integer
-        url:
-          description: Bank-scoped API path serving the image bytes. Requires the
-            same authorization as the bank.
-          title: Url
-          type: string
-      required:
-      - byte_size
-      - hash
-      - id
-      - media_type
-      - url
-      title: ChunkImage
     ChunkIncludeOptions:
       description: Options for including chunks in recall results.
       properties:
@@ -5862,6 +5868,11 @@ components:
         created_at:
           title: Created At
           type: string
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - bank_id
       - chunk_id
@@ -6531,6 +6542,11 @@ components:
           nullable: true
         observation_scopes:
           $ref: '#/components/schemas/Observation_Scopes'
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - bank_id
       - content_hash
@@ -6994,6 +7010,29 @@ components:
       - store_document_text
       - worker
       title: FeaturesInfo
+    FileContentBlock:
+      description: |-
+        A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+
+        Split from ``image`` rather than folded into one type because the providers
+        split it: Anthropic has distinct image and document blocks, OpenAI has
+        image_url and file parts. Carrying the caller's own distinction through means
+        the per-provider conversion never has to guess from the media type alone.
+      properties:
+        type:
+          enum:
+          - file
+          title: Type
+          type: string
+        source:
+          $ref: '#/components/schemas/Base64AttachmentSource'
+        filename:
+          nullable: true
+          type: string
+      required:
+      - source
+      - type
+      title: FileContentBlock
     FileRetainResponse:
       description: Response model for file upload endpoint.
       example:
@@ -7093,7 +7132,7 @@ components:
           title: Type
           type: string
         source:
-          $ref: '#/components/schemas/Base64ImageSource'
+          $ref: '#/components/schemas/Base64AttachmentSource'
       required:
       - source
       - type
@@ -10979,12 +11018,14 @@ components:
     Content_anyOf_inner:
       discriminator:
         mapping:
+          file: '#/components/schemas/FileContentBlock'
           image: '#/components/schemas/ImageContentBlock'
           text: '#/components/schemas/TextContentBlock'
         propertyName: type
       oneOf:
       - $ref: '#/components/schemas/TextContentBlock'
       - $ref: '#/components/schemas/ImageContentBlock'
+      - $ref: '#/components/schemas/FileContentBlock'
     Content:
       anyOf:
       - type: string

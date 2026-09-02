@@ -10,7 +10,7 @@ each image is represented by an atomic placeholder::
 
     To reset the VPN, click the button shown:
 
-    ⟦hs-img:c414cd0e204d⟧
+    ⟦hs-att:c414cd0e204d⟧
 
     ...then reconnect.
 
@@ -39,7 +39,7 @@ from dataclasses import dataclass
 # A caller cannot forge one regardless -- see `neutralize_placeholders`.
 PLACEHOLDER_OPEN = "⟦"
 PLACEHOLDER_CLOSE = "⟧"
-_PLACEHOLDER_BODY = "hs-img:"
+_PLACEHOLDER_BODY = "hs-att:"
 
 #: How much of the sha256 the placeholder carries. The token is text that sits in
 #: the document body and in every chunk of it -- so it is stored, it is indexed by
@@ -47,8 +47,8 @@ _PLACEHOLDER_BODY = "hs-img:"
 #: digest cost 82 characters a reference; a 12-hex prefix costs 22, which matters
 #: once an article carries ten screenshots.
 #:
-#: 48 bits needs roughly 16 million images in ONE bank before a 1% chance of two
-#: sharing a prefix, and a collision is not silent: ``bank_images`` carries a
+#: 48 bits needs roughly 16 million attachments in ONE bank before a 1% chance of two
+#: sharing a prefix, and a collision is not silent: ``bank_attachments`` carries a
 #: unique index on (bank_id, short_id), so the second image fails its insert
 #: loudly instead of having its placeholder quietly resolve to the first one.
 SHORT_ID_LENGTH = 12
@@ -57,7 +57,7 @@ SHORT_ID_LENGTH = 12
 PLACEHOLDER_RE = re.compile(
     re.escape(PLACEHOLDER_OPEN)
     + re.escape(_PLACEHOLDER_BODY)
-    + r"(?P<image_id>[0-9a-f]{"
+    + r"(?P<attachment_id>[0-9a-f]{"
     + str(SHORT_ID_LENGTH)
     + r"})"
     + re.escape(PLACEHOLDER_CLOSE)
@@ -76,22 +76,22 @@ _PLACEHOLDER_LOOKALIKE_RE = re.compile(
 )
 
 
-def short_image_id(image_hash: str) -> str:
-    """The prefix of ``image_hash`` that identifies an image inside document text."""
-    return image_hash[:SHORT_ID_LENGTH]
+def short_attachment_id(attachment_hash: str) -> str:
+    """The prefix of ``attachment_hash`` that identifies an image inside document text."""
+    return attachment_hash[:SHORT_ID_LENGTH]
 
 
-def image_placeholder(image_hash: str) -> str:
-    """Render the atomic placeholder token standing in for ``image_hash``.
+def attachment_placeholder(attachment_hash: str) -> str:
+    """Render the atomic placeholder token standing in for ``attachment_hash``.
 
     Accepts either the full digest or an already-shortened id, so a caller that
     holds one of them does not have to know which.
     """
-    return f"{PLACEHOLDER_OPEN}{_PLACEHOLDER_BODY}{short_image_id(image_hash)}{PLACEHOLDER_CLOSE}"
+    return f"{PLACEHOLDER_OPEN}{_PLACEHOLDER_BODY}{short_attachment_id(attachment_hash)}{PLACEHOLDER_CLOSE}"
 
 
-def compute_image_hash(data: bytes) -> str:
-    """Content-address image bytes. Identical images dedupe on this hash."""
+def compute_attachment_hash(data: bytes) -> str:
+    """Content-address attachment bytes. Identical attachments dedupe on this hash."""
     return hashlib.sha256(data).hexdigest()
 
 
@@ -109,24 +109,54 @@ def neutralize_placeholders(text: str) -> str:
 def iter_placeholder_ids(text: str) -> Iterator[str]:
     """Yield the short image ids referenced by ``text``, in order, with repeats."""
     for match in PLACEHOLDER_RE.finditer(text):
-        yield match.group("image_id")
+        yield match.group("attachment_id")
 
 
-def contains_image(text: str) -> bool:
-    """Whether ``text`` references at least one image."""
+def describe_placeholders(text: str, attachments: "Mapping[str, LoadedAttachment] | None" = None) -> str:
+    """Replace every placeholder with a short human-readable note.
+
+    For text that becomes a *memory* rather than a prompt. The ``chunks`` and
+    ``verbatim`` extraction modes copy chunk text straight into ``fact_text``, so
+    without this a recalled fact would read "click the button shown:
+    ⟦hs-att:c414cd0e204d⟧" — a content hash presented to a user as though it were
+    knowledge. The note keeps the position and says what was there; the machine
+    -readable handle travels beside the memory in ``attachments``, not inside its
+    text.
+
+    ``attachments`` is optional and only sharpens the note ("[image: image/png]"
+    rather than "[attachment]"); the substitution happens either way.
+    """
+
+    def _describe(match: "re.Match[str]") -> str:
+        record = (attachments or {}).get(match.group("attachment_id"))
+        if record is None:
+            return "[attachment]"
+        if record.filename:
+            return f"[{record.kind}: {record.filename}]"
+        return f"[{record.kind}: {record.media_type}]"
+
+    return PLACEHOLDER_RE.sub(_describe, text)
+
+
+def contains_attachment(text: str) -> bool:
+    """Whether ``text`` references at least one attachment."""
     return PLACEHOLDER_RE.search(text) is not None
 
 
 @dataclass(frozen=True)
-class RetainImage:
-    """One decoded image from a multimodal retain item."""
+class RetainAttachment:
+    """One decoded attachment from a multimodal retain item."""
 
-    image_hash: str
+    attachment_hash: str
     media_type: str
     data: bytes
-    #: Index of the block this image came from, kept so the first appearance of an
-    #: image in a document can be recorded for provenance.
+    #: Index of the block this attachment came from, kept so the first appearance
+    #: of an attachment in a document can be recorded for provenance.
     block_index: int
+    #: "image" or "file" — the caller's own distinction, carried through so the
+    #: per-provider conversion never has to infer it from the media type.
+    kind: str = "image"
+    filename: str | None = None
 
     @property
     def byte_size(self) -> int:
@@ -135,17 +165,17 @@ class RetainImage:
 
 @dataclass(frozen=True)
 class CanonicalContent:
-    """A multimodal item flattened to text plus the images it references."""
+    """A multimodal item flattened to text plus the attachments it references."""
 
     text: str
-    #: Deduplicated by hash, in first-appearance order. The same image used twice
-    #: in one document yields two placeholders but one entry here, so it is stored
-    #: and recorded once.
-    images: tuple[RetainImage, ...]
+    #: Deduplicated by hash, in first-appearance order. The same attachment used
+    #: twice in one document yields two placeholders but one entry here, so it is
+    #: stored and recorded once.
+    attachments: tuple[RetainAttachment, ...]
 
     @property
-    def has_images(self) -> bool:
-        return bool(self.images)
+    def has_attachments(self) -> bool:
+        return bool(self.attachments)
 
 
 @dataclass(frozen=True)
@@ -156,7 +186,7 @@ class RetainText:
 
 
 #: One element of a multimodal item's content, in the order the caller wrote it.
-ContentBlock = RetainText | RetainImage
+ContentBlock = RetainText | RetainAttachment
 
 
 def _pad_to_blank_line(body: str) -> str:
@@ -173,17 +203,34 @@ def _pad_to_blank_line(body: str) -> str:
 
 
 @dataclass(frozen=True)
-class LoadedImage:
-    """Image bytes fetched back out of storage, ready to put in a prompt."""
+class LoadedAttachment:
+    """Attachment bytes fetched back out of storage, ready to put in a prompt."""
 
     media_type: str
     data: bytes
+    kind: str = "image"
+    filename: str | None = None
 
     def as_data_uri(self) -> str:
         return f"data:{self.media_type};base64,{base64.b64encode(self.data).decode()}"
 
 
-def build_prompt_parts(text: str, images: Mapping[str, LoadedImage]) -> list[dict[str, object]] | str:
+def _prompt_part(attachment: LoadedAttachment) -> dict[str, object]:
+    """The canonical (OpenAI-shaped) content part for one attachment.
+
+    Images become ``image_url``; everything else becomes a ``file`` part. Each
+    provider converts from these two shapes — see the ``_to_*`` helpers in the
+    provider modules — so the vocabulary is decided once, here.
+    """
+    if attachment.kind == "image":
+        return {"type": "image_url", "image_url": {"url": attachment.as_data_uri()}}
+    file_part: dict[str, object] = {"file_data": attachment.as_data_uri()}
+    if attachment.filename:
+        file_part["filename"] = attachment.filename
+    return {"type": "file", "file": file_part}
+
+
+def build_prompt_parts(text: str, attachments: Mapping[str, LoadedAttachment]) -> list[dict[str, object]] | str:
     """Turn placeholder text back into an interleaved multimodal user message.
 
     Returns OpenAI-style content parts — the canonical wire shape the providers
@@ -195,7 +242,7 @@ def build_prompt_parts(text: str, images: Mapping[str, LoadedImage]) -> list[dic
     Returns the plain string unchanged when there is nothing to interleave, so a
     text-only chunk produces byte-identical requests to before.
 
-    A placeholder with no entry in ``images`` degrades to a short textual note
+    A placeholder with no entry in ``attachments`` degrades to a short textual note
     rather than raising. The bytes can legitimately be gone — reclaimed, or a
     storage backend swapped underneath an old document — and extracting the
     surrounding prose is far better than failing the whole retain.
@@ -216,12 +263,12 @@ def build_prompt_parts(text: str, images: Mapping[str, LoadedImage]) -> list[dic
     cursor = 0
     for match in PLACEHOLDER_RE.finditer(text):
         pending.append(text[cursor : match.start()])
-        image = images.get(match.group("image_id"))
-        if image is None:
-            pending.append("[image unavailable]")
+        attachment = attachments.get(match.group("attachment_id"))
+        if attachment is None:
+            pending.append("[attachment unavailable]")
         else:
             _flush_text()
-            parts.append({"type": "image_url", "image_url": {"url": image.as_data_uri()}})
+            parts.append(_prompt_part(attachment))
         cursor = match.end()
     pending.append(text[cursor:])
     _flush_text()
@@ -230,7 +277,7 @@ def build_prompt_parts(text: str, images: Mapping[str, LoadedImage]) -> list[dic
 
 
 def canonicalize(blocks: Sequence[ContentBlock]) -> CanonicalContent:
-    """Flatten ordered text/image blocks into the canonical body plus its images.
+    """Flatten ordered text/attachment blocks into the canonical body plus its attachments.
 
     Image blocks must already be decoded and hashed; this decides only where each
     placeholder lands. A single text block canonicalizes to exactly its own text,
@@ -238,21 +285,21 @@ def canonicalize(blocks: Sequence[ContentBlock]) -> CanonicalContent:
     identical body -- and therefore an identical ``content_hash``.
     """
     body = ""
-    images: list[RetainImage] = []
+    attachments: list[RetainAttachment] = []
     seen: set[str] = set()
-    after_image = False
+    after_attachment = False
 
     for block in blocks:
         if isinstance(block, RetainText):
-            if after_image:
+            if after_attachment:
                 body = _pad_to_blank_line(body)
             body += neutralize_placeholders(block.text)
-            after_image = False
+            after_attachment = False
         else:
-            body = _pad_to_blank_line(body) + image_placeholder(block.image_hash)
-            after_image = True
-            if block.image_hash not in seen:
-                seen.add(block.image_hash)
-                images.append(block)
+            body = _pad_to_blank_line(body) + attachment_placeholder(block.attachment_hash)
+            after_attachment = True
+            if block.attachment_hash not in seen:
+                seen.add(block.attachment_hash)
+                attachments.append(block)
 
-    return CanonicalContent(text=body, images=tuple(images))
+    return CanonicalContent(text=body, attachments=tuple(attachments))

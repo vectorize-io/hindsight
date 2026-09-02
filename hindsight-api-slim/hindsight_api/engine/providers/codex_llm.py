@@ -412,6 +412,10 @@ class CodexLLM(LLMInterface):
         }
         return mapping.get(effort.lower(), "auto") if effort else "auto"
 
+    def supports_vision(self) -> bool:
+        """Codex runs OpenAI's own models, all of which are multimodal."""
+        return True
+
     async def verify_connection(self) -> None:
         """Verify Codex connection by making a simple test call."""
         try:

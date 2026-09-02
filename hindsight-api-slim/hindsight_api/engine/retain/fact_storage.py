@@ -398,6 +398,49 @@ async def _upsert_document_row(
         document_tags or [],
         preserved_created_at,
     )
+    await sync_document_attachments(conn, bank_id, document_id, combined_content)
+
+
+async def sync_document_attachments(conn, bank_id: str, document_id: str, text: str) -> None:
+    """Record which attachments this document references, derived from its text.
+
+    Called on every document write, from the one place every write funnels
+    through. The edge is *derived*, never supplied: the canonical text is the
+    source of truth for which attachments a document carries, so a re-ingest, an
+    append or a delta re-extraction cannot leave this table disagreeing with it.
+    That is why the retain pipeline itself knows nothing about attachments.
+
+    The rows exist for lifecycle, not for reads — a chunk's own text is what
+    recall resolves. They die with the document via the composite FK, so after a
+    delete a blob that no row in the bank still references can be reclaimed.
+    """
+    from .attachment_content import iter_placeholder_ids
+
+    referenced = sorted(set(iter_placeholder_ids(text or "")))
+
+    # Delete-then-insert rather than a diff: the set is tiny, and this way a
+    # document that lost an attachment on re-ingest cannot keep a stale row.
+    await conn.execute(
+        f"DELETE FROM {fq_table('document_attachments')} WHERE bank_id = $1 AND document_id = $2",
+        bank_id,
+        document_id,
+    )
+    if not referenced:
+        return
+    # The placeholder carries the short id; the row carries the full digest, so
+    # resolve through bank_attachments rather than storing a second key shape.
+    await conn.execute(
+        f"""
+        INSERT INTO {fq_table("document_attachments")} (bank_id, document_id, attachment_hash)
+        SELECT $1, $2, attachment_hash
+        FROM {fq_table("bank_attachments")}
+        WHERE bank_id = $1 AND short_id = ANY($3::text[])
+        ON CONFLICT (bank_id, document_id, attachment_hash) DO NOTHING
+        """,
+        bank_id,
+        document_id,
+        referenced,
+    )
 
 
 def _normalize_scopes(value: list | str | None) -> list | str | None:

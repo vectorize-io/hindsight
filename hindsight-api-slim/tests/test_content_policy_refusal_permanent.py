@@ -218,7 +218,7 @@ def _extraction_config() -> SimpleNamespace:
         retain_structured_chunk_size=1000,
         # Chunking budgets the image-aware splitter reads; these bodies carry no
         # images, so the values only have to exist.
-        retain_max_images_per_chunk=8,
+        retain_max_attachments_per_chunk=8,
     )
 
 

@@ -95,12 +95,12 @@ import type {
   GetAgentStatsData,
   GetAgentStatsErrors,
   GetAgentStatsResponses,
+  GetBankAttachmentData,
+  GetBankAttachmentErrors,
+  GetBankAttachmentResponses,
   GetBankConfigData,
   GetBankConfigErrors,
   GetBankConfigResponses,
-  GetBankImageData,
-  GetBankImageErrors,
-  GetBankImageResponses,
   GetBankProfileData,
   GetBankProfileErrors,
   GetBankProfileResponses,
@@ -1328,19 +1328,18 @@ export const exportDocuments = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Fetch an image retained inline with a document
+ * Fetch an attachment retained inline with a document
  *
- * Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
+ * Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads — so an agent can show or reason over the original behind an attachment-derived fact.
  *
- * Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+ * Bytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.
  */
-export const getBankImage = <ThrowOnError extends boolean = false>(
-  options: Options<GetBankImageData, ThrowOnError>
+export const getBankAttachment = <ThrowOnError extends boolean = false>(
+  options: Options<GetBankAttachmentData, ThrowOnError>
 ) =>
-  (options.client ?? client).get<GetBankImageResponses, GetBankImageErrors, ThrowOnError>({
-    url: "/v1/default/banks/{bank_id}/images/{image_id}",
-    ...options,
-  });
+  (options.client ?? client).get<GetBankAttachmentResponses, GetBankAttachmentErrors, ThrowOnError>(
+    { url: "/v1/default/banks/{bank_id}/attachments/{attachment_id}", ...options }
+  );
 
 /**
  * Download a stored file (async export archive)

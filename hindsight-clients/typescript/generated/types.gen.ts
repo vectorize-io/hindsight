@@ -589,11 +589,11 @@ export type BankTemplateConfig = {
    */
   retain_chunk_batch_size?: number | null;
   /**
-   * Retain Max Images Per Chunk
+   * Retain Max Attachments Per Chunk
    *
    * Hard cap on inline images in a single extraction chunk
    */
-  retain_max_images_per_chunk?: number | null;
+  retain_max_attachments_per_chunk?: number | null;
   /**
    * Mcp Enabled Tools
    *
@@ -935,15 +935,15 @@ export type BankTemplateMentalModel = {
 };
 
 /**
- * Base64ImageSource
+ * Base64AttachmentSource
  *
- * Inline image bytes, base64-encoded.
+ * Inline attachment bytes, base64-encoded.
  *
  * The only source type in this version. ``url`` (server-side fetch) and
  * ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
  * is modelled as a discriminated union on ``type`` rather than as bare fields.
  */
-export type Base64ImageSource = {
+export type Base64AttachmentSource = {
   /**
    * Type
    */
@@ -951,13 +951,13 @@ export type Base64ImageSource = {
   /**
    * Media Type
    *
-   * MIME type of the image. One of: image/png, image/jpeg, image/gif, image/webp.
+   * MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed type is accepted; whether the model can read it is the model's answer to give, and a provider that rejects it fails the retain with its own error.
    */
-  media_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  media_type: string;
   /**
    * Data
    *
-   * Base64-encoded image bytes (no data: URI prefix).
+   * Base64-encoded bytes (no data: URI prefix).
    */
   data: string;
 };
@@ -1048,6 +1048,56 @@ export type ChildOperationStatus = {
 };
 
 /**
+ * ChunkAttachment
+ *
+ * An attachment referenced by retained text, and where to fetch it.
+ */
+export type ChunkAttachment = {
+  /**
+   * Id
+   *
+   * The id inside the text's placeholder; a prefix of the bytes' sha256.
+   */
+  id: string;
+  /**
+   * Hash
+   *
+   * Full sha256 of the attachment bytes.
+   */
+  hash: string;
+  /**
+   * Kind
+   *
+   * 'image' or 'file', as the caller sent it.
+   */
+  kind: string;
+  /**
+   * Media Type
+   *
+   * MIME type of the attachment.
+   */
+  media_type: string;
+  /**
+   * Byte Size
+   *
+   * Size of the attachment in bytes.
+   */
+  byte_size: number;
+  /**
+   * Filename
+   *
+   * Original filename, when the caller supplied one.
+   */
+  filename?: string | null;
+  /**
+   * Url
+   *
+   * Bank-scoped API path serving the bytes. Requires the same authorization as the bank.
+   */
+  url: string;
+};
+
+/**
  * ChunkData
  *
  * Chunk data for a single chunk.
@@ -1072,49 +1122,11 @@ export type ChunkData = {
    */
   truncated?: boolean;
   /**
-   * Images
+   * Attachments
    *
-   * Images this chunk's text references, in order of first appearance, when it was retained with inline image content. The text keeps each image's placeholder token (⟦hs-img:...⟧) where the image sat, so a multimodal agent can render or reason over the original image at the position it occupied in the source document. Omitted for chunks with no images.
+   * Attachments this chunk's text references, in order of first appearance, when it was retained with inline content. The text keeps each attachment's placeholder token (⟦hs-att:...⟧) where it sat, so a multimodal agent can render or reason over the original at the position it occupied in the source document. Omitted when there are none.
    */
-  images?: Array<ChunkImage> | null;
-};
-
-/**
- * ChunkImage
- *
- * An image referenced by a chunk's text, and where to fetch it.
- */
-export type ChunkImage = {
-  /**
-   * Id
-   *
-   * The id inside the chunk text's placeholder; a prefix of the bytes' sha256.
-   */
-  id: string;
-  /**
-   * Hash
-   *
-   * Full sha256 of the image bytes.
-   */
-  hash: string;
-  /**
-   * Media Type
-   *
-   * MIME type of the image.
-   */
-  media_type: string;
-  /**
-   * Byte Size
-   *
-   * Size of the image in bytes.
-   */
-  byte_size: number;
-  /**
-   * Url
-   *
-   * Bank-scoped API path serving the image bytes. Requires the same authorization as the bank.
-   */
-  url: string;
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
@@ -1161,6 +1173,12 @@ export type ChunkResponse = {
    * Created At
    */
   created_at: string;
+  /**
+   * Attachments
+   *
+   * Attachments referenced by this chunk's text, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
@@ -1807,6 +1825,12 @@ export type DocumentResponse = {
    * The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured.
    */
   observation_scopes?: string | Array<Array<string>> | null;
+  /**
+   * Attachments
+   *
+   * Attachments referenced by this document, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
@@ -2223,6 +2247,30 @@ export type FeaturesInfo = {
 };
 
 /**
+ * FileContentBlock
+ *
+ * A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+ *
+ * Split from ``image`` rather than folded into one type because the providers
+ * split it: Anthropic has distinct image and document blocks, OpenAI has
+ * image_url and file parts. Carrying the caller's own distinction through means
+ * the per-provider conversion never has to guess from the media type alone.
+ */
+export type FileContentBlock = {
+  /**
+   * Type
+   */
+  type: "file";
+  source: Base64AttachmentSource;
+  /**
+   * Filename
+   *
+   * Original filename, passed to providers that show one to the model (e.g. OpenAI).
+   */
+  filename?: string | null;
+};
+
+/**
  * FileRetainResponse
  *
  * Response model for file upload endpoint.
@@ -2290,7 +2338,7 @@ export type ImageContentBlock = {
    * Type
    */
   type: "image";
-  source: Base64ImageSource;
+  source: Base64AttachmentSource;
 };
 
 /**
@@ -3109,6 +3157,9 @@ export type MemoryItem = {
         | ({
             type: "image";
           } & ImageContentBlock)
+        | ({
+            type: "file";
+          } & FileContentBlock)
       >;
   /**
    * Timestamp
@@ -8492,7 +8543,7 @@ export type ExportDocumentsResponses = {
 
 export type ExportDocumentsResponse = ExportDocumentsResponses[keyof ExportDocumentsResponses];
 
-export type GetBankImageData = {
+export type GetBankAttachmentData = {
   body?: never;
   headers?: {
     /**
@@ -8506,26 +8557,26 @@ export type GetBankImageData = {
      */
     bank_id: string;
     /**
-     * Image Id
+     * Attachment Id
      */
-    image_id: string;
+    attachment_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/images/{image_id}";
+  url: "/v1/default/banks/{bank_id}/attachments/{attachment_id}";
 };
 
-export type GetBankImageErrors = {
+export type GetBankAttachmentErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type GetBankImageError = GetBankImageErrors[keyof GetBankImageErrors];
+export type GetBankAttachmentError = GetBankAttachmentErrors[keyof GetBankAttachmentErrors];
 
-export type GetBankImageResponses = {
+export type GetBankAttachmentResponses = {
   /**
-   * Image bytes
+   * Attachment bytes
    */
   200: unknown;
 };

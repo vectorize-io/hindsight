@@ -15,13 +15,13 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.retain.image_content import compute_image_hash, short_image_id
+from hindsight_api.engine.retain.attachment_content import compute_attachment_hash, short_attachment_id
 
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
-PNG_HASH = compute_image_hash(PNG_BYTES)
-PNG_ID = short_image_id(PNG_HASH)
+PNG_HASH = compute_attachment_hash(PNG_BYTES)
+PNG_ID = short_attachment_id(PNG_HASH)
 
 
 def _image_block() -> dict:
@@ -68,17 +68,18 @@ async def test_a_recalled_chunk_carries_a_handle_for_the_image_it_shows(api_clie
     chunks = (await _recall(api_client, bank_id)).get("chunks") or {}
     assert chunks, "recall returned no chunks"
 
-    with_images = [chunk for chunk in chunks.values() if chunk.get("images")]
-    assert with_images, "no chunk reported the image it references"
+    with_images = [chunk for chunk in chunks.values() if chunk.get("attachments")]
+    assert with_images, "no chunk reported the attachment it references"
 
-    image = with_images[0]["images"][0]
+    image = with_images[0]["attachments"][0]
     # The short id is what document text carries; the full digest still identifies
     # the bytes.
     assert image["id"] == PNG_ID
     assert image["hash"] == PNG_HASH
+    assert image["kind"] == "image"
     assert image["media_type"] == "image/png"
     assert image["byte_size"] == len(PNG_BYTES)
-    assert image["url"] == f"/v1/default/banks/{bank_id}/images/{PNG_ID}"
+    assert image["url"] == f"/v1/default/banks/{bank_id}/attachments/{PNG_ID}"
 
     # The placeholder stays in the text, marking where the image belongs.
     assert PNG_ID in with_images[0]["text"]
@@ -90,7 +91,7 @@ async def test_the_returned_url_serves_the_original_bytes(api_client, memory):
     await _retain_article(api_client, bank_id)
 
     chunks = (await _recall(api_client, bank_id)).get("chunks") or {}
-    url = next(chunk["images"][0]["url"] for chunk in chunks.values() if chunk.get("images"))
+    url = next(chunk["attachments"][0]["url"] for chunk in chunks.values() if chunk.get("attachments"))
 
     response = await api_client.get(url)
 
@@ -111,7 +112,7 @@ async def test_a_text_only_chunk_reports_no_images(api_client, memory):
 
     chunks = (await _recall(api_client, bank_id)).get("chunks") or {}
     assert chunks
-    assert all(chunk.get("images") is None for chunk in chunks.values())
+    assert all(chunk.get("attachments") is None for chunk in chunks.values())
 
 
 @pytest.mark.asyncio
@@ -126,7 +127,7 @@ async def test_another_banks_image_is_not_readable_even_with_the_right_hash(api_
         json={"items": [{"content": "unrelated", "document_id": "x"}], "async": False},
     )
 
-    response = await api_client.get(f"/v1/default/banks/{other}/images/{PNG_ID}")
+    response = await api_client.get(f"/v1/default/banks/{other}/attachments/{PNG_ID}")
 
     assert response.status_code == 404
 
@@ -136,6 +137,6 @@ async def test_an_unknown_hash_is_a_404(api_client, memory):
     bank_id = f"prov-{uuid.uuid4().hex[:8]}"
     await _retain_article(api_client, bank_id)
 
-    response = await api_client.get(f"/v1/default/banks/{bank_id}/images/{'0' * 12}")
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/attachments/{'0' * 12}")
 
     assert response.status_code == 404

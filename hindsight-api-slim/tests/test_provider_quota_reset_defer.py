@@ -108,7 +108,7 @@ async def test_extract_facts_from_text_preserves_provider_quota_reset(monkeypatc
                 retain_structured_chunk_size=None,
                 # Chunking budgets the image-aware splitter reads; this body
                 # carries no images, so the values only have to exist.
-                retain_max_images_per_chunk=8,
+                retain_max_attachments_per_chunk=8,
             ),
         )
 

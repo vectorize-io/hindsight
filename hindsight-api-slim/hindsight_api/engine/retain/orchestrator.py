@@ -29,7 +29,7 @@ from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
 
 if TYPE_CHECKING:
-    from .image_store import RetainImageLoader
+    from .attachment_store import RetainAttachmentLoader
 
 
 @dataclass
@@ -1047,7 +1047,7 @@ async def _extract_and_embed(
     pool: Any = None,
     operation_id: str | None = None,
     schema: str | None = None,
-    image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> _EmbeddedExtraction:
     """Shared pipeline: extract facts from contents and generate embeddings."""
     set_stage("retain.extract_and_embed")
@@ -1061,7 +1061,7 @@ async def _extract_and_embed(
     # so in the item's `context`, which extraction already reads and which the dry-run
     # `agent_name` override is deprecated in favour of.
     extraction = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, config, pool, operation_id, schema, image_loader=image_loader
+        contents, llm_config, config, pool, operation_id, schema, attachment_loader=attachment_loader
     )
     extracted_facts, chunks, usage = extraction.facts, extraction.chunks, extraction.usage
     log_buffer.append(
@@ -1196,7 +1196,7 @@ async def retain_batch(
     webhook_manager: Any = None,
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
     audit_logger: Any = None,
-    image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> RetainBatchResult:
     """
     Process a batch of content through the retain pipeline.
@@ -1720,7 +1720,7 @@ async def retain_batch(
             document_body_override=document_body_override,
             delta_full_body=_delta_full_body,
             append_base_hash=append_base_hash,
-            image_loader=image_loader,
+            attachment_loader=attachment_loader,
         )
         if delta_result is not None:
             return delta_result
@@ -1740,7 +1740,7 @@ async def retain_batch(
     structured_chunk_size = config.retain_structured_chunk_size
     # Same reasoning for the image cap: it moves chunk boundaries in exactly the
     # same way, so it must come from this resolved config too.
-    max_images_per_chunk = config.retain_max_images_per_chunk
+    max_attachments_per_chunk = config.retain_max_attachments_per_chunk
     all_pre_chunks: list[str] = []
     chunk_to_content: list[int] = []  # maps chunk index -> index into contents
     for content_idx, content in enumerate(contents):
@@ -1751,7 +1751,7 @@ async def retain_batch(
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            max_images_per_chunk=max_images_per_chunk,
+            max_attachments_per_chunk=max_attachments_per_chunk,
         ):
             all_pre_chunks.append(chunk)
             chunk_to_content.append(content_idx)
@@ -1804,7 +1804,7 @@ async def retain_batch(
         append_base_hash=append_base_hash,
         append_base_watermark=append_base_watermark,
         force_reextract=force_reextract,
-        image_loader=image_loader,
+        attachment_loader=attachment_loader,
     )
 
 
@@ -2223,7 +2223,7 @@ async def _streaming_retain_batch(
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
     force_reextract: bool = False,
-    image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> RetainBatchResult:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -2528,7 +2528,7 @@ async def _streaming_retain_batch(
                     pool,
                     operation_id,
                     schema,
-                    image_loader=image_loader,
+                    attachment_loader=attachment_loader,
                 )
             finally:
                 reset_call_metadata(meta_token)
@@ -3449,7 +3449,7 @@ async def _try_delta_retain(
     # `document_body_override`, which an append fills with only the new tail.
     delta_full_body: str | None = None,
     append_base_hash: str | None = None,
-    image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> RetainBatchResult | None:
     """
     Attempt delta retain for a document upsert. Returns result tuple if delta
@@ -3765,7 +3765,7 @@ async def _try_delta_retain(
             pool,
             operation_id,
             schema,
-            image_loader=image_loader,
+            attachment_loader=attachment_loader,
         )
     finally:
         reset_call_metadata(meta_token)
@@ -4196,7 +4196,7 @@ def _chunk_contents_for_delta(contents: list[RetainContent], config) -> dict[int
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            max_images_per_chunk=config.retain_max_images_per_chunk,
+            max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
         )
         for chunk_text in chunks:
             result[global_chunk_idx] = chunk_text
