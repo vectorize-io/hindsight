@@ -1,129 +1,139 @@
 ---
-title: "Four New Coding Agents, and Four Ways to Fail Silently"
+title: "Four More Coding Agents That Remember Your Project"
 authors: [benfrank241]
 slug: "2026/09/02/coding-agents-050-four-new-harnesses"
 date: 2026-09-02T12:00
 tags: [hindsight, coding-agents, integrations, opencode, qwen-code, deepagents, pi, release]
-description: "Coding Agents 0.5.0 adds pi, Qwen Code, DeepAgents Dcode, and opencode 2, bringing the total to 16 harnesses. Each one broke a different assumption, and three of the four failed without producing a single error."
+description: "Coding Agents 0.5.0 adds pi, Qwen Code, DeepAgents Dcode, and opencode 2, taking the package to 16 agents that all share one memory per repository. Here's how coding agents work, and what changes when they remember."
 image: /img/blog/coding-agents-050-four-harnesses.png
 hide_table_of_contents: true
 ---
 
-![Coding Agents 0.5.0 adds four new harnesses: pi, Qwen Code, DeepAgents Dcode, and opencode 2](/img/blog/coding-agents-050-four-harnesses.png)
+![Coding Agents 0.5.0 adds four new harnesses: pi, Qwen Code, DeepAgents Dcode, and opencode 2, all sharing one memory](/img/blog/coding-agents-050-four-harnesses.png)
 
-`hindsight-coding-agents` 0.5.0 adds four harnesses: **pi**, **Qwen Code**, **DeepAgents Dcode**, and **opencode 2**. That brings the package to **16 supported agents**, all sharing one reflect-and-inject core.
+There are a lot of coding agents now, and they're getting genuinely good. Every few weeks another one lands with a real point of view about how an agent should work: how it plans, what it's allowed to touch, whether it runs in your terminal or headless in CI.
 
-The interesting part isn't the count. It's that three of these four integrations, when wired the obvious way, **failed without producing a single error**. They installed cleanly, started cleanly, and did nothing. Each one broke a different assumption, and each is worth knowing about if you're building against these hosts yourself.
+`hindsight-coding-agents` 0.5.0 adds four of them — **pi**, **Qwen Code**, **DeepAgents Dcode**, and **opencode 2** — bringing the package to **16 supported agents**.
+
+The reason to wire all sixteen isn't completeness. It's that they can share one memory.
 
 <!-- truncate -->
 
-## The four
+## How a coding agent actually works
 
-| Harness | Package | How it integrates |
-|---|---|---|
-| **pi** | `@earendil-works/pi-coding-agent` | Extension, shared with Prime Agent |
-| **Qwen Code** | `qwen-code` | Hooks, Claude Code protocol |
-| **DeepAgents Dcode** | LangChain's `deepagents-code` | Native Agent Plugin, Hooks V2 + MCP |
-| **opencode 2** | `@opencode-ai/cli@beta` | Plugin, v2 API |
+Strip away the interface and every one of these tools runs the same loop. You type a request. The agent reads files, greps for symbols, runs commands, forms a plan, and edits. When you close the session, that context is gone. Next time, it starts over.
 
-Install any of them the same way:
+That reset is the thing worth paying attention to, because of *what* gets lost.
 
-```bash
-hindsight-coding-agents install qwen-code
-```
+The agent can always rebuild the mechanical part. It can re-read your code, re-derive the call graph, and work out what a function does, and modern agents are very good at this. What it cannot rebuild is the part that was never in the code to begin with.
 
-`install all` wires every harness it finds. Ingestion is automatic from there: a repo's git history and conversations flow into its memory bank in the background, with no setup command to run.
+Most of a real fix is derivable from the codebase. The **last mile** usually isn't. It hinges on a decision someone made once:
 
-![hindsight-coding-agents install all, wiring seven detected coding agents in 3.2 seconds](/img/blog/hindsight-coding-agents-install-all.png)
+- Round half-up, because finance asked for it in a thread eight months ago.
+- Don't retry that endpoint, because it isn't idempotent and we found out the hard way.
+- When two records tie, prefer the older one, because of how the importer used to behave.
 
-Worth reading that output closely, because it's the whole design in one screen. Seven hosts, and **no two are wired the same way**: hooks merged into a JSON settings file, an extension registered, an MCP server added under user scope, a plugin patched into a YAML profile that applies to every profile on the machine. Every one of those is a different host contract. Behind all of them sits the same reflect-and-inject core.
+None of that is in the source. It's in git history, in pull request discussions, and in the conversations you already had with an agent last week. So every session, you re-explain it. And the agent, having no way to know better, confidently does the reasonable thing instead of the correct one.
 
-## opencode 2: same name, nothing else in common
+## What changes when the agent remembers
 
-opencode v2 installs alongside v1 as a separate binary, `opencode2`. It also rewrote the plugin contract end to end.
+`hindsight-coding-agents` attaches to the agent's own lifecycle. Nothing about how you work changes; the agent just stops starting cold.
 
-A v1 plugin is a function returning a bag of named hooks. A v2 plugin is `{id, setup(ctx)}`, where `ctx` hands out per-domain registration. The mapping is a near-total rewrite:
+**At session start**, the project's memory is seeded into context: what this repo is, its conventions, the decisions that already got made.
 
-| opencode v1 | opencode 2 |
-|---|---|
-| `chat.message` | `ctx.session.hook("prompt")` |
-| `experimental.chat.system.transform` | `ctx.session.hook("context")` |
-| `tool: {...}` | `ctx.tool.transform(d => d.add(...))` |
-| `event (session.idle)` | `ctx.event.subscribe()` |
-| `client.session.messages()` | `ctx.session.context({sessionID})` |
+**On each prompt**, a recall runs against what you just asked and pulls back what's relevant to *that* task, rather than dumping everything it knows.
 
-Here's the part that matters. **Hand either host the other's export and the plugin loads, registers nothing, and reports no error.** No warning, no failed import, no missing-hook complaint. The agent simply runs without memory, exactly as if you had never installed anything.
+**During the session**, the agent has native `hindsight_*` tools, so it can go look something up on purpose. "Have we hit this before?" becomes a query rather than a guess.
 
-There's a second trap underneath it. Both CLIs read the *same* `~/.config/opencode/opencode.json`, and v1 rejects the entire file if it sees v2's `plugins` key. So you cannot solve this with a second config entry; one entry has to serve both.
+**At the end**, the session is written back. What you decided this afternoon is what tomorrow's session starts from.
 
-What makes that possible is a difference in how each host resolves a plugin *directory*: v1 follows `package.json` `main`, while v2 ignores `main` and loads `<dir>/index.js`. One directory, two entry points, each host finding its own. Installing either harness wires both, and uninstalling either removes the shared entry.
+There's no setup step. Point it at a repo and its git history and conversations flow into a memory bank in the background as you work. On top of that sits a curated set of **knowledge pages** — architecture, conventions, in-flight initiatives — that future sessions read first.
 
-![opencode running locally](/img/blog/hindsight-coding-agents-opencode.png)
+## Sixteen agents, one memory
 
-opencode. Version 2 ships as a separate `opencode2` binary that installs *alongside* v1 and reads the very same `opencode.json`, which is exactly what forces one shared plugin entry rather than two.
+Here's the part that makes the count matter.
 
-## Qwen Code: the same protocol, in different units
+Agents working in the same repository **share one bank by default**, named `coding-agent::{gitProject}`. Not one bank per agent. One bank per project.
 
-Qwen Code speaks Claude Code's hook protocol field for field. Same stdin envelope (`session_id`, `transcript_path`, `cwd`, `hook_event_name`), same `hookSpecificOutput.additionalContext` output, same exit semantics, and a `settings.json` shape byte-for-byte what the installer already emitted.
+So what you tell pi is there when you open Prime Agent. A decision you made in Claude Code on Monday is available to Qwen Code on Thursday. If you try opencode 2 this week and go back to Codex next week, nothing is lost, because the memory was never the agent's in the first place — it belongs to the repo.
 
-So the harness spec is Claude Code's with three deltas, and the first one is nasty: **Qwen's hook timeouts are milliseconds. Everywhere else they're seconds.**
+That turns switching agents from a cost into a free choice. Use the one whose planning you like for architecture work, the headless one in CI, the fast one for small edits. They're all reading and writing the same project memory.
 
-Write the usual `30` and `60` and you've just registered **30-millisecond hooks**. Recall gets killed before it can return, and memory silently stops arriving.
+Each agent still stamps its own name on everything it retains, so you can always see which one learned what.
 
-Now the part that makes it genuinely dangerous: *that misconfiguration looks fine in testing.* Qwen spawns hooks without `detached: true` and kills only the direct child, so the orphaned work still completes. You watch a session, memory shows up, everything seems wired. It isn't; you're seeing a process that outlived its own timeout.
+## The four new agents
 
-The fix is structural rather than a corrected constant. The harness spec now declares a `timeoutUnit`, the installed values are `30000/30000/60000`, and the lifecycle tests normalize through it. Changing `30_000` to `30`, or dropping the unit entirely, now fails a test instead of shipping dead hooks.
+| Agent | Made by | Runs | Wires in as |
+|---|---|---|---|
+| **pi** | Earendil Works | Terminal | Extension, native tools |
+| **Qwen Code** | Qwen | Terminal, headless | Hooks + MCP |
+| **DeepAgents Dcode** | LangChain | Terminal, headless | Native Agent Plugin |
+| **opencode 2** | opencode (beta) | Terminal | Plugin, native tools |
 
-![Qwen Code at startup](/img/blog/hindsight-coding-agents-qwen-code.png)
+### pi
 
-Qwen Code. Its hooks land in `~/.qwen/settings.json` in a shape byte-for-byte identical to Claude Code's, which is what makes the millisecond timeout so easy to miss.
+An extension entry in `~/.pi/agent/settings.json` plus a companion skill, with native tools and no MCP layer in between. **Prime Agent**, a fork of pi, is wired the same way in its own settings file — and per the rule above, the two share a repo's memory while staying individually attributable.
 
-## DeepAgents Dcode: a Python repr in the transcript
+### Qwen Code
 
-LangChain's Dcode registers as a native Agent Plugin: a root `plugin.json` contributing the shared skill, the Hooks V2 `SessionStart` / `UserPromptSubmit` / `Stop` lifecycle, and the `hindsight_*` MCP server, installed through Dcode's own marketplace.
+Qwen Code already has its own project-context convention: it reads `QWEN.md` files from your repo, so it starts with whatever you've written down by hand.
 
-Running it against `deepagents-code 0.1.65` turned up three things.
+![Qwen Code at startup, reading three QWEN.md files](/img/blog/hindsight-coding-agents-qwen-code.png)
 
-**The transcript lags the Stop event**, which makes `last_assistant_message` load-bearing. But that field is computed as `str(content)` — a *Python repr* whenever the provider returns content blocks rather than a plain string. The effect was that roughly 1.8 KB of encrypted reasoning payload got retained as the assistant's turn, and because the repr never compared equal to the transcript's clean text, an already-flushed reply was appended again every single turn.
+Hindsight adds the half you didn't write down. `QWEN.md` holds what someone remembered to document; the memory bank holds what actually happened — the decisions in git history and the conversations that produced them. Hooks land in `~/.qwen/settings.json`, alongside MCP and the companion skill.
 
-That one is now guarded family-wide: any harness surfacing that field has to declare a decoder.
+### DeepAgents Dcode
 
-**Dcode rejects unannotated MCP calls in headless mode.** The six read-only tools needed `readOnlyHint` annotations, without which recall and the knowledge-page tools were unusable under `dcode -n`.
-
-**Dcode can't host the codebase survey.** `hindsight_ingest_document` writes, and Dcode's headless runtime gates writes by design. The survey falls back to another agent's CLI, which is the same path eight other harnesses already take.
+LangChain's coding agent, and the one with the most opinionated plugin story: it has its own marketplace and plugin manager, and Hindsight installs as a **native Agent Plugin** through it rather than being bolted on. One `plugin.json` contributes the skill, the session lifecycle, and the `hindsight_*` tools together.
 
 ![DeepAgents Dcode v0.1.65](/img/blog/hindsight-coding-agents-dcode.png)
 
-DeepAgents Dcode **v0.1.65**, the exact version the three fixes above were found against.
+Dcode also runs headless (`dcode -n`), which is where project memory earns its keep: an agent running unattended in CI has nobody to ask, so the context has to already be there.
 
-## pi: one config key, two hosts
+### opencode 2
 
-pi and Prime Agent are the same shape — Prime Agent is a fork — so they now share one extension adapter and one installer.
+The new opencode, currently in beta, shipping as `opencode2` alongside v1 rather than replacing it. It rewrote its plugin API from the ground up, so it's wired as a harness in its own right.
 
-The bug was smaller and just as quiet. Both hosts read the same `pi` key in `package.json`, so that key could only ever name one bundle. **The host it didn't name loaded the other's bundle and reported the wrong harness.** Memory worked; it was just filed under the wrong agent.
+![opencode running locally](/img/blog/hindsight-coding-agents-opencode.png)
 
-The key is gone. `hindsight-coding-agents install pi` and `install prime-agent` are now the only route for either, each with its own config section and its own agent stamped on the documents it retains.
+Both versions read the same config file and share a repo's bank, so you can try v2 without cutting yourself off from anything v1 already learned.
 
-## The pattern
+## Installing
 
-Four integrations, and the failure mode was the same shape in three of them: **the integration reports success and does nothing.**
+One command, and it wires every agent it finds on the machine:
 
-- opencode 2 loads a plugin that registers no hooks, silently.
-- Qwen Code registers hooks that time out in 30 ms, and hides it by letting orphaned processes finish.
-- Dcode retains a Python repr that never matches the transcript, so it duplicates instead of erroring.
-- pi loads a bundle under the wrong harness name.
+```bash
+npx @vectorize-io/hindsight-coding-agents install all
+```
 
-None of these throws. Every one of them passes a casual smoke test. That's the argument for testing an agent integration on what it *wrote to memory* after a real session, rather than on whether the install command exited zero — which is what the lifecycle tests now assert per harness.
+![hindsight-coding-agents install all, wiring seven detected coding agents in 3.2 seconds](/img/blog/hindsight-coding-agents-install-all.png)
 
-## Also in this release
+That output is worth a closer look, because it shows how little these hosts have in common. Seven agents, and **no two are wired the same way**: hooks merged into a JSON settings file, an extension registered, an MCP server added under user scope, a plugin patched into a YAML profile that applies to every profile on the machine.
 
-- **Per-source observation scoping**, so observations can be scoped by where they came from.
-- **The installed runtime keeps itself current**, rather than pinning whatever version you first installed.
-- **MCP tool safety annotations** across the tool surface.
+A bare `install` with no target changes nothing and just prints the choices, so you can look before wiring anything. Naming one agent works too:
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install qwen-code
+```
+
+Updating is the same command again.
+
+## A note on what that takes
+
+Behind the uniform install sits a genuinely varied set of host contracts, and a few of them are unforgiving in interesting ways.
+
+Qwen Code is the best example. Its hook protocol matches Claude Code's field for field — same envelope, same output shape, same exit semantics — with one difference: **its timeouts are milliseconds, not seconds.** Write the usual `30` and you've registered a 30-millisecond hook. Worse, it looks fine in testing, because Qwen kills only the direct child process, so the orphaned work still finishes and memory still appears. The harness spec now carries an explicit `timeoutUnit`, and the tests fail if it's dropped.
+
+That's the shape of most of this work. The install command is one line because the differences are absorbed here rather than by you.
+
+## Also in 0.5.0
+
+- **Per-source observation scoping**, so observations carry where they came from.
+- **The installed runtime keeps itself current** instead of pinning whatever you first installed.
+- **MCP tool safety annotations**, which some hosts require before they'll allow a call at all.
 - **A failed git probe no longer forks a worktree into its own bank.**
-- **Bank config is only ever added to, never overwritten.**
 
-0.5.1 followed immediately with one fix worth noting: the runtime auto-update never actually fired, because the registry returned a 406 on the `/latest` media type. If you installed 0.5.0 on day one, upgrade.
+0.5.1 followed with one fix worth having: the runtime auto-update wasn't firing. If you installed 0.5.0 on day one, update.
 
 ```bash
 npm install -g @vectorize-io/hindsight-coding-agents@latest
@@ -132,5 +142,5 @@ npm install -g @vectorize-io/hindsight-coding-agents@latest
 ## Learn more
 
 - [Coding Agents changelog](https://hindsight.vectorize.io/changelog/integrations/coding-agents) — every release in full
-- [Knowledge Pages for Coding Agents](/blog/2026/08/13/knowledge-pages-coding-agents) — the curated layer these agents read from
+- [Knowledge Pages for Coding Agents](/blog/2026/08/13/knowledge-pages-coding-agents) — the curated layer these agents read first
 - [One Bank or Many? A Field Guide to Structuring Agent Memory](/blog/2026/07/16/bank-strategy-agent-memory) — how memory is scoped across repos and agents
