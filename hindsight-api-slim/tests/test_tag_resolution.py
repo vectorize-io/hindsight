@@ -26,7 +26,7 @@ from hindsight_api.engine.search.tags import (
     filter_results_by_tag_groups,
 )
 
-VOCABULARY = ["typescript", "javascript", "kubernetes", "mongodb", "mongoose", "user:alice"]
+VOCABULARY = ["typescript", "javascript", "kubernetes", "mongodb", "mongoose", "user:alice", "user:kubernetes"]
 
 
 class _Result:
@@ -47,7 +47,7 @@ class _Result:
         ("typsecript", "typescript"),  # transposition, 0.47
         ("typescropt", "typescript"),  # substitution, 0.57
         ("kubernets", "kubernetes"),  # deletion, 0.62
-        ("user:alcie", "user:alice"),  # transposition inside a namespaced tag, 0.47
+        ("user:kubernets", "user:kubernetes"),  # deletion inside a namespaced tag, 0.62
     ],
 )
 def test_typos_resolve(token, tag):
@@ -74,6 +74,40 @@ def test_similarity_is_length_sensitive_so_short_tags_barely_tolerate_typos():
     assert expand_token("kakfa", ["kafka"]) == ["kakfa"]
     # The same class of edit in a longer tag resolves fine.
     assert expand_token("kubernets", ["kubernetes"]) == ["kubernetes"]
+
+
+def test_a_namespace_does_not_make_short_values_similar():
+    """The namespace is shared by every candidate, so it must not count as agreement.
+
+    Scored over the whole tag, `name:the` and `name:ts` reach 0.545 and resolve to each
+    other, while the values `the` and `ts` score 0.167 — every short tag in a namespace
+    would resolve to every other, and the longer the namespace the worse it gets.
+    """
+    vocabulary = ["name:ts", "name:fp", "name:dlq", "name:auth"]
+    for token in ("name:the", "name:a", "name:my", "name:does"):
+        assert expand_token(token, vocabulary) == [token], f"{token} should resolve to nothing"
+
+
+def test_namespaced_typos_still_resolve_when_the_value_is_long_enough():
+    """The guard above must not cost real typo tolerance inside a namespace."""
+    assert expand_token("name:typsecript", ["name:typescript", "name:ts"]) == ["name:typescript"]
+    assert expand_token("name:eror", ["name:error", "name:fp"]) == ["name:error"]
+
+
+def test_length_sensitivity_does_not_depend_on_being_namespaced():
+    """`alcie`/`alice` and `kakfa`/`kafka` are the same edit at the same length (both 0.20).
+
+    Scoring the whole tag made the first resolve and the second not, purely because one
+    sat in a namespace. Neither resolves now.
+    """
+    assert expand_token("user:alcie", ["user:alice"]) == ["user:alcie"]
+    assert expand_token("kakfa", ["kafka"]) == ["kakfa"]
+
+
+def test_a_token_does_not_resolve_across_namespaces():
+    """A `name:` token has no business reaching a `scope:` tag because the values match."""
+    assert expand_token("name:kubernets", ["scope:kubernetes"]) == ["name:kubernets"]
+    assert expand_token("kubernets", ["name:kubernetes"]) == ["kubernets"]
 
 
 def test_exact_hit_wins_over_similar_tags():

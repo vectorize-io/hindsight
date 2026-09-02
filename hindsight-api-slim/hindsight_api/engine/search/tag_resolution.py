@@ -72,6 +72,20 @@ def _normalize(value: str) -> str:
     return value.strip().casefold()
 
 
+def _split_namespace(tag: str) -> tuple[str, str]:
+    """``("name", "k8s")`` for ``name:k8s``; ``("", tag)`` when there is no namespace.
+
+    Similarity must be measured on the value alone. A namespace is shared by every
+    candidate in it, so its trigrams count as agreement between tags that have nothing
+    else in common — and the shorter the value, the larger that shared share is. Scored
+    whole, ``name:the`` and ``name:ts`` reach 0.545 while ``the`` and ``ts`` score 0.167,
+    so every short tag in a namespace resolves to every other. Longer namespaces
+    (``customer:``, ``component:``) make it worse.
+    """
+    namespace, separator, value = tag.partition(":")
+    return (namespace, value) if separator else ("", tag)
+
+
 def expand_token(token: str, vocabulary: list[str]) -> list[str]:
     """The tags ``token`` should match, given the bank's tag vocabulary.
 
@@ -89,7 +103,15 @@ def expand_token(token: str, vocabulary: list[str]) -> list[str]:
     if exact:
         return exact
 
-    scored = [(tag, trigram_similarity(normalized, _normalize(tag))) for tag in vocabulary]
+    token_namespace, token_value = _split_namespace(normalized)
+    scored = [
+        (tag, trigram_similarity(token_value, tag_value))
+        for tag in vocabulary
+        # Only within the same namespace: a `name:` token has no business resolving to a
+        # `scope:` tag just because the values look alike.
+        for tag_namespace, tag_value in [_split_namespace(_normalize(tag))]
+        if tag_namespace == token_namespace
+    ]
     # Closest tag first; ties keep vocabulary order, which list_tags returns by usage count.
     matches = [tag for tag, score in sorted(scored, key=lambda pair: -pair[1]) if score >= MIN_SIMILARITY]
     return matches or [token]
