@@ -3493,10 +3493,10 @@ paths:
       summary: Export documents (async)
       tags:
       - Document Transfer
-  /v1/default/banks/{bank_id}/images/{image_hash}:
+  /v1/default/banks/{bank_id}/images/{image_id}:
     get:
       description: |-
-        Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
+        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
 
         Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
       operationId: get_bank_image
@@ -3511,10 +3511,10 @@ paths:
         style: simple
       - explode: false
         in: path
-        name: image_hash
+        name: image_id
         required: true
         schema:
-          title: Image Hash
+          title: Image Id
           type: string
         style: simple
       - explode: false
@@ -5382,9 +5382,6 @@ components:
         retain_chunk_batch_size:
           nullable: true
           type: integer
-        retain_image_chunk_cost_chars:
-          nullable: true
-          type: integer
         retain_max_images_per_chunk:
           nullable: true
           type: integer
@@ -5799,8 +5796,13 @@ components:
     ChunkImage:
       description: "An image referenced by a chunk's text, and where to fetch it."
       properties:
+        id:
+          description: The id inside the chunk text's placeholder; a prefix of the
+            bytes' sha256.
+          title: Id
+          type: string
         hash:
-          description: sha256 of the image bytes; the id inside the chunk text's placeholder.
+          description: Full sha256 of the image bytes.
           title: Hash
           type: string
         media_type:
@@ -5819,6 +5821,7 @@ components:
       required:
       - byte_size
       - hash
+      - id
       - media_type
       - url
       title: ChunkImage

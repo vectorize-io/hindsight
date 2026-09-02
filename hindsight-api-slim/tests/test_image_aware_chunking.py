@@ -21,10 +21,10 @@ from hindsight_api.engine.retain.image_content import (
     compute_image_hash,
     contains_image,
     image_placeholder,
-    iter_placeholder_hashes,
+    iter_placeholder_ids,
+    short_image_id,
 )
 
-COST = 1500
 MAX_CHARS = 3000
 MAX_IMAGES = 8
 
@@ -33,13 +33,8 @@ def _placeholder(seed: bytes) -> str:
     return image_placeholder(compute_image_hash(seed))
 
 
-def _chunk(text: str, *, max_chars: int = MAX_CHARS, cost: int = COST, max_images: int = MAX_IMAGES) -> list[str]:
-    return chunk_text(
-        text,
-        max_chars,
-        image_cost_chars=cost,
-        max_images_per_chunk=max_images,
-    )
+def _chunk(text: str, *, max_chars: int = MAX_CHARS, max_images: int = MAX_IMAGES) -> list[str]:
+    return chunk_text(text, max_chars, max_images_per_chunk=max_images)
 
 
 def test_text_without_images_is_chunked_exactly_as_before() -> None:
@@ -59,13 +54,18 @@ def test_an_image_stays_with_the_sentence_that_introduces_it() -> None:
     assert chunks[0] == text
 
 
-def test_an_image_costs_against_the_character_budget() -> None:
-    """Prose that would fit alone is split once an image shares its chunk."""
+def test_an_image_costs_only_the_characters_its_placeholder_occupies() -> None:
+    """retain_chunk_size budgets TEXT. An image must not evict prose.
+
+    An earlier version charged each image a large slice of the budget. That split
+    an article's introduction away from the images it introduced, which is the
+    one thing inline images exist to prevent.
+    """
     prose = "x" * 2000
     image = _placeholder(b"diagram")
 
     assert len(_chunk(prose)) == 1
-    assert len(_chunk(f"{prose}\n\n{image}")) == 2
+    assert len(_chunk(f"{prose}\n\n{image}")) == 1
 
 
 def test_images_beyond_the_hard_cap_start_a_new_chunk() -> None:
@@ -76,20 +76,20 @@ def test_images_beyond_the_hard_cap_start_a_new_chunk() -> None:
     """
     text = "\n\n".join(_placeholder(f"img{i}".encode()) for i in range(5))
 
-    chunks = _chunk(text, cost=10, max_images=2)
+    chunks = _chunk(text, max_images=2)
 
     assert len(chunks) == 3
-    assert [sum(1 for _ in iter_placeholder_hashes(chunk)) for chunk in chunks] == [2, 2, 1]
+    assert [sum(1 for _ in iter_placeholder_ids(chunk)) for chunk in chunks] == [2, 2, 1]
 
 
 def test_every_placeholder_survives_chunking_intact() -> None:
     """A placeholder split across two chunks would strand its image."""
-    hashes = [compute_image_hash(f"img{i}".encode()) for i in range(6)]
-    text = "\n\n".join(f"{'body text ' * 100}{image_placeholder(h)}" for h in hashes)
+    ids = [short_image_id(compute_image_hash(f"img{i}".encode())) for i in range(6)]
+    text = "\n\n".join(f"{'body text ' * 100}{image_placeholder(i)}" for i in ids)
 
     chunks = _chunk(text)
 
-    assert [h for chunk in chunks for h in iter_placeholder_hashes(chunk)] == hashes
+    assert [i for chunk in chunks for i in iter_placeholder_ids(chunk)] == ids
 
 
 @pytest.mark.parametrize(
@@ -116,10 +116,8 @@ def test_a_run_too_long_to_share_a_chunk_is_split_by_the_ordinary_splitter() -> 
 
     assert contains_image(chunks[0])
     assert len(chunks) > 1
-    # No chunk exceeds the text budget once its images are charged for.
     for chunk in chunks:
-        images = sum(1 for _ in iter_placeholder_hashes(chunk))
-        assert len(chunk) + images * COST <= MAX_CHARS + len(image) * images
+        assert len(chunk) <= MAX_CHARS
 
 
 def test_the_chunk_sequence_reconstructs_the_document_in_order() -> None:
@@ -132,31 +130,42 @@ def test_the_chunk_sequence_reconstructs_the_document_in_order() -> None:
     assert "".join(chunks).replace("\n", "").replace(" ", "") == text.replace("\n", "").replace(" ", "")
 
 
-def test_an_image_costlier_than_the_whole_budget_still_fits() -> None:
-    """A small retain_chunk_size must not make images unchunkable.
+def test_an_introduction_stays_with_all_the_images_it_introduces() -> None:
+    """ "Here are the screenshots:" must not be split away from the screenshots.
 
-    The cost and the chunk size are configured independently — a bank or retain
-    strategy may lower retain_chunk_size below the image cost default for its own
-    text-only reasons. Regression for a config rule that rejected exactly that
-    (it broke `retain_chunk_size: 800` strategies on upgrade); the chunker clamps
-    instead.
+    Ten images and one sentence: everything belongs in one chunk, because the
+    images cost only their placeholders and the count cap allows them.
     """
-    image = _placeholder(b"big")
+    images = "\n\n".join(_placeholder(f"shot{i}".encode()) for i in range(10))
 
-    chunks = _chunk(f"intro\n\n{image}\n\noutro", max_chars=800, cost=5000)
+    chunks = _chunk(f"Here are the ten screenshots of the failure:\n\n{images}", max_images=16)
 
-    assert [h for chunk in chunks for h in iter_placeholder_hashes(chunk)] == [compute_image_hash(b"big")]
-    # Still idempotent under the clamp.
-    for chunk in chunks:
-        assert _chunk(chunk, max_chars=800, cost=5000) == [chunk]
+    assert len(chunks) == 1
+    assert "ten screenshots" in chunks[0]
+    assert sum(1 for _ in iter_placeholder_ids(chunks[0])) == 10
 
 
-def test_an_over_budget_image_does_not_starve_the_surrounding_text() -> None:
-    """Clamping must not drop prose — it only stops the image sharing a chunk."""
-    image = _placeholder(b"big")
+def test_images_first_then_the_text_that_explains_them() -> None:
+    """The reverse ordering: pictures, then the prose about them.
 
-    chunks = _chunk(f"intro\n\n{image}\n\noutro", max_chars=800, cost=5000)
+    A caller writes this whenever the explanation follows the evidence. The
+    packer used to flush the buffered images the moment the following prose was
+    too long to fit whole, emitting a chunk of images with no text at all — and
+    the explanation in a chunk with no images.
+    """
+    images = "\n\n".join(_placeholder(f"err{i}".encode()) for i in range(2))
+    prose = ". ".join(f"These show error state {i} in the console" for i in range(120))
 
-    joined = "".join(chunks)
-    assert "intro" in joined
-    assert "outro" in joined
+    chunks = _chunk(f"{images}\n\n{prose}")
+
+    assert sum(1 for _ in iter_placeholder_ids(chunks[0])) == 2
+    assert "These show error state 0" in chunks[0], "the images were stranded without their explanation"
+
+
+def test_a_chunk_never_exceeds_the_image_count_cap() -> None:
+    """The cap is the real bound on images, so it must hold under every ordering."""
+    images = "\n\n".join(_placeholder(f"i{i}".encode()) for i in range(9))
+
+    for text in (f"intro:\n\n{images}", f"{images}\n\ntrailing prose"):
+        for chunk in _chunk(text, max_images=4):
+            assert sum(1 for _ in iter_placeholder_ids(chunk)) <= 4

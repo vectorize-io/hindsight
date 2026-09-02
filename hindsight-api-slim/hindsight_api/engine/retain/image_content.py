@@ -10,11 +10,12 @@ each image is represented by an atomic placeholder::
 
     To reset the VPN, click the button shown:
 
-    ⟦hs-image:sha256:3f9a...⟧
+    ⟦hs-img:c414cd0e204d⟧
 
     ...then reconnect.
 
-The bytes live in file storage, content-addressed by the same hash. They are
+The bytes live in file storage, content-addressed by the full digest the
+placeholder's short id prefixes. They are
 resolved back into real image parts only when the extraction prompt is assembled
 (see ``fact_extraction``), so the image is seen by the model *in position*,
 alongside the prose that refers to it.
@@ -38,13 +39,27 @@ from dataclasses import dataclass
 # A caller cannot forge one regardless -- see `neutralize_placeholders`.
 PLACEHOLDER_OPEN = "⟦"
 PLACEHOLDER_CLOSE = "⟧"
-_PLACEHOLDER_BODY = "hs-image:sha256:"
+_PLACEHOLDER_BODY = "hs-img:"
 
-#: Matches a well-formed image placeholder and captures its hash.
+#: How much of the sha256 the placeholder carries. The token is text that sits in
+#: the document body and in every chunk of it -- so it is stored, it is indexed by
+#: BM25, and it spends chunk budget that could have been prose. The full 64-hex
+#: digest cost 82 characters a reference; a 12-hex prefix costs 22, which matters
+#: once an article carries ten screenshots.
+#:
+#: 48 bits needs roughly 16 million images in ONE bank before a 1% chance of two
+#: sharing a prefix, and a collision is not silent: ``bank_images`` carries a
+#: unique index on (bank_id, short_id), so the second image fails its insert
+#: loudly instead of having its placeholder quietly resolve to the first one.
+SHORT_ID_LENGTH = 12
+
+#: Matches a well-formed image placeholder and captures its short id.
 PLACEHOLDER_RE = re.compile(
     re.escape(PLACEHOLDER_OPEN)
     + re.escape(_PLACEHOLDER_BODY)
-    + r"(?P<hash>[0-9a-f]{64})"
+    + r"(?P<image_id>[0-9a-f]{"
+    + str(SHORT_ID_LENGTH)
+    + r"})"
     + re.escape(PLACEHOLDER_CLOSE)
 )
 
@@ -61,9 +76,18 @@ _PLACEHOLDER_LOOKALIKE_RE = re.compile(
 )
 
 
+def short_image_id(image_hash: str) -> str:
+    """The prefix of ``image_hash`` that identifies an image inside document text."""
+    return image_hash[:SHORT_ID_LENGTH]
+
+
 def image_placeholder(image_hash: str) -> str:
-    """Render the atomic placeholder token standing in for ``image_hash``."""
-    return f"{PLACEHOLDER_OPEN}{_PLACEHOLDER_BODY}{image_hash}{PLACEHOLDER_CLOSE}"
+    """Render the atomic placeholder token standing in for ``image_hash``.
+
+    Accepts either the full digest or an already-shortened id, so a caller that
+    holds one of them does not have to know which.
+    """
+    return f"{PLACEHOLDER_OPEN}{_PLACEHOLDER_BODY}{short_image_id(image_hash)}{PLACEHOLDER_CLOSE}"
 
 
 def compute_image_hash(data: bytes) -> str:
@@ -82,10 +106,10 @@ def neutralize_placeholders(text: str) -> str:
     return _PLACEHOLDER_LOOKALIKE_RE.sub("", text)
 
 
-def iter_placeholder_hashes(text: str) -> Iterator[str]:
-    """Yield the image hashes referenced by ``text``, in order, with repeats."""
+def iter_placeholder_ids(text: str) -> Iterator[str]:
+    """Yield the short image ids referenced by ``text``, in order, with repeats."""
     for match in PLACEHOLDER_RE.finditer(text):
-        yield match.group("hash")
+        yield match.group("image_id")
 
 
 def contains_image(text: str) -> bool:
@@ -192,7 +216,7 @@ def build_prompt_parts(text: str, images: Mapping[str, LoadedImage]) -> list[dic
     cursor = 0
     for match in PLACEHOLDER_RE.finditer(text):
         pending.append(text[cursor : match.start()])
-        image = images.get(match.group("hash"))
+        image = images.get(match.group("image_id"))
         if image is None:
             pending.append("[image unavailable]")
         else:

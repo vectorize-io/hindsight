@@ -4,7 +4,8 @@ Bytes go to the existing :class:`~hindsight_api.engine.storage.base.FileStorage`
 abstraction — the same one uploaded files use — so a deployment on S3, GCS or
 Azure keeps image bytes out of the database without any new backend. The
 ``bank_images`` row records what the bytes are and where they live, keyed by
-``(bank_id, image_hash)``.
+``(bank_id, image_hash)`` and resolved by the ``short_id`` prefix that document
+text carries.
 
 Both writes are idempotent, because the key *is* the content hash. That is what
 makes it safe to persist at the API ingress, before retain has decided whether it
@@ -22,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..memory_engine import fq_table
-from .image_content import LoadedImage, RetainImage
+from .image_content import LoadedImage, RetainImage, short_image_id
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ class StoredImage:
     """An image that is committed to file storage and recorded for a bank."""
 
     image_hash: str
+    #: The prefix of ``image_hash`` that document text references. Resolution
+    #: looks up by this, because it is what a placeholder can afford to carry.
+    short_id: str
     media_type: str
     byte_size: int
     storage_key: str
@@ -70,6 +74,7 @@ async def store_images(
         key = image_storage_key(bank_id, image.image_hash)
         record = StoredImage(
             image_hash=image.image_hash,
+            short_id=short_image_id(image.image_hash),
             media_type=image.media_type,
             byte_size=image.byte_size,
             storage_key=key,
@@ -89,29 +94,30 @@ async def store_images(
     return stored
 
 
-async def load_bank_images(conn, bank_id: str, image_hashes: Sequence[str]) -> dict[str, StoredImage]:
-    """Resolve image hashes — as found in a document or chunk's text — to their records.
+async def load_bank_images(conn, bank_id: str, image_ids: Sequence[str]) -> dict[str, StoredImage]:
+    """Resolve short image ids — as found in a document or chunk's text — to records.
 
-    Hashes with no row are simply absent from the result. That is not an error: a
-    document retained before its blob was reclaimed still names the hash in its
-    text, and a caller rendering provenance should show the fact without the image
-    rather than fail.
+    Keyed by ``short_id``, which is what a placeholder carries. Ids with no row
+    are simply absent from the result. That is not an error: a document retained
+    before its blob was reclaimed still names the id in its text, and a caller
+    rendering provenance should show the fact without the image rather than fail.
     """
-    if not image_hashes:
+    if not image_ids:
         return {}
 
     rows = await conn.fetch(
         f"""
-        SELECT image_hash, media_type, byte_size, storage_key
+        SELECT image_hash, short_id, media_type, byte_size, storage_key
         FROM {fq_table("bank_images")}
-        WHERE bank_id = $1 AND image_hash = ANY($2::text[])
+        WHERE bank_id = $1 AND short_id = ANY($2::text[])
         """,
         bank_id,
-        list(dict.fromkeys(image_hashes)),
+        list(dict.fromkeys(image_ids)),
     )
     return {
-        row["image_hash"]: StoredImage(
+        row["short_id"]: StoredImage(
             image_hash=row["image_hash"],
+            short_id=row["short_id"],
             media_type=row["media_type"],
             byte_size=row["byte_size"],
             storage_key=row["storage_key"],
@@ -145,42 +151,42 @@ class RetainImageLoader:
         self._cached_bytes = 0
         self._lock = asyncio.Lock()
 
-    async def load(self, image_hashes: Sequence[str]) -> dict[str, LoadedImage]:
-        """Resolve hashes to bytes. Hashes that cannot be resolved are omitted."""
-        wanted = list(dict.fromkeys(image_hashes))
+    async def load(self, image_ids: Sequence[str]) -> dict[str, LoadedImage]:
+        """Resolve short image ids to bytes. Ids that cannot be resolved are omitted."""
+        wanted = list(dict.fromkeys(image_ids))
         if not wanted:
             return {}
 
-        resolved = {h: self._cache[h] for h in wanted if h in self._cache}
-        missing = [h for h in wanted if h not in resolved]
+        resolved = {i: self._cache[i] for i in wanted if i in self._cache}
+        missing = [i for i in wanted if i not in resolved]
         if not missing:
             return resolved
 
         async with self._backend.acquire() as conn:
             records = await load_bank_images(conn, self._bank_id, missing)
 
-        for image_hash in missing:
-            record = records.get(image_hash)
+        for image_id in missing:
+            record = records.get(image_id)
             if record is None:
                 # No row: the image was never stored for this bank, or its row was
                 # reclaimed. The placeholder degrades to a note in the prompt.
-                logger.warning("No bank_images row for %s in bank %s; extracting without it", image_hash, self._bank_id)
+                logger.warning("No bank_images row for %s in bank %s; extracting without it", image_id, self._bank_id)
                 continue
             try:
                 data = await self._file_storage.retrieve(record.storage_key)
             except FileNotFoundError:
                 logger.warning(
                     "bank_images row for %s in bank %s points at missing key %s; extracting without it",
-                    image_hash,
+                    image_id,
                     self._bank_id,
                     record.storage_key,
                 )
                 continue
             loaded = LoadedImage(media_type=record.media_type, data=data)
-            resolved[image_hash] = loaded
+            resolved[image_id] = loaded
             async with self._lock:
-                if image_hash not in self._cache and self._cached_bytes + len(data) <= self._max_cached_bytes:
-                    self._cache[image_hash] = loaded
+                if image_id not in self._cache and self._cached_bytes + len(data) <= self._max_cached_bytes:
+                    self._cache[image_id] = loaded
                     self._cached_bytes += len(data)
 
         return resolved
@@ -202,11 +208,20 @@ async def _record_images(conn, bank_id: str, images: Sequence[StoredImage]) -> N
     # means an identical image, and there is nothing to update. It also makes two
     # concurrent retains of the same image a no-op for the loser instead of a
     # deadlock-prone write.
+    #
+    # The conflict target is deliberately the PK and NOT (bank_id, short_id). A
+    # short-id clash between two *different* images must not be swallowed — it
+    # would leave the second image unrecorded and its placeholder resolving to the
+    # first. The unique index on (bank_id, short_id) therefore raises instead, and
+    # the retain fails where an operator can see it.
     await conn.executemany(
         f"""
-        INSERT INTO {fq_table("bank_images")} (bank_id, image_hash, media_type, byte_size, storage_key)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO {fq_table("bank_images")} (bank_id, image_hash, short_id, media_type, byte_size, storage_key)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (bank_id, image_hash) DO NOTHING
         """,
-        [(bank_id, image.image_hash, image.media_type, image.byte_size, image.storage_key) for image in images],
+        [
+            (bank_id, image.image_hash, image.short_id, image.media_type, image.byte_size, image.storage_key)
+            for image in images
+        ],
     )

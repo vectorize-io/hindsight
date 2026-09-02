@@ -14,8 +14,9 @@ from hindsight_api.engine.retain.image_content import (
     compute_image_hash,
     contains_image,
     image_placeholder,
-    iter_placeholder_hashes,
+    iter_placeholder_ids,
     neutralize_placeholders,
+    short_image_id,
 )
 
 PNG = b"\x89PNG\r\n\x1a\n fake bytes"
@@ -89,8 +90,9 @@ def test_repeated_image_is_placed_twice_but_stored_once() -> None:
 
     result = canonicalize([first, RetainText("and again:"), again])
 
+    short = short_image_id(first.image_hash)
     assert result.images == (first,)
-    assert list(iter_placeholder_hashes(result.text)) == [first.image_hash, first.image_hash]
+    assert list(iter_placeholder_ids(result.text)) == [short, short]
 
 
 def test_identical_bytes_hash_identically_and_different_bytes_do_not() -> None:
@@ -113,7 +115,7 @@ def test_caller_authored_text_cannot_forge_an_image_reference() -> None:
 
 
 def test_malformed_lookalikes_are_scrubbed_too() -> None:
-    assert neutralize_placeholders("x ⟦hs-image:sha256:not-hex⟧ y") == "x  y"
+    assert neutralize_placeholders("x ⟦hs-img:not-hex⟧ y") == "x  y"
 
 
 def test_placeholder_survives_the_ingress_sanitizer_byte_for_byte() -> None:

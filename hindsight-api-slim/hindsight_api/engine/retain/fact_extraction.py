@@ -648,77 +648,79 @@ def _iter_image_aware_chunks(
     text: str,
     max_chars: int,
     *,
-    image_cost_chars: int,
     max_images_per_chunk: int,
 ) -> Iterator[str]:
-    """Chunk text that carries image placeholders, budgeting for the images.
+    """Chunk text that carries image placeholders, keeping each image with its prose.
 
-    A chunk's budget is spent by its prose *and* by the images it references,
-    because both land in the same extraction call — an image-bearing chunk that
-    also carried a full ``max_chars`` of text would overflow the model's context.
-    A second, absolute cap bounds the image count regardless of budget, since many
-    small images could otherwise satisfy the character arithmetic and still exceed
-    a provider's per-request image limit.
+    ``max_chars`` bounds the *text*: a placeholder costs only the ~22 characters
+    it occupies, and the image behind it costs nothing against this budget. An
+    earlier version charged each image a large slice of the budget, reasoning
+    that the image consumes model context too. That was wrong in a way the
+    feature cannot afford: an article reading "here are the screenshots:"
+    followed by ten images had the introduction split away from every one of
+    them, and two images could not even share a chunk. The real constraint is
+    how many images one request may carry, which is ``max_images_per_chunk``.
 
-    Packing is greedy and left-to-right so an image stays in the same chunk as the
-    prose that introduces it wherever the budget allows — that adjacency is the
-    entire reason to accept inline images rather than retain them separately.
+    Packing is greedy and left-to-right, and an over-long run of prose is split
+    against the room that is *left* rather than the whole budget, so the images
+    already buffered keep the first piece of it. That is what makes both
+    orderings work — prose-then-image, and image-then-prose, which a caller
+    writes when the pictures come first and the explanation follows.
 
     Idempotent, like :func:`chunk_text`: every chunk this yields is within both
     budgets, so re-chunking one returns it unchanged and ``chunk_id`` stays stable
     across re-ingests (issue #2301).
     """
-    # An image can cost at most the whole budget, never more. The cost and the
-    # chunk size are configured independently — a bank or retain strategy may
-    # lower retain_chunk_size below the image default for reasons of its own —
-    # and without this an image would exceed a budget it could never fit in,
-    # flushing forever and yielding a chunk per placeholder with no text at all.
-    # Config validation deliberately does NOT reject that combination: doing so
-    # made text-only configs invalid because of an image default they never
-    # chose. Clamping degrades gracefully instead — the image simply leaves less
-    # room for prose beside it.
-    image_cost_chars = min(image_cost_chars, max_chars)
+    # Below this, splitting against the leftover room would shred the run into
+    # fragments to save one partial line; flush and use the full budget instead.
+    minimum_useful_room = max(max_chars // 4, 1)
 
     buffered: list[str] = []
-    cost = 0
+    used = 0
     images = 0
 
     def _flush() -> Iterator[str]:
-        nonlocal buffered, cost, images
+        nonlocal buffered, used, images
         if buffered:
             packed = "".join(buffered).strip()
             buffered = []
-            cost = 0
+            used = 0
             images = 0
             if packed:
                 yield packed
 
+    def _append(piece: str, is_image: bool) -> None:
+        nonlocal used, images
+        buffered.append(piece)
+        used += len(piece)
+        images += 1 if is_image else 0
+
     for segment in _iter_placeholder_segments(text):
         if segment.is_image:
-            if buffered and (cost + image_cost_chars > max_chars or images + 1 > max_images_per_chunk):
+            if buffered and (used + len(segment.text) > max_chars or images + 1 > max_images_per_chunk):
                 yield from _flush()
-            buffered.append(segment.text)
-            cost += image_cost_chars
-            images += 1
+            _append(segment.text, is_image=True)
             continue
 
-        if cost + len(segment.text) <= max_chars:
-            buffered.append(segment.text)
-            cost += len(segment.text)
+        if used + len(segment.text) <= max_chars:
+            _append(segment.text, is_image=False)
             continue
 
-        # The run does not fit alongside what is already buffered. Close the open
-        # chunk, then split the run on its own with the ordinary sentence-aware
-        # splitter, whose boundaries are the ones delta retain already matches.
-        yield from _flush()
-        pieces = list(_iter_recursive_splits(segment.text, max_chars, _RECURSIVE_TEXT_SEPARATORS))
-        if not pieces:
-            continue
-        # All but the last go out immediately; the last stays open so a following
-        # image can join the sentence that introduces it.
-        yield from pieces[:-1]
-        buffered.append(pieces[-1])
-        cost = len(pieces[-1])
+        # The run does not fit whole. Split it with the ordinary sentence-aware
+        # splitter — whose boundaries delta retain already matches — against the
+        # room left in the open chunk, so its first piece can join whatever is
+        # buffered instead of the buffer being flushed on its own.
+        room = max_chars - used
+        keep_open = bool(buffered) and room >= minimum_useful_room
+        if not keep_open:
+            # Nothing worth joining, or too little room to be worth it: close the
+            # chunk and split against the full budget.
+            yield from _flush()
+        budget = room if keep_open else max_chars
+        for piece in _iter_recursive_splits(segment.text, budget, _RECURSIVE_TEXT_SEPARATORS):
+            if buffered and used + len(piece) > max_chars:
+                yield from _flush()
+            _append(piece, is_image=False)
 
     yield from _flush()
 
@@ -728,8 +730,7 @@ def iter_chunks(
     max_chars: int,
     structured_chunk_size: int | None = None,
     *,
-    image_cost_chars: int | None = None,
-    max_images_per_chunk: int = 1,
+    max_images_per_chunk: int | None = None,
 ) -> Iterator[str]:
     """Stream the chunks of ``text``, in order — the lazy form of :func:`chunk_text`.
 
@@ -745,13 +746,8 @@ def iter_chunks(
     # it takes its own path. Text with no placeholders — every document retained
     # before inline images existed, and every text-only one after — reaches the
     # code below unchanged, byte for byte.
-    if image_cost_chars is not None and image_content.contains_image(text):
-        yield from _iter_image_aware_chunks(
-            text,
-            max_chars,
-            image_cost_chars=image_cost_chars,
-            max_images_per_chunk=max_images_per_chunk,
-        )
+    if max_images_per_chunk is not None and image_content.contains_image(text):
+        yield from _iter_image_aware_chunks(text, max_chars, max_images_per_chunk=max_images_per_chunk)
         return
 
     # If text is small enough, return as-is
@@ -799,8 +795,7 @@ def chunk_text(
     max_chars: int,
     structured_chunk_size: int | None = None,
     *,
-    image_cost_chars: int | None = None,
-    max_images_per_chunk: int = 1,
+    max_images_per_chunk: int | None = None,
 ) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
@@ -824,11 +819,9 @@ def chunk_text(
         max_chars: Target maximum characters per chunk
         structured_chunk_size: Maximum characters for a single JSONL line or
             conversation turn to keep whole. Defaults to ``max_chars``.
-        image_cost_chars: What one inline image spends against ``max_chars``.
-            ``None`` (the default) means the caller has no image budget to apply,
-            and text carrying image placeholders is chunked as ordinary text.
-        max_images_per_chunk: Absolute cap on images in one chunk, applied
-            alongside the character budget.
+        max_images_per_chunk: Cap on images in one chunk. ``None`` (the default)
+            means the caller applies no image handling, and text carrying image
+            placeholders is chunked as ordinary text.
 
     Returns:
         List of text chunks, roughly under max_chars
@@ -838,7 +831,6 @@ def chunk_text(
             text,
             max_chars,
             structured_chunk_size=structured_chunk_size,
-            image_cost_chars=image_cost_chars,
             max_images_per_chunk=max_images_per_chunk,
         )
     )
@@ -1749,7 +1741,7 @@ async def _extract_facts_from_chunk(
     # images comes back as the same plain string it always was.
     user_content: Any = user_message
     if image_loader is not None and image_content.contains_image(user_message):
-        loaded = await image_loader.load(list(image_content.iter_placeholder_hashes(user_message)))
+        loaded = await image_loader.load(list(image_content.iter_placeholder_ids(user_message)))
         user_content = image_content.build_prompt_parts(user_message, loaded)
 
     # Opt into context caching when the provider supports it. The prompt and
@@ -2275,7 +2267,6 @@ async def extract_facts_from_text(
         text,
         max_chars=config.retain_chunk_size,
         structured_chunk_size=config.retain_structured_chunk_size,
-        image_cost_chars=config.retain_image_chunk_cost_chars,
         max_images_per_chunk=config.retain_max_images_per_chunk,
     )
 
@@ -2538,7 +2529,6 @@ async def extract_facts_from_contents_batch_api(
             item.content,
             max_chars=config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
-            image_cost_chars=config.retain_image_chunk_cost_chars,
             max_images_per_chunk=config.retain_max_images_per_chunk,
         )
 
@@ -2993,7 +2983,6 @@ def _extract_facts_chunks(
             content.content,
             config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
-            image_cost_chars=config.retain_image_chunk_cost_chars,
             max_images_per_chunk=config.retain_max_images_per_chunk,
         )
         for chunk in chunks:

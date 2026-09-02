@@ -15,12 +15,13 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.retain.image_content import compute_image_hash
+from hindsight_api.engine.retain.image_content import compute_image_hash, short_image_id
 
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 PNG_HASH = compute_image_hash(PNG_BYTES)
+PNG_ID = short_image_id(PNG_HASH)
 
 
 def _image_block() -> dict:
@@ -71,13 +72,16 @@ async def test_a_recalled_chunk_carries_a_handle_for_the_image_it_shows(api_clie
     assert with_images, "no chunk reported the image it references"
 
     image = with_images[0]["images"][0]
+    # The short id is what document text carries; the full digest still identifies
+    # the bytes.
+    assert image["id"] == PNG_ID
     assert image["hash"] == PNG_HASH
     assert image["media_type"] == "image/png"
     assert image["byte_size"] == len(PNG_BYTES)
-    assert image["url"] == f"/v1/default/banks/{bank_id}/images/{PNG_HASH}"
+    assert image["url"] == f"/v1/default/banks/{bank_id}/images/{PNG_ID}"
 
     # The placeholder stays in the text, marking where the image belongs.
-    assert PNG_HASH in with_images[0]["text"]
+    assert PNG_ID in with_images[0]["text"]
 
 
 @pytest.mark.asyncio
@@ -122,7 +126,7 @@ async def test_another_banks_image_is_not_readable_even_with_the_right_hash(api_
         json={"items": [{"content": "unrelated", "document_id": "x"}], "async": False},
     )
 
-    response = await api_client.get(f"/v1/default/banks/{other}/images/{PNG_HASH}")
+    response = await api_client.get(f"/v1/default/banks/{other}/images/{PNG_ID}")
 
     assert response.status_code == 404
 
@@ -132,6 +136,6 @@ async def test_an_unknown_hash_is_a_404(api_client, memory):
     bank_id = f"prov-{uuid.uuid4().hex[:8]}"
     await _retain_article(api_client, bank_id)
 
-    response = await api_client.get(f"/v1/default/banks/{bank_id}/images/{'0' * 64}")
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/images/{'0' * 12}")
 
     assert response.status_code == 404

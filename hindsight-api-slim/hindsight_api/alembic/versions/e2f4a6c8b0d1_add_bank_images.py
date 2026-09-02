@@ -64,6 +64,7 @@ def _pg_upgrade() -> None:
         CREATE TABLE IF NOT EXISTS {schema}bank_images (
             bank_id TEXT NOT NULL,
             image_hash VARCHAR(64) NOT NULL,
+            short_id VARCHAR(12) NOT NULL,
             media_type TEXT NOT NULL,
             byte_size BIGINT NOT NULL,
             storage_key TEXT NOT NULL,
@@ -74,10 +75,17 @@ def _pg_upgrade() -> None:
         )
         """
     )
+    # The document text references an image by `short_id` (a prefix of the
+    # digest), so that is what resolution looks up — and it must identify exactly
+    # one image. UNIQUE turns the astronomically unlikely prefix collision into a
+    # failed insert the operator sees, rather than a placeholder that silently
+    # resolves to somebody else's picture.
+    op.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_images_short_id ON {schema}bank_images (bank_id, short_id)")
 
 
 def _pg_downgrade() -> None:
     schema = _pg_schema_prefix()
+    op.execute(f"DROP INDEX IF EXISTS {schema}uq_bank_images_short_id")
     op.execute(f"DROP TABLE IF EXISTS {schema}bank_images")
 
 
@@ -90,6 +98,7 @@ def _oracle_upgrade() -> None:
         CREATE TABLE IF NOT EXISTS bank_images (
             bank_id VARCHAR2(256) NOT NULL,
             image_hash VARCHAR2(64) NOT NULL,
+            short_id VARCHAR2(12) NOT NULL,
             media_type VARCHAR2(64) NOT NULL,
             byte_size NUMBER NOT NULL,
             storage_key VARCHAR2(1024) NOT NULL,
@@ -100,6 +109,7 @@ def _oracle_upgrade() -> None:
         )
         """
     )
+    op.execute("CREATE UNIQUE INDEX uq_bank_images_short_id ON bank_images (bank_id, short_id)")
 
 
 def _oracle_downgrade() -> None:

@@ -810,12 +810,11 @@ class _RetainChunkingConfig:
     append path re-chunks a reconstructed body. If any of them chunked under
     different settings, a piece would re-split, two chunks would share a
     ``chunk_index``, and their ``chunk_id``s would collide (issue #2301). The
-    image budget is part of that agreement, not an extra a caller may forget.
+    image cap is part of that agreement, not an extra a caller may forget.
     """
 
     chunk_size: int
     structured_chunk_size: int | None
-    image_cost_chars: int
     max_images_per_chunk: int
 
 
@@ -905,7 +904,6 @@ def _rejoin_native_chunks(
     chunk_size: int,
     structured_chunk_size: int | None,
     *,
-    image_cost_chars: int,
     max_images_per_chunk: int,
 ) -> str | None:
     """Rebuild the sub-batch text for a run of consecutive native chunks.
@@ -942,7 +940,6 @@ def _rejoin_native_chunks(
             text,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            image_cost_chars=image_cost_chars,
             max_images_per_chunk=max_images_per_chunk,
         )
         if rechunked == chunks:
@@ -1023,7 +1020,6 @@ def _iter_raw_sub_batches(
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
-    image_cost_chars: int,
     max_images_per_chunk: int,
 ) -> Iterator[_RawSubBatch]:
     """Stream the sub-batches of ``contents`` — see ``_split_contents_into_sub_batches``.
@@ -1047,7 +1043,6 @@ def _iter_raw_sub_batches(
             text,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            image_cost_chars=image_cost_chars,
             max_images_per_chunk=max_images_per_chunk,
         )
 
@@ -1120,7 +1115,6 @@ def _iter_raw_sub_batches(
                         run,
                         chunk_size,
                         structured_chunk_size,
-                        image_cost_chars=image_cost_chars,
                         max_images_per_chunk=max_images_per_chunk,
                     )
                 slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]
@@ -1179,7 +1173,6 @@ def iter_sub_batches(
         tokens_per_batch,
         chunk_size=chunk_size,
         structured_chunk_size=structured_chunk_size,
-        image_cost_chars=config.retain_image_chunk_cost_chars,
         max_images_per_chunk=config.retain_max_images_per_chunk,
     ):
         if held is not None:
@@ -5520,7 +5513,6 @@ class MemoryEngine(MemoryEngineInterface):
         return _RetainChunkingConfig(
             chunk_size=config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
-            image_cost_chars=config.retain_image_chunk_cost_chars,
             max_images_per_chunk=config.retain_max_images_per_chunk,
         )
 
@@ -5674,7 +5666,6 @@ class MemoryEngine(MemoryEngineInterface):
                             existing_text,
                             chunking_config.chunk_size,
                             structured_chunk_size=chunking_config.structured_chunk_size,
-                            image_cost_chars=chunking_config.image_cost_chars,
                             max_images_per_chunk=chunking_config.max_images_per_chunk,
                         )
                     )
@@ -6206,30 +6197,30 @@ class MemoryEngine(MemoryEngineInterface):
     async def resolve_bank_images(
         self,
         bank_id: str,
-        image_hashes: "Sequence[str]",
+        image_ids: "Sequence[str]",
         request_context: "RequestContext",
     ) -> "dict[str, StoredImage]":
-        """Look up the metadata for images a bank's chunks reference.
+        """Look up the metadata for images a bank's chunks reference, by short id.
 
         Used to turn the placeholders in recalled chunk text into something a
-        client can render. Hashes with no row are omitted rather than raising: a
+        client can render. Ids with no row are omitted rather than raising: a
         document whose image bytes are gone should still recall its facts.
         """
         from .retain.image_store import load_bank_images
 
-        if not image_hashes:
+        if not image_ids:
             return {}
         profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         if profile is None:
             return {}
         backend = await self._get_backend()
         async with backend.acquire() as conn:
-            return await load_bank_images(conn, bank_id, image_hashes)
+            return await load_bank_images(conn, bank_id, image_ids)
 
     async def retrieve_bank_image(
         self,
         bank_id: str,
-        image_hash: str,
+        image_id: str,
         request_context: "RequestContext",
     ) -> "LoadedImage | None":
         """Fetch one image's media type and bytes, authorized against ``bank_id``.
@@ -6237,12 +6228,12 @@ class MemoryEngine(MemoryEngineInterface):
         Returns ``None`` both when the bank is not visible to the caller and when
         the image does not exist — indistinguishable on purpose, so a caller
         cannot probe for which images a bank holds. Same guarantee as
-        :meth:`retrieve_bank_file`, and the reason the hash alone is not a
+        :meth:`retrieve_bank_file`, and the reason the id alone is not a
         capability: it is derived from the content, so anyone holding the same
         image could otherwise read whether some bank had also retained it.
         """
-        records = await self.resolve_bank_images(bank_id, [image_hash], request_context)
-        record = records.get(image_hash)
+        records = await self.resolve_bank_images(bank_id, [image_id], request_context)
+        record = records.get(image_id)
         if record is None:
             return None
         from .retain.image_content import LoadedImage

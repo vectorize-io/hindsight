@@ -1467,8 +1467,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE` | Max characters for a single JSONL line or conversation turn to keep whole. Unset uses `HINDSIGHT_API_RETAIN_CHUNK_SIZE`. Must be a positive integer when set. | - |
 | `HINDSIGHT_API_RETAIN_IMAGE_MAX_SIZE_MB` | Max decoded size of a single image sent as inline retain content. Above every mainstream provider's own per-image ceiling, so the provider's limit binds first for a legitimate image while an abusive upload is refused at the ingress. | `20` |
 | `HINDSIGHT_API_RETAIN_IMAGE_MAX_COUNT` | Max inline images in one retain item. Split larger documents across several items. | `50` |
-| `HINDSIGHT_API_RETAIN_IMAGE_CHUNK_COST_CHARS` | What one inline image costs against `HINDSIGHT_API_RETAIN_CHUNK_SIZE`. The chunk budget is measured in characters of text, but an image consumes model context too, so an image-bearing chunk must carry proportionally less prose. Keep it well below `HINDSIGHT_API_RETAIN_CHUNK_SIZE` so an image can share a chunk with the sentence that introduces it — that adjacency is the point of inline images. Not an error if it exceeds the chunk size (a bank may lower that for text-only reasons): the cost is clamped to the budget, and the image simply ends up in a chunk of its own. Configurable per bank. | `1500` |
-| `HINDSIGHT_API_RETAIN_MAX_IMAGES_PER_CHUNK` | Hard cap on images in one extraction chunk, applied alongside the character budget: many small images can satisfy the arithmetic and still exceed a provider's per-request image limit. Configurable per bank. | `8` |
+| `HINDSIGHT_API_RETAIN_MAX_IMAGES_PER_CHUNK` | Max images in one extraction chunk. `HINDSIGHT_API_RETAIN_CHUNK_SIZE` budgets **text only** — an image's placeholder costs the ~22 characters it occupies and nothing more — so this is what bounds images, matching a provider's per-request image limit. Lower it for a model with a smaller context. Configurable per bank. | `8` |
 | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, `verbatim`, `chunks`, or `custom` | `concise` |
 | `HINDSIGHT_API_RETAIN_MISSION` | What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode. | - |
 | `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Full prompt override for fact extraction (only used when mode is `custom`). Replaces built-in extraction rules entirely. | - |
@@ -1524,7 +1523,7 @@ What happens to the bytes:
   unchanged document is a no-op.
 - Storage goes through the same backend as uploaded files — `native` (PostgreSQL),
   `s3`, `gcs`, `azure`. See [File storage](#file-storage).
-- The document's stored text keeps a placeholder (`⟦hs-image:sha256:...⟧`) where
+- The document's stored text keeps a placeholder (`⟦hs-img:...⟧`) where
   the image sat, so chunking, idempotency, `update_mode=append` and re-extraction
   behave exactly as they do for text.
 - Recall returns the images a chunk references on `chunks[].images[]`, each with a
