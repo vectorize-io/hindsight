@@ -19,6 +19,11 @@ asserts initialize() leaves it at float32.
 
 import pytest
 
+# The dtype poisoning this covers is torch's, so there is nothing to assert without
+# it. torch ships free-threaded wheels, but the local-ml extra as a whole does not
+# (sentence-transformers re-enables the GIL), so a free-threaded install has neither.
+pytest.importorskip("torch", reason="covers torch's global default dtype; needs the local-ml extra")
+
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.task_backend import SyncTaskBackend
 

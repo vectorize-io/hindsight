@@ -1911,10 +1911,15 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-api-slim
-      # PYTHONWARNINGS makes the GIL re-enable warning fatal at the offending import,
-      # so a regression names the module instead of surfacing as an unrelated failure.
-      env:
-        PYTHONWARNINGS: "error:The global interpreter lock:RuntimeWarning"
+      # Deliberately NOT run with the GIL warning promoted to an error. The suite
+      # imports LiteLLM on purpose to test that provider, and LiteLLM pulls in
+      # fastuuid, which has no free-threaded build — so a suite-wide filter fails
+      # ~50 tests for doing exactly what they are meant to do.
+      #
+      # What matters is that the SERVER never takes the GIL, and that is asserted
+      # where it belongs: the step above imports the whole API under the fatal
+      # filter, tests/test_free_threading.py re-checks it in a subprocess, and the
+      # image build and smoke test assert it again.
       run: |
         ./.venv-ft/bin/python -m pytest tests -v \
           -m "not hs_llm_mat and not hs_llm_core"

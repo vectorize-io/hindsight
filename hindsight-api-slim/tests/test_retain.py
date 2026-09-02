@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from hindsight_api import RequestContext
 from hindsight_api.engine.memory_engine import Budget, MemoryEngine
 from tests.llm_judge import assert_meets_criteria
 
@@ -2643,7 +2642,7 @@ def test_chunks_extraction_mode():
             RetainContent(content="Bob fixed the critical bug in the payment service."),
         ]
 
-        facts, chunks, usage = asyncio.get_event_loop().run_until_complete(
+        facts, chunks, usage = asyncio.run(
             extract_facts_from_contents(
                 contents=contents,
                 llm_config=None,  # Must not be called
@@ -2961,7 +2960,7 @@ def test_strategy_overrides_extraction_mode_for_chunks():
         RetainContent(content="Bob reviewed the pull request."),
     ]
 
-    facts, chunks, usage = asyncio.get_event_loop().run_until_complete(
+    facts, chunks, usage = asyncio.run(
         extract_facts_from_contents(
             contents=contents,
             llm_config=None,  # chunks must not call the LLM
@@ -3019,7 +3018,6 @@ async def test_named_strategy_applied_end_to_end(memory, request_context):
     but the extraction mode override was silently ignored, always using the bank
     default (e.g. 'concise') instead of the strategy's override (e.g. 'chunks').
     """
-    from hindsight_api.config_resolver import ConfigResolver
 
     bank_id = f"test_strategy_e2e_{datetime.now(timezone.utc).timestamp()}"
 
@@ -3244,8 +3242,8 @@ from unittest.mock import patch
 
 import pytest_asyncio
 
-from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
 
