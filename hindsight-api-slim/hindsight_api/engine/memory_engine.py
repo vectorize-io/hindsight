@@ -14786,29 +14786,44 @@ class MemoryEngine(MemoryEngineInterface):
         # pinned model creation must do the same. The lazy bank-create runs inside
         # the same transaction as the INSERT below, so a freshly-created bank never
         # outlives a mental-model insert that ultimately fails.
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                created = await self._ensure_bank_exists(
-                    bank_id,
-                    request_context,
-                    conn=conn,
-                )
-                row = await self._insert_pinned_mental_model(
-                    conn,
-                    mental_model_id=mental_model_id,
-                    bank_id=bank_id,
-                    name=name,
-                    source_query=source_query,
-                    content=content,
-                    embedding=embedding,
-                    tags=tags,
-                    max_tokens=max_tokens,
-                    trigger=trigger,
-                )
-            # After the transaction commits: the index is derived from a row that must already
-            # exist, and indexing inside the transaction would publish a page a rollback then
-            # un-creates.
-            await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
+        try:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    created = await self._ensure_bank_exists(
+                        bank_id,
+                        request_context,
+                        conn=conn,
+                    )
+                    row = await self._insert_pinned_mental_model(
+                        conn,
+                        mental_model_id=mental_model_id,
+                        bank_id=bank_id,
+                        name=name,
+                        source_query=source_query,
+                        content=content,
+                        embedding=embedding,
+                        tags=tags,
+                        max_tokens=max_tokens,
+                        trigger=trigger,
+                    )
+                # After the transaction commits: the index is derived from a row that must already
+                # exist, and indexing inside the transaction would publish a page a rollback then
+                # un-creates.
+                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
+        except asyncpg.UniqueViolationError as exc:
+            # mental_models_pkey is the table's only unique constraint, so a violation naming
+            # this table is the caller's id colliding with a model that already exists. Anything
+            # else is a real failure and must not be reported as a duplicate model:
+            # _ensure_bank_exists creates this bank's vector indexes in the same transaction,
+            # and a cross-process CREATE INDEX race collides in pg_class, not here.
+            if getattr(exc, "table_name", None) != "mental_models":
+                raise
+            from hindsight_api.extensions import OperationValidationError
+
+            raise OperationValidationError(
+                f"Mental model '{mental_model_id}' already exists in bank '{bank_id}'",
+                status_code=409,
+            ) from exc
 
         # Best-effort default-template hook runs after the bank-create commits
         # (it opens its own connections and can create pinned models).
