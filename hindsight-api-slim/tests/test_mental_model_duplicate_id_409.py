@@ -24,13 +24,14 @@ async def test_duplicate_mental_model_id_raises_conflict(memory: MemoryEngine, r
         mental_model_id=mental_model_id,
         request_context=request_context,
     )
+    # Outside the try: the bank only exists once this has returned, and cleaning up
+    # a bank that was never created would mask whatever made the first create fail.
+    first = await memory.create_mental_model(**create)
+    assert first["id"] == mental_model_id
     try:
-        first = await memory.create_mental_model(**create)
-        assert first["id"] == mental_model_id
-
         with pytest.raises(OperationValidationError) as excinfo:
             await memory.create_mental_model(**create)
         assert excinfo.value.status_code == 409
-        assert mental_model_id in excinfo.value.reason
+        assert "already exists" in excinfo.value.reason
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
