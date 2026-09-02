@@ -42,6 +42,7 @@ hindsight-cursor init --api-url http://localhost:8888
 ### What `init` does
 
 - Copies plugin files into `.cursor-plugin/hindsight-memory/`
+- Writes/merges project `.cursor/hooks.json` so Cursor registers `sessionStart` / `stop` (workspace-relative commands — plugin-dir hooks alone are not loaded by the IDE)
 - Creates `~/.hindsight/cursor.json` with your connection settings (if the file does not already exist)
 - Writes `.cursor/mcp.json` with the Hindsight MCP endpoint for on-demand recall/retain/reflect tools
 - Use `--force` to overwrite an existing installation
@@ -109,6 +110,7 @@ The agent can use these tools mid-session when it needs memory beyond what was i
 | `lib/bank.py` | Bank ID derivation + mission management |
 | `lib/content.py` | Content processing (transcript parsing, memory formatting, tag stripping) |
 | `lib/state.py` | File-based state persistence with `fcntl` locking |
+| `lib/rules_file.py` | Writes `.cursor/rules/hindsight-session.mdc` (sessionStart additionalContext workaround) |
 | `lib/llm.py` | LLM provider auto-detection for daemon mode |
 
 ## Connection Modes

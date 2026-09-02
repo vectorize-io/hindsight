@@ -19,12 +19,17 @@ _PLUGIN_FILES = [
     "scripts/lib/content.py",
     "scripts/lib/daemon.py",
     "scripts/lib/llm.py",
+    "scripts/lib/rules_file.py",
     "scripts/lib/state.py",
     "scripts/session_start.py",
     "scripts/retain.py",
     "settings.json",
     "skills/hindsight-recall/SKILL.md",
 ]
+
+# Marker used to identify Hindsight's own entries when merging/stripping
+# project .cursor/hooks.json. Commands point at this install path.
+_HOOK_MARKER = ".cursor-plugin/hindsight-memory"
 
 _USER_CONFIG_DIR = Path.home() / ".hindsight"
 _USER_CONFIG_FILE = _USER_CONFIG_DIR / "cursor.json"
@@ -102,6 +107,107 @@ def _setup_mcp(project: Path, api_url: str | None, api_token: str | None, bank_i
     print(f"  MCP config written to {mcp_file}")
 
 
+def _hindsight_hook_entry(definition: dict) -> bool:
+    """True if a hooks.json entry belongs to this plugin install."""
+    return _HOOK_MARKER in json.dumps(definition)
+
+
+def _project_hooks_block() -> dict:
+    """Hooks Cursor loads from the project ``.cursor/hooks.json``.
+
+    Paths are workspace-relative so they work without ``CURSOR_PLUGIN_ROOT``
+    (which is only set for packages installed under ``~/.cursor/plugins``).
+    """
+    return {
+        "version": 1,
+        "hooks": {
+            "sessionStart": [
+                {
+                    "command": f"python3 {_HOOK_MARKER}/scripts/session_start.py",
+                    "timeout": 15,
+                }
+            ],
+            "stop": [
+                {
+                    "command": f"python3 {_HOOK_MARKER}/scripts/retain.py",
+                    "timeout": 15,
+                }
+            ],
+        },
+    }
+
+
+def _setup_hooks(project: Path) -> None:
+    """Write/merge project ``.cursor/hooks.json`` so Cursor registers the hooks.
+
+    Dropping files under ``.cursor-plugin/`` alone does not register hooks with
+    the IDE; Cursor only loads ``.cursor/hooks.json`` (workspace) or
+    ``~/.cursor/hooks.json`` (user). Idempotent: existing Hindsight entries are
+    replaced, other hooks are preserved.
+    """
+    cursor_dir = project / ".cursor"
+    hooks_file = cursor_dir / "hooks.json"
+    hooks_block = _project_hooks_block()
+
+    existing: dict = {}
+    if hooks_file.exists():
+        try:
+            existing = json.loads(hooks_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    existing.setdefault("version", hooks_block.get("version", 1))
+    existing.setdefault("hooks", {})
+
+    for event, definitions in hooks_block.get("hooks", {}).items():
+        bucket = [d for d in existing["hooks"].get(event, []) if not _hindsight_hook_entry(d)]
+        bucket.extend(definitions)
+        existing["hooks"][event] = bucket
+
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    hooks_file.write_text(json.dumps(existing, indent=2) + "\n")
+    print(f"  Hooks registered in {hooks_file}")
+
+
+def _remove_hooks(project: Path) -> None:
+    """Strip this plugin's entries from project ``.cursor/hooks.json``."""
+    hooks_file = project / ".cursor" / "hooks.json"
+    if not hooks_file.exists():
+        return
+    try:
+        data = json.loads(hooks_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    hooks = data.get("hooks", {})
+    changed = False
+    for event, definitions in list(hooks.items()):
+        kept = [d for d in definitions if not _hindsight_hook_entry(d)]
+        if len(kept) != len(definitions):
+            changed = True
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+
+    if not changed:
+        return
+
+    if hooks:
+        data["hooks"] = hooks
+        hooks_file.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"  Removed hindsight hooks from {hooks_file}")
+    else:
+        other_keys = {k for k in data if k not in ("version", "hooks")}
+        if other_keys:
+            data["hooks"] = {}
+            hooks_file.write_text(json.dumps(data, indent=2) + "\n")
+            print(f"  Removed hindsight hooks from {hooks_file}")
+        else:
+            hooks_file.unlink()
+            print(f"  Removed {hooks_file}")
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Install the Hindsight plugin into a Cursor project."""
     project = Path(args.project).resolve()
@@ -118,6 +224,11 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"Installing Hindsight plugin into {dest} ...")
     _copy_plugin(dest)
     print("  Plugin files copied.")
+
+    # Register hooks with Cursor IDE (project .cursor/hooks.json).
+    # The bundled hooks/hooks.json alone is not enough — Cursor only loads
+    # workspace/user hooks.json, not files under .cursor-plugin/.
+    _setup_hooks(project)
 
     _scaffold_config(args.api_url, args.api_token, args.bank_id)
 
@@ -156,6 +267,8 @@ def cmd_uninstall(args: argparse.Namespace) -> None:
                     print(f"  Removed {mcp_file}")
         except (json.JSONDecodeError, OSError):
             pass
+
+    _remove_hooks(project)
 
 
 def main() -> None:

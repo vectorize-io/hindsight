@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from hindsight_cursor.cli import _plugin_data_dir, cmd_init, cmd_uninstall
+from hindsight_cursor.cli import _PLUGIN_FILES, _plugin_data_dir, cmd_init, cmd_uninstall
 
 
 @pytest.fixture()
@@ -22,6 +22,7 @@ def fake_plugin_data(tmp_path):
     (data_dir / "settings.json").write_text('{"bankId": "cursor"}')
     (data_dir / "scripts" / "lib").mkdir(parents=True)
     (data_dir / "scripts" / "lib" / "__init__.py").write_text("")
+    (data_dir / "scripts" / "lib" / "rules_file.py").write_text("# rules_file")
     (data_dir / "scripts" / "session_start.py").write_text("# session_start")
     (data_dir / "scripts" / "retain.py").write_text("# retain")
     (data_dir / "rules").mkdir()
@@ -55,6 +56,7 @@ class TestInit:
         assert (dest / "hooks" / "hooks.json").exists()
         assert (dest / "settings.json").exists()
         assert (dest / "scripts" / "session_start.py").exists()
+        assert (dest / "scripts" / "lib" / "rules_file.py").exists()
         assert (dest / "rules" / "hindsight-memory.mdc").exists()
 
     def test_refuses_overwrite_without_force(self, tmp_path, fake_plugin_data, capsys):
@@ -227,6 +229,91 @@ class TestInit:
         assert "hindsight" in mcp["mcpServers"]
 
 
+    def test_copies_rules_file(self, tmp_path, fake_plugin_data):
+        """session_start imports lib.rules_file — init must ship it (#3864)."""
+        project = tmp_path / "my-project"
+        project.mkdir()
+
+        with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
+            cmd_init(
+                _Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False)
+            )
+
+        assert (project / ".cursor-plugin" / "hindsight-memory" / "scripts" / "lib" / "rules_file.py").exists()
+
+    def test_plugin_files_lists_rules_file(self):
+        assert "scripts/lib/rules_file.py" in _PLUGIN_FILES
+
+    def test_writes_project_hooks_json(self, tmp_path, fake_plugin_data):
+        project = tmp_path / "my-project"
+        project.mkdir()
+
+        with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
+            cmd_init(
+                _Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False)
+            )
+
+        hooks_file = project / ".cursor" / "hooks.json"
+        assert hooks_file.exists()
+        hooks = json.loads(hooks_file.read_text())
+        assert hooks["version"] == 1
+        assert "sessionStart" in hooks["hooks"]
+        assert "stop" in hooks["hooks"]
+        session_cmd = hooks["hooks"]["sessionStart"][0]["command"]
+        stop_cmd = hooks["hooks"]["stop"][0]["command"]
+        assert "session_start.py" in session_cmd
+        assert "retain.py" in stop_cmd
+        assert ".cursor-plugin/hindsight-memory" in session_cmd
+        assert "${CURSOR_PLUGIN_ROOT}" not in session_cmd
+
+    def test_merges_with_existing_hooks_json(self, tmp_path, fake_plugin_data):
+        project = tmp_path / "my-project"
+        project.mkdir()
+        cursor_dir = project / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "hooks.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "hooks": {
+                        "sessionStart": [{"command": "echo other-start", "timeout": 5}],
+                        "stop": [{"command": "echo other-stop"}],
+                    },
+                }
+            )
+        )
+
+        with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
+            cmd_init(
+                _Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False)
+            )
+
+        hooks = json.loads((cursor_dir / "hooks.json").read_text())
+        session = hooks["hooks"]["sessionStart"]
+        stop = hooks["hooks"]["stop"]
+        assert any("echo other-start" in d.get("command", "") for d in session)
+        assert any("hindsight-memory" in d.get("command", "") for d in session)
+        assert any("echo other-stop" in d.get("command", "") for d in stop)
+        assert any("retain.py" in d.get("command", "") for d in stop)
+
+    def test_hooks_merge_is_idempotent(self, tmp_path, fake_plugin_data):
+        project = tmp_path / "my-project"
+        project.mkdir()
+
+        with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
+            cmd_init(
+                _Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=True)
+            )
+            cmd_init(
+                _Args(project=str(project), force=True, api_url=None, api_token=None, bank_id="cursor", no_mcp=True)
+            )
+
+        hooks = json.loads((project / ".cursor" / "hooks.json").read_text())
+        assert len(hooks["hooks"]["sessionStart"]) == 1
+        assert len(hooks["hooks"]["stop"]) == 1
+
+
+
 class TestUninstall:
     def test_removes_plugin(self, tmp_path, fake_plugin_data):
         project = tmp_path / "my-project"
@@ -270,3 +357,35 @@ class TestUninstall:
         mcp = json.loads((mcp_dir / "mcp.json").read_text())
         assert "hindsight" not in mcp["mcpServers"]
         assert "other" in mcp["mcpServers"]
+
+    def test_cleans_up_hooks_json(self, tmp_path):
+        project = tmp_path / "my-project"
+        dest = project / ".cursor-plugin" / "hindsight-memory"
+        dest.mkdir(parents=True)
+        (dest / "x.txt").write_text("x")
+
+        cursor_dir = project / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "hooks.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "hooks": {
+                        "sessionStart": [
+                            {"command": "echo other"},
+                            {"command": "python3 .cursor-plugin/hindsight-memory/scripts/session_start.py"},
+                        ],
+                        "stop": [
+                            {"command": "python3 .cursor-plugin/hindsight-memory/scripts/retain.py"},
+                        ],
+                    },
+                }
+            )
+        )
+
+        cmd_uninstall(_Args(project=str(project)))
+
+        hooks = json.loads((cursor_dir / "hooks.json").read_text())
+        assert hooks["hooks"]["sessionStart"] == [{"command": "echo other"}]
+        assert "stop" not in hooks["hooks"]
+
