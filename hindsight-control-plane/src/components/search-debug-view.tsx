@@ -36,7 +36,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MemoryDetailPanel } from "./memory-detail-panel";
+import { MemoryDetailModal } from "./memory-detail-modal";
 
 type Budget = "low" | "mid" | "high";
 type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
@@ -73,7 +73,7 @@ export function SearchDebugView() {
   const [trace, setTrace] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("results");
-  const [selectedMemory, setSelectedMemory] = useState<any | null>(null);
+  const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
 
@@ -103,12 +103,10 @@ export function SearchDebugView() {
 
   const INITIAL_RESULTS_COUNT = 5;
 
-  // Helper to find full memory data from results when clicking trace items
+  // Trace rows carry the memory id under either key; the dialog fetches the rest
+  // itself, so there is nothing to look up in `results` any more.
   const selectMemoryFromTrace = (traceResult: any) => {
-    const nodeId = traceResult.id || traceResult.node_id;
-    // Try to find the full result with all metadata
-    const fullResult = results?.find((r: any) => r.id === nodeId || r.node_id === nodeId);
-    setSelectedMemory(fullResult || traceResult);
+    setSelectedMemoryId(traceResult.id || traceResult.node_id || null);
   };
 
   const temporalWindow = resolveTemporalWindow(windowStart, windowEnd);
@@ -454,7 +452,7 @@ export function SearchDebugView() {
                       <Card
                         key={idx}
                         className="cursor-pointer hover:border-primary/50 transition-colors"
-                        onClick={() => setSelectedMemory(result)}
+                        onClick={() => setSelectedMemoryId(result.id)}
                       >
                         <CardContent className="py-4">
                           <div className="flex items-start gap-4">
@@ -1119,17 +1117,12 @@ export function SearchDebugView() {
         </Card>
       )}
 
-      {/* Memory Detail Panel */}
-      {selectedMemory && (
-        <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l shadow-2xl z-50 overflow-y-auto">
-          <MemoryDetailPanel
-            memory={selectedMemory}
-            onClose={() => setSelectedMemory(null)}
-            inPanel
-            bankId={currentBank || undefined}
-          />
-        </div>
-      )}
+      {/* The same dialog every other view opens a memory in. It was a fixed
+          right-hand drawer here, which meant one memory rendered two different
+          ways depending on where you clicked — and the drawer was fed a recall
+          *result*, which carries none of the detail (attachments included) that
+          fetching the memory by id returns. */}
+      <MemoryDetailModal memoryId={selectedMemoryId} onClose={() => setSelectedMemoryId(null)} />
     </div>
   );
 }
