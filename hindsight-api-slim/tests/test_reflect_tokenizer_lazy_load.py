@@ -8,17 +8,17 @@ def _drop_reflect_modules() -> None:
         if name == "hindsight_api.engine.reflect" or name.startswith("hindsight_api.engine.reflect."):
             sys.modules.pop(name)
     # The encoding is cached in engine.token_encoding; drop it too so the fresh
-    # reimport starts with an empty cache and the quicktok patch is observed.
+    # reimport starts with an empty cache and the toktok patch is observed.
     sys.modules.pop("hindsight_api.engine.token_encoding", None)
 
 
 def test_reflect_import_does_not_load_tokenizer_encoding():
     _drop_reflect_modules()
 
-    with patch("quicktok.get_encoding") as get_encoding:
+    with patch("toktok._encoding") as load_encoding:
         reflect = importlib.import_module("hindsight_api.engine.reflect")
 
-    get_encoding.assert_not_called()
+    load_encoding.assert_not_called()
     assert reflect.run_reflect_agent is not None
 
 
@@ -27,10 +27,10 @@ def test_reflect_token_counting_loads_tokenizer_encoding_when_used():
     fake_encoding = MagicMock()
     # Counting goes through Tokenizer.count(), which takes no kwargs.
     fake_encoding.count.side_effect = lambda text: len(text.split())
-    # Truncation still needs ids; _SafeEncoding.encode passes disallowed_special=().
-    fake_encoding.encode.side_effect = lambda text, **kwargs: text.split()
+    # Truncation still needs ids; _SafeEncoding.encode routes to encode_ordinary.
+    fake_encoding.encode_ordinary.side_effect = lambda text: text.split()
 
-    with patch("quicktok.get_encoding", return_value=fake_encoding) as get_encoding:
+    with patch("toktok._encoding", return_value=fake_encoding) as load_encoding:
         agent = importlib.import_module("hindsight_api.engine.reflect.agent")
         prompts = importlib.import_module("hindsight_api.engine.reflect.prompts")
 
@@ -48,4 +48,4 @@ def test_reflect_token_counting_loads_tokenizer_encoding_when_used():
     assert "three four" in final_prompt
     # Whatever this deployment configured — asserting the literal default would
     # break for anyone with HINDSIGHT_API_TOKENIZER_ENCODING set in their .env.
-    get_encoding.assert_called_once_with(_get_raw_config().tokenizer_encoding)
+    load_encoding.assert_called_once_with(_get_raw_config().tokenizer_encoding)

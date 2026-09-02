@@ -4,26 +4,28 @@ Hindsight tokenizes purely to *count* and *chunk* arbitrary user content — nev
 feed a model that relies on the tokenizer's special-token vocabulary. That is what
 makes the two choices below safe.
 
-**Why quicktok and not tiktoken.** Counting is on the hot path of both retain and
+**Why toktok and not tiktoken.** Counting is on the hot path of both retain and
 recall: recall counts once per candidate fact, per candidate chunk, per source fact
 and per reranker document, and retain counts whole documents. Measured on this
-repo's own text (``hindsight-dev/benchmarks/micro/token_counting.py``), quicktok
-counts 4-12x faster than tiktoken on cl100k_base and 8-19x faster on o200k_base,
+repo's own text (``hindsight-dev/benchmarks/micro/token_counting.py``), toktok
+counts 2-7x faster than tiktoken on cl100k_base and 10-16x faster on o200k_base,
 and its ids are byte-identical — the benchmark asserts that before it times
 anything. Two properties matter as much as the speed:
 
 * ``count()`` returns an ``int`` without building a Python list of ids. Counting an
-  80k-token document cost 2.8 MB of transient allocation under tiktoken and costs
-  ~0 here, because there was never a list. (tiktoken has no count-only API;
+  80k-token document cost ~3 MB of transient allocation under tiktoken and costs
+  1 KiB here, because there was never a list. (tiktoken has no count-only API;
   ``encode_to_numpy`` is the closest it comes.)
-* the vocabularies ship *inside the wheel*, so nothing is downloaded on first use.
-  Air-gapped deployments no longer need the encoding pre-baked into the image.
+* the vocabularies are compiled *into the extension module*, so nothing is
+  downloaded on first use. Air-gapped deployments no longer need the encoding
+  pre-baked into the image.
 
-quicktok is a small project, so the risk is maintenance, not correctness. It is
+toktok is a small project, so the risk is maintenance, not correctness. It is
 contained deliberately: this module is the only place that imports it, every token
 call site in the engine routes through ``get_token_encoding()`` or
-``count_tokens()``, and its sole dependency (numpy) is one Hindsight already has.
-Replacing it means rewriting this file and nothing else.
+``count_tokens()``, and it pulls in no dependency of its own (numpy is an optional
+extra Hindsight does not ask for). Replacing it means rewriting this file and
+nothing else.
 
 **Why o200k_base by default.** ``HINDSIGHT_API_TOKENIZER_ENCODING`` selects the
 vocabulary; it defaults to ``o200k_base``, which is what current OpenAI models
@@ -34,28 +36,29 @@ cl100k_base and 13 under o200k_base. Since these counts drive budgets that stand
 for a model's context window, the closer vocabulary is the more honest one. Set the
 variable to ``cl100k_base`` to restore the previous counts exactly.
 
-**Special-token literals.** Both tokenizers default to ``disallowed_special="all"``,
-which makes ``encode()`` *raise* on content that merely mentions a literal such as
-``<|endoftext|>`` — surfacing as an HTTP 500 on retain/recall (issue #1883).
-``_SafeEncoding`` disables that check so such literals are counted as ordinary text.
+**Special-token literals.** tiktoken-shaped ``encode()`` defaults to
+``disallowed_special="all"``, which makes it *raise* on content that merely mentions
+a literal such as ``<|endoftext|>`` — surfacing as an HTTP 500 on retain/recall
+(issue #1883). ``_SafeEncoding.encode`` routes to ``encode_ordinary``, which has no
+special-token machinery at all, so such literals are counted as ordinary text.
 ``count()`` never applies the check in the first place.
 """
 
 from dataclasses import dataclass
 from functools import lru_cache
 
-import quicktok
+import toktok
 
-# Vocabularies quicktok ships in its wheel. Used only to make a misconfigured
-# HINDSIGHT_API_TOKENIZER_ENCODING fail with a list of what would have worked,
-# instead of a bare RuntimeError from the extension module mid-request.
-BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony", "llama3", "qwen3")
+# Vocabularies toktok compiles into its extension module. Used only to make a
+# misconfigured HINDSIGHT_API_TOKENIZER_ENCODING fail with a list of what would have
+# worked, instead of a bare KeyError from the extension module mid-request.
+BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony")
 
 
 class _SafeEncoding:
-    """Wraps a quicktok ``Tokenizer`` so ``encode()`` never raises on special-token literals."""
+    """Wraps a toktok ``Tokenizer`` so ``encode()`` never raises on special-token literals."""
 
-    def __init__(self, tokenizer: "quicktok.Tokenizer") -> None:
+    def __init__(self, tokenizer: "toktok._Tokenizer") -> None:
         self._tokenizer = tokenizer
 
     @property
@@ -67,14 +70,14 @@ class _SafeEncoding:
         """Token count, without materialising the ids.
 
         Prefer this over ``len(encode(text))`` wherever only the count is wanted —
-        it is the whole reason this module is on quicktok.
+        it is the whole reason this module is on toktok.
         """
         return self._tokenizer.count(text)
 
-    def encode(self, text: str, **kwargs) -> list[int]:
+    def encode(self, text: str) -> list[int]:
         # Count special-token literals as ordinary text instead of rejecting them.
-        kwargs.setdefault("disallowed_special", ())
-        return self._tokenizer.encode(text, **kwargs)
+        # This is also what ``count()`` does, so the two agree on every input.
+        return self._tokenizer.encode_ordinary(text)
 
     def decode(self, tokens: list[int]) -> str:
         return self._tokenizer.decode(tokens)
@@ -93,7 +96,11 @@ def get_token_encoding() -> _SafeEncoding:
 
     name = get_config().tokenizer_encoding
     try:
-        return _SafeEncoding(quicktok.get_encoding(name))
+        # toktok's supported API is ``batch_count``; ``_encoding`` is the escape
+        # hatch its own docstring points at, "for anyone who knowingly wants the
+        # full encode/decode surface". Truncation needs decode, so we take it —
+        # knowingly, and in this module only.
+        return _SafeEncoding(toktok._encoding(name))
     except Exception as err:
         raise ValueError(
             f"Unknown tokenizer encoding {name!r} (HINDSIGHT_API_TOKENIZER_ENCODING). "

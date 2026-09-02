@@ -200,7 +200,7 @@ prewarm_models() {
 
     # Only the "local" provider downloads weights; remote providers (TEI,
     # OpenAI, Cohere, ...) fetch nothing here. The tokenizer needs no step at
-    # all — quicktok ships its vocabularies in the wheel.
+    # all — toktok compiles its vocabularies into the wheel.
     local emb_model="" rer_model=""
     if [ "${HINDSIGHT_API_EMBEDDINGS_PROVIDER:-local}" = "local" ]; then
         emb_model="${HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL:-BAAI/bge-small-en-v1.5}"

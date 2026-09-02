@@ -107,7 +107,7 @@ See [perf/README.md](perf/README.md) for detailed documentation.
 
 ### Token Counting (micro)
 
-Measures the tiktoken token counting recall does per candidate fact, chunk and
+Measures the token counting recall does per candidate fact, chunk and
 reranker document — wall time, CPU time (all threads) and peak *traced*
 allocation, against a set of cheaper spellings of the same count. No DB, no LLM,
 no network.
@@ -123,19 +123,18 @@ no network.
 # flatters every BPE implementation)
 ./scripts/benchmarks/run-token-count-bench.sh --corpus /path/to/text
 
-# On the 200k vocabulary instead of production's cl100k_base
-./scripts/benchmarks/run-token-count-bench.sh --encoding o200k_base
+# On another vocabulary instead of production's o200k_base
+./scripts/benchmarks/run-token-count-bench.sh --encoding cl100k_base
 
-# Include the quicktok candidate encoder (deliberately not a project dependency)
-cd hindsight-dev && uv run --with quicktok-v1 token-count-bench
+# Include the tiktoken baseline (deliberately not a project dependency)
+cd hindsight-dev && uv run --with tiktoken token-count-bench
 ```
 
 **Options:**
 - `--workload NAME` - Run one workload (repeatable); shaped after a real call site
-- `--encoding NAME` - Vocabulary to measure (default `cl100k_base`, what production
-  uses). `o200k_base` is the current OpenAI vocabulary; measuring it says nothing
-  about switching production to it, which would change every token count and
-  therefore every budget.
+- `--encoding NAME` - Vocabulary to measure (default `o200k_base`, what production
+  uses). A 200k vocabulary is a different amount of work per byte, so a ranking
+  measured on one does not transfer to another for free.
 - `--repeats N` - Timed repeats per variant, best-of (default: 5)
 - `--threads N` - `num_threads` for the parallel batch variant
 - `--corpus PATH` - Slice workload texts out of a real text file

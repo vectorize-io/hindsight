@@ -9,6 +9,7 @@ import pytest
 
 from hindsight_api.config import DEFAULT_TOKENIZER_ENCODING, ENV_TOKENIZER_ENCODING, clear_config_cache
 from hindsight_api.engine.token_encoding import (
+    BUNDLED_ENCODINGS,
     count_tokens,
     get_token_encoding,
     truncate_to_tokens,
@@ -49,6 +50,16 @@ def test_defaults_to_o200k_base(encoding_env):
 
 def test_encoding_is_selectable(encoding_env):
     assert encoding_env("cl100k_base").name == "cl100k_base"
+
+
+@pytest.mark.parametrize("name", BUNDLED_ENCODINGS)
+def test_every_advertised_encoding_actually_loads(name, encoding_env):
+    """``BUNDLED_ENCODINGS`` is hand-maintained, and it is what a misconfigured
+    deployment is told to choose from — so it must not name a vocabulary the
+    installed tokenizer does not ship. It has been wrong before: it still listed
+    ``llama3`` and ``qwen3`` after the move off quicktok, which bundles neither.
+    """
+    assert encoding_env(name).name == name
 
 
 def test_unknown_encoding_names_the_valid_ones(encoding_env):
