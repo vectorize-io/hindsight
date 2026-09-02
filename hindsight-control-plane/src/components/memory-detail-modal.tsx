@@ -559,6 +559,14 @@ export function MemoryDetailModal({
                             )}
                           </div>
                           <p className="text-sm text-foreground leading-relaxed">{memory.text}</p>
+                          {/* The fact's text says "[image: image/png]" where an
+                              attachment was — a content hash is not knowledge —
+                              so what the model actually looked at is shown here. */}
+                          <AttachmentStrip
+                            bankId={currentBank ?? ""}
+                            attachments={memory.attachments}
+                            className="mt-3"
+                          />
                         </div>
 
                         {/* Curation: invalidate / restore (raw facts only) */}
