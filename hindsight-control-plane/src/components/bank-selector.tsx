@@ -8,6 +8,7 @@ import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
 import { withBasePath } from "@/lib/base-path";
 import { client } from "@/lib/api";
+import type { RetainContentBlock as ContentBlock } from "@/lib/api";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +43,7 @@ import {
   ChevronRight,
   LogOut,
   Copy,
+  Paperclip,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
@@ -127,6 +129,13 @@ function BankSelectorInner() {
   const [docDialogOpen, setDocDialogOpen] = React.useState(false);
   const [docTab, setDocTab] = React.useState<"text" | "upload">("text");
   const [docContent, setDocContent] = React.useState("");
+  // Attachments to interleave into the document's content. Kept in order, and
+  // appended after the prose: the API takes an ordered block list, and a form
+  // with one textarea has no way to express "this picture goes *here*". Anyone
+  // needing exact placement sends blocks through the API directly.
+  const [docAttachments, setDocAttachments] = React.useState<
+    { name: string; mediaType: string; data: string; size: number }[]
+  >([]);
   const [docContext, setDocContext] = React.useState("");
   const [docEventDate, setDocEventDate] = React.useState("");
   const [docDocumentId, setDocDocumentId] = React.useState("");
@@ -457,7 +466,7 @@ function BankSelectorInner() {
         .filter(Boolean);
 
       const item: {
-        content: string;
+        content: string | ContentBlock[];
         context?: string;
         timestamp?: string;
         document_id?: string;
@@ -467,6 +476,25 @@ function BankSelectorInner() {
         entities?: Array<{ text: string }>;
         strategy?: string;
       } = { content: docContent };
+      if (docAttachments.length > 0) {
+        // An image block for images, a file block for everything else — the
+        // distinction the API keeps because the providers keep it.
+        item.content = [
+          { type: "text", text: docContent },
+          ...docAttachments.map((a) =>
+            a.mediaType.startsWith("image/")
+              ? {
+                  type: "image" as const,
+                  source: { type: "base64" as const, media_type: a.mediaType, data: a.data },
+                }
+              : {
+                  type: "file" as const,
+                  filename: a.name,
+                  source: { type: "base64" as const, media_type: a.mediaType, data: a.data },
+                }
+          ),
+        ];
+      }
       if (docContext) item.context = docContext;
       if (docEventDate) item.timestamp = toIsoTimestamp(docEventDate);
       if (docDocumentId) item.document_id = docDocumentId;
@@ -506,6 +534,7 @@ function BankSelectorInner() {
       // Reset form and close dialog
       setDocDialogOpen(false);
       setDocContent("");
+      setDocAttachments([]);
       setDocContext("");
       setDocEventDate("");
       setDocDocumentId("");
@@ -927,6 +956,91 @@ function BankSelectorInner() {
                     className="min-h-[150px] resize-y"
                     autoFocus
                   />
+
+                  {/* Attachments ride *inside* this document rather than becoming
+                      documents of their own, which is what the Upload Files tab
+                      does. That is the whole distinction: a screenshot the prose
+                      refers to belongs with the prose. */}
+                  <div className="mt-3">
+                    <label className="font-bold block mb-1 text-sm text-foreground">
+                      {tAddDocument("attachmentsLabel")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {tAddDocument("attachmentsHint")}
+                    </p>
+                    <input
+                      id="doc-attachment-input"
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={async (e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        const encoded = await Promise.all(
+                          files.map(
+                            (file) =>
+                              new Promise<{
+                                name: string;
+                                mediaType: string;
+                                data: string;
+                                size: number;
+                              }>((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onerror = () => reject(reader.error);
+                                reader.onload = () =>
+                                  resolve({
+                                    name: file.name,
+                                    // Some browsers report "" for unusual
+                                    // extensions; the API accepts any
+                                    // well-formed type, so fall back to a
+                                    // generic one rather than refusing the file.
+                                    mediaType: file.type || "application/octet-stream",
+                                    size: file.size,
+                                    // readAsDataURL gives "data:<type>;base64,<payload>";
+                                    // the API wants the payload alone.
+                                    data: String(reader.result).split(",", 2)[1] ?? "",
+                                  });
+                                reader.readAsDataURL(file);
+                              })
+                          )
+                        );
+                        setDocAttachments((current) => [...current, ...encoded]);
+                        // Let the same file be picked again after removal.
+                        e.target.value = "";
+                      }}
+                    />
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => document.getElementById("doc-attachment-input")?.click()}
+                      >
+                        <Paperclip className="h-3.5 w-3.5 mr-1.5" />
+                        {tAddDocument("attachmentsAdd")}
+                      </Button>
+                      {docAttachments.map((a, index) => (
+                        <span
+                          key={`${a.name}-${index}`}
+                          className="inline-flex items-center gap-1.5 px-2 py-1 rounded border border-border bg-muted/50 text-xs"
+                        >
+                          <span className="max-w-[180px] truncate">{a.name}</span>
+                          <span className="text-muted-foreground">
+                            {(a.size / 1024).toFixed(0)} KB
+                          </span>
+                          <button
+                            type="button"
+                            aria-label={tAddDocument("attachmentsRemove", { name: a.name })}
+                            onClick={() =>
+                              setDocAttachments((current) => current.filter((_, i) => i !== index))
+                            }
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 </TabsContent>
 
                 <TabsContent value="upload" className="mt-3">
@@ -1452,6 +1566,7 @@ function BankSelectorInner() {
                 onClick={() => {
                   setDocDialogOpen(false);
                   setDocContent("");
+                  setDocAttachments([]);
                   setDocContext("");
                   setDocEventDate("");
                   setDocDocumentId("");

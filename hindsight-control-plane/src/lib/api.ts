@@ -34,13 +34,23 @@ function describeErrorDetails(details: unknown): string | undefined {
 /**
  * One element of a multimodal retain item's content.
  *
- * Retain accepts either a plain string or an ordered list of these, so an image
- * can sit inline where it actually appears and the extractor reads it alongside
- * the prose that refers to it.
+ * Retain accepts either a plain string or an ordered list of these, so an
+ * attachment can sit inline where it actually appears and the extractor reads it
+ * alongside the prose that refers to it.
+ *
+ * `image` and `file` are separate because the providers separate them —
+ * Anthropic has image and document blocks, OpenAI has image_url and file parts.
  */
+export type RetainAttachmentSource = {
+  type: "base64";
+  media_type: string;
+  data: string;
+};
+
 export type RetainContentBlock =
   | { type: "text"; text: string }
-  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+  | { type: "image"; source: RetainAttachmentSource }
+  | { type: "file"; source: RetainAttachmentSource; filename?: string };
 
 export interface WebhookHttpConfig {
   method: string;

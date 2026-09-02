@@ -1627,7 +1627,11 @@
     "observationScopesEmpty": "観察スコープをプレビューするには、上にタグを追加してください",
     "metadataHelpText": "1行に1つの <code>key: value</code>",
     "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント",
-    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません。抽出されたメモリのみが保持されます。"
+    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません。抽出されたメモリのみが保持されます。",
+    "attachmentsLabel": "Attachments",
+    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
+    "attachmentsAdd": "Add attachment",
+    "attachmentsRemove": "Remove {name}"
   },
   "dashboard": {
     "welcome": "Hindsightへようこそ",

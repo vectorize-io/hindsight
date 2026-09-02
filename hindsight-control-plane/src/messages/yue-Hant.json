@@ -1627,7 +1627,11 @@
     "observationScopesEmpty": "在上方新增標籤以預覽觀察範圍",
     "metadataHelpText": "每行一個 <code>key: value</code>",
     "entitiesHelpText": "以逗號分隔的提示，會與自動擷取的實體合併",
-    "textNotStoredWarning": "呢個伺服器唔會儲存文件原始文字，淨係保留擷取到嘅記憶。"
+    "textNotStoredWarning": "呢個伺服器唔會儲存文件原始文字，淨係保留擷取到嘅記憶。",
+    "attachmentsLabel": "Attachments",
+    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
+    "attachmentsAdd": "Add attachment",
+    "attachmentsRemove": "Remove {name}"
   },
   "dashboard": {
     "welcome": "歡迎使用 Hindsight",
