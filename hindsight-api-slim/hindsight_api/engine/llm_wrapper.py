@@ -2,7 +2,6 @@
 LLM wrapper for unified configuration across providers.
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -14,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from json_repair import repair_json
 from pydantic import BaseModel
+
+from .._cross_loop import CrossLoopSemaphore
 
 # Vertex AI imports (conditional - for LLMProvider to pass credentials to GeminiLLM)
 try:
@@ -53,11 +54,17 @@ configure_http_logging()
 
 # Global semaphore to limit concurrent LLM requests across all instances.
 # Set HINDSIGHT_API_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama).
+#
+# CrossLoopSemaphore, not asyncio.Semaphore: this is module-level state shared by
+# every event loop in the process, and an asyncio.Semaphore binds to whichever loop
+# first waits on it — so with several loops (free-threaded uvicorn) the first
+# contended LLM call claims it and every other loop then fails. The cap stays
+# process-wide, which is what --workers N already implied.
 _llm_max_concurrent = int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT)))
-_global_llm_semaphore = asyncio.Semaphore(_llm_max_concurrent)
+_global_llm_semaphore = CrossLoopSemaphore(_llm_max_concurrent)
 
 
-def _build_per_op_semaphores() -> dict[str, asyncio.Semaphore]:
+def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
     """Build the per-operation semaphore registry from env vars.
 
     Each per-op cap is composed with — not a substitute for — the global cap:
@@ -69,7 +76,7 @@ def _build_per_op_semaphores() -> dict[str, asyncio.Semaphore]:
     Operations without a configured env var are absent from the registry and
     therefore only constrained by the global cap.
     """
-    semaphores: dict[str, asyncio.Semaphore] = {}
+    semaphores: dict[str, CrossLoopSemaphore] = {}
     for op, env_var in (
         ("retain", ENV_RETAIN_LLM_MAX_CONCURRENT),
         ("reflect", ENV_REFLECT_LLM_MAX_CONCURRENT),
@@ -81,11 +88,11 @@ def _build_per_op_semaphores() -> dict[str, asyncio.Semaphore]:
         value = int(raw)
         if value <= 0:
             raise ValueError(f"{env_var} must be a positive integer, got {raw!r}")
-        semaphores[op] = asyncio.Semaphore(value)
+        semaphores[op] = CrossLoopSemaphore(value)
     return semaphores
 
 
-_per_op_llm_semaphores: dict[str, asyncio.Semaphore] = _build_per_op_semaphores()
+_per_op_llm_semaphores: dict[str, CrossLoopSemaphore] = _build_per_op_semaphores()
 
 
 def _scope_to_operation(scope: str) -> str | None:
@@ -104,7 +111,7 @@ def _scope_to_operation(scope: str) -> str | None:
     return None
 
 
-def _semaphores_for_scope(scope: str) -> list[asyncio.Semaphore]:
+def _semaphores_for_scope(scope: str) -> list[CrossLoopSemaphore]:
     """Return the semaphores a call with the given scope must acquire.
 
     Always includes the global semaphore; includes the per-op semaphore when

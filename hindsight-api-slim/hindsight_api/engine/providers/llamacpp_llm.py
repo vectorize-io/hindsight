@@ -24,6 +24,7 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any, Callable
 
+from hindsight_api._cross_loop import CrossLoopLock
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.response_models import LLMToolCallResult
 
@@ -40,7 +41,11 @@ MODELS_DIR = Path.home() / ".hindsight" / "models"
 # (retain, reflect, consolidation each create their own LLMProvider,
 # but they should all share one llama.cpp server process)
 _shared_server: "LlamaCppServer | None" = None
-_shared_server_lock = asyncio.Lock()
+# CrossLoopLock, not asyncio.Lock: module-level state shared by every event loop in
+# the process. It guards starting and stopping the shared llama.cpp subprocess, which
+# awaits, so it must be held across suspension points — a threading.Lock would block
+# the loop instead of yielding.
+_shared_server_lock = CrossLoopLock()
 
 
 def _find_free_port() -> int:
