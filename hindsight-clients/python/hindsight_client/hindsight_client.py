@@ -564,6 +564,7 @@ class Hindsight:
         include_tool_calls: bool = False,
         include_tool_call_output: bool = True,
         tag_groups: list[dict[str, Any]] | None = None,
+        apply_all_directives: bool = False,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
         exclude_mental_model_ids: list[str] | None = None,
@@ -593,6 +594,9 @@ class Hindsight:
                 outputs are included in the trace. Set to False for a smaller payload (inputs only).
                 Ignored when ``include_tool_calls`` is False (default: True).
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
+            apply_all_directives: Apply every active directive regardless of tags. By default
+                directives are tag-scoped like memories: untagged ones always apply, tagged ones
+                only when the request's tags match (default: False).
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
@@ -616,6 +620,7 @@ class Hindsight:
                 include_tool_calls=include_tool_calls,
                 include_tool_call_output=include_tool_call_output,
                 tag_groups=tag_groups,
+                apply_all_directives=apply_all_directives,
                 fact_types=fact_types,
                 exclude_mental_models=exclude_mental_models,
                 exclude_mental_model_ids=exclude_mental_model_ids,
@@ -1167,6 +1172,7 @@ class Hindsight:
         include_tool_calls: bool = False,
         include_tool_call_output: bool = True,
         tag_groups: list[dict[str, Any]] | None = None,
+        apply_all_directives: bool = False,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
         exclude_mental_model_ids: list[str] | None = None,
@@ -1196,6 +1202,9 @@ class Hindsight:
                 outputs are included in the trace. Set to False for a smaller payload (inputs only).
                 Ignored when ``include_tool_calls`` is False (default: True).
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
+            apply_all_directives: Apply every active directive regardless of tags. By default
+                directives are tag-scoped like memories: untagged ones always apply, tagged ones
+                only when the request's tags match (default: False).
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
@@ -1228,6 +1237,7 @@ class Hindsight:
             tags_match=tags_match,
             include=include,
             tag_groups=tag_groups_objs,
+            apply_all_directives=apply_all_directives or None,
             fact_types=fact_types,
             exclude_mental_models=exclude_mental_models or None,
             exclude_mental_model_ids=exclude_mental_model_ids,
@@ -1953,12 +1963,20 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         retain_default_strategy: str | None = None,
         retain_strategies: dict[str, Any] | None = None,
+        retain_chunk_batch_size: int | None = None,
+        store_document_text: bool | None = None,
         # Entity settings
         entity_labels: list[dict[str, Any]] | None = None,
         entities_allow_free_form: bool | None = None,
         # Observation / consolidation settings
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        max_observations_per_scope: int | None = None,
+        observation_scope_limits: list[dict[str, Any]] | None = None,
+        enable_auto_consolidation: bool | None = None,
+        consolidation_llm_parallelism: int | None = None,
+        consolidation_max_memories_per_round: int | None = None,
+        mental_model_min_refresh_interval_seconds: int | None = None,
         enable_text_search: bool | None = None,
         enable_temporal_retrieval: bool | None = None,
         enable_graph_retrieval: bool | None = None,
@@ -1966,6 +1984,19 @@ class Hindsight:
         consolidation_llm_batch_size: int | None = None,
         consolidation_source_facts_max_tokens: int | None = None,
         consolidation_source_facts_max_tokens_per_observation: int | None = None,
+        # Recall settings
+        recall_max_tokens: int | None = None,
+        recall_include_chunks: bool | None = None,
+        recall_chunks_max_tokens: int | None = None,
+        recall_budget_function: str | None = None,
+        recall_budget_fixed_low: int | None = None,
+        recall_budget_fixed_mid: int | None = None,
+        recall_budget_fixed_high: int | None = None,
+        recall_budget_adaptive_low: float | None = None,
+        recall_budget_adaptive_mid: float | None = None,
+        recall_budget_adaptive_high: float | None = None,
+        recall_budget_min: int | None = None,
+        recall_budget_max: int | None = None,
         # Disposition settings
         disposition_skepticism: int | None = None,
         disposition_literalism: int | None = None,
@@ -1973,7 +2004,10 @@ class Hindsight:
         # MCP settings
         mcp_enabled_tools: list[str] | None = None,
         # Gemini safety settings
-        llm_gemini_safety_settings: dict[str, str] | None = None,
+        llm_gemini_safety_settings: list[dict[str, str]] | None = None,
+        # Security / audit
+        memory_defense: dict[str, Any] | None = None,
+        audit_log_enabled: bool | None = None,
     ) -> dict[str, Any]:
         """
         Update configuration overrides for a bank (sync wrapper — use ``await client.banks.update_bank_config(...)`` in async code).
@@ -1993,6 +2027,8 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             retain_default_strategy: Default retain strategy name.
             retain_strategies: Named strategy definitions (dict of strategy name to config).
+            retain_chunk_batch_size: Number of chunks per sub-batch in chunks extraction mode.
+            store_document_text: Persist the original document text alongside extracted facts.
             entity_labels: Controlled vocabulary for entity labels — a list of label-group
                 dicts, each with a ``key`` and a ``type``: ``"value"``/``"multi-values"`` pick
                 from the group's declared ``values``, while ``"text"``/``"multi-text"`` are
@@ -2000,6 +2036,12 @@ class Hindsight:
                 extracted ``key:value`` labels are also written as tags, so they are
                 filterable via ``tags``/``tags_match`` at recall.
             entities_allow_free_form: Whether to allow entity types outside entity_labels (default: True).
+            max_observations_per_scope: Cap on observations retained per scope (-1 for unlimited).
+            observation_scope_limits: Per-scope observation caps, overriding max_observations_per_scope.
+            enable_auto_consolidation: Consolidate automatically after retain() rather than on demand.
+            consolidation_llm_parallelism: Concurrent LLM calls during consolidation.
+            consolidation_max_memories_per_round: Memories consolidated per round.
+            mental_model_min_refresh_interval_seconds: Debounce between mental-model refreshes.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations.
             enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
@@ -2012,11 +2054,26 @@ class Hindsight:
                 in a consolidation pass.
             consolidation_source_facts_max_tokens_per_observation: Max tokens of source facts per
                 individual observation in the consolidation prompt.
+            recall_max_tokens: Token budget for facts returned by recall.
+            recall_include_chunks: Include source chunks in recall results.
+            recall_chunks_max_tokens: Token budget for those chunks.
+            recall_budget_function: How the per-query result budget is derived: 'fixed' or 'adaptive'.
+            recall_budget_fixed_low: Fixed budget for low-breadth queries.
+            recall_budget_fixed_mid: Fixed budget for medium-breadth queries.
+            recall_budget_fixed_high: Fixed budget for high-breadth queries.
+            recall_budget_adaptive_low: Adaptive budget fraction for low-breadth queries.
+            recall_budget_adaptive_mid: Adaptive budget fraction for medium-breadth queries.
+            recall_budget_adaptive_high: Adaptive budget fraction for high-breadth queries.
+            recall_budget_min: Lower clamp on the resolved budget.
+            recall_budget_max: Upper clamp on the resolved budget.
             disposition_skepticism: How skeptical vs trusting (1=trusting, 5=skeptical).
             disposition_literalism: How literally to interpret information (1=flexible, 5=literal).
             disposition_empathy: How much to consider emotional context (1=detached, 5=empathetic).
             mcp_enabled_tools: List of MCP tool names to enable for this bank.
-            llm_gemini_safety_settings: Gemini/VertexAI safety setting overrides (category → threshold).
+            llm_gemini_safety_settings: Gemini/VertexAI safety overrides, as a list of
+                ``{"category": ..., "threshold": ...}`` dicts (the shape the provider takes).
+            memory_defense: Memory-defense (prompt-injection / secret redaction) settings.
+            audit_log_enabled: Write an audit log entry for each operation on this bank.
 
         Returns:
             dict with ``bank_id``, ``config`` (fully resolved), and ``overrides`` (bank-level only)
@@ -2033,10 +2090,18 @@ class Hindsight:
                 "retain_structured_chunk_size": retain_structured_chunk_size,
                 "retain_default_strategy": retain_default_strategy,
                 "retain_strategies": retain_strategies,
+                "retain_chunk_batch_size": retain_chunk_batch_size,
+                "store_document_text": store_document_text,
                 "entity_labels": entity_labels,
                 "entities_allow_free_form": entities_allow_free_form,
                 "enable_observations": enable_observations,
                 "observations_mission": observations_mission,
+                "max_observations_per_scope": max_observations_per_scope,
+                "observation_scope_limits": observation_scope_limits,
+                "enable_auto_consolidation": enable_auto_consolidation,
+                "consolidation_llm_parallelism": consolidation_llm_parallelism,
+                "consolidation_max_memories_per_round": consolidation_max_memories_per_round,
+                "mental_model_min_refresh_interval_seconds": mental_model_min_refresh_interval_seconds,
                 "enable_text_search": enable_text_search,
                 "enable_temporal_retrieval": enable_temporal_retrieval,
                 "enable_graph_retrieval": enable_graph_retrieval,
@@ -2044,11 +2109,25 @@ class Hindsight:
                 "consolidation_llm_batch_size": consolidation_llm_batch_size,
                 "consolidation_source_facts_max_tokens": consolidation_source_facts_max_tokens,
                 "consolidation_source_facts_max_tokens_per_observation": consolidation_source_facts_max_tokens_per_observation,
+                "recall_max_tokens": recall_max_tokens,
+                "recall_include_chunks": recall_include_chunks,
+                "recall_chunks_max_tokens": recall_chunks_max_tokens,
+                "recall_budget_function": recall_budget_function,
+                "recall_budget_fixed_low": recall_budget_fixed_low,
+                "recall_budget_fixed_mid": recall_budget_fixed_mid,
+                "recall_budget_fixed_high": recall_budget_fixed_high,
+                "recall_budget_adaptive_low": recall_budget_adaptive_low,
+                "recall_budget_adaptive_mid": recall_budget_adaptive_mid,
+                "recall_budget_adaptive_high": recall_budget_adaptive_high,
+                "recall_budget_min": recall_budget_min,
+                "recall_budget_max": recall_budget_max,
                 "disposition_skepticism": disposition_skepticism,
                 "disposition_literalism": disposition_literalism,
                 "disposition_empathy": disposition_empathy,
                 "mcp_enabled_tools": mcp_enabled_tools,
                 "llm_gemini_safety_settings": llm_gemini_safety_settings,
+                "memory_defense": memory_defense,
+                "audit_log_enabled": audit_log_enabled,
             }.items()
             if v is not None
         }
