@@ -61,7 +61,7 @@ describe("InlineAttachmentText", () => {
     );
 
     const img = screen.getByRole("img");
-    expect(img.getAttribute("src")).toBe(`/api/attachments?bank_id=bank-a&id=${IMAGE_ID}`);
+    expect(img.getAttribute("src")).toBe(`/api/banks/bank-a/attachments/${IMAGE_ID}`);
     expect(screen.getByText(/before/)).toBeTruthy();
     expect(screen.getByText(/after/)).toBeTruthy();
   });
@@ -73,7 +73,7 @@ describe("InlineAttachmentText", () => {
 
     expect(screen.queryByRole("img")).toBeNull();
     const link = screen.getByRole("link");
-    expect(link.getAttribute("href")).toBe(`/api/attachments?bank_id=bank-a&id=${FILE_ID}`);
+    expect(link.getAttribute("href")).toBe(`/api/banks/bank-a/attachments/${FILE_ID}`);
     expect(screen.getByText("escalation.pdf")).toBeTruthy();
     expect(screen.getByText(/application\/pdf/)).toBeTruthy();
   });
@@ -102,7 +102,7 @@ describe("InlineAttachmentText", () => {
 
     // The dataplane path would 401 from a browser: it has no credentials.
     expect(screen.getByRole("img").getAttribute("src")).toBe(
-      `/api/attachments?bank_id=bank-a&id=${IMAGE_ID}`
+      `/api/banks/bank-a/attachments/${IMAGE_ID}`
     );
   });
 

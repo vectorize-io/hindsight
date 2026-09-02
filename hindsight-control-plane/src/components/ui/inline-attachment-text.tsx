@@ -52,7 +52,7 @@ function formatBytes(bytes?: number): string {
  * proxy adds the credentials server-side.
  */
 function attachmentUrl(bankId: string, attachment: RetainedAttachment): string {
-  return `/api/attachments?bank_id=${encodeURIComponent(bankId)}&id=${attachment.id}`;
+  return `/api/banks/${encodeURIComponent(bankId)}/attachments/${attachment.id}`;
 }
 
 function Unavailable({ label }: { label: string }) {
