@@ -13,7 +13,6 @@ right to flag it.
 from dataclasses import dataclass, field
 
 from hindsight_api.config import (
-    DEFAULT_RETAIN_IMAGE_CHUNK_COST_CHARS,
     DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK,
     HindsightConfig,
 )
@@ -47,12 +46,11 @@ def collect_sub_batches(
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
-    image_cost_chars: int = DEFAULT_RETAIN_IMAGE_CHUNK_COST_CHARS,
     max_images_per_chunk: int = DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK,
 ) -> CollectedSplit:
     """Drain the raw splitter into a ``CollectedSplit``.
 
-    The image budget defaults to the server defaults: these tests use text-only
+    The image cap defaults to the server default: these tests use text-only
     documents, where it never binds, but the splitter requires every caller to
     state its chunking terms so no path can silently chunk on different ones.
     """
@@ -62,7 +60,6 @@ def collect_sub_batches(
         tokens_per_batch,
         chunk_size=chunk_size,
         structured_chunk_size=structured_chunk_size,
-        image_cost_chars=image_cost_chars,
         max_images_per_chunk=max_images_per_chunk,
     ):
         collected.sub_batches.append(raw.contents)

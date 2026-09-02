@@ -203,7 +203,8 @@ from hindsight_api.engine.retain.image_content import (
     RetainText,
     canonicalize,
     compute_image_hash,
-    iter_placeholder_hashes,
+    iter_placeholder_ids,
+    neutralize_placeholders,
 )
 from hindsight_api.engine.retain.image_content import ContentBlock as CanonicalBlock
 from hindsight_api.engine.search.tag_resolution import needs_resolution
@@ -583,7 +584,8 @@ class EntityDetailResponse(BaseModel):
 class ChunkImage(BaseModel):
     """An image referenced by a chunk's text, and where to fetch it."""
 
-    hash: str = Field(description="sha256 of the image bytes; the id inside the chunk text's placeholder.")
+    id: str = Field(description="The id inside the chunk text's placeholder; a prefix of the bytes' sha256.")
+    hash: str = Field(description="Full sha256 of the image bytes.")
     media_type: str = Field(description="MIME type of the image.")
     byte_size: int = Field(description="Size of the image in bytes.")
     url: str = Field(
@@ -603,7 +605,7 @@ class ChunkData(BaseModel):
         description=(
             "Images this chunk's text references, in order of first appearance, when it was retained "
             "with inline image content. The text keeps each image's placeholder token "
-            "(⟦hs-image:sha256:...⟧) where the image sat, so a multimodal agent can render or reason "
+            "(⟦hs-img:...⟧) where the image sat, so a multimodal agent can render or reason "
             "over the original image at the position it occupied in the source document. Omitted for "
             "chunks with no images."
         ),
@@ -733,9 +735,9 @@ class ImageContentBlock(BaseModel):
 ContentBlock = Annotated[TextContentBlock | ImageContentBlock, Field(discriminator="type")]
 
 
-def bank_image_url(bank_id: str, image_hash: str) -> str:
-    """The API path serving one of a bank's retained images."""
-    return f"/v1/default/banks/{quote(bank_id, safe='')}/images/{image_hash}"
+def bank_image_url(bank_id: str, image_id: str) -> str:
+    """The API path serving one of a bank's retained images, by its short id."""
+    return f"/v1/default/banks/{quote(bank_id, safe='')}/images/{image_id}"
 
 
 def _chunk_images(
@@ -749,20 +751,21 @@ def _chunk_images(
     simply absent from the response instead of adding a null to every recall.
     """
     seen: dict[str, ChunkImage] = {}
-    for image_hash in iter_placeholder_hashes(chunk_text):
-        if image_hash in seen:
+    for image_id in iter_placeholder_ids(chunk_text):
+        if image_id in seen:
             continue
-        record = records.get(image_hash)
+        record = records.get(image_id)
         if record is None:
             # The bytes are gone (reclaimed, or a storage backend swapped under an
             # old document). The placeholder stays in the text, honestly saying an
             # image was here; there is just nothing to fetch.
             continue
-        seen[image_hash] = ChunkImage(
-            hash=image_hash,
+        seen[image_id] = ChunkImage(
+            id=image_id,
+            hash=record.image_hash,
             media_type=record.media_type,
             byte_size=record.byte_size,
-            url=bank_image_url(bank_id, image_hash),
+            url=bank_image_url(bank_id, image_id),
         )
     return list(seen.values()) or None
 
@@ -785,7 +788,11 @@ def canonicalize_item_content(
     block to fix.
     """
     if isinstance(content, str):
-        return CanonicalContent(text=content, images=())
+        # Scrubbed exactly like a text block. Only the canonicalizer may mint a
+        # placeholder: without this, a caller could hand-write the token in plain
+        # string content and have extraction resolve it to an image the document
+        # never carried — any image already retained in the same bank.
+        return CanonicalContent(text=neutralize_placeholders(content), images=())
 
     blocks: list[CanonicalBlock] = []
     image_count = 0
@@ -2996,9 +3003,6 @@ class BankTemplateConfig(BaseModel):
     retain_chunk_batch_size: int | None = Field(
         default=None, description="Max chunks per streaming batch (0 disables batching)"
     )
-    retain_image_chunk_cost_chars: int | None = Field(
-        default=None, description="Chars one inline image costs against retain_chunk_size"
-    )
     retain_max_images_per_chunk: int | None = Field(
         default=None, description="Hard cap on inline images in a single extraction chunk"
     )
@@ -5201,9 +5205,9 @@ def _register_routes(app: FastAPI):
                 # so one lookup for the whole response resolves them all — no
                 # per-chunk query, and no second copy of the document→image edge.
                 referenced = [
-                    image_hash
+                    image_id
                     for chunk_info in core_result.chunks.values()
-                    for image_hash in iter_placeholder_hashes(chunk_info.chunk_text or "")
+                    for image_id in iter_placeholder_ids(chunk_info.chunk_text or "")
                 ]
                 image_records = await app.state.memory.resolve_bank_images(bank_id, referenced, request_context)
 
@@ -7859,9 +7863,9 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
-        "/v1/default/banks/{bank_id}/images/{image_hash}",
+        "/v1/default/banks/{bank_id}/images/{image_id}",
         summary="Fetch an image retained inline with a document",
-        description="Serve the bytes of an image retained as inline content. The hash is the id inside a "
+        description="Serve the bytes of an image retained as inline content. The id is the one inside a "
         "chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent "
         "can show or reason over the original image behind an image-derived fact.\n\n"
         "Access is authorized against the bank. A missing image and an invisible bank both return 404, "
@@ -7872,14 +7876,14 @@ def _register_routes(app: FastAPI):
     )
     async def api_get_bank_image(
         bank_id: str,
-        image_hash: str,
+        image_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Serve one of a bank's retained inline images."""
         from fastapi.responses import Response
 
         try:
-            image = await app.state.memory.retrieve_bank_image(bank_id, image_hash, request_context)
+            image = await app.state.memory.retrieve_bank_image(bank_id, image_id, request_context)
             if image is None:
                 raise HTTPException(status_code=404, detail="Image not found")
             return Response(
@@ -7895,7 +7899,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/images/{image_hash}: {e}")
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/images/{image_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

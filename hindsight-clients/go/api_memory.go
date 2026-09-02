@@ -419,7 +419,7 @@ type ApiGetBankImageRequest struct {
 	ctx context.Context
 	ApiService *MemoryAPIService
 	bankId string
-	imageHash string
+	imageId string
 	authorization *string
 }
 
@@ -435,21 +435,21 @@ func (r ApiGetBankImageRequest) Execute() (interface{}, *http.Response, error) {
 /*
 GetBankImage Fetch an image retained inline with a document
 
-Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
+Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
 
 Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
- @param imageHash
+ @param imageId
  @return ApiGetBankImageRequest
 */
-func (a *MemoryAPIService) GetBankImage(ctx context.Context, bankId string, imageHash string) ApiGetBankImageRequest {
+func (a *MemoryAPIService) GetBankImage(ctx context.Context, bankId string, imageId string) ApiGetBankImageRequest {
 	return ApiGetBankImageRequest{
 		ApiService: a,
 		ctx: ctx,
 		bankId: bankId,
-		imageHash: imageHash,
+		imageId: imageId,
 	}
 }
 
@@ -468,9 +468,9 @@ func (a *MemoryAPIService) GetBankImageExecute(r ApiGetBankImageRequest) (interf
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/images/{image_hash}"
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/images/{image_id}"
 	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
-	localVarPath = strings.Replace(localVarPath, "{"+"image_hash"+"}", url.PathEscape(parameterValueToString(r.imageHash, "imageHash")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"image_id"+"}", url.PathEscape(parameterValueToString(r.imageId, "imageId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}

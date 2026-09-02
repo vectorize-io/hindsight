@@ -589,12 +589,6 @@ export type BankTemplateConfig = {
    */
   retain_chunk_batch_size?: number | null;
   /**
-   * Retain Image Chunk Cost Chars
-   *
-   * Chars one inline image costs against retain_chunk_size
-   */
-  retain_image_chunk_cost_chars?: number | null;
-  /**
    * Retain Max Images Per Chunk
    *
    * Hard cap on inline images in a single extraction chunk
@@ -1080,7 +1074,7 @@ export type ChunkData = {
   /**
    * Images
    *
-   * Images this chunk's text references, in order of first appearance, when it was retained with inline image content. The text keeps each image's placeholder token (⟦hs-image:sha256:...⟧) where the image sat, so a multimodal agent can render or reason over the original image at the position it occupied in the source document. Omitted for chunks with no images.
+   * Images this chunk's text references, in order of first appearance, when it was retained with inline image content. The text keeps each image's placeholder token (⟦hs-img:...⟧) where the image sat, so a multimodal agent can render or reason over the original image at the position it occupied in the source document. Omitted for chunks with no images.
    */
   images?: Array<ChunkImage> | null;
 };
@@ -1092,9 +1086,15 @@ export type ChunkData = {
  */
 export type ChunkImage = {
   /**
+   * Id
+   *
+   * The id inside the chunk text's placeholder; a prefix of the bytes' sha256.
+   */
+  id: string;
+  /**
    * Hash
    *
-   * sha256 of the image bytes; the id inside the chunk text's placeholder.
+   * Full sha256 of the image bytes.
    */
   hash: string;
   /**
@@ -8470,12 +8470,12 @@ export type GetBankImageData = {
      */
     bank_id: string;
     /**
-     * Image Hash
+     * Image Id
      */
-    image_hash: string;
+    image_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/images/{image_hash}";
+  url: "/v1/default/banks/{bank_id}/images/{image_id}";
 };
 
 export type GetBankImageErrors = {

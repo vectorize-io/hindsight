@@ -21,7 +21,9 @@ var _ MappedNullable = &ChunkImage{}
 
 // ChunkImage An image referenced by a chunk's text, and where to fetch it.
 type ChunkImage struct {
-	// sha256 of the image bytes; the id inside the chunk text's placeholder.
+	// The id inside the chunk text's placeholder; a prefix of the bytes' sha256.
+	Id string `json:"id"`
+	// Full sha256 of the image bytes.
 	Hash string `json:"hash"`
 	// MIME type of the image.
 	MediaType string `json:"media_type"`
@@ -37,8 +39,9 @@ type _ChunkImage ChunkImage
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewChunkImage(hash string, mediaType string, byteSize int32, url string) *ChunkImage {
+func NewChunkImage(id string, hash string, mediaType string, byteSize int32, url string) *ChunkImage {
 	this := ChunkImage{}
+	this.Id = id
 	this.Hash = hash
 	this.MediaType = mediaType
 	this.ByteSize = byteSize
@@ -52,6 +55,30 @@ func NewChunkImage(hash string, mediaType string, byteSize int32, url string) *C
 func NewChunkImageWithDefaults() *ChunkImage {
 	this := ChunkImage{}
 	return &this
+}
+
+// GetId returns the Id field value
+func (o *ChunkImage) GetId() string {
+	if o == nil {
+		var ret string
+		return ret
+	}
+
+	return o.Id
+}
+
+// GetIdOk returns a tuple with the Id field value
+// and a boolean to check if the value has been set.
+func (o *ChunkImage) GetIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Id, true
+}
+
+// SetId sets field value
+func (o *ChunkImage) SetId(v string) {
+	o.Id = v
 }
 
 // GetHash returns the Hash field value
@@ -160,6 +187,7 @@ func (o ChunkImage) MarshalJSON() ([]byte, error) {
 
 func (o ChunkImage) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
+	toSerialize["id"] = o.Id
 	toSerialize["hash"] = o.Hash
 	toSerialize["media_type"] = o.MediaType
 	toSerialize["byte_size"] = o.ByteSize
@@ -172,6 +200,7 @@ func (o *ChunkImage) UnmarshalJSON(data []byte) (err error) {
 	// by unmarshalling the object into a generic map with string keys and checking
 	// that every required field exists as a key in the generic map.
 	requiredProperties := []string{
+		"id",
 		"hash",
 		"media_type",
 		"byte_size",

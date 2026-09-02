@@ -5035,13 +5035,13 @@
         }
       }
     },
-    "/v1/default/banks/{bank_id}/images/{image_hash}": {
+    "/v1/default/banks/{bank_id}/images/{image_id}": {
       "get": {
         "tags": [
           "Memory"
         ],
         "summary": "Fetch an image retained inline with a document",
-        "description": "Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` \u2014 so an agent can show or reason over the original image behind an image-derived fact.\n\nAccess is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.",
+        "description": "Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` \u2014 so an agent can show or reason over the original image behind an image-derived fact.\n\nAccess is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.",
         "operationId": "get_bank_image",
         "parameters": [
           {
@@ -5054,12 +5054,12 @@
             }
           },
           {
-            "name": "image_hash",
+            "name": "image_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Image Hash"
+              "title": "Image Id"
             }
           },
           {
@@ -7872,18 +7872,6 @@
             "title": "Retain Chunk Batch Size",
             "description": "Max chunks per streaming batch (0 disables batching)"
           },
-          "retain_image_chunk_cost_chars": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retain Image Chunk Cost Chars",
-            "description": "Chars one inline image costs against retain_chunk_size"
-          },
           "retain_max_images_per_chunk": {
             "anyOf": [
               {
@@ -8676,7 +8664,7 @@
               }
             ],
             "title": "Images",
-            "description": "Images this chunk's text references, in order of first appearance, when it was retained with inline image content. The text keeps each image's placeholder token (\u27e6hs-image:sha256:...\u27e7) where the image sat, so a multimodal agent can render or reason over the original image at the position it occupied in the source document. Omitted for chunks with no images."
+            "description": "Images this chunk's text references, in order of first appearance, when it was retained with inline image content. The text keeps each image's placeholder token (\u27e6hs-img:...\u27e7) where the image sat, so a multimodal agent can render or reason over the original image at the position it occupied in the source document. Omitted for chunks with no images."
           }
         },
         "type": "object",
@@ -8690,10 +8678,15 @@
       },
       "ChunkImage": {
         "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The id inside the chunk text's placeholder; a prefix of the bytes' sha256."
+          },
           "hash": {
             "type": "string",
             "title": "Hash",
-            "description": "sha256 of the image bytes; the id inside the chunk text's placeholder."
+            "description": "Full sha256 of the image bytes."
           },
           "media_type": {
             "type": "string",
@@ -8713,6 +8706,7 @@
         },
         "type": "object",
         "required": [
+          "id",
           "hash",
           "media_type",
           "byte_size",

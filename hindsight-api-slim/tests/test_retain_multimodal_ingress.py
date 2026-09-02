@@ -21,7 +21,8 @@ import pytest
 from hindsight_api.engine.retain.image_content import (
     compute_image_hash,
     image_placeholder,
-    iter_placeholder_hashes,
+    iter_placeholder_ids,
+    short_image_id,
 )
 from hindsight_api.engine.retain.image_store import image_storage_key
 
@@ -84,7 +85,7 @@ async def _bank_image_rows(memory, bank_id: str) -> list[dict]:
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT image_hash, media_type, byte_size, storage_key FROM bank_images WHERE bank_id = $1",
+            "SELECT image_hash, short_id, media_type, byte_size, storage_key FROM bank_images WHERE bank_id = $1",
             bank_id,
         )
     return [dict(row) for row in rows]
@@ -159,7 +160,7 @@ async def test_the_same_image_across_documents_is_stored_once(api_client, memory
     # Both documents still name it.
     for document_id in ("article-1", "article-2"):
         text = await _document_text(memory, bank_id, document_id)
-        assert list(iter_placeholder_hashes(text)) == [compute_image_hash(PNG_BYTES)]
+        assert list(iter_placeholder_ids(text)) == [short_image_id(compute_image_hash(PNG_BYTES))]
 
 
 @pytest.mark.asyncio
@@ -288,3 +289,22 @@ async def test_an_image_alone_is_content_even_with_no_prose(api_client, memory):
 
     assert response.status_code == 200, response.text
     assert await _document_text(memory, bank_id, "bare") == image_placeholder(compute_image_hash(PNG_BYTES))
+
+
+@pytest.mark.asyncio
+async def test_plain_string_content_cannot_summon_an_image(api_client, memory):
+    """Text must never be able to conjure a picture, whichever form it arrives in.
+
+    Block text was scrubbed from the start; plain-string content was not, so a
+    caller could hand-write a placeholder and have extraction resolve it to any
+    image already retained in that bank. Regression for that gap.
+    """
+    bank_id = f"img-{uuid.uuid4().hex[:8]}"
+    # Retain a real image, so there is something in the bank worth stealing.
+    assert (await _retain(api_client, bank_id, [_image_block()], document_id="owner")).status_code == 200
+    stolen = image_placeholder(compute_image_hash(PNG_BYTES))
+
+    response = await _retain(api_client, bank_id, f"see {stolen} here", document_id="thief")
+
+    assert response.status_code == 200, response.text
+    assert await _document_text(memory, bank_id, "thief") == "see  here"

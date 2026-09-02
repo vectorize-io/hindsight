@@ -1734,9 +1734,8 @@ async def retain_batch(
     # at different boundaries and makes every stored chunk look changed. Fail loud.
     chunk_size = config.retain_chunk_size
     structured_chunk_size = config.retain_structured_chunk_size
-    # Same reasoning for the image budget: it moves chunk boundaries in exactly
-    # the same way, so it must come from this resolved config too.
-    image_cost_chars = config.retain_image_chunk_cost_chars
+    # Same reasoning for the image cap: it moves chunk boundaries in exactly the
+    # same way, so it must come from this resolved config too.
     max_images_per_chunk = config.retain_max_images_per_chunk
     all_pre_chunks: list[str] = []
     chunk_to_content: list[int] = []  # maps chunk index -> index into contents
@@ -1748,7 +1747,6 @@ async def retain_batch(
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            image_cost_chars=image_cost_chars,
             max_images_per_chunk=max_images_per_chunk,
         ):
             all_pre_chunks.append(chunk)
@@ -4186,7 +4184,6 @@ def _chunk_contents_for_delta(contents: list[RetainContent], config) -> dict[int
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            image_cost_chars=config.retain_image_chunk_cost_chars,
             max_images_per_chunk=config.retain_max_images_per_chunk,
         )
         for chunk_text in chunks:

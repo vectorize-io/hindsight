@@ -26,6 +26,7 @@ from hindsight_api.engine.retain.image_content import (
     RetainText,
     canonicalize,
     compute_image_hash,
+    short_image_id,
 )
 from tests.llm_judge import assert_meets_criteria
 
@@ -79,8 +80,8 @@ class _StubImageLoader:
     def __init__(self, images: dict[str, LoadedImage]) -> None:
         self._images = images
 
-    async def load(self, image_hashes):
-        return {h: self._images[h] for h in image_hashes if h in self._images}
+    async def load(self, image_ids):
+        return {i: self._images[i] for i in image_ids if i in self._images}
 
 
 def _content_with_image(before: str, image_bytes: bytes, after: str):
@@ -92,7 +93,9 @@ def _content_with_image(before: str, image_bytes: bytes, after: str):
         block_index=1,
     )
     canonical = canonicalize([RetainText(before), image, RetainText(after)])
-    loader = _StubImageLoader({image.image_hash: LoadedImage(media_type="image/png", data=image_bytes)})
+    loader = _StubImageLoader(
+        {short_image_id(image.image_hash): LoadedImage(media_type="image/png", data=image_bytes)}
+    )
     return canonical.text, loader
 
 

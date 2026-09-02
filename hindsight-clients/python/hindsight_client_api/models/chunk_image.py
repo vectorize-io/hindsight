@@ -26,11 +26,12 @@ class ChunkImage(BaseModel):
     """
     An image referenced by a chunk's text, and where to fetch it.
     """ # noqa: E501
-    hash: StrictStr = Field(description="sha256 of the image bytes; the id inside the chunk text's placeholder.")
+    id: StrictStr = Field(description="The id inside the chunk text's placeholder; a prefix of the bytes' sha256.")
+    hash: StrictStr = Field(description="Full sha256 of the image bytes.")
     media_type: StrictStr = Field(description="MIME type of the image.")
     byte_size: StrictInt = Field(description="Size of the image in bytes.")
     url: StrictStr = Field(description="Bank-scoped API path serving the image bytes. Requires the same authorization as the bank.")
-    __properties: ClassVar[List[str]] = ["hash", "media_type", "byte_size", "url"]
+    __properties: ClassVar[List[str]] = ["id", "hash", "media_type", "byte_size", "url"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -83,6 +84,7 @@ class ChunkImage(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "id": obj.get("id"),
             "hash": obj.get("hash"),
             "media_type": obj.get("media_type"),
             "byte_size": obj.get("byte_size"),

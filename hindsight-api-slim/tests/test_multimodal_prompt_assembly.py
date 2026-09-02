@@ -17,12 +17,14 @@ from hindsight_api.engine.retain.image_content import (
     build_prompt_parts,
     compute_image_hash,
     image_placeholder,
+    short_image_id,
 )
 
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 PNG_HASH = compute_image_hash(PNG_BYTES)
+PNG_ID = short_image_id(PNG_HASH)
 PNG = LoadedImage(media_type="image/png", data=PNG_BYTES)
 
 
@@ -35,7 +37,7 @@ def test_the_image_lands_between_the_text_that_frames_it() -> None:
     """Position is the point: an image appended at the end loses its context."""
     text = f"click the button shown:\n\n{image_placeholder(PNG_HASH)}\n\nthen reconnect."
 
-    parts = build_prompt_parts(text, {PNG_HASH: PNG})
+    parts = build_prompt_parts(text, {PNG_ID: PNG})
 
     assert [part["type"] for part in parts] == ["text", "image_url", "text"]
     assert "click the button shown" in parts[0]["text"]
@@ -44,7 +46,7 @@ def test_the_image_lands_between_the_text_that_frames_it() -> None:
 
 
 def test_the_encoded_payload_round_trips_to_the_original_bytes() -> None:
-    parts = build_prompt_parts(image_placeholder(PNG_HASH), {PNG_HASH: PNG})
+    parts = build_prompt_parts(image_placeholder(PNG_HASH), {PNG_ID: PNG})
 
     payload = parts[0]["image_url"]["url"].split(",", 1)[1]
     assert base64.b64decode(payload) == PNG_BYTES
@@ -62,7 +64,7 @@ def test_an_unresolvable_image_degrades_to_a_note_instead_of_failing() -> None:
 def test_repeated_images_each_get_their_own_part() -> None:
     text = f"{image_placeholder(PNG_HASH)} and again {image_placeholder(PNG_HASH)}"
 
-    parts = build_prompt_parts(text, {PNG_HASH: PNG})
+    parts = build_prompt_parts(text, {PNG_ID: PNG})
 
     assert [part["type"] for part in parts] == ["image_url", "text", "image_url"]
 
@@ -71,7 +73,7 @@ def test_whitespace_only_runs_do_not_become_empty_text_parts() -> None:
     """Providers reject empty text blocks."""
     text = f"\n\n{image_placeholder(PNG_HASH)}\n\n"
 
-    parts = build_prompt_parts(text, {PNG_HASH: PNG})
+    parts = build_prompt_parts(text, {PNG_ID: PNG})
 
     assert parts == [{"type": "image_url", "image_url": {"url": PNG.as_data_uri()}}]
 
@@ -81,7 +83,7 @@ class TestAnthropicConversion:
         assert _to_anthropic_content("hello") == "hello"
 
     def test_an_image_part_becomes_a_native_base64_image_block(self) -> None:
-        parts = build_prompt_parts(f"see:\n\n{image_placeholder(PNG_HASH)}", {PNG_HASH: PNG})
+        parts = build_prompt_parts(f"see:\n\n{image_placeholder(PNG_HASH)}", {PNG_ID: PNG})
 
         blocks = _to_anthropic_content(parts)
 
@@ -116,7 +118,7 @@ class TestGeminiConversion:
 
         from hindsight_api.engine.providers.gemini_llm import _to_gemini_parts
 
-        prompt_parts = build_prompt_parts(f"see:\n\n{image_placeholder(PNG_HASH)}", {PNG_HASH: PNG})
+        prompt_parts = build_prompt_parts(f"see:\n\n{image_placeholder(PNG_HASH)}", {PNG_ID: PNG})
 
         parts = _to_gemini_parts(prompt_parts, genai_types)
 

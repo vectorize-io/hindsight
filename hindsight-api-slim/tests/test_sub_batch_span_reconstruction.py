@@ -33,9 +33,9 @@ from hindsight_api.engine.memory_engine import (
 from hindsight_api.engine.retain.fact_extraction import chunk_text
 
 CHUNK_SIZE = 1500
-# The image budget the splitter now requires from every caller. These bodies are
-# text-only, so it never binds — the values only have to be stated.
-IMAGE_BUDGET = {"image_cost_chars": 500, "max_images_per_chunk": 8}
+# The image cap the splitter now requires from every caller. These bodies are
+# text-only, so it never binds — the value only has to be stated.
+IMAGE_BUDGET = {"max_images_per_chunk": 8}
 TOKENS_PER_BATCH = 10_000
 # Small enough that the repeated fixture exceeds it, which is what reaches the packing branch.
 PACKED_TOKENS = 800

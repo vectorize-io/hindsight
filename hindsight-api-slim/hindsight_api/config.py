@@ -683,7 +683,6 @@ ENV_RETAIN_MEMORY_BUDGET_MB = "HINDSIGHT_API_RETAIN_MEMORY_BUDGET_MB"
 # does and a bank ingesting screenshot-heavy documents may want different values.
 ENV_RETAIN_IMAGE_MAX_SIZE_MB = "HINDSIGHT_API_RETAIN_IMAGE_MAX_SIZE_MB"
 ENV_RETAIN_IMAGE_MAX_COUNT = "HINDSIGHT_API_RETAIN_IMAGE_MAX_COUNT"
-ENV_RETAIN_IMAGE_CHUNK_COST_CHARS = "HINDSIGHT_API_RETAIN_IMAGE_CHUNK_COST_CHARS"
 ENV_RETAIN_MAX_IMAGES_PER_CHUNK = "HINDSIGHT_API_RETAIN_MAX_IMAGES_PER_CHUNK"
 
 # File storage configuration
@@ -1958,29 +1957,23 @@ def validate_retain_chunking_config(
 
 
 def validate_retain_image_chunking_config(
-    retain_image_chunk_cost_chars: Any,
     retain_max_images_per_chunk: Any,
     *,
-    retain_image_chunk_cost_chars_name: str = "retain_image_chunk_cost_chars",
     retain_max_images_per_chunk_name: str = "retain_max_images_per_chunk",
 ) -> None:
-    """Validate the hierarchical inline-image chunking fields.
+    """Validate the hierarchical inline-image chunking field.
 
     Named like :func:`validate_retain_chunking_config`, and called from the same
     places, so a bank/tenant override is rejected at write time rather than
     surfacing as a broken retain later.
 
-    Deliberately only bounds-checks each field on its own. An earlier version also
-    required ``retain_image_chunk_cost_chars < retain_chunk_size``, on the
-    reasoning that a costlier image could never share a chunk with the prose
-    around it. That rule was wrong in practice: it made a *text-only* config
-    invalid — a bank or retain strategy that lowers ``retain_chunk_size`` to 800
-    for its own reasons was rejected because of an image default it never chose,
-    which would break existing deployments on upgrade. The chunker clamps the
-    cost to the budget instead, so an image always fits (see
-    ``_iter_image_aware_chunks``).
+    There used to be a second field here, ``retain_image_chunk_cost_chars``,
+    charging each image a slice of ``retain_chunk_size``. It is gone: the chunk
+    size is a budget for *text*, and spending it on images split an article's
+    "here are the screenshots:" away from the screenshots — the exact adjacency
+    the feature exists to preserve. The real constraint is how many images one
+    request may carry, which is this field.
     """
-    _validate_retain_chunking_int(retain_image_chunk_cost_chars_name, retain_image_chunk_cost_chars)
     _validate_retain_chunking_int(retain_max_images_per_chunk_name, retain_max_images_per_chunk)
 
 
@@ -2865,7 +2858,6 @@ class HindsightConfig:
     retain_memory_budget_mb: int  # Max MB of in-flight extraction state per retain (0 = disabled)
     retain_image_max_size_mb: int  # Max decoded size of one inline retain image (static)
     retain_image_max_count: int  # Max inline images in one retain item (static)
-    retain_image_chunk_cost_chars: int  # Chars one image costs against retain_chunk_size
     retain_max_images_per_chunk: int  # Hard cap on images in a single extraction chunk
 
     # File storage (static - server-level only)
@@ -3208,9 +3200,9 @@ class HindsightConfig:
         "retain_default_strategy",
         "retain_strategies",
         "retain_chunk_batch_size",
-        # Inline-image chunking. Shapes extraction the same way retain_chunk_size
-        # does, so a bank ingesting screenshot-heavy documents can tune it.
-        "retain_image_chunk_cost_chars",
+        # How many images one extraction chunk may carry. Shapes extraction the
+        # same way retain_chunk_size does, so a bank ingesting screenshot-heavy
+        # documents can tune it.
         "retain_max_images_per_chunk",
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
@@ -3510,9 +3502,7 @@ class HindsightConfig:
         )
 
         validate_retain_image_chunking_config(
-            self.retain_image_chunk_cost_chars,
             self.retain_max_images_per_chunk,
-            retain_image_chunk_cost_chars_name=ENV_RETAIN_IMAGE_CHUNK_COST_CHARS,
             retain_max_images_per_chunk_name=ENV_RETAIN_MAX_IMAGES_PER_CHUNK,
         )
 
@@ -4237,9 +4227,6 @@ class HindsightConfig:
                 os.getenv(ENV_RETAIN_IMAGE_MAX_SIZE_MB, str(DEFAULT_RETAIN_IMAGE_MAX_SIZE_MB))
             ),
             retain_image_max_count=int(os.getenv(ENV_RETAIN_IMAGE_MAX_COUNT, str(DEFAULT_RETAIN_IMAGE_MAX_COUNT))),
-            retain_image_chunk_cost_chars=int(
-                os.getenv(ENV_RETAIN_IMAGE_CHUNK_COST_CHARS, str(DEFAULT_RETAIN_IMAGE_CHUNK_COST_CHARS))
-            ),
             retain_max_images_per_chunk=int(
                 os.getenv(ENV_RETAIN_MAX_IMAGES_PER_CHUNK, str(DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK))
             ),

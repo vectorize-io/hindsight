@@ -951,7 +951,7 @@ class MemoryApi:
     async def get_bank_image(
         self,
         bank_id: StrictStr,
-        image_hash: StrictStr,
+        image_id: StrictStr,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -968,12 +968,12 @@ class MemoryApi:
     ) -> object:
         """Fetch an image retained inline with a document
 
-        Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param image_hash: (required)
-        :type image_hash: str
+        :param image_id: (required)
+        :type image_id: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1000,7 +1000,7 @@ class MemoryApi:
 
         _param = self._get_bank_image_serialize(
             bank_id=bank_id,
-            image_hash=image_hash,
+            image_id=image_id,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1027,7 +1027,7 @@ class MemoryApi:
     async def get_bank_image_with_http_info(
         self,
         bank_id: StrictStr,
-        image_hash: StrictStr,
+        image_id: StrictStr,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1044,12 +1044,12 @@ class MemoryApi:
     ) -> ApiResponse[object]:
         """Fetch an image retained inline with a document
 
-        Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param image_hash: (required)
-        :type image_hash: str
+        :param image_id: (required)
+        :type image_id: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1076,7 +1076,7 @@ class MemoryApi:
 
         _param = self._get_bank_image_serialize(
             bank_id=bank_id,
-            image_hash=image_hash,
+            image_id=image_id,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1103,7 +1103,7 @@ class MemoryApi:
     async def get_bank_image_without_preload_content(
         self,
         bank_id: StrictStr,
-        image_hash: StrictStr,
+        image_id: StrictStr,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1120,12 +1120,12 @@ class MemoryApi:
     ) -> RESTResponseType:
         """Fetch an image retained inline with a document
 
-        Serve the bytes of an image retained as inline content. The hash is the id inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+        Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.  Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param image_hash: (required)
-        :type image_hash: str
+        :param image_id: (required)
+        :type image_id: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1152,7 +1152,7 @@ class MemoryApi:
 
         _param = self._get_bank_image_serialize(
             bank_id=bank_id,
-            image_hash=image_hash,
+            image_id=image_id,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1174,7 +1174,7 @@ class MemoryApi:
     def _get_bank_image_serialize(
         self,
         bank_id,
-        image_hash,
+        image_id,
         authorization,
         _request_auth,
         _content_type,
@@ -1199,8 +1199,8 @@ class MemoryApi:
         # process the path parameters
         if bank_id is not None:
             _path_params['bank_id'] = bank_id
-        if image_hash is not None:
-            _path_params['image_hash'] = image_hash
+        if image_id is not None:
+            _path_params['image_id'] = image_id
         # process the query parameters
         # process the header parameters
         if authorization is not None:
@@ -1225,7 +1225,7 @@ class MemoryApi:
 
         return self.api_client.param_serialize(
             method='GET',
-            resource_path='/v1/default/banks/{bank_id}/images/{image_hash}',
+            resource_path='/v1/default/banks/{bank_id}/images/{image_id}',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,

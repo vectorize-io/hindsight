@@ -13,21 +13,22 @@ import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 export async function GET(request: NextRequest) {
   try {
     const bankId = request.nextUrl.searchParams.get("bank_id");
-    const hash = request.nextUrl.searchParams.get("hash");
+    const imageId = request.nextUrl.searchParams.get("id");
 
-    // The hash is a sha256 hex digest and nothing else. Validating it here keeps
-    // a caller from steering the proxied path anywhere but the image endpoint.
-    if (!bankId || !hash || !/^[0-9a-f]{64}$/.test(hash)) {
+    // The id is a hex prefix of the image's sha256 and nothing else. Validating it
+    // here keeps a caller from steering the proxied path anywhere but the image
+    // endpoint.
+    if (!bankId || !imageId || !/^[0-9a-f]{12}$/.test(imageId)) {
       return NextResponse.json(
         localizeApiErrorPayload(request, {
-          error: "A bank id and a valid image hash are required",
+          error: "A bank id and a valid image id are required",
           errorKey: "api.errors.validation.bankIdRequired",
         }),
         { status: 400 }
       );
     }
 
-    const path = `/v1/default/banks/${encodeURIComponent(bankId)}/images/${hash}`;
+    const path = `/v1/default/banks/${encodeURIComponent(bankId)}/images/${imageId}`;
     const response = await fetch(`${DATAPLANE_URL}${path}`, { headers: getDataplaneHeaders() });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));
