@@ -32,6 +32,8 @@ dependencies = [
     # vocabularies ship in the wheel so nothing is downloaded at runtime.
     # Contained to engine/token_encoding.py — see that module for the rationale.
     "quicktok-v1>=0.4.0",
+    # Fast C++ Gestalt Pattern Matching for entity candidate scoring in entity_resolver.py.
+    "rapidfuzz>=3.9.0",
     "httpx>=0.27.0",
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
     "python-dateutil>=2.8.0",

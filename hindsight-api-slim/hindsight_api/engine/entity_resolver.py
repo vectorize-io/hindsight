@@ -15,8 +15,11 @@ from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from difflib import SequenceMatcher
 from typing import Any, Final, cast
+
+from rapidfuzz.distance.Indel import (
+    normalized_similarity as _similarity_ratio,
+)
 
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
@@ -121,7 +124,7 @@ _MIN_TOKEN_SIMILARITY: Final[float] = 0.6
 
 def _tokens_match(a: str, b: str) -> bool:
     """Whether two words are plausibly the same word — equal, an abbreviation of, or a near-miss."""
-    return a == b or a.startswith(b) or b.startswith(a) or SequenceMatcher(None, a, b).ratio() >= _MIN_TOKEN_SIMILARITY
+    return a == b or a.startswith(b) or b.startswith(a) or _similarity_ratio(a, b) >= _MIN_TOKEN_SIMILARITY
 
 
 def _tokens_are_compatible(a: str, b: str) -> bool:
@@ -1175,7 +1178,7 @@ class EntityResolver:
                     score = 0.0
 
                     # 1. Name similarity (0-0.5)
-                    name_similarity = SequenceMatcher(None, entity_text_lower, canonical_lower).ratio()
+                    name_similarity = _similarity_ratio(entity_text_lower, canonical_lower)
                     score += name_similarity * 0.5
 
                     # 2. Co-occurring entities (0-0.3), each weighted by how selective it is
