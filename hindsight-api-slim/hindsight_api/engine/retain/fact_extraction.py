@@ -1695,6 +1695,13 @@ def _build_user_message(
             "of a diagram, text on a page — are as extractable as facts stated in the prose, and "
             "are often the point of the document. Attribute each attachment to the sentences "
             'around it: an image that follows "click the button shown:" is that button.\n'
+            "When an attachment carries structured data — a chart, a table, a form, a "
+            "spreadsheet — the data IS the document: give each row, bar, slice or labelled "
+            "value its own fact, carrying its label and its exact figure. Do not summarize the "
+            "series. A summary keeps the two or three values it happens to name and silently "
+            "discards every other one, which is the bulk of what the attachment was showing. "
+            "Record what the whole thing is as well: its title, its units, the period it "
+            "covers, and how many items it plots or lists.\n"
             f"They are numbered {_numbering_phrase(attachment_count)} in the order they appear "
             "above. For each fact, set 'from_attachments' to the number(s) of the attachments it "
             "came from, and leave it empty when the fact is stated in the text. This is what lets "
