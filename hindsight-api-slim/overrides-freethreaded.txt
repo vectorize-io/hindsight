@@ -4,20 +4,26 @@
 # requirement is dropped: PEP 508 has no marker for "free-threaded build", so the
 # alternative would be forking pyproject.toml for one interpreter.
 #
-# Both packages below are C extensions with no cp3XXt wheel, and both have a
-# runtime fallback in hindsight (see the modules named).
+# orjson is a C extension with no cp3XXt wheel, and has a runtime fallback in
+# hindsight (see the module named).
 
 # orjson's build script refuses free-threading outright ("orjson vX does not
-# support free-threaded Python"). Used only to render pgvector literals in
-# engine/retain/types.py, which falls back to the pre-orjson formatting.
-# PostgreSQL parses either spelling into the same float32 bytes.
+# support free-threaded Python") and no release has ever published a cp3XXt wheel;
+# the 3.12.0 wheels for 3.15 are the GIL build. Upstream has done ABI work
+# (3.11.7: "ABI compatibility with CPython 3.15 alpha 5 free-threading") but ships
+# no free-threaded wheel yet.
+#
+# Used only to render pgvector literals in engine/retain/types.py, which falls back
+# to the pre-orjson formatting. That is CORRECT but not free -- measured on a
+# 1024-dim embedding:
+#
+#     with orjson                 23 us/vector, literal 6,531 chars
+#     fallback (_repr_literal)   325 us/vector, literal 20,504 chars
+#
+# i.e. 14x slower to render and 3.1x more bytes on the wire to PostgreSQL, per
+# vector. Both spellings parse to the same float32 bytes, so nothing is lost but
+# throughput. It is on the RETAIN path only (memories/pg/writes.py and
+# retain/link_utils.py); recall never renders a vector this way. So a retain-heavy
+# free-threaded deployment pays for this and a recall-heavy one does not.
 orjson; python_version < "0"
 
-# quicktok has no cp3XXt wheel and, built from source, would not declare
-# Py_MOD_GIL_NOT_USED — importing it re-enables the GIL for the whole process.
-# toktok-rs replaces it (byte-identical ids, ships cp3XXt wheels, declares
-# gil_used = false). quicktok is kept in pyproject only for the llama3/qwen3
-# vocabularies toktok does not bundle; engine/token_encoding.py imports both
-# optionally, so those two encodings are simply unavailable on a free-threaded
-# install and say so.
-quicktok-v1; python_version < "0"
