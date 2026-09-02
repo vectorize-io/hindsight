@@ -1863,21 +1863,18 @@ jobs:
 
     - name: Install dependencies
       working-directory: ./hindsight-api-slim
-      # `uv pip install` rather than `uv sync --frozen`: the resolution needs
-      # --override to drop orjson, which publishes no cp3XXt wheel and whose build
-      # refuses free-threading outright. See overrides-freethreaded.txt.
+      # `uv pip install` rather than `uv sync --frozen`: uv.lock pins the resolution
+      # for the default interpreter, and this one resolves different wheels.
       #
-      # The overrides also drop quicktok, which has no free-threaded wheel; toktok-rs
-      # replaces it and ships cp3XXt wheels, so no tokenizer has to be built here.
+      # No --override is needed any more: quicktok left in #4022 and orjson in #4040,
+      # and everything remaining publishes cp3XXt wheels.
       #
       # local-ml is deliberately excluded. Importing sentence_transformers re-enables
       # the GIL, so a process that installs it cannot stay free-threaded; the tests
       # that need local models skip themselves (see tests/conftest.py).
       env:
         VIRTUAL_ENV: .venv-ft
-      run: |
-        uv pip install --override overrides-freethreaded.txt \
-          -e ".[embedded-db]" --group dev
+      run: uv pip install -e ".[embedded-db]" --group dev
 
 
     - name: Assert the interpreter is genuinely free-threaded
