@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { TagList } from "@/components/ui/tag-list";
 import { Copy, Check, X, Calendar, History, Activity, RotateCcw, Pencil } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
+import { AttachmentStrip } from "@/components/ui/inline-attachment-text";
 import { InvalidateMemoryDialog } from "./invalidate-memory-dialog";
 import { EditMemoryForm, type EditMemoryFields } from "./edit-memory-form";
 import { DocumentChunkModal } from "./document-chunk-modal";
@@ -360,6 +361,13 @@ export function MemoryDetailPanel({
                 <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
                   {displayMemory.text}
                 </div>
+                {/* The fact's text says "[image: image/png]" where an attachment
+                    was, so what the model actually looked at is shown here. */}
+                <AttachmentStrip
+                  bankId={bankId ?? ""}
+                  attachments={displayMemory.attachments}
+                  className="mt-3"
+                />
               </div>
 
               {/* Curation: state badge + invalidate/revert (raw facts only) */}
@@ -680,6 +688,11 @@ export function MemoryDetailPanel({
                 {t("sectionFullText")}
               </div>
               <div className={`${textSize} whitespace-pre-wrap`}>{displayMemory.text}</div>
+              <AttachmentStrip
+                bankId={bankId ?? ""}
+                attachments={displayMemory.attachments}
+                className="mt-2"
+              />
             </div>
 
             {/* Context */}

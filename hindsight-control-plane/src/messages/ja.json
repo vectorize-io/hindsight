@@ -739,7 +739,8 @@
     "labelObservationScopes": "観測スコープ",
     "invalidatedFactsTitle": "無効化されたファクト",
     "documentUpdating": "更新中",
-    "lastRefreshed": "更新 {time}"
+    "lastRefreshed": "更新 {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "関係",

@@ -739,7 +739,8 @@
     "labelObservationScopes": "觀測範圍",
     "invalidatedFactsTitle": "已失效嘅事實",
     "documentUpdating": "更新緊",
-    "lastRefreshed": "已更新 {time}"
+    "lastRefreshed": "已更新 {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "關係",

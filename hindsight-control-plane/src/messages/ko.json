@@ -739,7 +739,8 @@
     "labelObservationScopes": "관찰 범위",
     "invalidatedFactsTitle": "무효화된 사실",
     "documentUpdating": "업데이트 중",
-    "lastRefreshed": "새로고침 {time}"
+    "lastRefreshed": "새로고침 {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "관계",

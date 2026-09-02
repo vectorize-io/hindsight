@@ -202,6 +202,7 @@ from hindsight_api.engine.retain.attachment_content import (
     RetainText,
     canonicalize,
     compute_attachment_hash,
+    contains_placeholder_like,
     iter_placeholder_ids,
     neutralize_placeholders,
 )
@@ -841,6 +842,7 @@ def canonicalize_item_content(
     *,
     item_index: int,
     config: HindsightConfig,
+    allowed_attachment_ids: "set[str] | None" = None,
 ) -> CanonicalContent:
     """Flatten a retain item's content to the canonical text the pipeline stores.
 
@@ -860,7 +862,7 @@ def canonicalize_item_content(
         # placeholder: without this, a caller could hand-write the token in plain
         # string content and have extraction resolve it to an attachment the
         # document never carried — anything already retained in the same bank.
-        return CanonicalContent(text=neutralize_placeholders(content), attachments=())
+        return CanonicalContent(text=neutralize_placeholders(content, allowed_attachment_ids), attachments=())
 
     blocks: list[CanonicalBlock] = []
     attachment_count = 0
@@ -907,7 +909,7 @@ def canonicalize_item_content(
             )
         )
 
-    return canonicalize(blocks)
+    return canonicalize(blocks, allowed_attachment_ids)
 
 
 class MemoryItem(BaseModel):
@@ -8713,8 +8715,30 @@ def _register_routes(app: FastAPI):
             # Downstream — sync or async, the operations payload, every retry — then
             # carries text only; raw screenshot bytes never enter the pipeline.
             config = get_config()
+            # A document may re-reference its own attachments. Editing an article's
+            # wording in the control plane re-sends `original_text` as a plain
+            # string, placeholders and all; without this that edit would scrub them
+            # and silently delete every screenshot in the article. Only paid for
+            # when the caller actually wrote something placeholder-shaped.
+            allowed_by_document: dict[str, set[str]] = {}
+            revisited = {
+                item.document_id
+                for item in request.items
+                if item.document_id and isinstance(item.content, str) and contains_placeholder_like(item.content)
+            }
+            if revisited:
+                existing = await app.state.memory.attachments_for_documents(bank_id, sorted(revisited), request_context)
+                allowed_by_document = {
+                    document_id: {record.short_id for record in records} for document_id, records in existing.items()
+                }
+
             canonical_contents = [
-                canonicalize_item_content(item.content, item_index=index, config=config)
+                canonicalize_item_content(
+                    item.content,
+                    item_index=index,
+                    config=config,
+                    allowed_attachment_ids=allowed_by_document.get(item.document_id or ""),
+                )
                 for index, item in enumerate(request.items)
             ]
             retained_attachments = [
