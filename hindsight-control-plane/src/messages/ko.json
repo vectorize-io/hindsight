@@ -1628,10 +1628,14 @@
     "metadataHelpText": "한 줄에 하나의 <code>key: value</code>",
     "entitiesHelpText": "자동 추출된 엔터티와 병합되는 쉼표로 구분된 힌트",
     "textNotStoredWarning": "이 서버에는 문서 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다.",
-    "attachmentsLabel": "Attachments",
-    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
-    "attachmentsAdd": "Add attachment",
-    "attachmentsRemove": "Remove {name}"
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source, so the extractor reads each attachment beside the text that introduces it. Needs a vision-capable model.",
+    "blockAddText": "Add text",
+    "blockAddAttachment": "Add attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down"
   },
   "dashboard": {
     "welcome": "Hindsight에 오신 것을 환영합니다",

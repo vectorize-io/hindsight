@@ -94,16 +94,23 @@ function FileCard({ bankId, attachment }: { bankId: string; attachment: Retained
 function InlineImage({ bankId, attachment }: { bankId: string; attachment: RetainedAttachment }) {
   const [failed, setFailed] = useState(false);
   if (failed) return <Unavailable label={`image unavailable (${attachment.id})`} />;
+  const href = attachmentUrl(bankId, attachment);
   return (
-    // A plain <img> rather than next/image: the bytes are proxied from the
-    // dataplane at request time behind server-side auth, so there is no URL for
-    // the image optimizer to pre-resolve.
-    <img
-      src={attachmentUrl(bankId, attachment)}
-      alt={attachment.filename || "Retained inline attachment"}
-      onError={() => setFailed(true)}
-      className="block my-2 max-h-64 max-w-full rounded border border-border object-contain"
-    />
+    // Wrapped in a link so the inline preview is also the way to open the full
+    // image — it is shown scaled down to sit in a document body, and a reader
+    // who wants to actually see the screenshot has to be able to click it.
+    <a href={href} target="_blank" rel="noreferrer" className="inline-block">
+      {/* A plain <img> rather than next/image: the bytes are proxied from the
+          dataplane at request time behind server-side auth, so there is no URL
+          for the image optimizer to pre-resolve. */}
+      <img
+        src={href}
+        alt={attachment.filename || "Retained inline attachment"}
+        title={attachment.filename || attachment.media_type}
+        onError={() => setFailed(true)}
+        className="block my-2 max-h-64 max-w-full rounded border border-border object-contain cursor-zoom-in hover:border-foreground/30 transition-colors"
+      />
+    </a>
   );
 }
 

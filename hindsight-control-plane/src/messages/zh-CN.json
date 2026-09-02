@@ -1628,10 +1628,14 @@
     "metadataHelpText": "每行一个 <code>key: value</code>",
     "entitiesHelpText": "逗号分隔的提示，与自动提取的实体合并",
     "textNotStoredWarning": "此服务器不会存储文档原始文本，仅保留提取的记忆。",
-    "attachmentsLabel": "Attachments",
-    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
-    "attachmentsAdd": "Add attachment",
-    "attachmentsRemove": "Remove {name}"
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source, so the extractor reads each attachment beside the text that introduces it. Needs a vision-capable model.",
+    "blockAddText": "Add text",
+    "blockAddAttachment": "Add attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down"
   },
   "dashboard": {
     "welcome": "欢迎使用 Hindsight",

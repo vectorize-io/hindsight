@@ -1628,10 +1628,14 @@
     "metadataHelpText": "Un <code>key: value</code> par ligne",
     "entitiesHelpText": "Indications séparées par des virgules fusionnées avec les entités extraites automatiquement",
     "textNotStoredWarning": "Le texte brut du document ne sera pas conservé sur ce serveur — seules les mémoires extraites sont conservées.",
-    "attachmentsLabel": "Attachments",
-    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
-    "attachmentsAdd": "Add attachment",
-    "attachmentsRemove": "Remove {name}"
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source, so the extractor reads each attachment beside the text that introduces it. Needs a vision-capable model.",
+    "blockAddText": "Add text",
+    "blockAddAttachment": "Add attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down"
   },
   "dashboard": {
     "welcome": "Bienvenue sur Hindsight",

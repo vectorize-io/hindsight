@@ -62,6 +62,11 @@ describe("InlineAttachmentText", () => {
 
     const img = screen.getByRole("img");
     expect(img.getAttribute("src")).toBe(`/api/banks/bank-a/attachments/${IMAGE_ID}`);
+    // Clickable: the inline preview is scaled down, so it must also be the way
+    // to open the full image.
+    expect(screen.getByRole("link").getAttribute("href")).toBe(
+      `/api/banks/bank-a/attachments/${IMAGE_ID}`
+    );
     expect(screen.getByText(/before/)).toBeTruthy();
     expect(screen.getByText(/after/)).toBeTruthy();
   });
@@ -88,7 +93,8 @@ describe("InlineAttachmentText", () => {
     );
 
     expect(screen.getAllByRole("img")).toHaveLength(1);
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    // One link for the image preview, one for the file card.
+    expect(screen.getAllByRole("link")).toHaveLength(2);
   });
 
   it("always fetches through the proxy, never the dataplane url", () => {

@@ -1628,10 +1628,14 @@
     "metadataHelpText": "One <code>key: value</code> per line",
     "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",
     "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept.",
-    "attachmentsLabel": "Attachments",
-    "attachmentsHint": "Images or files to keep inside this document, so the extractor reads them alongside the text. Needs a vision-capable model.",
-    "attachmentsAdd": "Add attachment",
-    "attachmentsRemove": "Remove {name}"
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source, so the extractor reads each attachment beside the text that introduces it. Needs a vision-capable model.",
+    "blockAddText": "Add text",
+    "blockAddAttachment": "Add attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down"
   },
   "dashboard": {
     "welcome": "Welcome to Hindsight",

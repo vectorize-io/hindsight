@@ -9,6 +9,12 @@ import { bankRoute } from "@/lib/bank-url";
 import { withBasePath } from "@/lib/base-path";
 import { client } from "@/lib/api";
 import type { RetainContentBlock as ContentBlock } from "@/lib/api";
+
+/** One element of a document composed as an ordered block list. */
+type DocBlock =
+  | { kind: "text"; text: string }
+  | { kind: "attachment"; name: string; mediaType: string; data: string; size: number };
+
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +50,7 @@ import {
   LogOut,
   Copy,
   Paperclip,
+  ChevronUp,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
@@ -133,9 +140,14 @@ function BankSelectorInner() {
   // appended after the prose: the API takes an ordered block list, and a form
   // with one textarea has no way to express "this picture goes *here*". Anyone
   // needing exact placement sends blocks through the API directly.
-  const [docAttachments, setDocAttachments] = React.useState<
-    { name: string; mediaType: string; data: string; size: number }[]
-  >([]);
+  // How the document's content is being composed. "text" is the plain textarea
+  // every document has always used; "blocks" is the ordered list that lets an
+  // attachment sit *between* two runs of prose, which is the whole point of
+  // inline attachments and cannot be expressed with one textarea. Kept as a
+  // switch so the common case — typing some text — is not cluttered by an
+  // editor most documents never need.
+  const [docComposeMode, setDocComposeMode] = React.useState<"text" | "blocks">("text");
+  const [docBlocks, setDocBlocks] = React.useState<DocBlock[]>([]);
   const [docContext, setDocContext] = React.useState("");
   const [docEventDate, setDocEventDate] = React.useState("");
   const [docDocumentId, setDocDocumentId] = React.useState("");
@@ -455,7 +467,11 @@ function BankSelectorInner() {
   };
 
   const handleCreateDocument = async () => {
-    if (!currentBank || !docContent.trim()) return;
+    const hasBlockContent = docBlocks.some((b) =>
+      b.kind === "text" ? b.text.trim().length > 0 : true
+    );
+    const hasContent = docComposeMode === "blocks" ? hasBlockContent : docContent.trim().length > 0;
+    if (!currentBank || !hasContent) return;
 
     setIsCreatingDoc(true);
 
@@ -476,24 +492,27 @@ function BankSelectorInner() {
         entities?: Array<{ text: string }>;
         strategy?: string;
       } = { content: docContent };
-      if (docAttachments.length > 0) {
-        // An image block for images, a file block for everything else — the
-        // distinction the API keeps because the providers keep it.
-        item.content = [
-          { type: "text", text: docContent },
-          ...docAttachments.map((a) =>
-            a.mediaType.startsWith("image/")
-              ? {
-                  type: "image" as const,
-                  source: { type: "base64" as const, media_type: a.mediaType, data: a.data },
-                }
-              : {
-                  type: "file" as const,
-                  filename: a.name,
-                  source: { type: "base64" as const, media_type: a.mediaType, data: a.data },
-                }
-          ),
-        ];
+      if (docComposeMode === "blocks") {
+        // Sent in the order they were arranged, so an attachment reaches the
+        // extractor between the sentences that frame it. An image block for
+        // images and a file block for everything else — the distinction the API
+        // keeps because the providers keep it.
+        item.content = docBlocks
+          .filter((b) => (b.kind === "text" ? b.text.trim().length > 0 : true))
+          .map((b) =>
+            b.kind === "text"
+              ? { type: "text" as const, text: b.text }
+              : b.mediaType.startsWith("image/")
+                ? {
+                    type: "image" as const,
+                    source: { type: "base64" as const, media_type: b.mediaType, data: b.data },
+                  }
+                : {
+                    type: "file" as const,
+                    filename: b.name,
+                    source: { type: "base64" as const, media_type: b.mediaType, data: b.data },
+                  }
+          );
       }
       if (docContext) item.context = docContext;
       if (docEventDate) item.timestamp = toIsoTimestamp(docEventDate);
@@ -534,7 +553,8 @@ function BankSelectorInner() {
       // Reset form and close dialog
       setDocDialogOpen(false);
       setDocContent("");
-      setDocAttachments([]);
+      setDocBlocks([]);
+      setDocComposeMode("text");
       setDocContext("");
       setDocEventDate("");
       setDocDocumentId("");
@@ -946,101 +966,196 @@ function BankSelectorInner() {
                 </TabsList>
 
                 <TabsContent value="text" className="mt-3">
-                  <label className="font-bold block mb-1 text-sm text-foreground">
-                    {tAddDocument("contentLabel")}
-                  </label>
-                  <Textarea
-                    value={docContent}
-                    onChange={(e) => setDocContent(e.target.value)}
-                    placeholder={tAddDocument("contentPlaceholder")}
-                    className="min-h-[150px] resize-y"
-                    autoFocus
-                  />
-
-                  {/* Attachments ride *inside* this document rather than becoming
-                      documents of their own, which is what the Upload Files tab
-                      does. That is the whole distinction: a screenshot the prose
-                      refers to belongs with the prose. */}
-                  <div className="mt-3">
-                    <label className="font-bold block mb-1 text-sm text-foreground">
-                      {tAddDocument("attachmentsLabel")}
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-sm text-foreground">
+                      {tAddDocument("contentLabel")}
                     </label>
-                    <p className="text-xs text-muted-foreground mb-2">
-                      {tAddDocument("attachmentsHint")}
-                    </p>
-                    <input
-                      id="doc-attachment-input"
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={async (e) => {
-                        const files = Array.from(e.target.files ?? []);
-                        const encoded = await Promise.all(
-                          files.map(
-                            (file) =>
-                              new Promise<{
-                                name: string;
-                                mediaType: string;
-                                data: string;
-                                size: number;
-                              }>((resolve, reject) => {
-                                const reader = new FileReader();
-                                reader.onerror = () => reject(reader.error);
-                                reader.onload = () =>
-                                  resolve({
-                                    name: file.name,
-                                    // Some browsers report "" for unusual
-                                    // extensions; the API accepts any
-                                    // well-formed type, so fall back to a
-                                    // generic one rather than refusing the file.
-                                    mediaType: file.type || "application/octet-stream",
-                                    size: file.size,
-                                    // readAsDataURL gives "data:<type>;base64,<payload>";
-                                    // the API wants the payload alone.
-                                    data: String(reader.result).split(",", 2)[1] ?? "",
-                                  });
-                                reader.readAsDataURL(file);
-                              })
-                          )
-                        );
-                        setDocAttachments((current) => [...current, ...encoded]);
-                        // Let the same file be picked again after removal.
-                        e.target.value = "";
-                      }}
-                    />
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <Button
+                    {/* The switch, rather than always showing the block editor:
+                        most documents are just text, and an ordered block list
+                        would be clutter in front of every one of them. */}
+                    <div className="flex items-center rounded border border-border overflow-hidden text-xs">
+                      <button
                         type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => document.getElementById("doc-attachment-input")?.click()}
+                        onClick={() => setDocComposeMode("text")}
+                        className={`px-2 py-1 ${
+                          docComposeMode === "text"
+                            ? "bg-muted text-foreground font-semibold"
+                            : "text-muted-foreground hover:bg-muted/50"
+                        }`}
                       >
-                        <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-                        {tAddDocument("attachmentsAdd")}
-                      </Button>
-                      {docAttachments.map((a, index) => (
-                        <span
-                          key={`${a.name}-${index}`}
-                          className="inline-flex items-center gap-1.5 px-2 py-1 rounded border border-border bg-muted/50 text-xs"
-                        >
-                          <span className="max-w-[180px] truncate">{a.name}</span>
-                          <span className="text-muted-foreground">
-                            {(a.size / 1024).toFixed(0)} KB
-                          </span>
-                          <button
-                            type="button"
-                            aria-label={tAddDocument("attachmentsRemove", { name: a.name })}
-                            onClick={() =>
-                              setDocAttachments((current) => current.filter((_, i) => i !== index))
-                            }
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
+                        {tAddDocument("composeText")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Carry the typed text across so switching never
+                          // silently loses what is already written.
+                          setDocBlocks((current) =>
+                            current.length > 0 ? current : [{ kind: "text", text: docContent }]
+                          );
+                          setDocComposeMode("blocks");
+                        }}
+                        className={`px-2 py-1 border-l border-border ${
+                          docComposeMode === "blocks"
+                            ? "bg-muted text-foreground font-semibold"
+                            : "text-muted-foreground hover:bg-muted/50"
+                        }`}
+                      >
+                        {tAddDocument("composeBlocks")}
+                      </button>
                     </div>
                   </div>
+
+                  {docComposeMode === "text" ? (
+                    <Textarea
+                      value={docContent}
+                      onChange={(e) => setDocContent(e.target.value)}
+                      placeholder={tAddDocument("contentPlaceholder")}
+                      className="min-h-[150px] resize-y"
+                      autoFocus
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        {tAddDocument("composeBlocksHint")}
+                      </p>
+                      {docBlocks.map((block, index) => (
+                        <div
+                          key={index}
+                          className="flex items-start gap-2 rounded border border-border p-2 bg-muted/20"
+                        >
+                          <div className="flex flex-col gap-1 pt-0.5">
+                            <button
+                              type="button"
+                              aria-label={tAddDocument("blockMoveUp")}
+                              disabled={index === 0}
+                              onClick={() =>
+                                setDocBlocks((current) => {
+                                  const next = [...current];
+                                  [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                                  return next;
+                                })
+                              }
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                            >
+                              <ChevronUp className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={tAddDocument("blockMoveDown")}
+                              disabled={index === docBlocks.length - 1}
+                              onClick={() =>
+                                setDocBlocks((current) => {
+                                  const next = [...current];
+                                  [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                                  return next;
+                                })
+                              }
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                            >
+                              <ChevronDown className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            {block.kind === "text" ? (
+                              <Textarea
+                                value={block.text}
+                                onChange={(e) =>
+                                  setDocBlocks((current) =>
+                                    current.map((b, i) =>
+                                      i === index && b.kind === "text"
+                                        ? { ...b, text: e.target.value }
+                                        : b
+                                    )
+                                  )
+                                }
+                                placeholder={tAddDocument("contentPlaceholder")}
+                                className="min-h-[80px] resize-y"
+                              />
+                            ) : (
+                              <div className="flex items-center gap-2 text-sm">
+                                <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span className="truncate">{block.name}</span>
+                                <span className="text-xs text-muted-foreground shrink-0">
+                                  {block.mediaType} · {(block.size / 1024).toFixed(0)} KB
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            aria-label={tAddDocument("blockRemove")}
+                            onClick={() =>
+                              setDocBlocks((current) => current.filter((_, i) => i !== index))
+                            }
+                            className="text-muted-foreground hover:text-foreground pt-0.5"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+
+                      <input
+                        id="doc-attachment-input"
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={async (e) => {
+                          const files = Array.from(e.target.files ?? []);
+                          const encoded = await Promise.all(
+                            files.map(
+                              (file) =>
+                                new Promise<DocBlock>((resolve, reject) => {
+                                  const reader = new FileReader();
+                                  reader.onerror = () => reject(reader.error);
+                                  reader.onload = () =>
+                                    resolve({
+                                      kind: "attachment",
+                                      name: file.name,
+                                      // Some browsers report "" for unusual
+                                      // extensions; the API accepts any
+                                      // well-formed type, so fall back to a
+                                      // generic one rather than refusing it.
+                                      mediaType: file.type || "application/octet-stream",
+                                      size: file.size,
+                                      // readAsDataURL gives "data:<type>;base64,<payload>";
+                                      // the API wants the payload alone.
+                                      data: String(reader.result).split(",", 2)[1] ?? "",
+                                    });
+                                  reader.readAsDataURL(file);
+                                })
+                            )
+                          );
+                          setDocBlocks((current) => [...current, ...encoded]);
+                          // Let the same file be picked again after removal.
+                          e.target.value = "";
+                        }}
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setDocBlocks((current) => [...current, { kind: "text", text: "" }])
+                          }
+                        >
+                          {tAddDocument("blockAddText")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => document.getElementById("doc-attachment-input")?.click()}
+                        >
+                          <Paperclip className="h-3.5 w-3.5 mr-1.5" />
+                          {tAddDocument("blockAddAttachment")}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="upload" className="mt-3">
@@ -1566,7 +1681,8 @@ function BankSelectorInner() {
                 onClick={() => {
                   setDocDialogOpen(false);
                   setDocContent("");
-                  setDocAttachments([]);
+                  setDocBlocks([]);
+                  setDocComposeMode("text");
                   setDocContext("");
                   setDocEventDate("");
                   setDocDocumentId("");
@@ -1587,7 +1703,14 @@ function BankSelectorInner() {
               {docTab === "text" ? (
                 <Button
                   onClick={handleCreateDocument}
-                  disabled={isCreatingDoc || !docContent.trim()}
+                  disabled={
+                    isCreatingDoc ||
+                    (docComposeMode === "blocks"
+                      ? !docBlocks.some((b) =>
+                          b.kind === "text" ? b.text.trim().length > 0 : true
+                        )
+                      : !docContent.trim())
+                  }
                 >
                   {isCreatingDoc
                     ? tAddDocument("addingDocument")
