@@ -1841,6 +1841,23 @@ jobs:
       # with the GIL quietly re-enabled.
       DISABLE_SQLALCHEMY_CEXT_RUNTIME: "1"
 
+    services:
+      # For the image smoke test at the end of the job. The pytest run above uses the
+      # embedded pg0, not this.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: hindsight
+          POSTGRES_PASSWORD: hindsight
+          POSTGRES_DB: hindsight
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hindsight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
     - uses: actions/checkout@v6
       with:
@@ -1901,6 +1918,18 @@ jobs:
       run: |
         ./.venv-ft/bin/python -m pytest tests -v \
           -m "not hs_llm_mat and not hs_llm_core"
+
+    - name: Build the free-threaded image
+      # Its own Dockerfile, not a target of the standalone one: different interpreter,
+      # different resolution, no control plane, no local ML. The build itself asserts
+      # the GIL is off after importing the whole API, so a mis-tagged image fails here.
+      run: docker build -f docker/standalone/Dockerfile.freethreaded -t hindsight-api:py3.14t .
+
+    - name: Smoke test the free-threaded image
+      # Starts the image against the Postgres service and a stub embedder, exercises
+      # retain and recall, and asserts the SERVER process still has the GIL disabled —
+      # the failure this tag exists to prevent is silent, so it has to be asserted.
+      run: ./docker/freethreaded-smoke.sh hindsight-api:py3.14t "postgresql://hindsight:hindsight@127.0.0.1:5432/hindsight"
 
   test-api-llm-core:
     needs: [detect-changes]

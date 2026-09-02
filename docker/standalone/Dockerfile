@@ -431,7 +431,6 @@ ENV TOKENIZERS_PARALLELISM=false
 
 CMD ["/app/start-all.sh"]
 
-
 # =============================================================================
 # Default target selection based on build args
 # =============================================================================
