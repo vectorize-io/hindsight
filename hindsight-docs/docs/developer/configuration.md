@@ -1559,6 +1559,19 @@ Extracted **facts** never carry the placeholder: a fact reads `[image:
 image/png]` where the attachment was, and the machine-readable handle travels
 beside it in `attachments`. A content hash is not knowledge.
 
+A **memory's** `attachments` are the ones that fact was actually drawn from, not
+every attachment in its chunk. Extraction runs one call per chunk, and a chunk
+holding a screenshot also holds the prose around it, so the chunk's attachments
+would otherwise be shown against every fact the call produced — the architecture
+diagram offered as the evidence for the paragraph about paging policy. The
+extractor is asked which attachments each fact came from, and a fact stated in
+the surrounding text has no `attachments` at all. That emptiness is the feature:
+an attachment shown beside a memory means the model looked at it to produce that
+memory.
+
+A **chunk's** `attachments` stay exactly what they were — everything the chunk
+references — because that is a question about the chunk, not about a fact.
+
 Two things will refuse the retain outright, both with `422`, rather than dropping
 attachments silently:
 
