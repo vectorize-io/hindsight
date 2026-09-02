@@ -2,7 +2,9 @@
 
 Hindsight tokenizes purely to *count* and *chunk* arbitrary user content — never to
 feed a model that relies on the tokenizer's special-token vocabulary. That is what
-makes the two choices below safe.
+makes the two choices below safe, and it is why this module exposes exactly two
+operations: :func:`count_tokens` and :func:`truncate_to_tokens`. Every token budget
+in the engine is one or the other.
 
 **Why toktok and not tiktoken.** Counting is on the hot path of both retain and
 recall: recall counts once per candidate fact, per candidate chunk, per source fact
@@ -21,11 +23,9 @@ anything. Two properties matter as much as the speed:
   pre-baked into the image.
 
 toktok is a small project, so the risk is maintenance, not correctness. It is
-contained deliberately: this module is the only place that imports it, every token
-call site in the engine routes through ``get_token_encoding()`` or
-``count_tokens()``, and it pulls in no dependency of its own (numpy is an optional
-extra Hindsight does not ask for). Replacing it means rewriting this file and
-nothing else.
+contained deliberately: this module is the only place that imports it, and it pulls
+in no dependency of its own (numpy is an optional extra Hindsight does not ask for).
+Replacing it means rewriting this file and nothing else.
 
 **Why o200k_base by default.** ``HINDSIGHT_API_TOKENIZER_ENCODING`` selects the
 vocabulary; it defaults to ``o200k_base``, which is what current OpenAI models
@@ -36,12 +36,14 @@ cl100k_base and 13 under o200k_base. Since these counts drive budgets that stand
 for a model's context window, the closer vocabulary is the more honest one. Set the
 variable to ``cl100k_base`` to restore the previous counts exactly.
 
-**Special-token literals.** tiktoken-shaped ``encode()`` defaults to
+**Special-token literals.** A tiktoken-shaped ``encode()`` defaults to
 ``disallowed_special="all"``, which makes it *raise* on content that merely mentions
-a literal such as ``<|endoftext|>`` — surfacing as an HTTP 500 on retain/recall
-(issue #1883). ``_SafeEncoding.encode`` routes to ``encode_ordinary``, which has no
-special-token machinery at all, so such literals are counted as ordinary text.
-``count()`` never applies the check in the first place.
+a literal such as ``<|endoftext|>`` — which reached users as an HTTP 500 on
+retain/recall (issue #1883). Neither operation here can hit that: ``count()`` never
+applies the check, and truncation encodes with ``encode_ordinary()``, which has no
+special-token machinery at all. This is the one reason to keep using the two
+functions below rather than reaching for ``get_token_encoding().encode()`` — that
+call is the raising one, and #1883 is what it looks like in production.
 """
 
 from dataclasses import dataclass
@@ -55,37 +57,14 @@ import toktok
 BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony")
 
 
-class _SafeEncoding:
-    """Wraps a toktok ``Tokenizer`` so ``encode()`` never raises on special-token literals."""
-
-    def __init__(self, tokenizer: "toktok._Tokenizer") -> None:
-        self._tokenizer = tokenizer
-
-    @property
-    def name(self) -> str:
-        """The encoding's name, e.g. ``o200k_base``."""
-        return self._tokenizer.name
-
-    def count(self, text: str) -> int:
-        """Token count, without materialising the ids.
-
-        Prefer this over ``len(encode(text))`` wherever only the count is wanted —
-        it is the whole reason this module is on toktok.
-        """
-        return self._tokenizer.count(text)
-
-    def encode(self, text: str) -> list[int]:
-        # Count special-token literals as ordinary text instead of rejecting them.
-        # This is also what ``count()`` does, so the two agree on every input.
-        return self._tokenizer.encode_ordinary(text)
-
-    def decode(self, tokens: list[int]) -> str:
-        return self._tokenizer.decode(tokens)
-
-
 @lru_cache(maxsize=1)
-def get_token_encoding() -> _SafeEncoding:
-    """The configured encoding, wrapped to tolerate special-token literals.
+def get_token_encoding() -> "toktok._Tokenizer":
+    """The tokenizer for ``HINDSIGHT_API_TOKENIZER_ENCODING``.
+
+    Prefer :func:`count_tokens` and :func:`truncate_to_tokens`; this is public only
+    so startup can load the vocabulary eagerly, and so tests can name the encoding
+    in play. Note that its ``encode()`` raises on special-token literals — see the
+    module docstring.
 
     Cached: the tokenizer is immutable and loading one parses a multi-megabyte
     vocabulary. Because the encoding name is read here, changing
@@ -100,7 +79,7 @@ def get_token_encoding() -> _SafeEncoding:
         # hatch its own docstring points at, "for anyone who knowingly wants the
         # full encode/decode surface". Truncation needs decode, so we take it —
         # knowingly, and in this module only.
-        return _SafeEncoding(toktok._encoding(name))
+        return toktok._encoding(name)
     except Exception as err:
         raise ValueError(
             f"Unknown tokenizer encoding {name!r} (HINDSIGHT_API_TOKENIZER_ENCODING). "
@@ -147,4 +126,7 @@ def truncate_to_tokens(text: str, max_tokens: int) -> TokenTruncation:
     original_tokens = enc.count(text)
     if original_tokens <= max_tokens:
         return TokenTruncation(text=text, original_tokens=original_tokens)
-    return TokenTruncation(text=enc.decode(enc.encode(text)[:max_tokens]), original_tokens=original_tokens)
+    # ``encode_ordinary``, not ``encode``: the latter rejects special-token literals
+    # (issue #1883), and it is the only spelling that agrees with what ``count()``
+    # just measured.
+    return TokenTruncation(text=enc.decode(enc.encode_ordinary(text)[:max_tokens]), original_tokens=original_tokens)

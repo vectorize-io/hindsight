@@ -61,7 +61,7 @@ def test_counting_is_exact(text: str):
     The windowed counter traded accuracy for memory; this one trades nothing, so the
     count must equal what encoding the text produces, on every input.
     """
-    assert count_tokens(text) == len(get_token_encoding().encode(text))
+    assert count_tokens(text) == len(get_token_encoding().encode_ordinary(text))
 
 
 def test_allocation_does_not_track_the_input():

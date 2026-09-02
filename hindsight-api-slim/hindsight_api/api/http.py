@@ -194,7 +194,7 @@ from hindsight_api.engine.response_models import (
 )
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.structured_output import validate_response_schema
-from hindsight_api.engine.token_encoding import get_token_encoding
+from hindsight_api.engine.token_encoding import count_tokens
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.liveness import LivenessResponse, liveness_response
 from hindsight_api.metrics import (
@@ -4860,7 +4860,7 @@ def _register_routes(app: FastAPI):
 
         # Validate query length to prevent expensive operations on oversized queries
         max_query_tokens = get_config().recall_max_query_tokens
-        query_tokens = get_token_encoding().count(request.query)
+        query_tokens = count_tokens(request.query)
         if query_tokens > max_query_tokens:
             raise HTTPException(
                 status_code=400,

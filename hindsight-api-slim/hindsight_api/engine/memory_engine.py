@@ -580,7 +580,7 @@ from .task_backend import TaskBackend
 RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
 from .retain import timing as _retain_timing_mod
 from .token_encoding import count_tokens as _token_encoding_count
-from .token_encoding import get_token_encoding
+from .token_encoding import get_token_encoding, truncate_to_tokens
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
@@ -1376,16 +1376,15 @@ def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix
     if max_query_tokens <= 0 or len(query) <= max_query_tokens:
         return query
 
-    encoding = get_token_encoding()
-    query_tokens = encoding.count(query)
-    if query_tokens <= max_query_tokens:
+    truncation = truncate_to_tokens(query, max_query_tokens)
+    if truncation.original_tokens <= max_query_tokens:
         return query
 
     logger.warning(
-        f"{log_prefix}Query truncated to {max_query_tokens} tokens (was {query_tokens}); "
+        f"{log_prefix}Query truncated to {max_query_tokens} tokens (was {truncation.original_tokens}); "
         f"raise HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS to allow longer queries"
     )
-    return encoding.decode(encoding.encode(query)[:max_query_tokens])
+    return truncation.text
 
 
 @dataclass(frozen=True)
@@ -7673,7 +7672,6 @@ class MemoryEngine(MemoryEngineInterface):
 
                 if chunk_ids_ordered:
                     chunks_dict = {}
-                    encoding = get_token_encoding()
 
                     # Fetch all candidate chunks in a single query. Token-budget accounting
                     # happens in Python after the fetch — one round-trip is always faster
@@ -7782,13 +7780,13 @@ class MemoryEngine(MemoryEngineInterface):
 
                         row = chunks_lookup[chunk_id]
                         chunk_text = row["chunk_text"]
-                        chunk_tokens = encoding.count(chunk_text)
+                        chunk_tokens = count_tokens(chunk_text)
 
                         if total_chunk_tokens + chunk_tokens > max_chunk_tokens:
                             remaining_tokens = max_chunk_tokens - total_chunk_tokens
                             if remaining_tokens > 0:
                                 # Only now are the ids needed — the fits-in-budget path above never builds them.
-                                truncated_text = encoding.decode(encoding.encode(chunk_text)[:remaining_tokens])
+                                truncated_text = truncate_to_tokens(chunk_text, remaining_tokens).text
                                 chunks_dict[chunk_id] = ChunkInfo(
                                     chunk_text=truncated_text, chunk_index=row["chunk_index"], truncated=True
                                 )
@@ -7812,12 +7810,11 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 6: Token budget filtering
             step_start = time.time()
 
-            encoding = get_token_encoding()
             selection = select_facts_within_budget(
                 fact_ids_ordered=[sr.id for sr in top_scored],
                 text_by_id={sr.id: sr.retrieval.text for sr in top_scored},
                 max_tokens=max_tokens,
-                count_tokens=encoding.count,
+                count_tokens=count_tokens,
             )
             total_tokens = selection.total_tokens
             selected_ids = set(selection.ids)
@@ -8046,8 +8043,6 @@ class MemoryEngine(MemoryEngineInterface):
                                     )
                                 }
 
-                            encoding = get_token_encoding()
-
                             def _make_source_fact(sid: str, r: Any) -> MemoryFact:
                                 return MemoryFact(
                                     id=sid,
@@ -8069,7 +8064,7 @@ class MemoryEngine(MemoryEngineInterface):
                                 text_by_id={sid: r["text"] for sid, r in source_row_by_id.items()},
                                 max_total_tokens=max_source_facts_tokens,
                                 max_tokens_per_observation=max_source_facts_tokens_per_observation,
-                                count_tokens=encoding.count,
+                                count_tokens=count_tokens,
                             )
                             source_facts_truncated = selection.truncated
                             source_facts_dict = {

@@ -27,7 +27,7 @@ def test_reflect_token_counting_loads_tokenizer_encoding_when_used():
     fake_encoding = MagicMock()
     # Counting goes through Tokenizer.count(), which takes no kwargs.
     fake_encoding.count.side_effect = lambda text: len(text.split())
-    # Truncation still needs ids; _SafeEncoding.encode routes to encode_ordinary.
+    # Truncation still needs ids; truncate_to_tokens encodes with encode_ordinary.
     fake_encoding.encode_ordinary.side_effect = lambda text: text.split()
 
     with patch("toktok._encoding", return_value=fake_encoding) as load_encoding:
