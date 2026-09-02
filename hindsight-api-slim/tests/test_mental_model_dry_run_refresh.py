@@ -24,6 +24,7 @@ import pytest_asyncio
 
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.response_models import ReflectResult
+from tests.conftest import stub_refresh_has_sources
 
 
 def _reflect_result(
@@ -80,6 +81,7 @@ def patch_reflect(monkeypatch):
             return _reflect_result(text, facts=facts, retrieved=retrieved)
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        stub_refresh_has_sources(monkeypatch, memory)
         return calls
 
     return _install
@@ -131,7 +133,7 @@ class TestDryRunPersistsNothing:
         result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
 
         assert result is not None
-        assert result.preview_content == "# Team\n\nCompletely rewritten."
+        assert result.preview_content == "# Team\n\nCompletely rewritten.\n"
         assert result.would_persist is True
 
         after = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
@@ -241,12 +243,13 @@ class TestDryRunExplainsTheModeDecision:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_delta_ops_failure_warns_that_older_content_is_dropped(
+    async def test_delta_ops_failure_reports_the_refused_refresh(
         self, memory: MemoryEngine, request_context: RequestContext, patch_reflect, patch_delta_llm
     ):
-        """A failed delta call falls back to a candidate built from a delta-scoped
+        """A failed delta call leaves only a candidate built from a delta-scoped
         recall, so writing it whole would drop everything grounded in older
-        memories. The dry run has to say so — this is invisible in the result."""
+        memories. A real refresh refuses it (#3112) and the preview must predict
+        exactly that: no content change, and the reason spelled out."""
         bank_id = await _make_bank(memory, request_context, "test-dryrun-deltafail")
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -274,7 +277,14 @@ class TestDryRunExplainsTheModeDecision:
 
         assert result.effective_mode == "full"
         assert result.mode_fallback_reason == "delta_ops_failed"
-        assert any("not carried over" in w or "not applied" in w for w in result.warnings), result.warnings
+        assert result.outcome == "refresh_failed_delta_not_applied"
+        assert result.would_persist is False
+        # The preview is the document as it stands, not the narrow candidate the
+        # run produced — that is what a real refresh would leave behind.
+        assert result.preview_content == result.current_content
+        assert "Only the newest fact." in result.candidate_content
+        assert result.diff == ""
+        assert any("preserved and the refresh fails" in w for w in result.warnings), result.warnings
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -581,6 +591,7 @@ class TestKeepTrace:
             "tool_calls",
             "llm_calls",
             "delta_operations",
+            "retraction",
             "usage",
             "duration_ms",
             "warnings",
@@ -680,7 +691,7 @@ class TestKeepTrace:
             )
 
         stored = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
-        assert stored["content"] == "# Team\n\nStill here."
+        assert stored["content"] == "# Team\n\nStill here.\n"
         trace = (stored.get("reflect_response") or {}).get("trace")
         assert trace is not None
         assert trace["outcome"] == "refresh_failed_empty_candidate"
@@ -727,13 +738,13 @@ class TestDryRunRefreshEndpoint:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["preview_content"] == "# Team\n\nRewritten."
+        assert body["preview_content"] == "# Team\n\nRewritten.\n"
         assert body["effective_mode"] == "full"
         assert body["would_persist"] is True
         assert "trace" in body
 
         stored = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
-        assert stored["content"] == "# Team\n\nOriginal.", "the endpoint must not persist"
+        assert stored["content"] == "# Team\n\nOriginal.\n", "the endpoint must not persist"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

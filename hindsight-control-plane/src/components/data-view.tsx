@@ -4,6 +4,11 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import {
+  AppliedMemoryFilters,
+  hasActiveMemoryFilters,
+  shouldShowEmptyBankState,
+} from "@/lib/memory-filters";
 import { EntityChip, TagChip } from "@/components/ui/facet-chip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -96,6 +101,13 @@ export function DataView({
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  // The filters that actually produced the `data` currently on screen. This
+  // deliberately lags the live filter state: `searchQuery` only reaches the
+  // server on Enter, so deciding "is this bank empty?" from what the user has
+  // *typed* makes backspacing a zero-result search swap the results for the
+  // "no memories yet" screen — which unmounts the search box along with it
+  // (issue #3670).
+  const [appliedFilters, setAppliedFilters] = useState<AppliedMemoryFilters>({ q: "", tags: [] });
   // Observation scope filtering: the distinct scopes available, and the selected
   // one. `null` = all scopes; `[]` = the global (untagged) scope; otherwise an
   // exact tag set. Mutually exclusive with the free-form tag filter above.
@@ -169,6 +181,7 @@ export function DataView({
         chunk_id: chunkId,
       });
       setData(graphData);
+      setAppliedFilters({ q: q ?? "", tags: tags ?? [], tagsMatch });
 
       // Fetch consolidation status for observations
       if (factType === "observation") {
@@ -212,8 +225,9 @@ export function DataView({
     if (showInvalidated) return invalidatedRows;
     return data?.table_rows ?? [];
   }, [data, showInvalidated, invalidatedRows]);
-  const hasActiveMemoryFilters =
-    searchQuery.trim().length > 0 || tagFilters.length > 0 || selectedScope !== null;
+  // Read from the applied filters, not the live ones, so every "filtered vs.
+  // unfiltered" label describes the rows actually on screen.
+  const filtersActive = hasActiveMemoryFilters(appliedFilters);
 
   // Helper to get normalized link type
   const getLinkTypeCategory = (type: string | undefined): string => {
@@ -477,7 +491,7 @@ export function DataView({
           <Spinner size="lg" variant="jump" className="mx-auto mb-3" />
           <p className="text-muted-foreground">{t("loadingMemories")}</p>
         </div>
-      ) : data && data.total_units === 0 && !hasActiveMemoryFilters ? (
+      ) : data && shouldShowEmptyBankState(data.total_units, appliedFilters) ? (
         <div className="text-center py-20">
           <FileText className="w-10 h-10 mx-auto mb-4 text-muted-foreground/50" />
           <h3 className="text-base font-medium text-foreground mb-1">{t("noMemoriesYet")}</h3>
@@ -518,7 +532,18 @@ export function DataView({
                   <Input
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setSearchQuery(next);
+                      // Emptying the box is the one edit that doesn't need an
+                      // Enter to be unambiguous: re-run the query unfiltered so
+                      // the full list (and its total) comes straight back.
+                      if (next === "" && appliedFilters.q !== "" && currentBank) {
+                        setCurrentPage(1);
+                        const { tags, match } = resolveTagQuery();
+                        loadData(undefined, undefined, tags, match);
+                      }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -595,7 +620,7 @@ export function DataView({
                   </Button>
                 )}
                 <div className="text-sm text-muted-foreground">
-                  {hasActiveMemoryFilters ? (
+                  {filtersActive ? (
                     t("matchingMemories", { count: filteredTableRows.length })
                   ) : data.table_rows?.length < data.total_units ? (
                     <span>
@@ -1041,7 +1066,7 @@ export function DataView({
                     })()
                   ) : (
                     <div className="text-center py-12 text-muted-foreground">
-                      {hasActiveMemoryFilters ? t("noMemoriesMatchFilter") : t("noMemoriesFound")}
+                      {filtersActive ? t("noMemoriesMatchFilter") : t("noMemoriesFound")}
                     </div>
                   )}
                 </div>

@@ -23,6 +23,12 @@ import pytest_asyncio
 
 from hindsight_api.engine.retain import embedding_utils
 
+# This module seeds `memory_units` rows directly and asserts the SQL enrichment join. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# tables empty, so the seed lands nowhere the code under test can see it and every assertion here
+# measures the storage layout rather than the behaviour. Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 def _to_str(emb: list[float]) -> str:
     return "[" + ",".join(str(v) for v in emb) + "]"
@@ -96,6 +102,7 @@ async def seeded_combo(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_recall_all_enrichments_together_on_default_store(memory, request_context, seeded_combo):
     """All three enrichment flags at once on PostgresMemories, with prefer_observations."""
     bank_id = seeded_combo["bank_id"]

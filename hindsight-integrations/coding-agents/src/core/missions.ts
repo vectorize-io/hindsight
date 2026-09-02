@@ -63,7 +63,10 @@ export const DOCUMENT_MISSION =
 export const OBSERVATIONS_MISSION =
   "Consolidate durable knowledge about THIS codebase — recurring patterns, conventions, module " +
   "responsibilities, and how components relate — from the ingested commits and conversations. " +
-  "Favor stable structural understanding over one-off details.";
+  "Favor stable structural understanding over one-off details. When a new fact contradicts or " +
+  "supersedes an existing observation, UPDATE that observation to reflect the current state rather " +
+  "than creating a sibling alongside it; note that the rule was revised and when, so the superseded " +
+  "version is visible as history rather than as a competing claim.";
 
 export const RETAIN_STRATEGIES = {
   git: { retain_mission: GIT_MISSION, retain_extraction_mode: "verbose" },
@@ -182,14 +185,46 @@ export const KNOWLEDGE_LABELS: EntityLabelGroup = {
 // any repo; the curator populates each from history+chats and can spawn per-component sub-pages.
 // A seeded page is a tag-scoped synthesis view: `tags` pins it to one `knowledge:<tier>` label so
 // its synthesis draws from the facts the extractor routed to that tier (exact set-ops — see
-// KNOWLEDGE_LABELS above; names/tiers mirror the label vocabulary).
+// KNOWLEDGE_LABELS above; names/tiers mirror the label vocabulary). The tiers say what KIND of
+// knowledge a fact is, never WHOSE — `pageScopeRule` below carries that half.
 export interface KnowledgePage {
   name: string;
   source_query: string;
   tags: string[];
 }
 
-export const PAGES: KnowledgePage[] = [
+/**
+ * The subject-scoping clause every seeded page's query carries, naming the repository it is about.
+ *
+ * A bank collects everything said IN a repository, which is NOT the same as everything said ABOUT
+ * it: a repo that reads its dependency's source, drafts its upstream issues, or documents how it
+ * configures a service files those facts here too — correctly, since that is where the work
+ * happened. Nothing downstream can tell the two apart. Attribution tags (`project:`, `harness:`,
+ * `workspace:`) record where a fact ARRIVED from, never what it is ABOUT, and by synthesis time the
+ * source document is gone: the fact reads as a bare technical decision with no hint whose codebase
+ * it belongs to. So the page builder answered "what are this project's key decisions?" over
+ * everything the bank held and presented a dependency's decisions as the repo's own, upstream
+ * commit SHAs and all (#3476).
+ *
+ * Naming the repo and stating the exclusion is what lets the synthesizer make that call while it
+ * still has the fact's text in front of it. It rides on `source_query` rather than the bank's
+ * `reflect_mission` because the mission is seeded ONCE and then belongs to whoever set it
+ * (`codingBankManifest`, #2492) — a mission-only fix would never reach an existing bank, while a
+ * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
+ */
+function pageScopeRule(project: string): string {
+  return (
+    ` Scope this page to ${project} ITSELF: the bank also holds facts about external tools, ` +
+    `libraries and services that ${project} merely uses, configures, deploys or discusses, and ` +
+    `those belong to somebody else's codebase. Include something only when its subject is ` +
+    `${project}'s own code, configuration or process; when it is about a dependency, leave it out ` +
+    `however well-evidenced it looks — including any commit SHA or identifier that belongs to that ` +
+    `dependency's repository rather than this one.`
+  );
+}
+
+/** The taxonomy before scoping — never seeded directly; `pagesFor` binds it to a repository. */
+const PAGE_TAXONOMY: readonly KnowledgePage[] = [
   {
     name: "Component map",
     source_query:
@@ -227,19 +262,97 @@ export const PAGES: KnowledgePage[] = [
     source_query:
       "Based on this repository's commit history, what are the major initiatives, features, and " +
       "enhancements the project has worked on? Summarize the themes and notable changes over time. " +
-      "When a source memory carries a tag of the form `relatedPageId:<id>`, include a Markdown link " +
-      "`[[page:<id>]]` to that page in the summary, so each initiative links to its detailed page.",
+      "When a source memory's context carries a `[[page:<id>]]` link, repeat that link in the " +
+      "summary of what it describes, so each initiative links to its detailed page.",
     tags: ["knowledge:feature-work"],
   },
 ];
 
-// Refresh policy shared by every seeded page: a living document, rebuilt from all three fact
-// tiers whenever consolidation produces new material.
+/**
+ * The seeded pages for one repository: the taxonomy above with `project` named in every query.
+ *
+ * A pure function of `project`, so the query text is STABLE for a given repo and `seedPages()`
+ * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run.
+ */
+export function pagesFor(project: string): KnowledgePage[] {
+  const scope = pageScopeRule(project);
+  return PAGE_TAXONOMY.map((page) => ({ ...page, source_query: page.source_query + scope }));
+}
+
+// Refresh policy shared by every page this plugin creates — the seeded taxonomy above and the
+// per-initiative pages `captureInitiative` adds.
 export const PAGE_MAX_TOKENS = 4096;
-export const PAGE_TRIGGER = {
-  fact_types: ["world", "experience", "observation"],
-  refresh_after_consolidation: true,
-} as const;
+
+/** A page's `trigger`, in the API's own shape (see MentalModelTrigger in api/http.py). */
+export interface PageTrigger {
+  fact_types: string[];
+  /** How the page's own `tags` filter the memories a refresh reads. See `PAGE_TAGS_MATCH`. */
+  tags_match: "any" | "all" | "any_strict" | "all_strict" | "exact";
+  refresh_after_consolidation?: boolean;
+  refresh_cron?: string;
+}
+
+/**
+ * `all` — AND over the page's tier tag, but INCLUDING untagged memories.
+ *
+ * The server defaults a tagged model to `all_strict`, which excludes untagged memories, and every
+ * observation in these banks is untagged: `DEFAULT_OBSERVATION_SCOPES = "shared"` consolidates into
+ * the single empty scope on purpose (#3564), so the consolidated tier carries no tags to match on.
+ * Under `all_strict` that put `"observation"` in `PAGE_FACT_TYPES` and the consolidated beliefs it
+ * asks for on opposite sides of the filter: pages declared the tier and could never retrieve a
+ * single row of it, synthesizing from raw world/experience facts alone.
+ *
+ * `all` keeps the discrimination that matters — a `knowledge:decision` fact still cannot reach the
+ * Component map, since it is tagged and lacks that page's tag — while letting the untagged shared
+ * observations reach every page, where the page's `source_query` is what selects among them. That
+ * is what one shared belief pool means.
+ */
+const PAGE_TAGS_MATCH = "all" as const;
+
+/** A page synthesizes from all three tiers; the fact types are not a preference. */
+export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
+
+/** The config fields that shape the trigger (a subset of Config — see core/config.ts). */
+export interface PageTriggerConfig {
+  pageTriggerType?: "auto-refresh" | "cron" | "manual";
+  pageTriggerCron?: string;
+}
+
+/**
+ * How this project's pages keep themselves current.
+ *
+ * WHEN is the only part of this that is a preference. `auto-refresh` — the default, and what every
+ * page shipped with — keeps a living document, rebuilt whenever consolidation produced new
+ * material: the most current setting and the most expensive, since a busy repo consolidates
+ * constantly and each pass is an LLM synthesis per page (#3506). `cron` bounds that to a schedule
+ * (the server skips a tick when nothing changed), `manual` refreshes only when something asks. A page is a mental model like any
+ * other, so the scheduler picks it up either way (`mental_models_with_cron()` filters on nothing
+ * but a non-empty `refresh_cron`).
+ *
+ * HOW a page refreshes is deliberately NOT stated here. `create_knowledge_page` owns that
+ * (`KNOWLEDGE_PAGE_DEFAULT_TRIGGER`: delta refresh, no sibling pages in the reflect loop) and
+ * merges a client's fields over it, so this sends only what it actually means and inherits the
+ * rest. Restating the server's own defaults here would just freeze a copy of them that drifts the
+ * next time they change.
+ *
+ * `fact_types` IS ours to state: the server's page default is observation-only, while these pages
+ * are tag-scoped syntheses over the `knowledge:<tier>` labels the extractor puts on world and
+ * experience facts. So is `tags_match`, for the reason `PAGE_TAGS_MATCH` gives.
+ *
+ * `refresh_after_consolidation` and `refresh_cron` are mutually exclusive server-side, so exactly
+ * one of them is ever set here.
+ */
+export function buildPageTrigger(cfg: PageTriggerConfig = {}): PageTrigger {
+  const base: PageTrigger = { fact_types: PAGE_FACT_TYPES, tags_match: PAGE_TAGS_MATCH };
+  switch (cfg.pageTriggerType) {
+    case "cron":
+      return { ...base, refresh_cron: cfg.pageTriggerCron };
+    case "manual":
+      return { ...base, refresh_after_consolidation: false };
+    default:
+      return { ...base, refresh_after_consolidation: true };
+  }
+}
 
 // ── the bank template ──────────────────────────────────────────────────────────
 // The bank's CONFIG — missions, retain strategies, entity labels — as a single manifest for
@@ -264,3 +377,87 @@ export const CODING_BANK_TEMPLATE = {
     entities_allow_free_form: true,
   },
 } as const;
+
+/** Bank-level missions the template seeds ONCE and then leaves alone (#2492). */
+const MISSION_FIELDS = ["reflect_mission", "retain_mission", "observations_mission"] as const;
+
+/** Bank-scoped config OVERRIDES exactly as `GET /banks/{id}/config` reports them. */
+export type BankOverrides = Record<string, unknown>;
+
+/** The manifest `configureBank` POSTs to `/banks/{id}/import`. */
+export interface BankManifest {
+  version: "1";
+  bank: Record<string, unknown>;
+}
+
+/** A bank-config override the bank's owner actually made. Blank is not a choice; `false` is. */
+function isSet(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  return true;
+}
+
+/**
+ * The template fields still missing from a bank whose overrides are `overrides` — or `undefined`
+ * when it already carries them all and there is nothing to write.
+ *
+ * **This plugin only ever ADDS what is missing; it never overwrites what the bank already says.**
+ *
+ * Re-applying the whole template on every pass is how a plugin takes a bank over, and it has now
+ * been fixed three times over the same shape: #1270 for OpenClaw's missions, #2492 for this
+ * plugin's, and #3927 for everything those two left un-guarded. Each earlier fix protected only the
+ * fields that had just been noticed, so the rest kept being stamped back on every session start.
+ * Reading the current overrides and writing only where the bank is silent covers the whole surface
+ * at once, including whatever gets added to the template next.
+ *
+ * The two container fields merge PER ENTRY, because the server stores each as ONE config value and
+ * an import replaces it outright: re-sending the five strategies wholesale deleted any strategy the
+ * user had defined, reverted their edits to the plugin's own (mission, extraction mode, chunk
+ * size), and could leave `retain_default_strategy` naming a strategy that no longer existed.
+ * Merging still lets a strategy ADDED by a newer plugin release reach an existing bank — the reason
+ * the re-apply exists — without touching the entries already there.
+ *
+ * The consequence is deliberate: a release that REWORDS an existing strategy or label does not
+ * reach a bank that already has it. Clearing that override on the bank takes the current default
+ * back, since the next pass then finds the bank silent there.
+ */
+export function codingBankManifest(overrides: BankOverrides | undefined): BankManifest | undefined {
+  // Unreadable overrides — the bank does not exist yet, or the deployment has the bank-config API
+  // switched off. Nothing can have been customised through an API that is not there, and this same
+  // POST is what CREATES the bank, so `{}` seeds the lot (every branch below fires, and the result
+  // is CODING_BANK_TEMPLATE — asserted in missions.test.ts).
+  const current = overrides ?? {};
+  const template = CODING_BANK_TEMPLATE.bank;
+  const bank: Record<string, unknown> = {};
+
+  // The missions are seeded as a GROUP: the plugin writes all three together, so any one of them
+  // being present means this bank has been seeded already, or its owner wrote their own (#2492).
+  if (!MISSION_FIELDS.some((f) => isSet(current[f]))) {
+    bank.reflect_mission = template.reflect_mission;
+    bank.enable_observations = template.enable_observations;
+    bank.observations_mission = template.observations_mission;
+    bank.retain_mission = template.retain_mission;
+    bank.retain_extraction_mode = template.retain_extraction_mode;
+  }
+
+  if (!isSet(current.retain_default_strategy))
+    bank.retain_default_strategy = template.retain_default_strategy;
+  if (!isSet(current.entities_allow_free_form))
+    bank.entities_allow_free_form = template.entities_allow_free_form;
+
+  const strategies =
+    current.retain_strategies && typeof current.retain_strategies === "object"
+      ? (current.retain_strategies as Record<string, unknown>)
+      : {};
+  const missing = Object.entries(template.retain_strategies).filter(([n]) => !(n in strategies));
+  // The whole map is one config value, so the UNION has to be sent — not just the additions.
+  if (missing.length > 0)
+    bank.retain_strategies = { ...strategies, ...Object.fromEntries(missing) };
+
+  const labels = Array.isArray(current.entity_labels) ? current.entity_labels : [];
+  const [knowledgeGroup] = template.entity_labels;
+  if (!labels.some((g) => (g as { key?: unknown } | null)?.key === knowledgeGroup.key))
+    bank.entity_labels = [...labels, knowledgeGroup];
+
+  return Object.keys(bank).length > 0 ? { version: "1", bank } : undefined;
+}

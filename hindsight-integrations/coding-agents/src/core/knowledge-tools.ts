@@ -1,10 +1,12 @@
 /**
- * Knowledge-page MCP tool specs — SDK-free so this stays unit-testable without a real MCP host.
+ * Knowledge-page MCP tool specs — runtime SDK-free so this stays unit-testable without a real MCP
+ * host.
  *
- * `src/mcp-server.ts` is the only file that imports the MCP SDK; it wires the specs returned here
- * into an `McpServer`. Each tool wraps one `HindsightClient` knowledge-page/recall method: it never
- * throws — a thrown client error is caught and turned into an `isError:true` text result so the
- * calling LLM sees the failure instead of the process crashing.
+ * `src/mcp-server.ts` is the only file with a runtime MCP SDK import; this module uses only its
+ * `ToolAnnotations` type. The server wires the specs returned here into an `McpServer`. Each tool
+ * wraps one `HindsightClient` knowledge-page/recall method: it never throws — a thrown client error
+ * is caught and turned into an `isError:true` text result so the calling LLM sees the failure
+ * instead of the process crashing.
  *
  * The agent-facing surface is intentionally curated: grounding + capture only. Raw page CRUD
  * (create/update/delete) is deliberately NOT exposed — agents never author page structure; they
@@ -16,10 +18,14 @@ import { z } from "zod";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
-import { loadConfig } from "./config";
+import { applyBankConfig, DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
+import { describeError } from "./log";
+import type { RetainStamp } from "./retain-stamp";
+import type { PageTrigger } from "./missions";
 
 export interface ToolResult {
   // Index signature so this structurally satisfies the MCP SDK's CallToolResult (which carries
@@ -30,10 +36,39 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+type ToolSafetyAnnotations = Required<
+  Pick<ToolAnnotations, "readOnlyHint" | "destructiveHint" | "idempotentHint" | "openWorldHint">
+>;
+
+const READ_ONLY_ANNOTATIONS: ToolSafetyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
+const NON_DESTRUCTIVE_WRITE_ANNOTATIONS: ToolSafetyAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+};
+
 export interface ToolSpec {
   name: string;
   description: string;
   inputSchema: ZodRawShape;
+  /**
+   * Safety metadata published verbatim as the tool's MCP annotations (src/mcp-server.ts).
+   *
+   * Required, not optional: it is not cosmetic. Dcode gates every MCP tool lacking a coherent
+   * read-only annotation behind an approval prompt, so in its headless (`dcode -n`) runtime an
+   * unannotated tool is REJECTED outright — "This MCP action requires approval, but the current
+   * headless runtime has no approval UI." Codex Auto-review likewise treats an unannotated call as
+   * unverified external access. Reads get READ_ONLY_ANNOTATIONS; the two writes get
+   * NON_DESTRUCTIVE_WRITE_ANNOTATIONS so clients still gate them, but for the right reason.
+   */
+  annotations: ToolSafetyAnnotations;
   handler: (args: any) => Promise<ToolResult>;
 }
 
@@ -42,7 +77,7 @@ function ok(value: unknown): ToolResult {
 }
 
 function err(e: unknown): ToolResult {
-  const message = String((e as Error)?.message ?? e);
+  const message = describeError(e);
   return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
 }
 
@@ -61,7 +96,19 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
 export function buildKnowledgeTools(
   client: HindsightClient,
   bankId: string,
-  opts: { repoDir?: string; harness?: string } = {}
+  opts: {
+    repoDir?: string;
+    harness?: string;
+    stampFor?: () => RetainStamp;
+    /** Refresh policy for a page `hindsight_capture_initiative` creates (core/missions.ts). */
+    pageTrigger?: PageTrigger;
+    /** How long `hindsight_reflect` waits on the server (cfg.reflectToolTimeoutMs). Must be
+     *  threaded in by every caller: left unset, the client falls back to a 120s deadline that
+     *  aborts high-budget synthesis on a populated bank mid-flight (#3590). */
+    reflectTimeoutMs?: number;
+    /** Reflect budget for `hindsight_reflect` (cfg.reflectBudget, default "high"). */
+    reflectBudget?: "low" | "mid" | "high";
+  } = {}
 ): ToolSpec[] {
   return [
     {
@@ -73,6 +120,7 @@ export function buildKnowledgeTools(
         "queryable. Ingestion is automatic and background — if not synced, it is in progress; " +
         "nothing to run.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: async () => {
         try {
           return ok(await syncStatus(client, bankId, opts.repoDir ?? process.cwd()));
@@ -89,11 +137,19 @@ export function buildKnowledgeTools(
         "Use this when memory, hooks, MCP tools, or configuration appear not to work. Tokens and " +
         "other secret values are never returned.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: async (_args: Record<string, never>) => {
         const configPath =
           process.env.HINDSIGHT_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
         const harness = opts.harness ?? "unknown";
-        const cfg = loadConfig({ harness: opts.harness });
+        // Resolve through the SAME pipeline the host used — including the `banks.<id>` section for
+        // the bank this client is bound to, which may carry its own apiToken/apiUrl. A bare
+        // loadConfig() would report a mismatch for every per-bank credential.
+        const cfg = applyBankConfig(
+          loadConfig({ harness: opts.harness }),
+          bankId,
+          opts.repoDir
+        ).cfg;
         return ok({
           bank_id: bankId,
           harness,
@@ -104,6 +160,14 @@ export function buildKnowledgeTools(
             api_url: cfg.apiUrl,
             api_token_configured: Boolean(cfg.apiToken),
             disabled: cfg.disabled,
+          },
+          // What the LIVE client is signing with, which is not the same question as what the file
+          // says. A long-lived host used to keep a credential the config had already replaced, and
+          // this tool reported that state as perfectly healthy (#3600). Booleans only — the token
+          // value is never returned.
+          credential: {
+            api_token_in_use: Boolean(client.apiToken),
+            api_token_matches_config: client.apiToken === cfg.apiToken,
           },
           environment: {
             config_override: Boolean(process.env.HINDSIGHT_CONFIG),
@@ -127,6 +191,7 @@ export function buildKnowledgeTools(
         "credit it visibly: start that part with a markdown blockquote header " +
         '"> 🧠 **From Hindsight memory (<page name>)** — <the facts you drew on>".',
       inputSchema: { query: z.string().describe("what to look for") },
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: async (args: { query: string }) => {
         try {
           const hits = await client.searchKnowledgePages(args.query, 3);
@@ -153,6 +218,7 @@ export function buildKnowledgeTools(
         "periodically in long sessions, to see what the project already knows before you read code " +
         "or ask the user. The list changes as work is captured, so re-check it occasionally.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: guarded(async () => client.listPages()),
     },
     {
@@ -165,6 +231,7 @@ export function buildKnowledgeTools(
         "contain [[page:<id>]] links to related pages; follow one by calling this tool again with " +
         "that id. Prefer reading a page over re-deriving the same understanding from source.",
       inputSchema: { page_id: z.string() },
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: guarded(async ({ page_id }) => client.getPage(page_id)),
     },
     {
@@ -177,31 +244,52 @@ export function buildKnowledgeTools(
         "shallow and you need the root cause or the decided literals. When the answer informs " +
         'your reply, credit it visibly with a blockquote header: "> 🧠 **From Hindsight memory** — <summary>".',
       inputSchema: { query: z.string().describe("the question to reason over memory about") },
+      annotations: READ_ONLY_ANNOTATIONS,
       handler: guarded(async ({ query }: { query: string }) =>
-        client.reflect(query, { budget: "high" })
+        client.reflect(query, {
+          budget: opts.reflectBudget ?? "high",
+          timeoutMs: opts.reflectTimeoutMs ?? DEFAULT_REFLECT_TOOL_TIMEOUT_MS,
+        })
       ),
     },
     {
       name: "hindsight_capture_initiative",
       description:
         "Record a new feature or initiative as a tracked knowledge page, so future sessions know it " +
-        "exists and can build on it.\n\n" +
-        "WHEN TO CALL: right after the user approves a plan or finishes brainstorming a new feature/" +
-        "capability and you are about to start implementing — BEFORE you write any code. Call it ONCE, EARLY.\n\n" +
-        "WHEN TO SKIP: bug fixes, small tweaks, refactors, and chores are not initiatives — skip " +
-        "them.\n\n" +
-        "- title: short, specific name (e.g. 'Newsletter refinement chat').\n" +
-        "- summary: 2-3 sentences on what you're building and why (the intent, not a code diff).\n" +
-        "- relates_to_page_id: leave empty for a new initiative. Set it only to attach to an " +
-        "initiative that already has a page — pass that page's id from hindsight_list_knowledge_pages.\n\n" +
+        "exists and can build on it — and keep that page tracking the plan as it moves.\n\n" +
+        "WHEN TO CALL:\n" +
+        "- Starting one: right after the user approves a plan or finishes brainstorming a new feature/" +
+        "capability and you are about to start implementing — BEFORE you write any code. Leave " +
+        "relates_to_page_id empty.\n" +
+        "- Plan changed: call it AGAIN — mid-implementation is fine and expected — whenever the goal, " +
+        "scope, or rationale of an initiative you already captured materially changes (an approach is " +
+        "dropped, scope grows or shrinks, the why is rewritten). Pass relates_to_page_id = that " +
+        "initiative's page id so the change lands on the existing page. Never mint a second page for the " +
+        "same initiative.\n\n" +
+        "WHEN TO SKIP: bug fixes, small tweaks, refactors, chores, and trivial course-corrections that " +
+        "leave the goal intact are not initiatives — skip them.\n\n" +
+        "- title: short, specific name (e.g. 'Newsletter refinement chat'). On a recapture, reuse the " +
+        "initiative's existing title.\n" +
+        "- summary: 2-3 sentences on what you're building and why — the CURRENT intent, not the " +
+        "originally approved plan (on a recapture, say what changed and why).\n" +
+        "- relates_to_page_id: leave empty for a new initiative. Set it to an existing initiative's page " +
+        "id — from hindsight_list_knowledge_pages, or the id this tool returned earlier — to record a " +
+        "plan change or an enhancement to it.\n\n" +
         "Returns the page id. The page is generated for you — you never format one yourself.",
       inputSchema: {
         title: z.string(),
         summary: z.string(),
         relates_to_page_id: z.string().optional(),
       },
+      annotations: NON_DESTRUCTIVE_WRITE_ANNOTATIONS,
       handler: guarded(async ({ title, summary, relates_to_page_id }) =>
-        client.captureInitiative({ title, summary, relatesToPageId: relates_to_page_id })
+        client.captureInitiative({
+          title,
+          summary,
+          relatesToPageId: relates_to_page_id,
+          ...(opts.stampFor ? { stamp: opts.stampFor() } : {}),
+          ...(opts.pageTrigger ? { pageTrigger: opts.pageTrigger } : {}),
+        })
       ),
     },
     {
@@ -215,19 +303,31 @@ export function buildKnowledgeTools(
         "'Correction: <topic>' stating what memory claimed, what is actually true, and the " +
         "evidence — the newer fact supersedes the stale one in future retrieval.",
       inputSchema: { title: z.string(), content: z.string() },
+      annotations: NON_DESTRUCTIVE_WRITE_ANNOTATIONS,
       handler: guarded(async ({ title, content }) => {
         const docId =
           title
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
             .replace(/^-+|-+$/g, "") || "doc";
+        const stamp = opts.stampFor?.();
+        const metadata = {
+          ...stamp?.metadata,
+          ...(opts.harness ? { harness: opts.harness } : {}),
+        };
         await client.retain(
           content,
           "ingested document",
           docId,
-          ["source:upload", ...(opts.harness ? [`harness:${opts.harness}`] : [])],
+          [
+            ...new Set([
+              ...(stamp?.tags ?? []),
+              "source:upload",
+              ...(opts.harness ? [`harness:${opts.harness}`] : []),
+            ]),
+          ],
           "document",
-          { async: true, metadata: opts.harness ? { harness: opts.harness } : undefined }
+          Object.keys(metadata).length ? { metadata } : {}
         );
         return { ok: true, doc_id: docId };
       }),

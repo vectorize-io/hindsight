@@ -174,8 +174,75 @@ async def test_call_with_tools_marks_last_block_of_tool_result_message():
         )
 
     messages = provider._client.messages.create.await_args.kwargs["messages"]
+    # Parallel tool results must land in ONE user message immediately after the
+    # assistant tool_use turn: Anthropic requires every tool_use block to be
+    # answered in that single following message.
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
     last_blocks = messages[-1]["content"]
-    assert last_blocks[-1]["type"] == "tool_result"
+    assert [b["type"] for b in last_blocks] == ["tool_result", "tool_result"]
+    assert [b["tool_use_id"] for b in last_blocks] == ["t1", "t2"]
     assert last_blocks[-1]["cache_control"] == EPHEMERAL
-    # The earlier tool-result message is unmarked.
-    assert all("cache_control" not in block for block in messages[-2]["content"])
+    # Only the final block of the grouped batch carries the marker.
+    assert "cache_control" not in last_blocks[0]
+
+
+async def test_call_with_tools_does_not_merge_tool_results_across_assistant_turns():
+    """Two independent assistant tool batches stay two user result messages."""
+    provider = _make_provider()
+    provider._client.messages.create = AsyncMock(return_value=_tool_response())
+
+    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+        await provider.call_with_tools(
+            messages=[
+                {"role": "user", "content": "Question?"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "a1", "function": {"name": "recall", "arguments": "{}"}},
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "a1", "content": "result A"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "b1", "function": {"name": "recall", "arguments": "{}"}},
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "b1", "content": "result B"},
+            ],
+            tools=[{"function": {"name": "recall", "description": "d", "parameters": {"type": "object"}}}],
+            max_retries=0,
+        )
+
+    messages = provider._client.messages.create.await_args.kwargs["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant", "user", "assistant", "user"]
+    # Each assistant turn keeps its own immediately-following tool_result message.
+    assert messages[2]["content"][0]["tool_use_id"] == "a1"
+    assert messages[4]["content"][0]["tool_use_id"] == "b1"
+
+
+async def test_call_with_tools_keeps_empty_tool_result_block():
+    """An empty tool result still produces a tool_result block (never dropped)."""
+    provider = _make_provider()
+    provider._client.messages.create = AsyncMock(return_value=_tool_response())
+
+    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+        await provider.call_with_tools(
+            messages=[
+                {"role": "user", "content": "Question?"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "e1", "function": {"name": "recall", "arguments": "{}"}},
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "e1", "content": ""},
+            ],
+            tools=[{"function": {"name": "recall", "description": "d", "parameters": {"type": "object"}}}],
+            max_retries=0,
+        )
+
+    messages = provider._client.messages.create.await_args.kwargs["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+    assert messages[-1]["content"][0]["type"] == "tool_result"
+    assert messages[-1]["content"][0]["content"] == ""

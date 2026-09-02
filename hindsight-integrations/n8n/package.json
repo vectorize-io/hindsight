@@ -56,7 +56,8 @@
     "n8n-workflow": "*"
   },
   "overrides": {
-    "form-data": "^4.0.6"
+    "form-data": "^4.0.6",
+    "postcss": ">=8.5.23 <9.0.0"
   },
   "engines": {
     "node": ">=20.15"

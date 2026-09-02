@@ -1,16 +1,15 @@
 """Tests for profile_manager module."""
 
+import builtins
 import json
-import os
+import pathlib
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from hindsight_embed.profile_manager import (
-    ProfileInfo,
     ProfileManager,
-    ProfilePaths,
     resolve_active_profile,
     validate_profile_exists,
 )
@@ -83,6 +82,33 @@ class TestProfileManager:
         assert "port" not in metadata["profiles"]["test-profile"]
         assert "created_at" in metadata["profiles"]["test-profile"]
 
+    def test_profile_config_uses_utf8_when_locale_is_not_utf8(self, profile_manager, temp_hindsight_dir, monkeypatch):
+        """Profile templates remain readable with a legacy default code page."""
+        original_open = pathlib.Path.open
+        original_builtin_open = builtins.open
+
+        def add_legacy_encoding(args, kwargs):
+            mode = kwargs.get("mode", args[0] if args else "r")
+            if kwargs.get("encoding") is None and "b" not in mode:
+                kwargs["encoding"] = "gbk"
+
+        def legacy_locale_open(path, *args, **kwargs):
+            add_legacy_encoding(args, kwargs)
+            return original_open(path, *args, **kwargs)
+
+        def legacy_builtin_open(file, *args, **kwargs):
+            add_legacy_encoding(args, kwargs)
+            return original_builtin_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "open", legacy_locale_open)
+        monkeypatch.setattr(builtins, "open", legacy_builtin_open)
+
+        profile_manager.create_profile("legacy-locale", {"CUSTOM_DESCRIPTION": "memory — retained"})
+
+        config_path = temp_hindsight_dir / "profiles" / "legacy-locale.env"
+        assert "memory — retained" in config_path.read_text(encoding="utf-8")
+        assert profile_manager.load_profile_config("legacy-locale")["CUSTOM_DESCRIPTION"] == "memory — retained"
+
     def test_create_profile_invalid_name(self, profile_manager):
         """Test creating profile with invalid name fails."""
         config = {"KEY": "value"}
@@ -119,22 +145,50 @@ class TestProfileManager:
         # Create profile
         profile_manager.create_profile("test-profile", {"KEY": "value"})
         assert profile_manager.profile_exists("test-profile")
+        profiles_dir = temp_hindsight_dir / "profiles"
+        (profiles_dir / "test-profile.log").write_text("current")
+        (profiles_dir / "test-profile.log.1").write_text("retained")
 
         # Delete profile
         profile_manager.delete_profile("test-profile")
         assert not profile_manager.profile_exists("test-profile")
 
         # Verify all files are removed
-        profiles_dir = temp_hindsight_dir / "profiles"
         assert not (profiles_dir / "test-profile.env").exists()
         assert not (profiles_dir / "test-profile.lock").exists()
         assert not (profiles_dir / "test-profile.log").exists()
+        assert not (profiles_dir / "test-profile.log.1").exists()
 
         # Verify metadata no longer contains profile
         metadata_path = profiles_dir / "metadata.json"
         if metadata_path.exists():
             metadata = json.loads(metadata_path.read_text())
             assert "test-profile" not in metadata.get("profiles", {})
+
+    def test_delete_profile_survives_undeletable_log(self, profile_manager, temp_hindsight_dir):
+        """An unremovable log (e.g. still open on Windows) must not strand the profile."""
+        profile_manager.create_profile("test-profile", {"KEY": "value"})
+        profiles_dir = temp_hindsight_dir / "profiles"
+        (profiles_dir / "test-profile.log").write_text("current")
+        (profiles_dir / "test-profile.log.1").write_text("retained")
+
+        real_unlink = Path.unlink
+
+        def refuse_active_log(self, **kwargs):
+            if self.name == "test-profile.log":
+                raise PermissionError(32, "The process cannot access the file")
+            return real_unlink(self, **kwargs)
+
+        with patch.object(Path, "unlink", refuse_active_log):
+            profile_manager.delete_profile("test-profile")
+
+        # The locked log stays behind, but everything else is cleaned up and the
+        # profile is fully deregistered rather than left half-deleted.
+        assert (profiles_dir / "test-profile.log").exists()
+        assert not (profiles_dir / "test-profile.log.1").exists()
+        assert not profile_manager.profile_exists("test-profile")
+        metadata = json.loads((profiles_dir / "metadata.json").read_text())
+        assert "test-profile" not in metadata.get("profiles", {})
 
     def test_delete_nonexistent_profile(self, profile_manager):
         """Test deleting a non-existent profile fails."""

@@ -80,8 +80,8 @@ Configure via environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_DATABASE_URL` | PostgreSQL connection string | `pg0` (embedded) |
-| `HINDSIGHT_API_LLM_PROVIDER` | `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio` | `openai` |
-| `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
+| `HINDSIGHT_API_LLM_PROVIDER` | LLM provider, including `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, and `github-copilot` | `openai` |
+| `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot` | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-4o-mini` |
 | `HINDSIGHT_API_HOST` | Server bind address | `0.0.0.0` |
 | `HINDSIGHT_API_PORT` | Server port | `8888` |

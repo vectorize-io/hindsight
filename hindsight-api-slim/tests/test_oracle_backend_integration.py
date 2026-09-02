@@ -37,6 +37,9 @@ except ImportError:
 pytestmark = [
     pytest.mark.skipif(not ORACLEDB_AVAILABLE, reason="oracledb not installed"),
     pytest.mark.skipif(not os.getenv("ORACLE_TEST_DSN"), reason="ORACLE_TEST_DSN not set"),
+    # Talks to the backend's own tables in SQL, down to VECTOR_DISTANCE over the
+    # embedding column.
+    pytest.mark.memory_backend_incompatible,
 ]
 
 

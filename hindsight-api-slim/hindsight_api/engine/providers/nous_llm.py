@@ -48,7 +48,7 @@ class NousLLM(OpenAICompatibleLLM):
         api_key: str,  # Ignored — the token is read from ~/.hermes/auth.json
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         **kwargs: Any,
     ):
         try:

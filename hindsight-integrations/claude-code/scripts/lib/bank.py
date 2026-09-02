@@ -29,6 +29,24 @@ DEFAULT_BANK_NAME = "claude-code"
 VALID_FIELDS = {"agent", "project", "session", "channel", "user"}
 
 
+def _is_bare_repository(common_dir: str) -> bool:
+    """Check the shared Git directory itself, independent of the current worktree."""
+    env = os.environ.copy()
+    env.pop("GIT_DIR", None)
+    env.pop("GIT_WORK_TREE", None)
+    try:
+        result = subprocess.run(
+            ["git", "-C", common_dir, "rev-parse", "--is-bare-repository"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=env,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _resolve_project_name(cwd: str, config: dict) -> str:
     """Resolve the project name from the working directory.
 
@@ -57,10 +75,14 @@ def _resolve_project_name(cwd: str, config: dict) -> str:
         )
         if result.returncode == 0:
             git_common_dir = result.stdout.strip()
-            # git-common-dir returns the .git directory of the main repo
-            # e.g. /home/user/myproject/.git → parent is /home/user/myproject
-            main_repo_path = os.path.dirname(git_common_dir)
-            return os.path.basename(main_repo_path)
+            common_name = os.path.basename(git_common_dir)
+            if common_name == ".git":
+                return os.path.basename(os.path.dirname(git_common_dir))
+            # Bare-hub plumbing is conventionally hidden (`.bare`, `.git-bare`). Keep standalone
+            # bare clone names stable instead of mapping every `/repos/*.git` to `repos`.
+            if common_name.startswith(".") and _is_bare_repository(git_common_dir):
+                return os.path.basename(os.path.dirname(git_common_dir))
+            return common_name
     except (OSError, subprocess.TimeoutExpired):
         pass
 

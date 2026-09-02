@@ -1415,6 +1415,7 @@ async def test_list_tags_ordered_by_count(api_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_list_memories_includes_tags(api_client, test_bank_id):
     """Test that list memories endpoint returns tags for each memory unit.
 

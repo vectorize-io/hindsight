@@ -42,6 +42,7 @@ export function startBackgroundSeed(
       {
         detached: true,
         stdio: "ignore",
+        windowsHide: true,
       }
     );
     // spawn() failures (ENOENT/EACCES/fd exhaustion/sandboxed environments) often arrive

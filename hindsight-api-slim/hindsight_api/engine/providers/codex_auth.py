@@ -69,19 +69,27 @@ _CODEX_AUTH_LOCKS_GUARD = threading.Lock()
 _CODEX_AUTH_LOCKS: dict[Path, threading.Lock] = {}
 
 
-def default_codex_auth_file() -> Path:
+def default_codex_auth_file(codex_home: str | None = None) -> Path:
     """Return the path to Codex's ``auth.json``.
 
-    Honors the ``CODEX_HOME`` environment variable — the same variable the
-    canonical ``@openai/codex`` CLI uses to relocate its config/credentials
-    directory — and falls back to ``~/.codex`` when it is unset or empty.
+    ``codex_home`` is an explicit credentials directory for one provider
+    instance (``HINDSIGHT_API_LLM_CODEX_HOME`` / the per-member
+    ``..._LLM_<n>_CODEX_HOME``). It exists so that two Codex members of a
+    multi-LLM chain can hold two independently authorized ChatGPT profiles;
+    without it every member in a process resolves the same store and failover
+    between profiles is a no-op.
+
+    When it is ``None`` (the default), honors the ``CODEX_HOME`` environment
+    variable — the same variable the canonical ``@openai/codex`` CLI uses to
+    relocate its config/credentials directory — and falls back to ``~/.codex``
+    when that is unset or empty.
 
     Resolved lazily on each call (rather than cached at import time) so that
     the environment is read at the point of use.
     """
-    codex_home = os.environ.get("CODEX_HOME")
-    if codex_home:
-        return Path(codex_home) / "auth.json"
+    home = codex_home or os.environ.get("CODEX_HOME")
+    if home:
+        return Path(home) / "auth.json"
     return Path.home() / ".codex" / "auth.json"
 
 
@@ -422,7 +430,13 @@ class CodexAuthManager:
             with _codex_auth_lock(self._auth_file):
                 disk_tokens = self._load_tokens_from_file(self._auth_file)
                 if disk_tokens and self._adopt_tokens(disk_tokens):
-                    if force or self._token_is_fresh_with_known_expiry():
+                    # Only skip the network refresh when the adopted token is
+                    # demonstrably usable. A reactive (force) caller is here
+                    # because the server rejected its token, and its one retry
+                    # is spent on whatever we return: adopting a token that is
+                    # merely *different* — but itself past expiry, or with an
+                    # unparseable exp — burns that retry on a second 401.
+                    if self._token_is_fresh_with_known_expiry():
                         return
 
                 if not self.refresh_token:
@@ -434,31 +448,42 @@ class CodexAuthManager:
                 log_reason = f" ({reason})" if reason else ""
                 logger.info(f"Refreshing Codex OAuth access_token{log_reason}")
 
-                request_access_token = self.access_token
-                request_refresh_token = self.refresh_token
-                request_body = {
-                    "client_id": _CODEX_CLIENT_ID,
-                    "grant_type": "refresh_token",
-                    "refresh_token": request_refresh_token,
-                }
-                try:
-                    response = self._http_client.post(
-                        _CODEX_REFRESH_TOKEN_URL,
-                        json=request_body,
-                        headers={"Content-Type": "application/json"},
-                        timeout=30.0,
-                    )
-                except httpx.RequestError as e:
-                    raise RuntimeError(f"Codex OAuth refresh network error: {type(e).__name__}") from e
+                refresh_attempt = 0
+                while True:
+                    request_access_token = self.access_token
+                    request_refresh_token = self.refresh_token
+                    request_body = {
+                        "client_id": _CODEX_CLIENT_ID,
+                        "grant_type": "refresh_token",
+                        "refresh_token": request_refresh_token,
+                    }
+                    try:
+                        response = self._http_client.post(
+                            _CODEX_REFRESH_TOKEN_URL,
+                            json=request_body,
+                            headers={"Content-Type": "application/json"},
+                            timeout=30.0,
+                        )
+                    except httpx.RequestError as e:
+                        raise RuntimeError(f"Codex OAuth refresh network error: {type(e).__name__}") from e
 
-                if response.status_code == 401:
+                    if response.status_code != 401:
+                        break
+
                     error_code = self._extract_oauth_error_code(response)
                     disk_tokens = self._load_tokens_from_file(self._auth_file)
                     if disk_tokens and (
                         disk_tokens.get("access_token") != request_access_token
                         or disk_tokens.get("refresh_token") != request_refresh_token
                     ):
+                        previous_refresh_token = self.refresh_token
                         self._adopt_tokens(disk_tokens)
+                        if self._token_is_fresh_with_known_expiry():
+                            return
+                        if self.refresh_token and self.refresh_token != previous_refresh_token and refresh_attempt == 0:
+                            refresh_attempt += 1
+                            logger.info("Retrying Codex OAuth refresh with newer refresh_token from auth.json")
+                            continue
                         return
                     if error_code in _CODEX_TERMINAL_REFRESH_ERROR_CODES:
                         raise CodexRefreshExpiredError(

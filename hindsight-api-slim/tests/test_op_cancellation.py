@@ -207,6 +207,7 @@ class TestMarkOperationGracefulOnMissingRow:
 
 class TestConsolidationCheckpoint:
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_consolidation_stops_early_when_op_cancelled(self, memory: MemoryEngine, request_context):
         """Consolidation returns 'cancelled' status after the first batch if _check_op_alive is False."""
         from hindsight_api.config import _get_raw_config

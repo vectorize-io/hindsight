@@ -4,10 +4,19 @@ Uses unnest(), LATERAL, DISTINCT ON, and native array operations for
 efficient batch operations.
 """
 
+import asyncio
 from datetime import datetime
 
 from .base import DatabaseConnection
-from .ops import DataAccessOps, LinkExpansionRows, TagListingParts, UpdatedWindow
+from .ops import (
+    ClaimedOperations,
+    DataAccessOps,
+    LinkExpansionRows,
+    TagListingParts,
+    UpdatedWindow,
+    bank_serialization_sql,
+    document_serialization_sql,
+)
 from .result import ResultRow
 
 
@@ -16,30 +25,57 @@ def pg_search_vector_expr(
     *,
     text_col: str = "text",
     context_col: str = "context",
-    signals_col: str = "text_signals",
+    signals_col: str | None = "text_signals",
+    native_inline: bool = True,
 ) -> str | None:
     """SQL expression that builds ``search_vector`` for the configured PG text-search backend.
 
-    Single source of truth shared by the batch insert (over the ``input_data``
-    CTE columns) and the curation revert recompute (over a ``memory_units`` row),
-    so the two can never drift. Returns ``None`` for backends that leave
-    ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search index the
-    base text columns directly and keep only a dummy column, so there is nothing
-    to build.
+    Single source of truth shared by ``memory_units`` (the batch insert over the
+    ``input_data`` CTE columns and the curation-revert recompute) and
+    ``mental_models`` (the knowledge-page writes), so the per-backend tokenization
+    can never drift between the two tables. Returns ``None`` for backends that
+    leave ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search
+    index the base text columns directly and keep only a dummy column, so there is
+    nothing to build.
+
+    The ``*_col`` arguments are the SQL for each text source (a column name or a
+    bind placeholder); pass ``signals_col=None`` for a two-column table like
+    ``mental_models`` (name + content). Pass ``native_inline=False`` when the
+    table's native ``search_vector`` is a GENERATED column that populates itself
+    (``mental_models``) — writing it inline would fail; only vchord's plain
+    bm25vector column then needs an explicit value.
 
     ``text_search_extension_native_language`` is validated as a PG identifier in
     ``HindsightConfig.validate()``, so embedding it as a SQL literal is safe.
     """
-    combined = f"COALESCE({text_col}, '') || ' ' || COALESCE({context_col}, '') || ' ' || COALESCE({signals_col}, '')"
+    cols = [text_col, context_col] + ([signals_col] if signals_col is not None else [])
+    combined = " || ' ' || ".join(f"COALESCE({c}, '')" for c in cols)
     if config.text_search_extension == "vchord":
         return f"tokenize({combined}, 'llmlingua2')::bm25_catalog.bm25vector"
-    if config.text_search_extension == "native":
+    if config.text_search_extension == "native" and native_inline:
         return f"to_tsvector('{config.text_search_extension_native_language}'::regconfig, {combined})"
     return None
 
 
 class PostgreSQLOps(DataAccessOps):
     """PostgreSQL-specific data access operations using unnest and LATERAL."""
+
+    def __init__(self) -> None:
+        # Per-table serialization of per-bank vector-index DDL within this
+        # process. Concurrent index DDL on one relation deadlocks by design:
+        # DROP INDEX CONCURRENTLY holds ShareUpdateExclusive while it waits out
+        # every transaction whose snapshot could still see the index — including
+        # other sessions' index DDL queued on that same lock — so many banks
+        # deleted at once form a wait cycle Postgres resolves by killing one.
+        # A session advisory lock would serialize this across processes too, but
+        # advisory locks are banned here (poolers hand sessions around; see the
+        # Database Locking standard). In-process the asyncio lock removes the
+        # cycle outright; across processes the callers' retry-with-backoff
+        # absorbs the (now much rarer) collisions.
+        self._index_ddl_locks: dict[str, asyncio.Lock] = {}
+
+    def _index_ddl_lock(self, table: str) -> asyncio.Lock:
+        return self._index_ddl_locks.setdefault(table, asyncio.Lock())
 
     @property
     def uses_observation_sources_table(self) -> bool:
@@ -252,6 +288,7 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         # ORDER BY LOWER(name) so every concurrent batch inserts in the same order
         # as the conflict target (bank_id, LOWER(canonical_name)). ON CONFLICT DO
@@ -263,9 +300,9 @@ class PostgreSQLOps(DataAccessOps):
         # the database's own collation the single arbiter for all writers.
         inserted_rows = await conn.fetch(
             f"""
-            INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-            SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0
-            FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
+            INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count, entity_kind)
+            SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0, kind
+            FROM unnest($2::text[], $3::timestamptz[], $4::text[]) AS t(name, event_date, kind)
             ORDER BY LOWER(name)
             ON CONFLICT (bank_id, LOWER(canonical_name))
             DO NOTHING
@@ -274,6 +311,7 @@ class PostgreSQLOps(DataAccessOps):
             bank_id,
             entity_names,
             entity_dates,
+            entity_kinds,
         )
         return {row["name_lower"]: row["id"] for row in inserted_rows}
 
@@ -305,6 +343,7 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         # One statement, one round-trip (same shape as bulk_insert_links):
         #   * the CTE takes FOR KEY SHARE on every parent that still exists,
@@ -323,15 +362,16 @@ class PostgreSQLOps(DataAccessOps):
                 ORDER BY id
                 FOR KEY SHARE
             )
-            INSERT INTO {table} (id, bank_id, canonical_name)
-            SELECT t.entity_id, $1, t.canonical_name
-            FROM unnest($2::uuid[], $3::text[]) AS t(entity_id, canonical_name)
+            INSERT INTO {table} (id, bank_id, canonical_name, entity_kind)
+            SELECT t.entity_id, $1, t.canonical_name, t.entity_kind
+            FROM unnest($2::uuid[], $3::text[], $4::text[]) AS t(entity_id, canonical_name, entity_kind)
             WHERE t.entity_id NOT IN (SELECT id FROM locked)
             ON CONFLICT DO NOTHING
             """,
             bank_id,
             entity_ids,
             canonical_names,
+            entity_kinds,
         )
 
     async def bulk_insert_unit_entities(
@@ -434,26 +474,126 @@ class PostgreSQLOps(DataAccessOps):
         )
         return [str(row["unit_id"]) for row in rows]
 
+    async def enqueue_entity_maintenance(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        # Read the candidates straight out of unit_entities rather than making
+        # callers pass entity ids: every caller runs this immediately before the
+        # rows go, and the join they'd have to write is this one.
+        #
+        # The inner ORDER BY is load-bearing, not cosmetic: it makes the INSERT
+        # take the (bank_id, entity_id) row locks ascending, the same order
+        # claim_entity_maintenance_batch takes them, so a mutation enqueueing an
+        # overlapping candidate set cannot cycle against a worker draining it.
+        # (Same protocol as enqueue_graph_maintenance, which sorts in Python
+        # because its ids arrive as a bind array.)
+        #
+        # DO UPDATE (not DO NOTHING) on a duplicate — #3034. The SET is a
+        # deliberate no-op preserving enqueued_at; its only purpose is to lock
+        # the conflicting row. DO NOTHING does not lock it, so a delete
+        # re-enqueueing an already-queued entity could not block a worker from
+        # claiming that row and evaluating the entity's pre-delete state — it
+        # would find the entity still referenced, keep it, and the re-enqueue
+        # signal would be lost, stranding the orphan until some later delete
+        # happened to name it again.
+        result = await conn.execute(
+            f"""
+            INSERT INTO {table} (bank_id, entity_id)
+            SELECT $1, s.entity_id
+            FROM (
+                SELECT DISTINCT ue.entity_id
+                FROM {ue_table} ue
+                WHERE ue.unit_id = ANY($2::uuid[])
+                ORDER BY 1
+            ) s
+            ON CONFLICT (bank_id, entity_id)
+                DO UPDATE SET enqueued_at = {table}.enqueued_at
+            """,
+            bank_id,
+            unit_ids,
+        )
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("INSERT") else 0
+
+    async def claim_entity_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list:
+        # Same claim shape as claim_graph_maintenance_batch: pick the oldest
+        # batch by enqueued_at, but acquire the row locks in (bank_id, entity_id)
+        # order — the order enqueue_entity_maintenance takes them — so a
+        # concurrent enqueue can never cycle against this claim. `chosen` is
+        # MATERIALIZED so the enqueued_at pick is fenced from the locking clause,
+        # and `FOR UPDATE OF q ... ORDER BY q.entity_id` puts LockRows above the
+        # Sort.
+        rows = await conn.fetch(
+            f"""
+            WITH chosen AS MATERIALIZED (
+                SELECT bank_id, entity_id FROM {table}
+                WHERE bank_id = $1
+                ORDER BY enqueued_at
+                LIMIT $2
+            ),
+            locked AS (
+                SELECT q.bank_id, q.entity_id
+                FROM {table} q
+                JOIN chosen c ON c.bank_id = q.bank_id AND c.entity_id = q.entity_id
+                ORDER BY q.entity_id
+                FOR UPDATE OF q
+            )
+            DELETE FROM {table} q
+            USING locked l
+            WHERE q.bank_id = l.bank_id AND q.entity_id = l.entity_id
+            RETURNING q.entity_id
+            """,
+            bank_id,
+            limit,
+        )
+        return [row["entity_id"] for row in rows]
+
     async def prune_orphan_entities(
         self,
         conn: DatabaseConnection,
         entities_table: str,
         ue_table: str,
         bank_id: str,
+        entity_ids: list,
     ) -> int:
-        # Scoped by entities.bank_id (indexed). The NOT EXISTS subquery is
-        # backed by idx_ue_entity on unit_entities(entity_id), so this stays
-        # linear in the number of entities in the bank — not in the size of
-        # unit_entities globally.
+        # Scoped to the claimed candidates: primary-key lookups, with the
+        # NOT EXISTS backed by idx_unit_entities_entity_unit. Cost tracks the
+        # batch, not the bank (#3222) — the bank-wide form this replaces probed
+        # once per entity in the bank on every single run.
+        #
+        # Victims are locked in id order before the delete so the locks are
+        # acquired the same way retain's entity upsert takes them
+        # (bulk_upsert_entities locks `ORDER BY id FOR KEY SHARE`), which is what
+        # keeps a prune and a concurrent re-assert from cycling.
         result = await conn.execute(
             f"""
+            WITH victims AS (
+                SELECT e.id
+                FROM {entities_table} e
+                WHERE e.bank_id = $1
+                  AND e.id = ANY($2::uuid[])
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {ue_table} ue WHERE ue.entity_id = e.id
+                  )
+                ORDER BY e.id
+                FOR UPDATE
+            )
             DELETE FROM {entities_table} e
-            WHERE e.bank_id = $1
-              AND NOT EXISTS (
-                  SELECT 1 FROM {ue_table} ue WHERE ue.entity_id = e.id
-              )
+            USING victims v
+            WHERE e.id = v.id
             """,
             bank_id,
+            entity_ids,
         )
         # asyncpg returns "DELETE N"
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
@@ -463,12 +603,18 @@ class PostgreSQLOps(DataAccessOps):
         conn: DatabaseConnection,
         ec_table: str,
         ue_table: str,
-        entities_table: str,
-        bank_id: str,
+        entity_ids: list,
     ) -> int:
-        # Scope by joining through entities.bank_id (entity_cooccurrences itself
-        # has no bank_id column — entities don't span banks, so scoping via
-        # entity_id_1 is sufficient).
+        # Scoped to cooccurrence rows incident to the claimed candidates. The
+        # two arms are a UNION rather than
+        # `WHERE entity_id_1 = ANY(...) OR entity_id_2 = ANY(...)`: an OR across
+        # two columns of the same table cannot be driven from either index, so
+        # the planner would make entity_cooccurrences the outer relation and
+        # scan it whole — the #3387 shape. As a UNION each arm is an index scan
+        # (the PK for arm 1, idx_entity_cooccurrences_entity2 for arm 2).
+        #
+        # No bank predicate: entities don't span banks and the candidates came
+        # off a bank-scoped queue, so both endpoints are already this bank's.
         #
         # Ordered locking (deadlock avoidance, #2529): retain's concurrent
         # cooccurrence upsert (entity_resolver._flush_pending) locks rows in
@@ -484,26 +630,58 @@ class PostgreSQLOps(DataAccessOps):
         # retry wrap in run_graph_maintenance_job stays as a backstop for the
         # residual paths (FK cascade from prune_orphan_entities, Oracle).
         #
-        # The staleness predicate is an INTERSECT of the two entities' unit sets
-        # rather than the equivalent `unit_entities u1 JOIN u2 ON u1.unit_id =
-        # u2.unit_id` self-join (#2473): both INTERSECT branches resolve as Index
-        # Only Scans on idx_unit_entities_entity_unit (entity_id, unit_id), so the
-        # per-pair cost is bounded by the two entities' degrees. The self-join let
-        # the planner pick an anti-join that rescanned a high-degree hub entity's
-        # membership set for every pair — 28-30min on a bank with a ~100K-membership
-        # hub, even when zero rows were stale. Don't "simplify" it back.
+        # Staleness is decided against a SET of currently-live pairs, not with a
+        # per-cooccurrence-row check (#3367). The old form ran a correlated
+        # `NOT EXISTS (… INTERSECT …)` per row, and each evaluation re-scanned a
+        # hub entity's full membership set — cost scaled as (rows judged) x (hub
+        # degree), 88-140s on a real bank with a ~22K-degree hub. #2473 had
+        # swapped an earlier hub-rescanning self-join to that INTERSECT, but only
+        # made each per-row check cheaper; it kept the per-row structure, so the
+        # product blew up again at scale.
+        #
+        # `live` groups unit_entities by unit (self-join on unit_id) to emit every
+        # co-occurring (e1<e2) pair in one materialised pass: its cost is driven
+        # by unit degree (entities per unit — small), never by entity degree, so a
+        # hub contributes only its per-unit membership rather than a rescan per
+        # edge. The victims anti-join then hashes against it. MATERIALIZED keeps
+        # the planner from inlining `live` back into a per-row correlated plan.
+        #
+        # `live` is seeded from the *candidates'* units rather than the whole
+        # bank's (#3222 composed with #3367): graph maintenance is queue-driven,
+        # so this only has to decide about pairs in `incident`, and every such
+        # pair has a candidate as at least one endpoint. Any unit still
+        # witnessing such a pair therefore references a candidate, and so is in
+        # the seeded set — the scoped build cannot miss a live pair. That keeps
+        # the whole statement proportional to the batch instead of re-deriving
+        # every pair in the bank on every run.
         result = await conn.execute(
             f"""
-            WITH victims AS (
+            WITH incident AS MATERIALIZED (
                 SELECT c.entity_id_1, c.entity_id_2
                 FROM {ec_table} c
-                JOIN {entities_table} e ON e.id = c.entity_id_1
-                WHERE e.bank_id = $1
-                  AND NOT EXISTS (
-                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_1
-                      INTERSECT
-                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_2
-                  )
+                WHERE c.entity_id_1 = ANY($1::uuid[])
+                UNION
+                SELECT c.entity_id_1, c.entity_id_2
+                FROM {ec_table} c
+                WHERE c.entity_id_2 = ANY($1::uuid[])
+            ),
+            live AS MATERIALIZED (
+                SELECT u1.entity_id AS e1, u2.entity_id AS e2
+                FROM {ue_table} seed
+                JOIN {ue_table} u1 ON u1.unit_id = seed.unit_id
+                JOIN {ue_table} u2 ON u2.unit_id = u1.unit_id
+                                  AND u2.entity_id > u1.entity_id
+                WHERE seed.entity_id = ANY($1::uuid[])
+            ),
+            victims AS (
+                SELECT c.entity_id_1, c.entity_id_2
+                FROM incident i
+                JOIN {ec_table} c
+                  ON c.entity_id_1 = i.entity_id_1 AND c.entity_id_2 = i.entity_id_2
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM live l
+                    WHERE l.e1 = c.entity_id_1 AND l.e2 = c.entity_id_2
+                )
                 ORDER BY c.entity_id_1, c.entity_id_2
                 FOR UPDATE OF c
             )
@@ -512,7 +690,7 @@ class PostgreSQLOps(DataAccessOps):
             WHERE c.entity_id_1 = v.entity_id_1
               AND c.entity_id_2 = v.entity_id_2
             """,
-            bank_id,
+            entity_ids,
         )
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
 
@@ -726,8 +904,47 @@ class PostgreSQLOps(DataAccessOps):
         # The window bounds the observations that come *back*, not the source facts
         # traversed to reach them: an observation is in the window when it was itself
         # written or refreshed there, regardless of how old the facts underneath it are.
-
-        entity_rows = await conn.fetch(
+        #
+        # The shared-source count is scored set-wise (`scored`), not per candidate row.
+        # It used to be a correlated subquery — COUNT(DISTINCT s) over
+        # unnest(mu.source_memory_ids) filtered by `= ANY(ca.source_ids)` — which
+        # re-scanned the connected-source array linearly for every element of every
+        # candidate's array. Because consolidation appends to source_memory_ids and
+        # never prunes it (issue #1725), that product grows with the bank's age: at
+        # 5k observations averaging 113 sources against ~3k connected sources it was
+        # ~1.7B element comparisons, 2.6s of one saturated backend (issue #3085).
+        # Unnesting once and hash-joining connected_sources makes the work linear in
+        # the number of source ids instead.
+        #
+        # `connected_sources` caps each entity with row_number() rather than the
+        # LATERAL + LIMIT that reads more naturally. Do not "simplify" it back
+        # (issue #3510). The scoring join above is O(C + U) when planned as a hash
+        # join and O(U x C) when planned as a nested loop — 15s and ~15M rejected
+        # rows on a realistically-shaped bank — and PostgreSQL picks between them
+        # from its row estimate for this CTE. Out of a LATERAL + LIMIT subquery the
+        # capped column carries no n_distinct statistic, so DISTINCT over it was
+        # estimated at 2 and the NOT EXISTS took that to 1 against an actual ~3,700;
+        # a 1-row inner side makes the nested loop look free, so it won on cost and
+        # lost by four orders of magnitude at runtime. Ranking with a window keeps
+        # the column traceable to unit_entities.unit_id, so the estimate comes from
+        # real statistics (207-3,449 against 2,242-4,193 actual) and the nested loop
+        # is priced honestly.
+        #
+        # The trade is that this reads every unit_entities row of a matched entity
+        # to rank it, where the LATERAL stopped at per_entity_limit off the index:
+        # O(sum of degree) rather than O(entities x per_entity_limit). Measured at
+        # parity up to ~12k-degree hubs and +50% traversal cost at 38k. If banks
+        # grow hubs far past that, re-measure before assuming this is still the
+        # right shape.
+        #
+        # Entity/source traversal and semantic/causal expansion run as ONE query
+        # (#3857): the observation entity arm is fused into the semantic/causal CTE
+        # query behind an 'entity' source discriminator, like the non-observation
+        # combined expansion, so a normal call performs one fetch instead of two.
+        # Every predicate, score expression, ordering, limit, and the window bind
+        # positions are exactly the two previous statements', now sharing one
+        # snapshot. The caller splits the unioned rows by `source`.
+        all_rows = await conn.fetch(
             f"""
             WITH seed_sources AS (
                 SELECT DISTINCT unnest(source_memory_ids) AS source_id
@@ -742,45 +959,59 @@ class PostgreSQLOps(DataAccessOps):
             ),
             connected_sources AS (
                 SELECT DISTINCT t.unit_id AS source_id
-                FROM source_entities se
-                CROSS JOIN LATERAL (
-                    SELECT ue_target.unit_id
+                FROM (
+                    SELECT
+                        ue_target.unit_id,
+                        row_number() OVER (
+                            PARTITION BY ue_target.entity_id
+                            ORDER BY ue_target.unit_id DESC
+                        ) AS rn
                     FROM {ue_table} ue_target
-                    WHERE ue_target.entity_id = se.entity_id
-                    ORDER BY ue_target.unit_id DESC
-                    LIMIT {per_entity_limit}
+                    JOIN source_entities se ON se.entity_id = ue_target.entity_id
                 ) t
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM seed_sources ss WHERE ss.source_id = t.unit_id
-                )
+                WHERE t.rn <= {per_entity_limit}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM seed_sources ss WHERE ss.source_id = t.unit_id
+                  )
             ),
             connected_array AS (
                 SELECT array_agg(source_id) AS source_ids FROM connected_sources
-            )
-            SELECT
-                mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                mu.occurred_end, mu.mentioned_at,
-                mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
-                (SELECT COUNT(DISTINCT s) FROM unnest(mu.source_memory_ids) s WHERE s = ANY(ca.source_ids))::float AS score
-            FROM {mu_table} mu, connected_array ca
-            WHERE mu.fact_type = 'observation'
-              AND mu.id != ALL($1::uuid[])
-              AND ca.source_ids IS NOT NULL
-              AND mu.source_memory_ids && ca.source_ids
-              {window.clause("mu")}
-            ORDER BY score DESC
-            LIMIT $2
-            """,
-            seed_ids,
-            budget,
-            *window.params,
-        )
-
-        # Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
-        # DISTINCT ON for causal, hardcoded to fact_type='observation'.
-        sem_causal_rows = await conn.fetch(
-            f"""
-            WITH semantic_expanded AS (
+            ),
+            candidates AS (
+                SELECT
+                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
+                    mu.occurred_end, mu.mentioned_at,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    mu.source_memory_ids
+                FROM {mu_table} mu, connected_array ca
+                WHERE mu.fact_type = 'observation'
+                  AND mu.id != ALL($1::uuid[])
+                  AND ca.source_ids IS NOT NULL
+                  AND mu.source_memory_ids && ca.source_ids
+                  {window.clause("mu")}
+            ),
+            scored AS (
+                SELECT c.id, COUNT(DISTINCT cs.source_id)::float AS score
+                FROM candidates c
+                CROSS JOIN LATERAL unnest(c.source_memory_ids) AS s(source_id)
+                JOIN connected_sources cs ON cs.source_id = s.source_id
+                GROUP BY c.id
+            ),
+            observation_entity_expanded AS (
+                SELECT
+                    c.id, c.text, c.context, c.event_date, c.occurred_start,
+                    c.occurred_end, c.mentioned_at,
+                    c.fact_type, c.document_id, c.chunk_id, c.tags, c.proof_count,
+                    sc.score,
+                    'entity'::text AS source
+                FROM candidates c
+                JOIN scored sc ON sc.id = c.id
+                ORDER BY sc.score DESC
+                LIMIT $2
+            ),
+            -- Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
+            -- DISTINCT ON for causal, hardcoded to fact_type='observation'.
+            semantic_expanded AS (
                 SELECT
                     id, text, context, event_date, occurred_start,
                     occurred_end, mentioned_at,
@@ -822,6 +1053,8 @@ class PostgreSQLOps(DataAccessOps):
                   {window.clause("mu")}
                 ORDER BY mu.id, ml.weight DESC LIMIT $2
             )
+            SELECT * FROM observation_entity_expanded
+            UNION ALL
             SELECT * FROM semantic_expanded
             UNION ALL
             SELECT * FROM causal_expanded
@@ -831,9 +1064,11 @@ class PostgreSQLOps(DataAccessOps):
             *window.params,
         )
 
-        semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]
-        causal_rows = [r for r in sem_causal_rows if r["source"] == "causal"]
-        return LinkExpansionRows(entity=list(entity_rows), semantic=semantic_rows, causal=causal_rows)
+        return LinkExpansionRows(
+            entity=[r for r in all_rows if r["source"] == "entity"],
+            semantic=[r for r in all_rows if r["source"] == "semantic"],
+            causal=[r for r in all_rows if r["source"] == "causal"],
+        )
 
     def build_tag_listing_parts(self, mu_table: str) -> TagListingParts:
         return TagListingParts(
@@ -852,15 +1087,21 @@ class PostgreSQLOps(DataAccessOps):
         index_clause: str,
         fact_types: dict[str, str],
     ) -> None:
+        # Plain CREATE INDEX, not CONCURRENTLY: this runs inside the bank-create
+        # transaction, and CONCURRENTLY cannot. It is instant — the bank is empty
+        # — but it still takes a ShareLock on the shared memory_units table and
+        # so can deadlock with a concurrent writer. The caller retries the whole
+        # transaction for that reason; the body is idempotent.
         escaped = bank_id.replace("'", "''")
-        for ft, suffix in fact_types.items():
-            uid = str(internal_id).replace("-", "")[:16]
-            idx = f"idx_mu_emb_{suffix}_{uid}"
-            await conn.execute(
-                f"CREATE INDEX IF NOT EXISTS {idx} "
-                f"ON {table} {index_clause} "
-                f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
-            )
+        async with self._index_ddl_lock(table):
+            for ft, suffix in fact_types.items():
+                uid = str(internal_id).replace("-", "")[:16]
+                idx = f"idx_mu_emb_{suffix}_{uid}"
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {idx} "
+                    f"ON {table} {index_clause} "
+                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
+                )
 
     async def drop_bank_vector_indexes(
         self,
@@ -875,10 +1116,21 @@ class PostgreSQLOps(DataAccessOps):
         # table; CONCURRENTLY does not conflict with DML. The caller
         # (delete_bank) runs this on an autocommit connection after its delete
         # transaction has committed — CONCURRENTLY cannot run inside a tx.
-        for ft, suffix in fact_types.items():
-            uid = str(internal_id).replace("-", "")[:16]
-            idx = f"idx_mu_emb_{suffix}_{uid}"
-            await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{idx}")
+        #
+        # The in-process lock serializes concurrent bank creates and deletes
+        # against each other; its key must match create_bank_vector_indexes',
+        # whose `table` is the fq name this reconstructs from `schema`. It does
+        # not cover the maintenance operation, which reconciles the same indexes
+        # over its own raw connection: an in-process lock could not help there
+        # anyway, since that runs in every process and the real contention is
+        # cross-process. Both paths retry the transient deadlock (40P01)
+        # instead, which is the only lock-free option available — the project
+        # forbids advisory locks (unreliable behind poolers, #2817).
+        async with self._index_ddl_lock(f"{schema}.memory_units"):
+            for ft, suffix in fact_types.items():
+                uid = str(internal_id).replace("-", "")[:16]
+                idx = f"idx_mu_emb_{suffix}_{uid}"
+                await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{idx}")
 
     def get_entity_resolution_strategy(self) -> str:
         return "trigram"
@@ -1099,24 +1351,25 @@ class PostgreSQLOps(DataAccessOps):
         self,
         conn,
         table: str,
-        busy_bank_ids: list[str],
         claimed_ids: list,
         limit: int,
         priority_map: dict[str, int] | None,
     ) -> list:
         """Claim consolidation tasks with optional priority-based tiered ordering.
 
-        When *priority_map* is ``None``, uses the default ``ORDER BY created_at``
-        with bank-serialization (exclude busy banks).  When set, claims in
-        priority tiers — highest-priority banks first.  Specific patterns always
-        take precedence over the catch-all ``*`` entry.
+        When *priority_map* is ``None``, uses the default ``ORDER BY created_at``.
+        When set, claims in priority tiers — highest-priority banks first.
+        Specific patterns always take precedence over the catch-all ``*`` entry.
+
+        Every query here carries :func:`bank_serialization_sql`, so whichever
+        tier a bank is claimed in, at most one of its consolidations is taken.
         """
         if limit <= 0:
             return []
 
         # --- Fast path: no priority map -> current behavior ---
         if not priority_map:
-            return await self._claim_consolidation_plain(conn, table, busy_bank_ids, claimed_ids, limit)
+            return await self._claim_consolidation_plain(conn, table, claimed_ids, limit)
 
         # --- Tiered claiming ---
         # Separate specific patterns from catch-all.
@@ -1151,7 +1404,6 @@ class PostgreSQLOps(DataAccessOps):
                 rows = await self._claim_consolidation_like(
                     conn,
                     table,
-                    busy_bank_ids,
                     claimed_ids,
                     remaining,
                     specific_by_priority[pri],
@@ -1166,7 +1418,6 @@ class PostgreSQLOps(DataAccessOps):
                 rows = await self._claim_consolidation_not_like(
                     conn,
                     table,
-                    busy_bank_ids,
                     claimed_ids,
                     remaining,
                     all_specific_sql,
@@ -1182,104 +1433,64 @@ class PostgreSQLOps(DataAccessOps):
         self,
         conn,
         table,
-        busy_bank_ids,
         claimed_ids,
         limit,
     ) -> list:
         """Claim consolidation tasks with default created_at ordering."""
-        exclude_ids = claimed_ids if claimed_ids else None
-        if busy_bank_ids:
-            if exclude_ids:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND bank_id != ALL($1::text[])
-                      AND operation_id != ALL($2::uuid[])
-                    ORDER BY created_at
-                    LIMIT $3
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    busy_bank_ids,
-                    exclude_ids,
-                    limit,
-                )
-            else:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND bank_id != ALL($1::text[])
-                    ORDER BY created_at
-                    LIMIT $2
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    busy_bank_ids,
-                    limit,
-                )
-        else:
-            if exclude_ids:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND operation_id != ALL($1::uuid[])
-                    ORDER BY created_at
-                    LIMIT $2
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    exclude_ids,
-                    limit,
-                )
-            else:
-                return await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
-                    LIMIT $1
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    limit,
-                )
+        if claimed_ids:
+            return await conn.fetch(
+                f"""
+                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                FROM {table} o
+                WHERE o.status = 'pending'
+                  AND o.task_payload IS NOT NULL
+                  AND o.operation_type = 'consolidation'
+                  AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                  AND o.operation_id != ALL($1::uuid[])
+                  AND {bank_serialization_sql(table, "o", "consolidation")}
+                ORDER BY o.created_at
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED
+                """,
+                claimed_ids,
+                limit,
+            )
+        return await conn.fetch(
+            f"""
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            FROM {table} o
+            WHERE o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type = 'consolidation'
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o", "consolidation")}
+            ORDER BY o.created_at
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+            """,
+            limit,
+        )
 
     async def _claim_consolidation_like(
         self,
         conn,
         table,
-        busy_bank_ids,
         claimed_ids,
         limit,
         sql_patterns,
     ) -> list:
         """Claim consolidation tasks from banks matching LIKE patterns."""
+        # bank_id is deliberately unqualified in the LIKE ANY / NOT LIKE ALL
+        # conditions here and in _claim_consolidation_not_like: db/oracle.py
+        # rewrites those forms by regex on a bare column name, so an "o."
+        # prefix would survive the rewrite as "o.(bank_id LIKE :p0 OR ...)".
+        # One table is in scope, so unqualified resolves to o.bank_id anyway.
         params: list = [sql_patterns]
         conditions = ["bank_id LIKE ANY($1::text[])"]
         idx = 2
 
-        if busy_bank_ids:
-            conditions.append(f"bank_id != ALL(${idx}::text[])")
-            params.append(busy_bank_ids)
-            idx += 1
-
         if claimed_ids:
-            conditions.append(f"operation_id != ALL(${idx}::uuid[])")
+            conditions.append(f"o.operation_id != ALL(${idx}::uuid[])")
             params.append(claimed_ids)
             idx += 1
 
@@ -1287,14 +1498,15 @@ class PostgreSQLOps(DataAccessOps):
         extra = " AND ".join(conditions)
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
-            FROM {table}
-            WHERE status = 'pending'
-              AND task_payload IS NOT NULL
-              AND operation_type = 'consolidation'
-              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            FROM {table} o
+            WHERE o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type = 'consolidation'
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o", "consolidation")}
               AND {extra}
-            ORDER BY created_at
+            ORDER BY o.created_at
             LIMIT ${idx}
             FOR UPDATE SKIP LOCKED
             """,
@@ -1305,7 +1517,6 @@ class PostgreSQLOps(DataAccessOps):
         self,
         conn,
         table,
-        busy_bank_ids,
         claimed_ids,
         limit,
         exclude_patterns,
@@ -1320,13 +1531,8 @@ class PostgreSQLOps(DataAccessOps):
             params.append(exclude_patterns)
             idx += 1
 
-        if busy_bank_ids:
-            conditions.append(f"bank_id != ALL(${idx}::text[])")
-            params.append(busy_bank_ids)
-            idx += 1
-
         if claimed_ids:
-            conditions.append(f"operation_id != ALL(${idx}::uuid[])")
+            conditions.append(f"o.operation_id != ALL(${idx}::uuid[])")
             params.append(claimed_ids)
             idx += 1
 
@@ -1334,15 +1540,139 @@ class PostgreSQLOps(DataAccessOps):
         extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
-            FROM {table}
-            WHERE status = 'pending'
-              AND task_payload IS NOT NULL
-              AND operation_type = 'consolidation'
-              AND (next_retry_at IS NULL OR next_retry_at <= NOW()){extra_clause}
-            ORDER BY created_at
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            FROM {table} o
+            WHERE o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type = 'consolidation'
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o", "consolidation")}{extra_clause}
+            ORDER BY o.created_at
             LIMIT ${idx}
             FOR UPDATE SKIP LOCKED
+            """,
+            *params,
+        )
+
+    async def _claim_reserved_tasks(self, conn, table, limit, op_type) -> list:
+        """Claim rows of one operation type against that type's reserved pool.
+
+        No bank rotation here: reservations are a floor for an operation *type*,
+        and every non-consolidation type defaults to 0 (``WORKER_SLOT_TYPE_DEFAULTS``),
+        so retains are claimed from the shared pool where the rotation lives. An
+        operator who reserves the whole of ``WORKER_MAX_SLOTS`` by type leaves no
+        shared pool for it to rotate in — deliberate, and the reason the defaults
+        keep a shared pool.
+        """
+        return await conn.fetch(
+            f"""
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            FROM {table} o
+            WHERE o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type = $1
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o")}
+              AND {document_serialization_sql(table, "o")}
+            ORDER BY o.created_at
+            LIMIT $2
+            FOR UPDATE SKIP LOCKED
+            """,
+            op_type,
+            limit,
+        )
+
+    async def _claim_shared_tasks(self, conn, table, claimed_ids, limit, bank_cursor) -> list:
+        """Claim the shared pool: one row for the bank whose turn it is, rest by age.
+
+        Deficit round robin (Shreedhar & Varghese) with a quantum of one slot.
+        Every operation costs exactly one slot, so the deficit counter the
+        algorithm carries for variable-size packets is always zero and drops out
+        — what is left is the round-robin walk. ``bank_id > $1`` *is* that walk:
+        a cursor over the bank id space, advanced by an index seek rather than by
+        maintaining a list of active queues. A list could not do it anyway — the
+        starved bank is the one this worker has never claimed for, so only a
+        range can discover it.
+
+        Both tiers are one statement on purpose. ``rot`` is a bounded seek and
+        ``fifo`` is the claim query that was always here, so the fairness costs
+        no extra round trip; measured at 50k pending rows, 0.10 ms against
+        0.02 ms for the bare FIFO claim. Splitting them cost a statement on every
+        claim, for every schema, on every poll.
+
+        ``fifo`` is also what makes the rotation safe at both ends:
+
+        * It is the wrap. Once the cursor passes the last bank with work, ``rot``
+          matches nothing and ``fifo`` claims the whole pool by itself — no
+          second query, no reset round-trip, and a single-bank deployment (where
+          the cursor is *always* past the only bank) pays nothing but the empty
+          seek.
+        * It is what keeps this work-conserving. The rotation can never hold a
+          slot open for an idle bank, because ``fifo`` always offers a full
+          pool's worth of candidates behind it. A bank alone with work still
+          takes every slot.
+
+        The predicates are repeated in the outer query, not just in the CTEs:
+        the CTEs read rows unlocked, and re-checking under ``FOR UPDATE`` is what
+        makes a row another worker claimed in between fall out instead of being
+        claimed twice.
+
+        Two ways that re-check costs a little precision, both self-correcting on
+        the next poll and both preferred to a second statement: a candidate lost
+        to ``SKIP LOCKED`` makes this return fewer rows than the pool has free
+        even though other rows are claimable, and losing the *rotation* row that
+        way reads as an empty tier, so the cursor restarts the round early.
+
+        ``tier`` comes back in the rows so the caller can read the rotation's new
+        cursor off the result. Within the rotated bank the row is index-ordered
+        rather than that bank's oldest — sorting by ``created_at`` there would
+        need an index on ``(bank_id, created_at)`` and cost 12 s without one, and
+        per-document order is held by ``document_serialization_sql`` regardless.
+        """
+        params: list = [bank_cursor]
+        exclusion = ""
+        idx = 2
+
+        if claimed_ids:
+            exclusion = f" AND o.operation_id != ALL(${idx}::uuid[])"
+            params.append(claimed_ids)
+            idx += 1
+
+        params.append(limit)
+        claimable = f"""o.status = 'pending'
+              AND o.task_payload IS NOT NULL
+              AND o.operation_type != 'consolidation'
+              AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+              AND {bank_serialization_sql(table, "o")}
+              AND {document_serialization_sql(table, "o")}{exclusion}"""
+
+        return await conn.fetch(
+            f"""
+            WITH rot AS (
+                SELECT o.operation_id, 0 AS tier, o.created_at
+                FROM {table} o
+                WHERE {claimable}
+                  AND o.bank_id > $1
+                ORDER BY o.bank_id
+                LIMIT 1
+            ), fifo AS (
+                SELECT o.operation_id, 1 AS tier, o.created_at
+                FROM {table} o
+                WHERE {claimable}
+                  AND NOT EXISTS (SELECT 1 FROM rot WHERE rot.operation_id = o.operation_id)
+                ORDER BY o.created_at
+                LIMIT ${idx}
+            ), cand AS (
+                SELECT * FROM rot UNION ALL SELECT * FROM fifo
+            )
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count,
+                   o.serialization_key, o.bank_id, c.tier
+            FROM cand c
+            JOIN {table} o ON o.operation_id = c.operation_id
+            WHERE {claimable}
+            ORDER BY c.tier, c.created_at
+            LIMIT ${idx}
+            FOR UPDATE OF o SKIP LOCKED
             """,
             *params,
         )
@@ -1355,10 +1685,19 @@ class PostgreSQLOps(DataAccessOps):
         reserved_limits,
         shared_limit,
         *,
+        bank_cursor="",
         consolidation_bank_priority=None,
     ):
         all_rows = []
         claimed_ids = []
+        next_bank_cursor = bank_cursor
+
+        def _collect(rows) -> int:
+            """Record a claim query's rows, and report how many it returned."""
+            for row in rows:
+                claimed_ids.append(row["operation_id"])
+                all_rows.append(row)
+            return len(rows)
 
         # --- Phase 1: claim from reserved pools ---
         for op_type, limit in reserved_limits.items():
@@ -1366,113 +1705,62 @@ class PostgreSQLOps(DataAccessOps):
                 continue
 
             if op_type == "consolidation":
-                busy_banks = await conn.fetch(
-                    f"""
-                    SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
-                    """,
-                )
-                busy_bank_ids = [r["bank_id"] for r in busy_banks]
-
-                rows = await self._claim_consolidation_tasks(
-                    conn,
-                    table,
-                    busy_bank_ids,
-                    claimed_ids,
-                    limit,
-                    consolidation_bank_priority,
+                _collect(
+                    await self._claim_consolidation_tasks(
+                        conn,
+                        table,
+                        claimed_ids,
+                        limit,
+                        consolidation_bank_priority,
+                    )
                 )
             else:
-                rows = await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = $1
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
-                    LIMIT $2
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    op_type,
-                    limit,
-                )
-
-            for row in rows:
-                claimed_ids.append(row["operation_id"])
-                all_rows.append(row)
+                _collect(await self._claim_reserved_tasks(conn, table, limit, op_type))
 
         # --- Phase 2: claim from shared pool ---
         remaining_shared = shared_limit
         if remaining_shared > 0:
-            # 2a. Non-consolidation tasks
-            if claimed_ids:
-                rows = await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND operation_id != ALL($1::uuid[])
-                    ORDER BY created_at
-                    LIMIT $2
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    claimed_ids,
-                    remaining_shared,
-                )
-            else:
-                rows = await conn.fetch(
-                    f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
-                    LIMIT $1
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    remaining_shared,
-                )
-
-            for row in rows:
-                claimed_ids.append(row["operation_id"])
-                all_rows.append(row)
-            remaining_shared -= len(rows)
+            # 2a. Non-consolidation tasks: one row for the bank the rotation is
+            # up to (#3861), the rest oldest-first, in one statement.
+            # graph_maintenance stays in this created_at-ordered query — see
+            # bank_serialization_sql for why it is a predicate rather than a
+            # phase of its own.
+            shared_rows = await self._claim_shared_tasks(conn, table, claimed_ids, remaining_shared, bank_cursor)
+            # An empty rotation tier means no bank sorts after the cursor: the
+            # round is over, so the next claim starts from the beginning.
+            next_bank_cursor = next((row["bank_id"] for row in shared_rows if row["tier"] == 0), "")
+            remaining_shared -= _collect(shared_rows)
 
             # 2b. Consolidation tasks (with bank-serialization + optional priority)
             if remaining_shared > 0:
-                busy_banks_2 = await conn.fetch(
-                    f"""
-                    SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
-                    """,
+                _collect(
+                    await self._claim_consolidation_tasks(
+                        conn,
+                        table,
+                        claimed_ids,
+                        remaining_shared,
+                        consolidation_bank_priority,
+                    )
                 )
-                busy_bank_ids_2 = [r["bank_id"] for r in busy_banks_2]
-
-                rows = await self._claim_consolidation_tasks(
-                    conn,
-                    table,
-                    busy_bank_ids_2,
-                    claimed_ids,
-                    remaining_shared,
-                    consolidation_bank_priority,
-                )
-
-                for row in rows:
-                    claimed_ids.append(row["operation_id"])
-                    all_rows.append(row)
 
         if not all_rows:
-            return []
+            return ClaimedOperations(rows=[], next_bank_cursor=next_bank_cursor)
 
         # Mark all claimed rows as processing
         operation_ids = [row["operation_id"] for row in all_rows]
+        await self.mark_operations_processing(conn, table, worker_id, operation_ids)
+
+        return ClaimedOperations(rows=all_rows, next_bank_cursor=next_bank_cursor)
+
+    async def mark_operations_processing(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        worker_id: str,
+        operation_ids: list,
+    ) -> None:
+        if not operation_ids:
+            return
         await conn.execute(
             f"""
             UPDATE {table}
@@ -1483,4 +1771,31 @@ class PostgreSQLOps(DataAccessOps):
             operation_ids,
         )
 
-        return all_rows
+    async def fetch_foldable_retain_peers(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        serialization_key: str,
+        limit: int,
+    ) -> list[ResultRow]:
+        if limit <= 0:
+            return []
+        return await conn.fetch(
+            f"""
+            SELECT operation_id, task_payload, retry_count
+            FROM {table}
+            WHERE status = 'pending'
+              AND task_payload IS NOT NULL
+              AND operation_type = 'retain'
+              AND bank_id = $1
+              AND serialization_key = $2
+              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            ORDER BY created_at, operation_id
+            LIMIT $3
+            FOR UPDATE SKIP LOCKED
+            """,
+            bank_id,
+            serialization_key,
+            limit,
+        )

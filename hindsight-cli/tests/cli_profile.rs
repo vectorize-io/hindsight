@@ -31,7 +31,10 @@ fn unique_tempdir(tag: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("hindsight-profile-test-{}-{}-{}-{}", tag, pid, nanos, n));
+    let dir = std::env::temp_dir().join(format!(
+        "hindsight-profile-test-{}-{}-{}-{}",
+        tag, pid, nanos, n
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -108,7 +111,11 @@ fn profile_create_writes_toml_and_json_output() {
     assert_eq!(payload["api_key_set"], true);
 
     let path = home.join(".hindsight/cli-profiles/prod.toml");
-    assert!(path.exists(), "profile file was not created at {}", path.display());
+    assert!(
+        path.exists(),
+        "profile file was not created at {}",
+        path.display()
+    );
     let body = std::fs::read_to_string(&path).unwrap();
     assert!(body.contains("api_url = \"https://api.example.com\""));
     assert!(body.contains("api_key = \"hsk_abcdef1234\""));
@@ -315,7 +322,48 @@ fn hindsight_profile_env_var_is_honored() {
         .output()
         .unwrap();
     assert!(!out.status.success());
-    let err = String::from_utf8_lossy(&out.stderr).into_owned()
-        + &String::from_utf8_lossy(&out.stdout);
-    assert!(err.contains("from-env"), "expected profile URL in output:\n{}", err);
+    let err =
+        String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
+    assert!(
+        err.contains("from-env"),
+        "expected profile URL in output:\n{}",
+        err
+    );
+}
+
+#[test]
+fn configure_rejects_invalid_url_with_nonzero_exit() {
+    let home = unique_tempdir("bad-url");
+    let out = run_with_home(
+        &home,
+        &[
+            "configure",
+            "--api-url",
+            "not-a-valid-url",
+            "--api-key",
+            "test-key",
+        ],
+    );
+
+    assert!(
+        !out.status.success(),
+        "configure with invalid URL should exit non-zero, got success"
+    );
+    assert!(
+        stderr(&out).contains("Invalid API URL"),
+        "expected error message on stderr, got:\n{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn configure_accepts_valid_http_and_https_urls() {
+    for url in ["http://localhost:8080", "https://api.example.com"] {
+        let home = unique_tempdir("valid-url");
+        let out = run_with_home(
+            &home,
+            &["configure", "--api-url", url, "--api-key", "test-key"],
+        );
+        assert_success(&out);
+    }
 }

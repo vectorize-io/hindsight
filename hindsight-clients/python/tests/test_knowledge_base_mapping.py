@@ -106,6 +106,31 @@ def test_update_node_maps_page_options(monkeypatch):
     assert request.source_query == "New question?"
     assert request.tags == []
     assert request.max_tokens == 2048
+    assert "trigger" not in request.model_fields_set
+
+
+def test_update_node_forwards_a_partial_trigger(monkeypatch):
+    """The trigger is a PATCH server-side: unsent fields keep the page's current values,
+    so the wrapper must pass exactly what the caller gave it — and a wrapper that dropped
+    the field would leave callers unable to change a refresh policy at all.
+
+    Asserted on the serialized body, not on ``model_fields_set``: the server reads
+    which fields the REQUEST carried, and the generated model's ``to_dict`` keeps a
+    non-None default even for a field nobody set. Passing the dict straight through
+    therefore shipped ``mode="full"``, ``refresh_after_consolidation``,
+    ``exclude_mental_models`` and ``keep_trace`` alongside the one setting asked for,
+    resetting the page to a from-scratch rebuild over its sibling pages — #3506's bug,
+    one layer down.
+    """
+    client = Hindsight(base_url="http://example.invalid")
+    captured: dict[str, object] = {}
+    _capture(monkeypatch, client, "update_knowledge_node", captured)
+
+    client.update_knowledge_node("bank-1", "kp-1", trigger={"refresh_cron": "0 3 * * *"})
+
+    _, _, request = captured["args"]
+    assert request.trigger.refresh_cron == "0 3 * * *"
+    assert request.trigger.to_dict() == {"refresh_cron": "0 3 * * *"}
 
 
 def test_search_forwards_query_and_limit(monkeypatch):

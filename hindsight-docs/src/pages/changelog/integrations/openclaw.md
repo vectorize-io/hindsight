@@ -8,6 +8,27 @@ import PageHero from '@site/src/components/PageHero';
 
 [← OpenClaw integration](/sdks/integrations/openclaw)
 
+## [0.11.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.11.1)
+
+**Bug Fixes**
+
+- Fixed conversation history being lost when the plugin runs its own local Hindsight daemon: every restart of the OpenClaw host replaced the documents retained before it, so long-running sessions kept only the most recent stretch of their history. Retains that fail while the daemon is unavailable are now queued and retried instead of dropped.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/d97b560e2" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>d97b560e2</a>
+
+## [0.11.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.11.0)
+
+**Features**
+
+- Added GitHub Copilot as a supported subscription provider for LLM usage.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/dudujuju828" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/dudujuju828.png?size=40" alt="@dudujuju828" width="18" height="18" style={{borderRadius: "50%"}} />@dudujuju828</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/1d9a6a381" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>1d9a6a381</a>
+
+**Improvements**
+
+- Auto-recalled memories now include document provenance tags (e.g., "[doc:&lt;document_id&gt;]") to make sources clearer.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/xiaoxiaoHe-E" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/xiaoxiaoHe-E.png?size=40" alt="@xiaoxiaoHe-E" width="18" height="18" style={{borderRadius: "50%"}} />@xiaoxiaoHe-E</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/0eee31b63" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>0eee31b63</a>
+
+**Bug Fixes**
+
+- Retain requests are now idempotent when queued, preventing duplicate retains from repeated submissions.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/r266-tech" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/r266-tech.png?size=40" alt="@r266-tech" width="18" height="18" style={{borderRadius: "50%"}} />@r266-tech</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/3d7f7930b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>3d7f7930b</a>
+- Recall and retain results no longer include the operator-configured display-name prefix, improving consistent naming in returned memories.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/chethanuk" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/chethanuk.png?size=40" alt="@chethanuk" width="18" height="18" style={{borderRadius: "50%"}} />@chethanuk</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/e62ce26ef" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>e62ce26ef</a>
+
 ## [0.10.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.10.0)
 
 **Features**

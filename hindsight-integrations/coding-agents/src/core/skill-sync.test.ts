@@ -2,6 +2,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { INSTALLERS } from "../installer";
+import { SKILL_DIRS } from "./skill-dirs";
 import { syncCompanionSkill } from "./skill-sync";
 
 describe("syncCompanionSkill", () => {
@@ -48,5 +50,30 @@ describe("syncCompanionSkill", () => {
     expect(
       readFileSync(join(home, ".claude", "skills", "hindsight-coding-agent", "SKILL.md"), "utf8")
     ).toBe("NEW CONTENT v2");
+  });
+});
+
+/**
+ * Family-wide guard (#3524 shape): a harness whose installer copies the skill but that SKILL_DIRS
+ * does not map installs it once and then never refreshes it — `npm update -g` upgrades the package
+ * while that host keeps the old SKILL.md until someone re-installs. A per-harness test cannot catch
+ * this, because the harness that forgets is by definition the one whose test nobody wrote.
+ *
+ * This once grepped `installSkill(c, "<harness>"` out of installer.ts, with an exemption list for
+ * five hosts it found unmapped. Both halves are gone. The installer now derives every skills
+ * directory from this map, so an unmapped host cannot install at all (skillsBaseFor throws) — and
+ * the pi family, which reaches installSkill through a shared factory with a `harness` variable,
+ * matched no literal and so was invisible to that regex anyway. installer.test.ts owns the forward
+ * direction by behaviour instead: it installs EVERY entry of INSTALLERS, finds where the skill
+ * actually landed, and requires the self-update to refresh that copy.
+ *
+ * What is left here is the reverse direction, which nothing else states: a mapped host must be a
+ * host that exists. A stale entry is a path this module would keep writing to for an agent the
+ * installer no longer supports.
+ */
+describe("SKILL_DIRS maps only real harnesses", () => {
+  it("names no harness the installer does not offer", () => {
+    const installable = new Set(INSTALLERS.map((i) => i.name));
+    expect(Object.keys(SKILL_DIRS).filter((h) => !installable.has(h))).toEqual([]);
   });
 });

@@ -6,15 +6,16 @@
  * no arguments, no outputs. That keeps WHICH files/commands the session touched without burying the
  * decisions in mechanical noise; `tool_result` blocks are dropped entirely.
  *
- * Drops non-message lines (`last-prompt`, `mode`, `summary`, …), `isMeta` lines, `isSidechain`
+ * Drops non-message lines (`last-prompt`, `mode`, `summary`, …), `isMeta` lines, compaction
+ * summaries (`isCompactSummary`), `isSidechain`
  * (subagent/Task) lines, `thinking` blocks, and turns that render to nothing. Injected recall
  * context (`<hindsight_memories>` / `<hindsight_bank>` / `<relevant_memories>`) is stripped so the
  * write-back can't feed recalled memory back into the bank (a retain→recall feedback loop). A
  * Fail-open: never throws on a missing file, malformed line, or a line that parses to a
  * non-object JSON value (`null`, a number, a boxed primitive, …).
  */
-import { readFileSync } from "node:fs";
 import type { TransportTurn } from "./chat";
+import { readJsonlTail } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface ContentBlock {
@@ -29,6 +30,7 @@ interface TranscriptLine {
   type?: string;
   isMeta?: boolean;
   isSidechain?: boolean;
+  isCompactSummary?: boolean;
   timestamp?: string;
   message?: {
     content?: string | ContentBlock[];
@@ -76,15 +78,8 @@ function renderLine(content: string | ContentBlock[] | undefined, type: string):
  *  Drops thinking blocks, isMeta/isSidechain lines, injected memory, and empty turns.
  *  Never throws on bad lines. */
 export function readClaudeTranscript(path: string): TransportTurn[] {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return [];
-  }
-
   const turns: TransportTurn[] = [];
-  for (const rawLine of raw.split("\n")) {
+  for (const rawLine of readJsonlTail(path, { scope: "claude-code" }).lines) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
 
@@ -102,6 +97,12 @@ export function readClaudeTranscript(path: string): TransportTurn[] {
     if (line.type !== "user" && line.type !== "assistant") continue;
     if (line.isMeta === true) continue;
     if (line.isSidechain === true) continue;
+    // Claude Code's own recap of the conversation so far, written when the context window fills.
+    // It arrives as a plain type:"user" record with NO isMeta flag, so nothing else filters it and
+    // a ~16KB machine-written summary was retained as something the user said. It is also a
+    // summary of turns ALREADY retained — compaction appends to the transcript rather than
+    // rewriting it — so keeping it extracts the same decisions twice (#3379).
+    if (line.isCompactSummary === true) continue;
     if (typeof line.message !== "object" || line.message === null) continue;
 
     // `type` is validated as "user" | "assistant" above; drive role from it (not the redundant

@@ -72,6 +72,8 @@ Controls how aggressively facts are extracted:
 | `concise` *(default)* | Selective — only facts worth remembering long-term |
 | `verbose` | Captures more detail per fact; slower and uses more tokens |
 | `custom` | Write your own extraction rules via `retain_custom_instructions` |
+| `verbatim` | Stores each chunk's original text as one memory; the LLM extracts metadata such as entities and dates |
+| `chunks` | Stores each chunk as one memory without an LLM call; only caller-provided entities are available |
 
 ### retain_custom_instructions
 
@@ -128,10 +130,10 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
 |-------|---------|-------------|
 | `key` | — | Label group identifier. Becomes the prefix in `key:value` entities (or `key:field:value` for `"map"`). |
 | `description` | `""` | Shown to the LLM to guide label assignment. |
-| `type` | `"value"` | `"value"` → pick one enum value; `"multi-values"` → pick multiple; `"text"` → free-form string; `"map"` → structured group with named fields. |
-| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"` and `"map"`. |
-| `fields` | `{}` | Field definitions for `"map"` types. Each field is itself typed (`"text"`, `"value"`, `"multi-values"`, or nested `"map"`). Ignored for non-map types. |
-| `optional` | `true` | When `true` the LLM may skip the label if not applicable. When `false` the LLM must always assign a value. Has no effect on `"multi-values"` groups (always optional). |
+| `type` | `"value"` | `"value"` → pick one enum value; `"multi-values"` → pick multiple; `"text"` → free-form string; `"multi-text"` → any number of free-form strings; `"map"` → structured group with named fields. |
+| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"`, `"multi-text"` and `"map"`. |
+| `fields` | `{}` | Field definitions for `"map"` types. Each field is itself typed (`"text"`, `"multi-text"`, `"value"`, `"multi-values"`, or nested `"map"`). Ignored for non-map types. |
+| `optional` | `true` | When `true` the LLM may skip the label if not applicable. When `false` the LLM must always assign a value. Has no effect on `"multi-values"` or `"multi-text"` groups (always optional). |
 | `tag` | `false` | When `true`, extracted `key:value` labels are also written as tags on the memory unit, enabling filtering via `tags`/`tags_match` in recall/reflect. |
 
 **Enum groups** (`type: "value"` or `type: "multi-values"`): the LLM picks from the predefined `values` list; anything outside the list is silently dropped. Vocabulary stays stable and graph links stay tight. Use `"multi-values"` when a fact can belong to several values at once.
@@ -148,7 +150,20 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
 }
 ```
 
-**Map groups** (`type: "map"`): defines a structured entity type with named fields. Each field is itself typed (`"text"`, `"value"`, `"multi-values"`, or nested `"map"`) so you can describe rich entities like a person with name, role, and organization. Each extracted field is stored as a flat `key:field:value` entity string (e.g. `person:name:Alice`), reusing the existing entity storage with no schema changes — so map fields participate in the knowledge graph and retrieval the same way single-value labels do.
+**Open-vocabulary groups** (`type: "multi-text"`): like `"text"`, but the LLM writes a *list* of strings instead of one — so a single fact can carry several values that nobody enumerated in the bank config. Use it when the interesting values only exist in the content: the names a thing is known by (canonical name plus abbreviations, acronyms and alternative spellings), ticket references a fact cites, product codes or SKUs. Each value becomes its own `key:value` entity, and with `tag: true` each is written as a tag, so a bank can derive a classification from content and then filter on it at recall without the caller supplying the vocabulary.
+
+```json
+{
+  "key": "name",
+  "description": "Every name the subject of this fact is known by — canonical name plus abbreviations, acronyms, short forms and alternative spellings.",
+  "type": "multi-text",
+  "tag": true
+}
+```
+
+Retaining *"We deploy services to a Kubernetes cluster on EKS — the team usually just says k8s, or kube"* yields the entities and tags `name:kubernetes`, `name:k8s` and `name:kube`, so `{"tags": ["name:k8s"], "tags_match": "any_strict"}` finds the fact. A `"text"` group would keep only one of the three.
+
+**Map groups** (`type: "map"`): defines a structured entity type with named fields. Each field is itself typed (`"text"`, `"multi-text"`, `"value"`, `"multi-values"`, or nested `"map"`) so you can describe rich entities like a person with name, role, and organization. Each extracted field is stored as a flat `key:field:value` entity string (e.g. `person:name:Alice`), reusing the existing entity storage with no schema changes — so map fields participate in the knowledge graph and retrieval the same way single-value labels do.
 
 ```json
 {
@@ -162,6 +177,8 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
   }
 }
 ```
+
+**How label entities resolve.** Regular entities resolve fuzzily so close name variants merge ("Alice" / "Alice Chen"). Label entities are different: their canonical names are user-defined, so two similar-looking values (`use:use-001` / `use:use-002`) must stay distinct. They therefore resolve by **exact match only** and are stored with `entity_kind = "label"`, which keeps them out of fuzzy name matching entirely — a free-text label group accumulating thousands of similar values doesn't slow down resolution of the bank's regular entities. The classification is fixed when the entity is first stored; removing a label group later doesn't reclassify its existing entities.
 
 ### entities_allow_free_form
 
@@ -301,7 +318,7 @@ An allowlist of MCP tool names that are enabled for this bank. When set, only th
 ["recall", "reflect"]
 ```
 
-Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`.
+Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_knowledge_base_tree`, `search_knowledge_base`, `get_knowledge_page`, `create_knowledge_folder`, `create_knowledge_page`, `update_knowledge_node`, `delete_knowledge_node`.
 
 ### llm_gemini_safety_settings
 
@@ -695,22 +712,35 @@ Move documents — and the facts already extracted from them — between banks *
 
 ### Export documents
 
-`GET /v1/default/banks/{bank_id}/document-transfer` — synchronous; streams a ZIP archive.
+`POST /v1/default/banks/{bank_id}/document-transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive, which on a big bank could exhaust memory and pin a connection). It returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
 ```bash
-# whole bank
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer" -o my-bank.zip
+# 1. Submit the export (whole bank; add ?document_id=… to scope it)
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer/export"
+# -> {"operation_id": "…", "status": "pending"}
 
-# specific documents, including consolidated observations
+# 2. Poll until completed
 curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer?document_id=doc-1&include_observations=true" -o subset.zip
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/operations/$OPERATION_ID"
+# -> {"status":"completed","result_metadata":{
+#      "download_url":"/v1/default/files/download/banks/my-bank/exports/…/transfer.zip",
+#      "storage_key":"banks/my-bank/exports/…/transfer.zip","byte_size":12345,"filename":"my-bank-documents.zip"}}
+
+# 3. Download the archive
+curl -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL$DOWNLOAD_URL" -o my-bank.zip
 ```
 
 | Query param | Description |
 |-------------|-------------|
 | `document_id` | Repeatable. Export only these documents; omit for the whole bank. |
 | `include_observations` | Also export consolidated observations (default `false`). Only valid for a **whole-bank** export — combining it with `document_id` returns `400`. |
+
+> **📝 The synchronous `GET …/document-transfer` was removed**
+>
+It loaded the entire bank into memory and held a database connection for the full request, which could take down the shared API on large banks. It now returns `410` pointing here. Use the async flow above. The download route (`GET /v1/default/files/download/{key}`) authorizes the caller against the bank the archive belongs to.
+The archive lives as long as its export **operation record** — indefinitely by default, or until the operation is pruned when `HINDSIGHT_API_OPERATION_RETENTION_DAYS` is set (the archive is deleted in step with the row). Deleting the operation removes the archive immediately.
 
 ### Import documents
 
@@ -749,7 +779,7 @@ Both endpoints are gated by server-level flags (default `true`). A disabled endp
 
 | Variable | Gates |
 |----------|-------|
-| `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | `GET …/document-transfer` |
+| `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | `POST …/document-transfer/export` and `GET …/files/download/{key}` |
 | `HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API` | `POST …/document-transfer` |
 
 ## Migrating a bank to a new instance

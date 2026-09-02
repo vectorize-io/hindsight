@@ -45,18 +45,24 @@ async def test_temporal_ranges_are_written(memory_real_llm, request_context):
     # Give it a moment for async processing
     await asyncio.sleep(2)
 
-    # Retrieve facts from database directly
-    pool = await memory_real_llm._get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, text, event_date, occurred_start, occurred_end, mentioned_at
-            FROM memory_units
-            WHERE bank_id = $1
-            ORDER BY created_at
-            """,
-            bank_id,
-        )
+    # Retrieve the facts through the read API. It hands back the temporal fields as
+    # ISO strings, so parse them once here and the date arithmetic below is unchanged.
+    page = await memory_real_llm.list_memory_units(bank_id, limit=500, request_context=request_context)
+
+    def _dt(value: str | None) -> datetime | None:
+        return datetime.fromisoformat(value) if value else None
+
+    rows = [
+        {
+            "id": item["id"],
+            "text": item["text"],
+            "event_date": _dt(item["date"]),
+            "occurred_start": _dt(item["occurred_start"]),
+            "occurred_end": _dt(item["occurred_end"]),
+            "mentioned_at": _dt(item["mentioned_at"]),
+        }
+        for item in page["items"]
+    ]
 
     print(f"\n\n=== Retrieved {len(rows)} facts ===")
     for i, row in enumerate(rows):

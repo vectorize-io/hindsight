@@ -135,25 +135,41 @@ def dump_request_on_4xx(
     err: Any,
     request: Any = None,
     messages: Any = None,
+    force: bool = False,
 ) -> None:
     """Log the exact request behind an LLM 4xx when the diagnostic is enabled.
 
-    No-op unless ``HINDSIGHT_API_LLM_DEBUG_DUMP_4XX`` is truthy and ``err`` carries a
-    4xx status. ``request`` is whatever the provider assembled (a Pydantic config, a
-    kwargs dict, ...); ``messages`` overrides where the per-message previews come from
+    No-op unless ``err`` carries a 4xx status AND either the
+    ``HINDSIGHT_API_LLM_DEBUG_DUMP_4XX`` flag is truthy or ``force`` is set.
+    ``request`` is whatever the provider assembled (a Pydantic config, a kwargs
+    dict, ...); ``messages`` overrides where the per-message previews come from
     (defaults to the message list found inside ``request``).
+
+    ``force`` is for deterministic rejections a retry can't fix (e.g. a 400
+    ``INVALID_ARGUMENT``): the structural profile — request config, per-message
+    sizes — is logged on the first (and only) failure so an otherwise-opaque
+    black box is diagnosable in production without flipping a flag and
+    reproducing (#3256). Message *previews* stay gated behind the opt-in flag, so
+    the forced structural dump never spills user content — only per-part sizes.
     """
-    if not _enabled():
+    enabled = _enabled()
+    if not (enabled or force):
         return
     code = status_code_of(err)
     if code is None or not (400 <= code < 500):
         return
+    # Previews carry user content, so they ride only on the explicit opt-in; a
+    # forced dump logs the structural profile (config + per-part sizes) alone.
+    include_previews = enabled
     try:
         cfg_repr = _serialize_config(request)
         summary = []
         for msg in _resolve_messages(request, messages) or []:
             m = _message_preview(msg)
-            summary.append({"role": m.role, "chars": len(m.text), "preview": m.text[:_PREVIEW_CHARS]})
+            entry: dict[str, Any] = {"role": m.role, "chars": len(m.text)}
+            if include_previews:
+                entry["preview"] = m.text[:_PREVIEW_CHARS]
+            summary.append(entry)
         logger.error(
             "[LLM_4XX_DUMP] provider=%s model=%s scope=%s code=%s err=%s config=%s contents=%s",
             provider,

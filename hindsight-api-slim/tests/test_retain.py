@@ -1140,6 +1140,11 @@ async def test_document_upsert_behavior(memory, request_context):
 
 
 @pytest.mark.asyncio
+# Reads documents.created_at / updated_at with raw SQL. The fully store-owned retain path keeps
+# no Postgres documents row at all, so the SELECT returns None regardless of behaviour. The
+# property itself — a re-ingest preserves the original created_at — is enforced on the store side
+# in the provider's put_document, which reuses the existing record's created_at.
+@pytest.mark.memory_backend_incompatible
 async def test_document_upsert_preserves_created_at(memory, request_context):
     """Re-ingesting a document keeps the original created_at; updated_at advances."""
     bank_id = f"test_upsert_ts_{datetime.now(timezone.utc).timestamp()}"
@@ -1447,6 +1452,7 @@ async def test_chunks_truncation_behavior(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_temporal_links_creation(memory, request_context):
     """
     Test that temporal links are created between facts with nearby event dates.
@@ -1526,6 +1532,7 @@ async def test_temporal_links_creation(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_semantic_links_creation(memory, request_context):
     """
     Test that semantic links are created between facts with similar content.
@@ -1600,6 +1607,7 @@ async def test_semantic_links_creation(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_entity_links_creation(memory, request_context):
     """
     Test that entity edges surface in the /graph response between facts that
@@ -1672,6 +1680,7 @@ async def test_entity_links_creation(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_graph_entity_edges_cover_all_visible_units(memory, request_context):
     """
     Regression test: when a hot entity is shared by more than the per-entity
@@ -1712,6 +1721,7 @@ async def test_graph_entity_edges_cover_all_visible_units(memory, request_contex
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_people_name_extraction(memory, request_context):
     """
     Test that people names are correctly extracted as entities.
@@ -1739,16 +1749,8 @@ async def test_people_name_extraction(memory, request_context):
             )
 
         # Query entities to verify people names were extracted
-        async with memory._pool.acquire() as conn:
-            entities = await conn.fetch(
-                """
-                SELECT canonical_name, mention_count
-                FROM entities
-                WHERE bank_id = $1
-                ORDER BY mention_count DESC, canonical_name
-                """,
-                bank_id,
-            )
+        listing = await memory.list_entities(bank_id, limit=1000, request_context=request_context)
+        entities = listing["items"]
 
         logger.info(f"Extracted {len(entities)} entities")
         for entity in entities:
@@ -1777,6 +1779,7 @@ async def test_people_name_extraction(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_mention_count_accuracy(memory, request_context):
     """
     Test that mention_count is accurately tracked across retain calls.
@@ -1805,15 +1808,8 @@ async def test_mention_count_accuracy(memory, request_context):
             )
 
         # Check Alice's mention count
-        async with memory._pool.acquire() as conn:
-            alice_entity = await conn.fetchrow(
-                """
-                SELECT canonical_name, mention_count
-                FROM entities
-                WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%alice%'
-                """,
-                bank_id,
-            )
+        listing = await memory.list_entities(bank_id, limit=1000, request_context=request_context)
+        alice_entity = next((e for e in listing["items"] if "alice" in e["canonical_name"].lower()), None)
 
         assert alice_entity is not None, "Alice entity should exist"
         logger.info(f"Alice mention_count after 5 separate retains: {alice_entity['mention_count']}")
@@ -1830,6 +1826,7 @@ async def test_mention_count_accuracy(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_mention_count_batch_retain(memory, request_context):
     """
     Test that mention_count is accurate when using batch retain with multiple items.
@@ -1858,15 +1855,8 @@ async def test_mention_count_batch_retain(memory, request_context):
         )
 
         # Check Bob's mention count after batch retain
-        async with memory._pool.acquire() as conn:
-            bob_entity = await conn.fetchrow(
-                """
-                SELECT canonical_name, mention_count
-                FROM entities
-                WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%bob%'
-                """,
-                bank_id,
-            )
+        listing = await memory.list_entities(bank_id, limit=1000, request_context=request_context)
+        bob_entity = next((e for e in listing["items"] if "bob" in e["canonical_name"].lower()), None)
 
         assert bob_entity is not None, "Bob entity should exist after batch retain"
         logger.info(f"Bob mention_count after batch retain of 6 items: {bob_entity['mention_count']}")
@@ -1889,15 +1879,8 @@ async def test_mention_count_batch_retain(memory, request_context):
         )
 
         # Check updated mention count
-        async with memory._pool.acquire() as conn:
-            bob_entity_updated = await conn.fetchrow(
-                """
-                SELECT canonical_name, mention_count
-                FROM entities
-                WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%bob%'
-                """,
-                bank_id,
-            )
+        listing = await memory.list_entities(bank_id, limit=1000, request_context=request_context)
+        bob_entity_updated = next((e for e in listing["items"] if "bob" in e["canonical_name"].lower()), None)
 
         logger.info(f"Bob mention_count after second batch: {bob_entity_updated['mention_count']}")
 
@@ -1919,6 +1902,7 @@ async def test_mention_count_batch_retain(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_causal_links_creation(memory, request_context):
     """
     Test that causal links are created between facts with causal relationships.
@@ -1993,6 +1977,7 @@ async def test_causal_links_creation(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_all_link_types_together(memory, request_context):
     """
     Integration test: Verify all link types can be created in a single retain operation.
@@ -2066,6 +2051,7 @@ async def test_all_link_types_together(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_semantic_links_within_same_batch(memory, request_context):
     """
     Test that semantic links are created between facts retained in the SAME batch.
@@ -2127,6 +2113,7 @@ async def test_semantic_links_within_same_batch(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_semantic_links_phase1_ann_cross_batch(memory, request_context):
     """
     Test that Phase 1 ANN search creates semantic links between facts from
@@ -2196,6 +2183,7 @@ async def test_semantic_links_phase1_ann_cross_batch(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_temporal_links_within_same_batch(memory, request_context):
     """
     Test that temporal links are created between facts retained in the SAME batch.
@@ -2271,6 +2259,59 @@ async def test_temporal_links_within_same_batch(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_user_provided_entities_resolve_flag_is_scoped_to_them(memory, request_context):
+    """resolve_entities=False keeps a caller's own entity names literal (#3479).
+
+    The bank already holds "Dr Wall", a near-duplicate of the name being supplied. With the
+    flag off, the supplied "Dr. Waller" must be stored as written rather than matched onto it.
+    The flag deliberately does not reach auto-extracted entities — those are the extractor's
+    guess at a name, and turning resolution off for them would fill the bank with duplicates.
+    """
+    bank_id = f"test_user_entities_literal_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        async with memory._pool.acquire() as conn:
+            # last_seen "now" is what tips the near-duplicate over the 0.6 match threshold:
+            # 0.41 name similarity + the full 0.2 temporal bonus.
+            await conn.execute(
+                "INSERT INTO entities (id, bank_id, canonical_name, first_seen, last_seen, mention_count) "
+                "VALUES (gen_random_uuid(), $1, $2, NOW(), NOW(), 5)",
+                bank_id,
+                "Dr Wall",
+            )
+
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "The patient was referred to a specialist.",
+                    "entities": [{"text": "Dr. Waller", "type": "PERSON"}],
+                    "resolve_entities": False,
+                }
+            ],
+            request_context=request_context,
+        )
+        unit_ids = [uid for sublist in result for uid in sublist]
+        assert unit_ids, "Should have created at least one fact"
+
+        async with memory._pool.acquire() as conn:
+            names = {
+                row["canonical_name"]
+                for row in await conn.fetch(
+                    "SELECT DISTINCT e.canonical_name FROM entities e "
+                    "JOIN unit_entities ue ON e.id = ue.entity_id WHERE ue.unit_id::text = ANY($1)",
+                    unit_ids,
+                )
+            }
+        assert "Dr. Waller" in names, f"the supplied name must be stored as written, got {names}"
+        assert "Dr Wall" not in names, "the supplied name must not resolve onto the near-duplicate"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_user_provided_entities(memory, request_context):
     """
     Test that user-provided entities are merged with auto-extracted entities.
@@ -2606,7 +2647,6 @@ def test_chunks_extraction_mode():
             extract_facts_from_contents(
                 contents=contents,
                 llm_config=None,  # Must not be called
-                agent_name="TestAgent",
                 config=_get_raw_config(),
             )
         )
@@ -2673,7 +2713,6 @@ async def test_verbatim_extraction_mode():
         facts, chunks, _ = await extract_facts_from_contents(
             contents=contents,
             llm_config=llm_config,
-            agent_name="TestAgent",
             config=_get_raw_config(),
         )
 
@@ -2841,6 +2880,7 @@ def test_retain_cacheable_prefix_invariant_to_per_bank_freetext(mode):
             "entity_labels": None,
             "entities_allow_free_form": True,
             "llm_output_language": None,
+            "llm_supports_string_pattern": False,
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -2925,7 +2965,6 @@ def test_strategy_overrides_extraction_mode_for_chunks():
         extract_facts_from_contents(
             contents=contents,
             llm_config=None,  # chunks must not call the LLM
-            agent_name="TestAgent",
             config=strategy_config,
         )
     )
@@ -3032,6 +3071,7 @@ async def test_named_strategy_applied_end_to_end(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_semantic_ann_uses_hnsw_index(memory, request_context):
     """
     Test that Phase 1 ANN semantic search creates links between similar world
@@ -3104,6 +3144,7 @@ async def test_semantic_ann_uses_hnsw_index(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_temporal_links_scoped_by_fact_type(memory, request_context):
     """
     Test that temporal links only connect facts of the SAME fact_type.
@@ -3321,7 +3362,160 @@ def _set_chunk_batch_size(memory: MemoryEngine, batch_size: int) -> None:
     memory._config_resolver._global_config.retain_chunk_batch_size = batch_size
 
 
+def _set_retain_memory_budget_mb(memory: MemoryEngine, budget_mb: int) -> None:
+    """Set retain_memory_budget_mb on the config resolver's global config."""
+    memory._config_resolver._global_config.retain_memory_budget_mb = budget_mb
+
+
 @pytest.mark.asyncio
+async def test_streaming_retain_under_a_tiny_memory_budget_keeps_every_fact(memory_mock_llm, request_context):
+    """A budget too small for one chunk must throttle the pipeline, never drop from it.
+
+    ``retain_chunk_batch_size`` bounds how many chunks are in flight; it cannot bound what
+    they weigh, so since #3756 the consumer also flushes on a byte budget and the producer
+    waits when the pipeline is full. Both are new places a chunk could be lost or a retain
+    could wedge, and neither shows up in a unit test of the budget object.
+
+    A 1 MB budget against a document whose facts exceed it forces every path at once: the
+    producer blocks on nearly every chunk, the consumer flushes on bytes rather than on its
+    chunk count, and the oversized-chunk escape hatch admits work an empty pipeline could
+    not otherwise take. The document must still arrive whole.
+    """
+    memory = memory_mock_llm
+    # A chunk count far larger than the document, so the byte budget is what decides every
+    # flush — the count trigger can never fire and cannot mask a broken budget.
+    _set_chunk_batch_size(memory, 10_000)
+    _set_retain_memory_budget_mb(memory, 1)
+    bank_id = f"test_budget_{uuid.uuid4().hex[:8]}"
+    document_id = f"budget_doc_{uuid.uuid4().hex[:8]}"
+
+    content = _generate_chunky_content(num_chunks=12, chunk_size=3000)
+    mock_llm_call = _make_mock_llm_call()
+
+    try:
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+            result = await asyncio.wait_for(
+                memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=[
+                        {
+                            "content": content,
+                            "context": "memory budget test",
+                            "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                        }
+                    ],
+                    document_id=document_id,
+                    request_context=request_context,
+                ),
+                # A budget that never hands room back deadlocks rather than failing, so the
+                # test has to time out instead of hanging the suite.
+                timeout=180,
+            )
+
+        unit_ids = result[0] if result else []
+        assert len(unit_ids) > 0, "a throttled retain must still produce facts"
+
+        stored = await memory.list_memory_units(bank_id, limit=1000, request_context=request_context)
+        assert stored["total"] == len(unit_ids), (
+            f"budget throttling lost facts: {stored['total']} stored, {len(unit_ids)} returned"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_streaming_retain_with_the_budget_disabled_matches_the_budgeted_run(memory_mock_llm, request_context):
+    """Turning the budget off changes throughput, not what gets stored.
+
+    ``0`` restores the pre-#3756 chunk-count-only bound, which deployments that tuned that
+    count deliberately will use. The two configurations must be indistinguishable in what
+    they write, or the budget is not a bound but a behaviour change.
+    """
+    memory = memory_mock_llm
+    _set_chunk_batch_size(memory, 3)
+    content = _generate_chunky_content(num_chunks=8, chunk_size=3000)
+    mock_llm_call = _make_mock_llm_call()
+
+    counts = []
+    bank_ids = [f"test_budget_off_{uuid.uuid4().hex[:8]}", f"test_budget_on_{uuid.uuid4().hex[:8]}"]
+    try:
+        for bank_id, budget_mb in zip(bank_ids, [0, 1]):
+            _set_retain_memory_budget_mb(memory, budget_mb)
+            with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+                await memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=[{"content": content, "context": "budget parity test"}],
+                    document_id=f"parity_doc_{uuid.uuid4().hex[:8]}",
+                    request_context=request_context,
+                )
+            stored = await memory.list_memory_units(bank_id, limit=1000, request_context=request_context)
+            counts.append(stored["total"])
+
+    finally:
+        for bank_id in bank_ids:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    assert counts[0] == counts[1], f"budget off stored {counts[0]} facts, budget on stored {counts[1]}"
+    assert counts[0] > 0
+
+
+@pytest.mark.asyncio
+async def test_every_streaming_batch_survives_the_next_one(memory_mock_llm, request_context):
+    """A streaming retain must keep every batch's facts, not just the last one's.
+
+    A document large enough to split into several consumer batches is written one batch at a time,
+    and only the FIRST may replace the document's prior version — replacing again tombstones the
+    siblings the earlier batches just wrote.
+
+    Getting that wrong loses data silently: the retain still returns every unit id it created, so
+    the caller sees success while the memories are gone. Measured before the fix, on a ten-batch
+    document: 100 unit ids returned, 10 memories in the bank — the last batch's.
+
+    Asserted through the public read API, not the `documents`/`chunks` tables, so it also runs
+    against a bank whose document store is external — which is the backend the bug lived on.
+    """
+    memory = memory_mock_llm
+    _set_chunk_batch_size(memory, 3)
+    bank_id = f"test_stream_accum_{uuid.uuid4().hex[:8]}"
+    document_id = f"doc_{uuid.uuid4().hex[:8]}"
+
+    mock_llm_call = _make_mock_llm_call()
+
+    try:
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+            result = await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[
+                    {"content": _generate_chunky_content(num_chunks=10, chunk_size=3000), "document_id": document_id}
+                ],
+                request_context=request_context,
+            )
+        returned = result[0] if result else []
+        assert len(returned) > 0, "the retain produced no facts, so the assertion below is vacuous"
+
+        listing = await memory.list_memory_units(bank_id, limit=1000, request_context=request_context)
+        assert listing["total"] == len(returned), (
+            f"the bank holds {listing['total']} memories but the retain returned {len(returned)} "
+            f"unit ids — a later batch replaced what an earlier one wrote, and the loss is silent "
+            f"because the retain still reports every id it created"
+        )
+
+        # The ids themselves, not merely the count: a replace leaving an equal number of DIFFERENT
+        # memories would satisfy a count check.
+        live = {row["id"] for row in listing["items"]}
+        missing = sorted(set(returned) - live)
+        assert not missing, f"{len(missing)} returned unit ids are not in the bank, e.g. {missing[:5]}"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+# Its remaining assertions read the Postgres `documents` and `chunks` tables, which the fully
+# store-owned retain path does not write. The part that mattered — that a multi-batch streaming
+# retain keeps EVERY batch's facts, not just the last — is asserted through the public read API
+# by test_every_streaming_batch_survives_the_next_one above, which runs on both backends. That
+# assertion is what caught the replace-per-batch data loss; do not fold it back in here.
+@pytest.mark.memory_backend_incompatible
 async def test_streaming_chunk_batching_produces_same_facts(memory_mock_llm, request_context):
     """
     Retain a medium document (~10 chunks) with batch_size=3.
@@ -3358,15 +3552,13 @@ async def test_streaming_chunk_batching_produces_same_facts(memory_mock_llm, req
         assert len(streaming_unit_ids) > 0, "Streaming should produce facts"
 
         # Verify facts are in the DB
-        async with memory._pool.acquire() as conn:
-            fact_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1",
-                bank_id,
-            )
-            assert fact_count == len(streaming_unit_ids), (
-                f"DB has {fact_count} facts, but streaming returned {len(streaming_unit_ids)} unit_ids"
-            )
+        fact_count = (await memory.list_memory_units(bank_id, limit=1000, request_context=request_context))["total"]
+        assert fact_count == len(streaming_unit_ids), (
+            f"DB has {fact_count} facts, but streaming returned {len(streaming_unit_ids)} unit_ids"
+        )
 
+        # documents/chunks aren't exposed by the read API — check them directly.
+        async with memory._pool.acquire() as conn:
             # Verify the document was tracked
             doc = await conn.fetchrow(
                 "SELECT id FROM documents WHERE bank_id = $1 AND id = $2",
@@ -3423,11 +3615,9 @@ async def test_streaming_chunk_batching_recovery(memory_mock_llm, request_contex
         first_unit_ids = result1[0] if result1 else []
         assert len(first_unit_ids) > 0, "First retain should produce facts"
 
-        async with memory._pool.acquire() as conn:
-            first_fact_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1",
-                bank_id,
-            )
+        first_fact_count = (await memory.list_memory_units(bank_id, limit=1000, request_context=request_context))[
+            "total"
+        ]
 
         logger.info(f"First retain: {first_fact_count} facts")
 
@@ -3446,11 +3636,9 @@ async def test_streaming_chunk_batching_recovery(memory_mock_llm, request_contex
                 request_context=request_context,
             )
 
-        async with memory._pool.acquire() as conn:
-            second_fact_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1",
-                bank_id,
-            )
+        second_fact_count = (await memory.list_memory_units(bank_id, limit=1000, request_context=request_context))[
+            "total"
+        ]
 
         logger.info(f"Second retain: {second_fact_count} facts")
 
@@ -3464,6 +3652,9 @@ async def test_streaming_chunk_batching_recovery(memory_mock_llm, request_contex
 
 
 @pytest.mark.asyncio
+# Asserts the document was tracked by selecting it from the Postgres documents table, which the
+# fully store-owned path does not write; the document lives in the store.
+@pytest.mark.memory_backend_incompatible
 async def test_streaming_disabled_for_small_docs(memory_mock_llm, request_context):
     """
     Retain a small document (2 chunks) with batch_size=500.

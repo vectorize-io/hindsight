@@ -11,6 +11,13 @@
  *   - Docusaurus frontmatter replaces the README's H1 (the title comes from frontmatter).
  *   - Repo-relative links (`src/…`, `../other-integration`) are dropped to plain text: they resolve
  *     on GitHub but 404 on the docs site.
+ *   - Absolute asset URLs on our own domain become site-relative. The README must use absolute URLs
+ *     so images render on npm and GitHub, but on the docs site those same URLs pin every image to
+ *     PRODUCTION — so a new asset shows as broken locally and in previews until it is deployed,
+ *     which is exactly when you are trying to look at it.
+ *   - The `skill:begin` / `skill:end` markers are dropped. They tell the integration's
+ *     scripts/build-skill.mjs which regions the companion skill copies; MDX has no HTML comments,
+ *     so leaving them in would fail the docs build outright.
  *
  * Run: node hindsight-docs/scripts/sync-coding-agents-doc.mjs [--check]
  * `--check` fails when the doc page is out of date instead of writing it (for CI).
@@ -24,12 +31,10 @@ const readme = join(here, '..', '..', 'hindsight-integrations', 'coding-agents',
 const page = join(here, '..', 'docs-integrations', 'coding-agents.md');
 
 // Kept in the doc page's frontmatter rather than derived, so title/description stay tuned for
-// search without touching the README's own heading. `unlisted` hides it from the sidebar, gallery
-// and sitemap while it is pre-announcement — see EXCLUDED in check-integrations.mjs.
+// search without touching the README's own heading.
 const FRONTMATTER = `---
 sidebar_position: 6
-unlisted: true
-title: "Coding Agents Memory Plugin (opencode, Kilo, Cline, Claude Code, Codex, Antigravity, Cursor, Copilot, Grok) | Integration Guide"
+title: "Coding Agents"
 description: "One Hindsight memory plugin for coding agents — per-repo memory banks built automatically from git history and past sessions, injected into the agent as it works."
 ---
 
@@ -38,7 +43,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 `;
 
 /** Sections that only make sense inside the repo (contributor-facing), dropped from the doc page. */
-const DROP_SECTIONS = ['Layout'];
+const DROP_SECTIONS = ['Layout', 'Ingestion internals (no CLI)', 'Companion skill (generated)'];
 
 function build() {
   const src = readFileSync(readme, 'utf8');
@@ -57,8 +62,17 @@ function build() {
   }
   const body = out
     .join('\n')
+    // Region markers for the companion-skill generator — invalid syntax in MDX, and meaningless
+    // to a reader of the docs site either way.
+    .replace(/^<!--\s*skill:(?:begin|end)[^>]*-->\n?/gm, '')
     // Repo-relative links 404 on the docs site; keep the label, drop the link.
     .replace(/\[([^\]]+)\]\((?!https?:|\/)[^)]+\)/g, '$1')
+    // Our own absolute URLs -> site-relative. Assets so the page uses THIS build's static
+    // files rather than whatever is live in production; doc links so they resolve within the
+    // site (and so the docs-skill generator can turn them into file-relative paths, which it
+    // cannot do with an absolute URL). The README keeps them absolute because it also renders
+    // on GitHub, where site-relative would 404.
+    .replace(/https:\/\/hindsight\.vectorize\.io\/([^\s"')]+)/g, '/$1')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return `${FRONTMATTER}\n${body}\n`;

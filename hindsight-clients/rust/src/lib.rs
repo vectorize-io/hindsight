@@ -109,6 +109,7 @@ mod tests {
                     metadata: None,
                     timestamp: None,
                     entities: None,
+                    resolve_entities: true,
                     tags: None,
                     observation_scopes: None,
                     strategy: None,
@@ -121,6 +122,7 @@ mod tests {
                     metadata: None,
                     timestamp: None,
                     entities: None,
+                    resolve_entities: true,
                     tags: None,
                     observation_scopes: None,
                     strategy: None,
@@ -150,6 +152,7 @@ mod tests {
             tags_match: types::TagsMatch::Any,
             tag_groups: None,
             min_scores: None,
+            temporal_window: None,
         };
         let recall_response = client
             .recall_memories(&bank_id, None, &recall_request)

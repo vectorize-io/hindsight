@@ -112,6 +112,23 @@ class DatabaseConnection(ABC):
         """
         ...
 
+    async def execute_rows_affected(self, query: str, *args: Any, timeout: float | None = None) -> int:
+        """Execute a DML statement and return the number of rows it affected.
+
+        Normalizes the dialect-specific execute result into a plain int so callers
+        never hand-parse an ``"UPDATE <n>"`` / ``"DELETE <n>"`` command tag in
+        business logic (mirrors ``parse_json`` above, which normalizes the other
+        dialect-divergent result shape). asyncpg returns the tag directly; the
+        Oracle connection reshapes ``cursor.rowcount`` into the same trailing-count
+        form, so parsing the last token is dialect-safe. Returns 0 when the status
+        has no trailing count (e.g. a non-DML statement).
+        """
+        status = await self.execute(query, *args, timeout=timeout)
+        if not isinstance(status, str):
+            return 0
+        parts = status.split()
+        return int(parts[-1]) if parts and parts[-1].isdigit() else 0
+
     @abstractmethod
     async def executemany(self, query: str, args: list[tuple[Any, ...]], *, timeout: float | None = None) -> None:
         """Execute a query for each set of arguments.

@@ -30,9 +30,9 @@ Most operations are a method here, so the call chains route through the interfac
 rather than reimplement it per store; where the two differ, they usually differ by
 what the method does — the Postgres implementation writes join rows and reprocesses
 links, one that owns the store no-ops those passes and does its own thing. A handful
-of call sites still branch on the two capability flags (``writes_memory_rows_in_sql``
-for the inline-SQL fast paths, ``owns_document_store`` for the document/chunk bodies)
-where the shapes are genuinely different; those are the seams, not accidental leaks.
+of call sites still branch on the one capability flag, ``store_owned`` — whether the
+store owns its writes or the caller issues them as SQL — where the shapes are
+genuinely different; those are the seams, not accidental leaks.
 """
 
 from __future__ import annotations
@@ -47,20 +47,36 @@ from typing import TYPE_CHECKING, Any
 from ...extensions.base import Extension
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ..search.retrieval import GraphRetriever, SemanticBm25Result
+    from ..search.retrieval import GraphRetriever
 
 
-class MemoryTxn:
-    """Opaque token for a cross-store write-group transaction, threaded from
-    :meth:`MemoriesExtension.begin_txn` through the write calls to
-    :meth:`MemoriesExtension.decide_txn`.
+class StoreWriteUnavailable(RuntimeError):
+    """The store cannot accept writes for this bank *right now*, but will shortly.
 
-    A store that keeps memories in the same database as the caller's transaction has nothing
-    to coordinate and returns ``None`` from ``begin_txn`` — the write methods then receive
-    ``txn=None`` and behave exactly as before. A store that writes memories to a *separate*
-    system subclasses this to carry whatever it needs to defer the writes'
-    visibility until the caller's transaction is known to have committed. The base is
-    deliberately empty: only the store that minted a handle interprets it."""
+    Distinct from a failure: nothing is wrong, the bank is briefly closed to writes — a store
+    migrating a bank between backends holds it for a few seconds while it takes the final delta
+    and flips. The caller should retry rather than surface an error, which is why the API maps
+    this to 503 with a `Retry-After` rather than a 5xx that reads as a bug.
+
+    Raised from :meth:`MemoriesExtension.assert_writable` and from bank-scoped write methods.
+    """
+
+    #: Seconds a caller should wait before retrying. A cutover freeze is drain + a reconcile.
+    retry_after: int = 30
+
+
+class StoreWriteConflict(RuntimeError):
+    """A conditional write lost its race: the state it was based on moved before it committed.
+
+    Raised by a store whose write carried a precondition — the read-modify-write case, where the
+    caller read something, derived a new value from it, and asked the store to accept that value
+    only if nothing had changed underneath. Nothing was written.
+
+    Distinct from :class:`StoreWriteUnavailable`: that one means "not now, try again shortly" and
+    the same write will succeed unchanged. This one means the write is STALE — retrying it as-is
+    would re-apply a decision made on an old base. The caller has to re-read and redo the work,
+    which is what makes concurrent appends to one document safe rather than last-writer-wins.
+    """
 
 
 # Keys used in an implementation's opaque metadata bag for the `memory_units`
@@ -77,6 +93,30 @@ META_METADATA_JSON = "metadata_json"
 META_OBSERVATION_SCOPES = "observation_scopes"
 META_TEXT_SIGNALS = "text_signals"
 META_CREATED_AT = "created_at"
+#: When the memory last changed, and the contract every write path owes it (#3490):
+#: a write that changes what the memory *is* — text, context, dates, fact_type, tags,
+#: metadata, embedding, an observation's sources — stamps ``updated_at``, so a consumer
+#: chasing ``WHERE updated_at > watermark`` sees the change. Those consumers are
+#: incremental export, cache invalidation, the mental-model staleness check
+#: (:meth:`any_memory_updated_since`) and its delta refresh — and recall's own
+#: ``created_after`` / ``created_before`` window, which despite the name filters on this
+#: column, so what stamps it also decides what a date-bounded recall returns.
+#:
+#: The consolidation *scheduler* is the one deliberate exception: when a pass records
+#: that it folded a fact (or requeues one whose observation went away) it writes only
+#: ``consolidated_at`` / ``consolidation_failed_at``, which are scheduler state rather
+#: than the memory. Stamping there would make every pass look like an edit to every fact
+#: it folded — re-flagging mental models stale and re-feeding unchanged facts to a delta
+#: refresh. :meth:`MemoriesExtension.mark_consolidated` and the requeue sites that clear
+#: the markers inline therefore leave the column alone.
+#:
+#: The exemption is that *situation*, not the two columns: a write that clears the markers
+#: as part of a real change to the memory still stamps — :meth:`restore_memory` brings an
+#: archived memory back and resets it for re-consolidation in one statement, and that is an
+#: edit. A store that owns memories itself is expected to keep the same contract.
+#:
+#: No timestamp can report a hard delete; a consumer that must catch those needs a
+#: content fingerprint, not a watermark.
 META_UPDATED_AT = "updated_at"
 # Observation bookkeeping. `source_memory_ids` is a JSON list: an implementation
 # with no edge relation carries an observation's sources denormalised.
@@ -134,6 +174,10 @@ class StoredMemory:
     occurred_end: datetime | None = None
     mentioned_at: datetime | None = None
     created_at: datetime | None = None
+    # Write time, as opposed to the four content times above: when the memory was last
+    # written, which is the watermark a caller compares against to detect a change. Distinct
+    # from `created_at`, which never moves after the first write.
+    updated_at: datetime | None = None
     # Which observation scopes a memory is routed to. Consolidation reads it off
     # its candidates to decide which observation each one belongs in, so it has
     # to survive the round trip through the store.
@@ -144,6 +188,11 @@ class StoredMemory:
     # Derived kNN edges `(target_unit_id, weight)`, populated only when the read
     # asked for them — the ranking path never does.
     semantic_edges: list[tuple[str, float]] = field(default_factory=list)
+    # Intrinsic causal edges the memory was written with, same shape the write model
+    # carries. Populated only when the read asked for edges. A store that keeps memories
+    # outside SQL has no `memory_links` table to reconstruct these from, so without them
+    # on the read model an export of such a bank silently loses every causal relation.
+    causal_edges: list[CausalEdgeRecord] = field(default_factory=list)
 
 
 @dataclass
@@ -200,6 +249,95 @@ class ScanPage:
 
     memories: list[StoredMemory] = field(default_factory=list)
     next_page_token: str = ""
+
+
+@dataclass
+class RetainDocumentPart:
+    """One consumer batch's worth of a document: its chunk texts and the facts extracted from them.
+
+    The unit the engine already produces. It is deliberately NOT "a whole document": a document's
+    chunks arrive across sub-batches and across extraction completions, and requiring completeness
+    here would either serialise extraction behind it or force the engine to decide when a document
+    is done — a judgement the streaming pipeline is specifically built not to need.
+
+    A part may carry chunk texts, facts, or both, and the engine sends BOTH KINDS SEPARATELY for
+    the same document. That is not a convenience: the streaming producer frees each chunk string as
+    soon as it has been extracted (`all_pre_chunks[i] = ""`), so the texts are only live at the
+    point they are produced, while the facts do not exist until extraction completes. A contract
+    that demanded them together would either pin the whole document in memory for the retain or
+    read back blanked strings. The store merges them per document.
+
+    `chunk_texts` are the texts for `chunk_offset .. chunk_offset + len(chunk_texts)`. The OFFSET is
+    per document, not per call: it is what makes a document's chunk identity independent of which
+    other documents shared the retain, and a store that derives chunk ids from anything else will
+    give the same document different ids depending on its neighbours — silently breaking dedup and
+    delta. See `document_body` for the rest of that contract.
+    """
+
+    document_id: str
+    #: The whole document's text, for the stored body. Every part of one document carries the same
+    #: value, so whichever part is written first can supply it.
+    document_body: str | None
+    content_hash: str
+    chunk_offset: int
+    #: Empty on a facts-only part. A part never carries a PARTIAL chunk list for its offset.
+    chunk_texts: list[str] = field(default_factory=list)
+    facts: list["FactRecord"] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+    #: Entity NAMES per unit_id, unresolved. A store that owns an entity registry resolves them
+    #: itself; one that does not resolves them before calling.
+    entity_names: dict[str, list[str]] = field(default_factory=dict)
+    #: What this part replaces, if anything: `None` replaces nothing, an empty list replaces the
+    #: WHOLE document, and a non-empty list names the chunk ids whose facts go. Only the first part
+    #: of a document may carry it — a later one would tombstone its own siblings.
+    replace_chunk_ids: list[str] | None = None
+
+
+@dataclass
+class RetainResult:
+    """What a committed retain produced, per document."""
+
+    #: unit_id lists keyed by document_id, in the order the facts were added.
+    unit_ids: dict[str, list[str]] = field(default_factory=dict)
+    #: Entities minted (not resolved to existing ones) across the whole retain.
+    new_entities: int = 0
+
+
+class RetainSession:
+    """An in-flight retain. The engine streams parts in; the store decides when to write.
+
+    A session rather than one call because the engine's pipeline overlaps extraction with writes —
+    LLM extraction is the dominant cost when it runs, and a contract of "hand me everything, then I
+    persist" would serialise it away. `add` is called exactly where the engine writes today, so the
+    overlap is unchanged; what moves is WHEN the write happens, which becomes the store's choice.
+
+    That choice is the point. A bulk ingest that runs no LLM should commit ONCE — one WAL entry,
+    one bump of the namespace head, which is what a sustained ingest actually serialises on. A long
+    LLM extraction should not, because committing only at the end means a crash loses all of it.
+    Neither is right in general, so the engine must not decide it.
+
+    Two rules a flush policy has to honour, whatever it decides:
+
+    * **Never memories without their bodies.** A flush must not commit facts whose document record
+      has not landed, or an interrupted retain leaves memories citing chunks that do not exist.
+    * **Bound what an interruption loses.** "Only at the end" is unbounded for a long retain; some
+      progress has to become durable as it accumulates.
+    """
+
+    async def add(self, part: RetainDocumentPart) -> None:
+        """Take one part. May write, may buffer — the caller must not assume either."""
+        raise NotImplementedError
+
+    async def commit(self) -> RetainResult:
+        """Write whatever is still buffered and return what the retain produced."""
+        raise NotImplementedError
+
+    async def abort(self) -> None:
+        """Give up. Anything already flushed STAYS: the store has no cross-entry rollback, and
+        pretending otherwise would be a transaction it cannot honour. Callers get at-least-what-was-
+        flushed, which is the same guarantee an interrupted retain has always had."""
+        return None
 
 
 @dataclass
@@ -338,7 +476,10 @@ def build_fact_records(
             FactRecord(
                 unit_id=str(unit_id),
                 text=fact.fact_text,
-                embedding=fact.embedding,
+                # Unpacked here on purpose: `FactRecord` is the contract every store
+                # implementation reads, and retain's packed `array("f")` is an internal
+                # carrying format (#3756). The list exists only for the record.
+                embedding=list(fact.embedding),
                 fact_type=fact.fact_type,
                 tags=fact.tags or [],
                 context=fact.context,
@@ -357,6 +498,184 @@ def build_fact_records(
             )
         )
     return records
+
+
+@dataclass(frozen=True)
+class MemoryScopeWatermark:
+    """One "has this scope changed?" question, for the batched staleness check.
+
+    ``key`` is opaque to the store — it is whatever the caller wants the answer
+    reported under (a mental-model id, a knowledge-page id) — and the scope
+    fields are the same ones :meth:`MemoriesExtension.any_memory_updated_since`
+    takes for a single model, so the two surfaces cannot drift apart.
+    """
+
+    key: str
+    since: datetime
+    fact_types: list[str] | None = None
+    tags: list[str] | None = None
+    tags_match: str = "any"
+    tag_groups: list | None = None
+
+
+@dataclass
+class RelinkPassResult:
+    """What one relink drain got through.
+
+    ``queue_exhausted`` is False when the pass stopped on its deadline (or the
+    runaway-iteration cap) with rows still queued — not a failure, since every
+    batch commits before the next is claimed, but the caller needs to know the
+    queue is not empty so it can arrange for the rest to be picked up.
+    """
+
+    units_processed: int = 0
+    links_added: int = 0
+    queue_exhausted: bool = True
+
+
+@dataclass
+class EntityPrunePassResult:
+    """What one entity-prune drain got through.
+
+    ``entities_examined`` counts candidates claimed, not rows deleted: most
+    candidates turn out to be alive and are kept, which is the pass working as
+    intended rather than wasted effort.
+    """
+
+    entities_examined: int = 0
+    orphan_entities_pruned: int = 0
+    stale_cooccurrences_pruned: int = 0
+    queue_exhausted: bool = True
+
+
+@dataclass
+class RecallArms:
+    """One fact_type's per-arm candidate lists from :meth:`MemoriesExtension.recall_unified`.
+
+    Each list holds ``RetrievalResult`` items, unfused — RRF/rerank happen downstream.
+    ``temporal`` is empty unless a window was given; ``graph`` is empty when that arm is off.
+    """
+
+    semantic: list = field(default_factory=list)
+    bm25: list = field(default_factory=list)
+    graph: list = field(default_factory=list)
+    temporal: list = field(default_factory=list)
+
+
+@dataclass
+class FullRecallRequest:
+    """Everything a store needs to answer a whole recall — see
+    :meth:`MemoriesExtension.full_recall`.
+
+    This is deliberately the ENGINE's resolved values, not the caller's raw request: the budget
+    has already been resolved from the bank config, the arm toggles and the reranker mode have
+    been decided, and ``now`` is whatever the request said to score recency against. A store
+    receiving this needs no access to configuration, which is what keeps product policy out of a
+    store release — change the bank config and the next call carries the new values.
+
+    Everything after :attr:`enable_graph` is a stage the engine would otherwise run itself.
+    """
+
+    # ---- what to retrieve (mirrors `recall_unified`) ----
+    bank_id: str
+    fact_types: "list[str]"
+    query_embedding: str
+    #: The user's question. Used BOTH for the full-text arm and as the reranker's query — a store
+    #: with text search off still needs it for the second.
+    query_text: str
+    limit: int
+    temporal_window: "tuple[datetime, datetime] | None" = None
+    temporal_semantic_threshold: float = 0.1
+    tags: "list[str] | None" = None
+    tags_match: str = "any"
+    tag_groups: "list | None" = None
+    created_after: "datetime | None" = None
+    created_before: "datetime | None" = None
+    min_semantic: "float | None" = None
+    min_keyword: "float | None" = None
+    enable_text_search: bool = True
+    enable_graph: bool = True
+
+    # ---- how to rank ----
+    #: ``"rrf"``, ``"interleave"`` or ``"cross_encoder"`` — the engine's ``reranking`` mode. The
+    #: first two are passthrough (the fusion order stands); only the third calls a reranker.
+    reranking: str = "rrf"
+    reranker_max_candidates: int = 0
+    per_source_cap: int = 0
+    #: Arm name -> priority level, from ``HINDSIGHT_API_RECALL_STRATEGY_BOOSTS``.
+    strategy_boosts: "dict[str, str] | None" = None
+    recency_decay_function: str = "linear"
+    recency_decay_linear_window_days: float = 365.0
+    recency_decay_halflife_days: float = 90.0
+    #: What recency is measured from — ``question_date`` when the caller gave one, else now.
+    now: "datetime | None" = None
+    min_reranker: "float | None" = None
+    min_final: "float | None" = None
+
+    # ---- what to return ----
+    #: Results are truncated to this before the token budget is spent.
+    truncate_to: int = 0
+    max_tokens: int = 4096
+    #: The BPE vocabulary token counts are computed against. Travels because the count decides
+    #: which results come back, so the store must count with the same table the engine does.
+    tokenizer_encoding: str = "o200k_base"
+    include_entities: bool = False
+    include_chunks: bool = False
+    max_chunk_tokens: int = 4096
+
+    # ---- shapes a store may not implement ----
+    # ---- derived memories (observations) and their sources ----
+    #
+    # An observation is consolidated FROM source facts and carries their ids, so a store that holds
+    # that list can answer all three of these itself. Each was previously a decline.
+    #: Drop raw facts that a returned observation was consolidated from, and backfill the freed
+    #: slots. No-op unless both observations and a raw type were requested.
+    prefer_observations: bool = False
+    #: Return each returned observation's source facts, under the budgets below.
+    include_source_facts: bool = False
+    #: Total token budget for source facts. Negative means unlimited.
+    max_source_facts_tokens: int = 4096
+    #: Per-observation budget. When >= 0 this REPLACES the total, so one observation with many
+    #: sources cannot spend every other observation's provenance.
+    max_source_facts_tokens_per_observation: int = -1
+
+
+@dataclass
+class KnowledgePageEntry:
+    """One knowledge page as the store indexes it.
+
+    Only what a search needs. The page's own row — its name, body, folder, trigger, history —
+    stays in Postgres, which remains the authority; this is the derived half.
+    """
+
+    #: The mental model's id, and the id every match comes back under.
+    page_id: str
+    #: What full-text search matches on. The page name and body joined; never returned.
+    index_text: str
+    #: The page's embedding. ``None`` indexes it for text search only.
+    embedding: list[float] | None = None
+    #: The page's visibility tags, so a scoped search filters inside the store rather than
+    #: over-fetching and discarding — a discarded hit has already cost a top-k slot.
+    tags: list[str] = field(default_factory=list)
+    #: When the page's row last changed. Read back by :meth:`MemoriesExtension.list_knowledge_pages`
+    #: so a reconcile can spot a stale index entry without reading the page.
+    updated_at: datetime | None = None
+
+
+@dataclass
+class KnowledgePageRef:
+    """A page as the reconcile pass sees it: what the store holds and how old it thinks it is."""
+
+    page_id: str
+    updated_at: datetime | None = None
+
+
+@dataclass
+class KnowledgePageMatch:
+    """One search result. ``score`` is comparable within a result set, not across stores."""
+
+    page_id: str
+    score: float
 
 
 class MemoriesExtension(Extension, ABC):
@@ -378,21 +697,244 @@ class MemoriesExtension(Extension, ABC):
         name rather than masquerading as another store in the banner."""
         return type(self).__name__
 
-    #: Whether memories live as rows in the SQL ``memory_units`` table. True for the SQL stores
-    #: (Postgres/Oracle), whose ``upsert_observation`` / ``delete_facts`` are no-ops because the
-    #: consolidator writes those rows inline. A store that keeps memories elsewhere sets this
-    #: False so the consolidator skips the inline SQL and routes the write through the store —
-    #: then all of an observation's state lives wherever the store keeps it, not in Postgres.
-    writes_memory_rows_in_sql: bool = True
+    #: Whether this store OWNS ITS WRITES, rather than the caller writing them as SQL.
+    #:
+    #: One question, because in practice there has only ever been one: a store either keeps
+    #: everything itself — the memory rows, the document/chunk bodies, and the whole retain — or it
+    #: keeps none of them and the caller issues the SQL inside its own transaction. This used to be
+    #: three separate flags (``writes_memory_rows_in_sql``, ``owns_document_store``,
+    #: ``store_owned_retain``) asking that same question in three places, two of them in the
+    #: opposite polarity to the third, and no store ever set a mixed combination.
+    #:
+    #: False (the default) is the SQL stores, Postgres and Oracle, and nothing about how they work
+    #: changes: memories are rows in ``memory_units``, a document's text is
+    #: ``documents.original_text`` and its chunks are ``chunks.chunk_text``, the retain runs its
+    #: Phase-1 entity resolution in SQL, and this extension's write methods are no-ops because the
+    #: caller already wrote them — inside a transaction that makes the whole re-ingest atomic.
+    #:
+    #: True is a store that keeps memories elsewhere. It owns a dedicated document store (bodies go
+    #: through ``put_document`` / ``get_document_record`` / ``get_chunk_text`` / ``list_chunk_texts``
+    #: / ``count_chunks`` / ``document_content_hash``), resolves entity NAMES itself, and commits the
+    #: entire retain — resolution, upserts and the document replace — as ONE atomic server-side call
+    #: (``retain``). The orchestrator then needs no Postgres connection phase for it.
+    #:
+    #: It also selects the KNOWLEDGE-PAGE index: a store that owns its memories serves
+    #: `search_knowledge_pages` and the reflect tool from its own index, and the page write paths
+    #: call :meth:`index_knowledge_pages` / :meth:`delete_knowledge_pages`. The Postgres row is
+    #: still written first and is still what a hit is hydrated from — the store holds a DERIVED
+    #: copy, so a divergence is repaired by indexing again rather than restored from a backup.
+    #:
+    #: This is also what selects the retain SESSION (:meth:`begin_retain`): a store that owns its
+    #: memories owns the persistence half of a retain, and the engine hands it the whole of it —
+    #: how many round trips it takes, how chunk identity is derived, and what commits atomically
+    #: with what. There is no separate flag for that, deliberately. There was, and a router that
+    #: forwarded `store_owned_for` but not the second probe silently answered "no session" for
+    #: every bank: nothing failed, retain just fell back to writing per consumer batch and ran at
+    #: half the throughput. One capability, one flag, one thing for a router to forward.
+    #:
+    #: Bank-scoped via :meth:`store_owned_for`, for a router whose banks live in different backends.
+    store_owned: bool = False
 
-    #: Whether this store owns the document/chunk BODIES — a document's extracted text, its chunk
-    #: texts, and its original uploaded file. Default False: Postgres keeps ``documents.original_text``
-    #: / ``chunks.chunk_text`` and the file goes through ``file_storage``. A store that sets this True
-    #: owns a dedicated document store, so the retain and read paths route document/chunk
-    #: bodies through the ``put_document`` / ``get_document_record`` / ``get_chunk_text`` /
-    #: ``list_chunk_texts`` / ``count_chunks`` / ``document_content_hash`` methods below instead of
-    #: the inline SQL. Cold, never-searched, key-based — see docs/documents-chunks.md.
-    owns_document_store: bool = False
+    def store_owned_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`store_owned`. Defaults to the class attribute, so a
+        single-backend extension needs no override. A router whose banks live in different backends
+        overrides this to answer PER BANK; every bank-scoped call site consults it rather than the
+        attribute."""
+        return self.store_owned
+
+    async def put_documents(self, *, bank_id: str, documents: list[dict], expect_watermark: int | None = None) -> None:
+        """Store (or replace) several documents in one call.
+
+        Default is a loop over :meth:`put_document`, so a store gains nothing by not implementing
+        it and no caller has to ask whether it exists. A store whose write is a network round trip
+        overrides this to send one, which is where the saving is.
+
+        Declared HERE rather than left on the provider: a public provider method the seam does not
+        declare is one the engine can never call, and that has shipped twice.
+        """
+        for d in documents:
+            await self.put_document(bank_id=bank_id, expect_watermark=expect_watermark, **d)
+
+    async def get_document_records(self, *, bank_id: str, document_ids: list[str]) -> dict[str, dict]:
+        """Several documents' metadata in one read, keyed by document_id; absent ones omitted.
+
+        Default is a loop over :meth:`get_document_record`, so a store gains nothing by not
+        implementing it and no caller has to ask whether it exists. A store whose read is a network
+        round trip overrides this to send one.
+        """
+        out: dict[str, dict] = {}
+        for did in document_ids:
+            rec = await self.get_document_record(bank_id=bank_id, document_id=did)
+            if rec is not None:
+                out[did] = rec
+        return out
+
+    async def begin_retain(self, *, bank_id: str, config: Any) -> "RetainSession":
+        """Open a retain session. Only a store advertising :attr:`store_owned`
+        implements this; the orchestrator calls it instead of driving the writes itself."""
+        raise NotImplementedError
+
+    #: True when the store derives semantic links itself, so retain must not run the SQL pass.
+    #:
+    #: The end-of-retain ANN pass reads every committed unit's embedding out of `memory_units` and
+    #: writes links back. For a store that owns its memories those rows are not in SQL at all: the
+    #: read returns nothing, the pass derives nothing, and all it costs is a connection acquire and
+    #: a query per retain -- against an empty table, on the hot write path.
+    #:
+    #: Declared here rather than read off the provider with `getattr`, because an attribute only
+    #: the provider knows about is one the engine silently never consults -- which is exactly what
+    #: happened: a provider set this and nothing honoured it.
+    derives_semantic_links_internally: bool = False
+
+    def derives_semantic_links_internally_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`derives_semantic_links_internally`, for a router whose banks
+        live in different backends. Defaults to the class attribute."""
+        return self.derives_semantic_links_internally
+
+    # -- the knowledge-page index -------------------------------------------
+    #
+    # Knowledge pages are the one place where a store holds a DERIVED copy rather than the
+    # authority. The page's row stays in Postgres; the store keeps only an index over its text and
+    # embedding, so a lost or diverged entry is repaired by indexing it again and the two never need
+    # a transaction between them.
+    #
+    # It follows `store_owned` rather than carrying a flag of its own. A separate flag would only
+    # earn its place if some store wanted the mixed state — owning every memory in a bank while its
+    # pages were still searched in SQL — and none does: a store that owns the bank's memories is
+    # already the thing answering its searches, so splitting the two only creates a combination
+    # nothing sets and every call site has to keep handling.
+
+    async def index_knowledge_pages(self, bank_id: str, entries: list["KnowledgePageEntry"]) -> None:
+        """Upsert pages into the store's index. A ``page_id`` already present is replaced.
+
+        Called after the Postgres row is committed, so an entry here always describes a row that
+        exists. The reverse — a committed row whose indexing failed — is the expected failure and is
+        repaired by the reconcile pass, not by a transaction.
+
+        Replacing rather than merging is deliberate: a derived index has nothing worth preserving
+        across a rewrite, and it makes re-indexing everything idempotent, which is what lets the
+        reconcile pass be "put them all again"."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def delete_knowledge_pages(self, bank_id: str, page_ids: list[str]) -> None:
+        """Remove pages from the index. Deleting one the store does not hold must be a no-op, so a
+        reconcile can reap an entry it believes is stale without first proving it is there."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def search_knowledge_pages(
+        self,
+        bank_id: str,
+        *,
+        embedding: list[float] | None,
+        text: str,
+        limit: int,
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+        tag_groups: list | None = None,
+    ) -> list["KnowledgePageMatch"]:
+        """Hybrid search over the bank's pages: text and (when given) embedding, fused BY THE STORE.
+
+        Fusion is the store's business because only it knows what its arms produce — one returning
+        ranks and another returning distances cannot share a caller-side formula. ``score`` is
+        therefore comparable within one result set and meaningless across stores; callers order by
+        it and do not otherwise interpret it.
+
+        Returns ids only. The caller joins them back to Postgres for name, snippet and folder — and
+        that join is also what filters out ids that are not pages, so the store never needs to know
+        the difference between a page and a pinned mental model."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def search_knowledge_pages_semantic(
+        self,
+        bank_id: str,
+        *,
+        embedding: list[float],
+        limit: int,
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+        tag_groups: list | None = None,
+        exclude_ids: list[str] | None = None,
+    ) -> list["KnowledgePageMatch"]:
+        """Pure vector search over the bank's pages, for the reflect tool.
+
+        Separate from :meth:`search_knowledge_pages` because the two want different answers, not
+        different tunings of one: this one reports ``score`` as a **similarity in [0, 1]**, which
+        the agent surfaces as a relevance figure, and a fused hybrid score cannot stand in for it.
+
+        ``exclude_ids`` drops pages from the result — a refresh must not retrieve the very page it
+        is regenerating."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def list_knowledge_pages(self, bank_id: str) -> list["KnowledgePageRef"]:
+        """Every page the store currently indexes for this bank.
+
+        The read half of the reconcile: diff it against the bank's `mental_models` rows to find both
+        what is missing from the index and what is left over in it. Bounded by the bank's page
+        count, which is a curated set rather than its corpus."""
+        raise NotImplementedError("this store does not index knowledge pages")
+
+    async def retain(
+        self,
+        bank_id: str,
+        unit_ids: list[str],
+        facts: list,
+        *,
+        document_id: str | None = None,
+        unit_entity_names: dict[str, list[str]] | None = None,
+        replace_document_id: str = "",
+        replace_chunk_ids: list[str] | None = None,
+        replace_keep_chunk_ids: list[str] | None = None,
+        resolve_threshold: float = 0.0,
+        enable_text_search: bool = True,
+        enable_graph_retrieval: bool = True,
+    ):
+        """Commit an entire retain in one server-side call — resolve/mint the ``unit_entity_names``
+        against the store's own registry, write the memories with the resulting entity ids, and
+        (when ``replace_document_id`` is set) tombstone the document's prior version — all atomically.
+        Only a store advertising :attr:`store_owned` implements this; the orchestrator calls it
+        exactly when :meth:`store_owned_for` is true, so the default never runs. It exists on
+        the interface so a routing extension delegates it automatically (see RoutingMemories).
+
+        ``replace_chunk_ids`` narrows the replace to named chunks of the document — the DELTA case,
+        where every chunk not named keeps its facts. Pass the chunks whose facts must go: the ones
+        that changed AND the ones that were removed, since a removed chunk has no replacement upsert
+        to supersede it. Without this a re-ingest can only replace wholesale, which means
+        re-extracting the entire document to change one paragraph.
+
+        ``replace_keep_chunk_ids`` states the same scope from the other side — the survivors — and
+        exists because a store may cap how many values a scope can name. A re-ingest that rewrites
+        most of a large document cannot name the changed chunks under such a cap, but naming the few
+        that survive is the same replace. Pass whichever side is smaller; passing both is an error.
+
+        A store that cannot scope a replace must ignore these rather than silently widening to a
+        wholesale one: the chunks the caller did not name are exactly the ones it is trying to
+        keep.
+
+        ``enable_text_search`` / ``enable_graph_retrieval`` are the bank's recall toggles, passed
+        here because for a store that owns its index they are not only read-time settings: an arm
+        the bank has switched off needs no index built for it, and building one is work and bytes
+        spent on a query that will not run. They are the bank's CURRENT values on every retain, so
+        a store that acts on them tracks a bank that changes its mind without an out-of-band call.
+
+        A store that indexes everything regardless ignores them, which is what the default does —
+        and what Postgres does, where the columns behind both arms are maintained by the insert
+        itself and there is nothing separable to skip."""
+        raise NotImplementedError("this store does not support a store-owned retain")
+
+    async def assert_writable(self, bank_id: str) -> None:
+        """Refuse the operation if the store cannot take writes for this bank right now.
+
+        Called at the entry to a *multi-store* operation — retain, which writes documents, chunks
+        and entities through paths that are not this interface at all. Every write that does go
+        through a store method is already covered by the method itself; this exists for the ones
+        that are not, so a store can close a bank completely rather than only partly.
+
+        The default is a no-op, so no existing store needs a change. A store that migrates banks
+        between backends raises :class:`StoreWriteUnavailable` while a bank is mid-cutover: the
+        window is seconds, and a retain that started before it and writes after it would land in
+        the store that is about to stop being authoritative.
+        """
+        return None
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -420,60 +962,6 @@ class MemoriesExtension(Extension, ABC):
 
     # ------------------------------------------------------------------ writes
 
-    async def begin_txn(self, *, conn, fq_table, bank_id: str, mutating: bool) -> "MemoryTxn | None":
-        """Open a cross-store write-group transaction around a unit of work, or ``None``.
-
-        Called INSIDE the caller's database transaction, before the writes that belong to it.
-        The returned handle is threaded (as ``txn=``) into every write of the unit and finally
-        into :meth:`decide_txn` once the caller's transaction has settled.
-
-        Default is ``None``: a store whose memories live in the caller's own database needs no
-        cross-store coordination — its writes are already covered by that transaction, and the
-        ``txn`` kwarg is ignored everywhere. A store that writes to a *separate* system returns
-        a handle so those writes can be held invisible until the transaction is known to have
-        committed. ``mutating`` distinguishes a unit that only creates new memories (safe to
-        write plainly and compensate on abort) from one that changes or removes existing ones
-        (whose previous value only deferred visibility can preserve)."""
-        return None
-
-    async def decide_txn(self, txn: "MemoryTxn | None", *, commit: bool) -> None:
-        """Resolve a handle from :meth:`begin_txn` after its transaction settled.
-
-        ``commit=True`` once the caller's transaction has COMMITTED, ``commit=False`` if it
-        aborted. A no-op for ``None``. For a separate-store implementation this is where the
-        held writes are made visible (commit) or discarded/compensated (abort)."""
-        return None
-
-    async def mint_txn(self, *, bank_id: str, mutating: bool) -> "MemoryTxn | None":
-        """Mint a write-group handle WITHOUT opening a database transaction — the split form of
-        :meth:`begin_txn` for a unit of work (consolidation) that runs slow work between its
-        writes and must not hold a transaction across it. Tag the writes with the handle, then
-        :meth:`write_txn_witness` + commit in one short transaction at the end, then
-        :meth:`decide_txn`. Default ``None`` (no cross-store coordination)."""
-        return None
-
-    async def write_txn_witness(self, txn: "MemoryTxn | None", *, conn, fq_table) -> None:
-        """Record a :meth:`mint_txn` handle's commit witness in the caller's transaction, just
-        before it commits. No-op for ``None``."""
-        return None
-
-    async def recover_pending_txns(
-        self,
-        *,
-        conn,
-        fq_table,
-        bank_ids: list[str],
-        first_seen: dict[str, float],
-        now: float,
-        grace_seconds: float = 300.0,
-        witness_ttl_seconds: float = 3600.0,
-    ) -> int:
-        """Backstop for a crashed writer: resolve each bank's undecided write-group txns against
-        the witness table. Only a store that keeps memory rows outside SQL has cross-store txns to
-        recover; the default (Postgres) has none, and the maintenance loop skips it. Returns the
-        number of txns decided."""
-        return 0
-
     @abstractmethod
     async def insert_facts(
         self,
@@ -484,7 +972,6 @@ class MemoriesExtension(Extension, ABC):
         facts: list,
         document_id: str | None = None,
         defer_index: bool = False,
-        txn: "MemoryTxn | None" = None,
     ) -> list[str]:
         """Store a batch of extracted facts and return their unit ids, in order.
 
@@ -514,10 +1001,10 @@ class MemoriesExtension(Extension, ABC):
         """
 
     @abstractmethod
-    async def delete_facts(self, bank_id: str, unit_ids: list[str], *, txn: "MemoryTxn | None" = None) -> None:
+    async def delete_facts(self, bank_id: str, unit_ids: list[str]) -> None:
         """Remove units. Safe to call for ids that were never written."""
 
-    async def delete_where(self, bank_id: str, predicate: DeletePredicate, txn=None) -> int:
+    async def delete_where(self, bank_id: str, predicate: DeletePredicate) -> int:
         """Remove every memory matching ``predicate``. Returns the count when known.
 
         May be implemented lazily (recording the delete and materializing it
@@ -526,9 +1013,7 @@ class MemoriesExtension(Extension, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_document(
-        self, *, conn, fq_table, bank_id: str, document_id: str, txn: "MemoryTxn | None" = None
-    ) -> None:
+    async def delete_document(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
         """Remove every memory belonging to ``document_id``.
 
         Called when a document is replaced, so it races the replacement's writes:
@@ -538,10 +1023,10 @@ class MemoriesExtension(Extension, ABC):
 
     # ------------------------------------------------------ document/chunk bodies
     #
-    # Only relevant when :attr:`owns_document_store` is True: a store that keeps document/chunk
+    # Only relevant when :attr:`store_owned` is True: a store that keeps document/chunk
     # BODIES (extracted text, chunk texts, original file) in its own dedicated store rather than in
     # ``documents.original_text`` / ``chunks.chunk_text`` / ``file_storage``. The retain and read
-    # paths branch on ``owns_document_store`` and call these instead of the inline SQL. All bodies
+    # paths branch on ``store_owned`` and call these instead of the inline SQL. All bodies
     # are cold and never-searched; the document is passed whole (text + ordered chunk texts + file)
     # so the store can pack and dedup it — see docs/documents-chunks.md.
 
@@ -558,11 +1043,23 @@ class MemoriesExtension(Extension, ABC):
         file_bytes: "bytes | None" = None,
         file_content_type: str = "",
         file_original_name: str = "",
-        txn: "MemoryTxn | None" = None,
+        expect_watermark: "int | None" = None,
     ) -> None:
         """Store (or replace) a document's bodies: its extracted text, its ordered chunk texts, and
         optionally the original uploaded file. Idempotent by content — re-ingest re-uploads only
-        what changed. Under a ``txn`` the record commits atomically with the retain's facts."""
+        what changed.
+
+        ``chunk_texts`` REPLACES the document's chunk list, so a caller holding only part of a
+        document (a retain sub-batch) must send the whole list, not its slice — see
+        ``_store_document_bodies``, which restores the prefix before calling this.
+
+        ``expect_watermark`` makes this a compare-and-set: the write is applied only if the store's
+        state is still the one the caller read (the ``watermark`` from
+        :meth:`get_document_record`), and otherwise raises :class:`StoreWriteConflict` having
+        written nothing. This is what makes a read-modify-write — appending onto the stored body —
+        safe against a concurrent one, which without it silently erases the other's turn. ``None``
+        writes unconditionally. A store with no notion of a watermark ignores it, and is expected
+        to serialize such writes some other way."""
         raise NotImplementedError
 
     async def document_content_hash(self, *, bank_id: str, document_id: str) -> "str | None":
@@ -570,12 +1067,131 @@ class MemoriesExtension(Extension, ABC):
         raise NotImplementedError
 
     async def get_document_record(self, *, bank_id: str, document_id: str, include_text: bool = False) -> "dict | None":
-        """A document's metadata (and, if asked, its extracted ``original_text``), or ``None``."""
+        """A document's metadata (and, if asked, its extracted ``original_text``), or ``None``.
+
+        A returned record may carry a ``watermark``: an opaque token for the store state this read
+        observed, to hand back as ``put_document(expect_watermark=...)`` when the write is derived
+        from what was just read. Absent for a store that does not support conditional writes."""
+        raise NotImplementedError
+
+    async def list_documents(
+        self,
+        *,
+        bank_id: str,
+        search_query: "str | None" = None,
+        tags: "list[str] | None" = None,
+        tags_match: str = "any_strict",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """Page this bank's documents from the store's OWN registry — the ``{items, total, limit,
+        offset}`` shape the documents browser expects. Only a store that owns its document metadata
+        overrides this (a Postgres-backed store lists from the SQL ``documents`` table instead, so
+        the engine only calls this for a ``store_owned`` store). Default raises so a
+        mis-routed call is loud rather than silently empty.
+
+        ``tags``/``tags_match`` filter by the documents' tags with the same modes and meanings as
+        anywhere else, and ``total`` must count what MATCHES — a page filtered after the fact would
+        report the unfiltered total and drop every match past the window."""
+        raise NotImplementedError
+
+    async def count_documents(self, *, bank_id: str) -> int:
+        """This bank's document count, from the store's own registry — the bank-stats document
+        total. Only a ``store_owned`` store overrides this (a Postgres store counts the
+        SQL ``documents`` table instead); the engine only calls it for a store that owns its docs."""
+        raise NotImplementedError
+
+    async def get_entity_graph(self, *, bank_id: str, limit: int = 1000, min_count: int = 1) -> dict:
+        """The entity co-occurrence graph (``{nodes, edges, ...}``) from the store's OWN aggregate.
+        Only a store that owns its entities overrides this (a Postgres store reads its
+        ``entity_cooccurrences`` table); the engine calls it only for a store-owned bank, whose SQL
+        table is empty."""
         raise NotImplementedError
 
     async def get_chunk_text(self, *, bank_id: str, document_id: str, chunk_index: int) -> "str | None":
         """One chunk's text by position, or ``None`` if the document/index does not exist."""
         raise NotImplementedError
+
+    async def hydrate_results(self, *, bank_id: str, results: "list") -> None:
+        """Fill in the payload for retrieval results a store returned without one, IN PLACE.
+
+        Default: nothing to do. A store that returns fully-populated results from retrieval — the
+        Postgres one does — is already hydrated, and this costs it a single ``return``.
+
+        It exists because ranking does not need payloads. Fusion orders candidates by id and arm
+        score, and only the few that survive are ever read, so a store CAN return scores for the
+        wide arms and materialize the rest afterwards. A store that does so must populate at least
+        ``text`` here, and should also restore ``entity_ids`` and, for observations,
+        ``source_memory_ids`` — each field left ``None`` sends recall down a fallback that re-fetches
+        the very memories this just fetched (``entity_map_for_units`` for the first, the
+        ``prefer_observations`` and ``include_chunks`` reads for the second).
+
+        Declared here rather than probed for, because a routing store generates its delegators from
+        this interface: a method that exists only on a concrete store is unreachable in a cloud
+        deployment, and the call silently does nothing. That has cost three optimisations already.
+        """
+        return None
+
+    async def count_memories_many(self, *, bank_ids: "list[str]", strong: bool = False) -> "dict[str, dict[str, int]]":
+        """Per-bank fact counts for MANY banks — ``{bank_id: {fact_type: count}}``.
+
+        A bank absent from the result has nothing to count, so one unknown bank cannot fail a page.
+
+        Declared here for the same reason as :meth:`get_chunk_texts`: a bank list wants a count for
+        every bank on the page, and the per-bank shape makes that a round-trip per bank. A store
+        that can answer them together overrides this; the default is the per-bank loop, which is
+        correct everywhere and merely saves nothing.
+
+        ``strong`` asks for read-your-writes. A store whose counts lag (because they come from a
+        periodically-refreshed index rather than a live read) may answer the default form from that
+        lagging view; the loop below ignores the flag because a per-bank count is already live.
+        """
+        out: dict[str, dict[str, int]] = {}
+        for bank_id in bank_ids:
+            counts = await self.count_memories(conn=None, fq_table=None, bank_id=bank_id)
+            if counts:
+                out[bank_id] = counts
+        return out
+
+    async def last_write_at_many(self, *, bank_ids: "list[str]") -> "dict[str, datetime]":
+        """When each bank was last written — ``{bank_id: datetime}``, for many banks at once.
+
+        The bank list is ORDERED by this. Postgres derives it with ``MAX`` over live
+        ``documents`` / ``memory_units`` rows, which a store owning those rows leaves empty, so
+        without an answer here such a bank's ordering silently degenerates to created-at.
+
+        Empty by default: the SQL path already has the columns and does not need this, and a store
+        that cannot answer should say nothing rather than guess. **A bank absent from the result
+        keeps whatever the caller already had — absent means "unknown", never "the epoch".**
+        """
+        return {}
+
+    async def last_document_at_many(self, *, bank_ids: "list[str]") -> "dict[str, datetime]":
+        """When each bank last INGESTED a new document — ``{bank_id: datetime}``.
+
+        Not the same question as :meth:`last_write_at_many`: re-retaining an existing document is a
+        write but not a new document, and the bank list shows the two separately. Empty by default,
+        with the same rule — a bank absent from the result keeps whatever the caller had.
+        """
+        return {}
+
+    async def get_chunk_texts(self, *, bank_id: str, refs: "list[tuple[str, int]]") -> "list[str | None]":
+        """Many chunks' text at once — ``refs`` is ``(document_id, chunk_index)``.
+
+        Returns one entry per ref, in the SAME order, ``None`` where the chunk does not exist.
+
+        Declared here, not left to the store, because a chunk-hydrated recall wants one chunk from
+        each of many documents and the per-chunk shape makes that a round-trip per document. A store
+        that can fetch them together overrides this; the default below is correct for every store and
+        simply does not save anything.
+
+        **It has to be on this interface to be reachable.** A routing store generates its delegators
+        from the methods declared here, so a fetch-many that exists only on a concrete store is
+        invisible through the router — the call silently falls back and the optimisation is dead code
+        in exactly the deployment it was written for. That has now happened twice; see
+        ``store_owned_for``.
+        """
+        return [await self.get_chunk_text(bank_id=bank_id, document_id=doc_id, chunk_index=idx) for doc_id, idx in refs]
 
     async def list_chunk_texts(self, *, bank_id: str, document_id: str) -> "list[str] | None":
         """Every chunk's text in order, or ``None`` if the document does not exist."""
@@ -585,7 +1201,20 @@ class MemoriesExtension(Extension, ABC):
         """How many chunks a document has (0 if it does not exist)."""
         raise NotImplementedError
 
-    async def delete_document_record(self, *, bank_id: str, document_id: str, txn: "MemoryTxn | None" = None) -> None:
+    async def set_document_tags(self, *, bank_id: str, document_id: str, tags: "list[str]") -> None:
+        """Replace a document RECORD's tags, leaving its bodies alone.
+
+        Only a ``store_owned`` store implements this; a Postgres store updates its own
+        ``documents`` row instead, so the engine calls it only for a store-owned bank. It exists
+        because re-tagging must not mean re-uploading: the record already carries every body's
+        content hash, so a store can rewrite the record with new tags and move no bytes.
+
+        Without it, `update_document(tags=...)` changed the memories' tags and left the document
+        itself showing the old ones, which is the sort of half-applied edit that only surfaces in
+        the browser a week later."""
+        raise NotImplementedError
+
+    async def delete_document_record(self, *, bank_id: str, document_id: str) -> None:
         """Delete a document's RECORD and bodies from the document store — an EXPLICIT document
         deletion, distinct from :meth:`delete_document` (which drops only the document's facts on
         re-ingest and must not touch the record, since the replacement's ``put_document`` overwrites
@@ -598,18 +1227,18 @@ class MemoriesExtension(Extension, ABC):
         A no-op for Postgres, where deleting the bank cascades to its rows.
         """
 
-    async def delete_observations(self, *, conn, fq_table, bank_id: str, txn=None) -> None:
+    async def delete_observations(self, *, conn, fq_table, bank_id: str) -> None:
         """Remove every observation in a bank, leaving the facts behind it."""
         raise NotImplementedError
 
-    async def update_memories(self, bank_id: str, patches: list[MemoryPatch], txn=None) -> None:
+    async def update_memories(self, bank_id: str, patches: list[MemoryPatch]) -> None:
         """Apply partial updates. Only the fields set on each patch change."""
         raise NotImplementedError
 
-    # ------------------------------------------------------------------ recall arms
+    # ------------------------------------------------------------------ recall
 
     @abstractmethod
-    async def search(
+    async def recall_unified(
         self,
         *,
         conn,
@@ -618,6 +1247,8 @@ class MemoriesExtension(Extension, ABC):
         query_embedding: str,
         query_text: str,
         limit: int,
+        temporal_window: "tuple[datetime, datetime] | None" = None,
+        temporal_semantic_threshold: float = 0.1,
         tags: list[str] | None = None,
         tags_match: str = "any",
         tag_groups: list | None = None,
@@ -625,41 +1256,53 @@ class MemoriesExtension(Extension, ABC):
         created_before: datetime | None = None,
         min_semantic: float | None = None,
         min_keyword: float | None = None,
-        graph_seed_min_similarity: float | None = None,
-    ) -> "dict[str, SemanticBm25Result]":
-        """Run the semantic + BM25 arms.
+        enable_text_search: bool = True,
+        enable_graph: bool = True,
+    ) -> "dict[str, RecallArms]":
+        """Run ALL retrieval arms for every fact_type — the whole recall interface, in one call.
 
-        Returns ``{fact_type: SemanticBm25Result(semantic, bm25, graph_seeds)}`` of
-        ``RetrievalResult`` — the contract ``retrieve_semantic_bm25_combined`` has.
-        ``graph_seed_min_similarity`` restricts which semantic hits seed the graph
-        arm (Postgres populates ``graph_seeds``; a store with its own graph arm
-        leaves it ``None``).
+        Returns ``{fact_type: RecallArms(semantic, bm25, graph, temporal)}`` of
+        ``RetrievalResult``: the four per-arm candidate lists, unfused (RRF/rerank happen
+        downstream, unchanged). ``temporal`` is empty unless ``temporal_window`` is given;
+        ``bm25`` is empty when ``enable_text_search`` is False, and ``graph`` when
+        ``enable_graph`` is False.
+
+        This is the ONE method recall goes through — how a store answers the arms is entirely its
+        own business. Postgres runs the split per-arm SQL orchestration behind this (a dense+BM25
+        UNION query, a graph retriever per type, a temporal query); a store that owns its index
+        answers every arm from a single query with no per-arm round-trips. Either way the caller
+        sees only this method and its per-arm result.
+
+        ``conn`` is the store's connection handle for the call. Postgres treats it as the pool it
+        acquires its own connections from and runs the graph arm on; a store that reaches its index
+        another way (e.g. over the network) ignores it.
         """
 
-    @abstractmethod
-    async def temporal_search(
-        self,
-        *,
-        conn,
-        bank_id: str,
-        fact_types: list[str],
-        query_embedding: str,
-        start_date: datetime,
-        end_date: datetime,
-        limit: int,
-        semantic_threshold: float = 0.1,
-        tags: list[str] | None = None,
-        tags_match: str = "any",
-        tag_groups: list | None = None,
-        created_after: datetime | None = None,
-        created_before: datetime | None = None,
-    ) -> dict[str, list]:
-        """Run the temporal arm over ``[start_date, end_date]``.
+    async def full_recall(self, request: "FullRecallRequest") -> "RecallResult | None":
+        """Answer a WHOLE recall inside the store, or decline by returning ``None``.
 
-        Returns ``{fact_type: [RetrievalResult]}``: entry points whose effective
-        time — ``COALESCE(occurred_start, mentioned_at, occurred_end)`` — falls in
-        the window, spread one hop and scored by proximity to it.
+        The default is ``None``: a store that does not implement this simply never claims a
+        recall, and the engine runs its own pipeline exactly as before. That is what makes this
+        safe to add — it is an opt-in shortcut, not a fork in the interface.
+
+        A store that DOES claim one is taking on everything the engine does after
+        :meth:`recall_unified`: fusion, the candidate trim, reranking, the recency / temporal /
+        strategy boosts, the ``min_scores`` floors, the ``max_tokens`` budget, and the entity and
+        chunk enrichment. It must return the same shape the engine would have — the results in
+        rank order, with their scores — because the caller cannot tell which path produced its
+        answer and must not need to.
+
+        **Declining is normal and must stay cheap.** A store should return ``None`` for any
+        request shape it does not implement rather than approximating it: a recall answered
+        almost-right is far worse than one answered by the path that has always answered it. The
+        engine falls through with no extra round-trip, since nothing has been read yet.
+
+        The reason this exists is round-trips. On a store that lives across the network, the
+        engine's pipeline is four calls — the arms, then hydration, then chunks, then entities —
+        and it moves every candidate's text out of the store to decide which handful to keep.
+        A store that owns its index can do all of it where the data already is.
         """
+        return None
 
     def graph_retriever(self) -> "GraphRetriever | None":
         """The retriever backing the graph arm, or ``None`` to use the configured one.
@@ -802,12 +1445,14 @@ class MemoriesExtension(Extension, ABC):
         unit_ids: list[str],
         when: datetime | None,
         failed: bool = False,
-        txn: "MemoryTxn | None" = None,
     ) -> None:
         """Stamp (or clear, with ``when=None``) the consolidated marker on sources.
 
         ``failed`` stamps the failure marker instead, so a memory the LLM could
         not consolidate is not retried forever.
+
+        This is scheduler state, not an edit: it must leave the memory's
+        ``updated_at`` alone (see :data:`META_UPDATED_AT`).
         """
 
     @abstractmethod
@@ -836,6 +1481,19 @@ class MemoriesExtension(Extension, ABC):
         """
 
     @abstractmethod
+    async def resolve_entity_names(self, *, conn, fq_table, bank_id: str, entity_ids: list[str]) -> dict[str, str]:
+        """``{entity_id: canonical_name}`` for the given ids, from the ``entities`` registry.
+
+        The label half of :meth:`entity_map_for_units`, split out so a backend that
+        already carries a unit's entity ids on the recalled result can turn those ids
+        into names without re-fetching the memories — recall then builds the entity map
+        from the result's ids plus this one lookup. Bank-scoped, and ids with no registry
+        row are simply absent from the result. The concrete SQL is the store's, next to
+        :meth:`entity_map_for_units`, because the query dialect belongs to the backend,
+        not this interface.
+        """
+
+    @abstractmethod
     async def any_memory_updated_since(
         self,
         *,
@@ -856,6 +1514,54 @@ class MemoriesExtension(Extension, ABC):
         so the same scope that gates a refresh decides whether one is due.
         """
 
+    async def any_memory_updated_since_batch(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        scopes: list[MemoryScopeWatermark],
+    ) -> dict[str, bool]:
+        """:meth:`any_memory_updated_since` for many scopes at once, keyed by ``scope.key``.
+
+        The knowledge tree and the mental-model list both need the answer for
+        every model in a bank on one read, and asking one at a time makes the
+        round-trips, not the scans, the cost. A store that can answer them
+        together should override this; the default is the honest loop, so a
+        store only has to implement the single-scope method to work correctly.
+
+        Duplicate keys are not meaningful — the caller owns the keyspace, and a
+        repeat simply overwrites. An empty ``scopes`` list returns ``{}`` without
+        touching the connection.
+        """
+        return {
+            scope.key: await self.any_memory_updated_since(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                since=scope.since,
+                fact_types=scope.fact_types,
+                tags=scope.tags,
+                tags_match=scope.tags_match,
+                tag_groups=scope.tag_groups,
+            )
+            for scope in scopes
+        }
+
+    async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
+        """Which of ``unit_ids`` still exist among the bank's live memories.
+
+        Backs the retraction check behind the mental-model refresh: a document's
+        grounding is a set of ids on ``reflect_response.based_on``, and one that no
+        longer answers here has been retracted. Invalidated, deleted, and swept-as-
+        stale are deliberately not distinguished — from the document's point of view
+        all three mean the same thing, so this asks only whether the row is live.
+
+        Ids that are not memory ids (or do not parse) read as absent rather than
+        raising, so callers may pass a mixed set.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ count surfaces
     #
     # The stats/admin views that aggregate memories by a key: consolidation
@@ -875,7 +1581,7 @@ class MemoriesExtension(Extension, ABC):
         ``last_memory_write_at`` is the newest write time (``updated_at``) across
         the bank's memories, or None for an empty bank. It is the bank-wide
         counterpart of :meth:`any_memory_updated_since`: a mental model whose
-        ``last_refreshed_at`` is at or after it cannot be stale, whatever its
+        ``last_memory_seen_at`` is at or after it cannot be stale, whatever its
         scope — which is how the stats and knowledge-tree surfaces answer "is
         this up to date" for many models without a scoped scan each.
         """
@@ -929,7 +1635,7 @@ class MemoriesExtension(Extension, ABC):
         ops,
         fq_table,
         bank_id: str,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         consolidation_state: str | None = None,
         state: str | None = None,
@@ -970,9 +1676,7 @@ class MemoriesExtension(Extension, ABC):
         """
 
     @abstractmethod
-    async def invalidate_memory(
-        self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None, txn=None
-    ) -> bool:
+    async def invalidate_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> bool:
         """Move a live memory into the archive, out of every recall surface.
 
         Returns ``True`` if it was live and is now archived, ``False`` if there was
@@ -986,21 +1690,34 @@ class MemoriesExtension(Extension, ABC):
         """Update the recorded reason on a memory that is already archived."""
 
     @abstractmethod
-    async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, txn=None) -> StoredMemory | None:
+    async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
         """Move an archived memory back to the live set, restoring its entity postings.
 
         Returns the restored memory (so the caller can recompute its embedding —
         the archive need not keep one), or ``None`` if it was not archived.
+
+        Bringing a memory back is an edit, so this stamps ``updated_at`` even though
+        it also resets the consolidation markers (see :data:`META_UPDATED_AT`).
         """
 
     @abstractmethod
-    async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding, txn=None) -> None:
-        """Write a memory's embedding, recomputed by the caller.
+    async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
+        """Write a memory's embedding, recomputed by the caller, leaving its fields as they are.
 
         Its own method because the general :meth:`update_memories` is a no-op for
-        the store whose write is the row itself — reverting or editing a memory has
-        to put a freshly computed vector back on it, so this is a real write for
-        both. ``embedding`` is a float list or the pgvector literal.
+        the store whose write is the row itself — restoring an invalidated memory has
+        to put a freshly computed vector back on it, so this is a real write.
+        ``embedding`` is a float list or the pgvector literal.
+
+        A curation edit no longer arrives here. It used to call this straight after
+        :meth:`apply_edit` — a second write of the row that call had just written, which
+        for a store whose write is a durable append is the whole cost of the edit again —
+        so the vector now rides the edit itself as ``apply_edit(embedding=...)``. What is
+        left for this method is writing a vector when no field is changing alongside it.
+
+        The vector is part of the memory, so this stamps ``updated_at`` itself rather
+        than leaning on a statement a caller happens to pair it with
+        (see :data:`META_UPDATED_AT`).
         """
 
     async def clear_unit_entities(self, *, conn, fq_table, bank_id: str, unit_id: str) -> None:
@@ -1025,20 +1742,45 @@ class MemoriesExtension(Extension, ABC):
         event_date,
         mentioned_at,
         entity_ids: list[str] | None,
-        txn=None,
+        entity_names: list[str] | None = None,
+        embedding=None,
+        current_fact_type: str | None = None,
     ) -> None:
         """Apply a curation field edit to a live memory.
 
         Writes the new text / context / fact_type / occurred window, resets the
         consolidation markers (the memory re-consolidates) and stamps the edit
-        time, and drops the memory's derived links (they are recomputed). The
-        embedding is *not* written here — the caller re-embeds from the new fields
-        and calls :meth:`set_memory_embedding` after.
+        time, and drops the memory's derived links (they are recomputed).
 
-        ``entity_ids`` is the resolved entity set the memory should now carry; a
-        store that keeps them on the memory writes them here, one that keeps them
-        in a join table has already re-linked them and ignores this. ``None`` means
-        the entity set was not part of this edit.
+        ``embedding`` is the vector the caller re-embedded from the new fields, and
+        writing it is **part of applying the edit** — an implementation writes it
+        alongside the fields above rather than leaving it for a following
+        :meth:`set_memory_embedding`. Where a write is a durable append rather than
+        a row update, a separate call is a second write of the row this one just
+        wrote and doubles what an edit costs. ``None`` leaves the stored vector
+        alone. (:meth:`set_memory_embedding` remains for the paths that write a
+        vector without editing fields, such as restoring an invalidated memory.)
+
+        ``current_fact_type`` is the memory's fact_type BEFORE this edit, which the
+        caller has just read under this transaction. A fact-type change is the one
+        part of an edit that some stores cannot apply as a partial update, and
+        discovering it here would cost a read the caller has already paid for. It
+        may be ``None``, from a caller that does not have it.
+
+        The new entity set for the memory is supplied one of two ways, and a store
+        uses whichever fits how it keeps its registry:
+
+        * ``entity_names`` — the raw names the edit resolved to. A store that owns
+          its entity registry resolves + mints these against its OWN registry
+          (exactly as its :meth:`retain` does) and rewrites the memory's entity
+          ids from the result, so a brand-new entity created by an edit lands in
+          that registry. When it is not ``None`` it is the authoritative set and
+          ``entity_ids`` is ignored.
+        * ``entity_ids`` — the already-resolved set, for a store whose registry is
+          the host's SQL (the host minted them and, for a join-table store, has
+          already re-linked them, so it ignores this).
+
+        Both ``None`` means the entity set was not part of this edit.
         """
         raise NotImplementedError
 
@@ -1088,11 +1830,72 @@ class MemoriesExtension(Extension, ABC):
     async def graph_direct_links(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[dict[str, Any]]:
         """Memory-to-memory edges among ``unit_ids`` for the graph view."""
 
+    async def graph_view(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        fact_type: "str | list[str] | None" = None,
+        search_query: str | None = None,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: str = "all_strict",
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """Everything one graph render reads, in one pass:
+        ``{"units", "total", "links", "entity_rows"}``.
+
+        The three questions are about ONE set of memories — which are visible, how they link, and
+        what they mention — and against a store that keeps memories outside SQL they are all
+        answered by the same records. Asked separately, the visible set is read, then read again to
+        pick its edges off, then a third time for its entity ids. Asked together, once.
+
+        This default composes the parts, which is right where they really are different queries
+        (SQL joins different tables per question). A store that would re-read overrides it.
+
+        ``entity_rows`` covers the units AND their source memories, because an observation borrows
+        its sources' entities for the render.
+        """
+        page = await self.graph_units(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            fact_type=fact_type,
+            search_query=search_query,
+            document_id=document_id,
+            chunk_id=chunk_id,
+            tags=tags,
+            tags_match=tags_match,
+            limit=limit,
+        )
+        units = page["units"]
+        ids = [str(row["id"]) for row in units]
+        sources = sorted({str(s) for row in units for s in (row["source_memory_ids"] or [])})
+        links, entity_rows = await self.graph_links_and_entities(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=ids + sources
+        )
+        return {"units": units, "total": page["total"], "links": links, "entity_rows": entity_rows}
+
+    async def graph_links_and_entities(
+        self, *, conn, fq_table, bank_id: str, unit_ids: list[str]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """``(direct_links, entity_rows)`` for the same ``unit_ids``, in one pass.
+
+        The graph view asks both questions about exactly one set of memories, and a store that
+        keeps memories outside SQL answers both from the same records — so asking separately reads
+        the whole set twice for a single render. This default keeps that shape for stores where the
+        two really are different queries (SQL joins different tables); a store that would re-read
+        overrides it and reads once.
+        """
+        links = await self.graph_direct_links(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        entities = await self.graph_entity_rows(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return links, entities
+
     # ------------------------------------------------------------------ observations
 
-    async def upsert_observation(
-        self, *, conn, bank_id: str, record: FactRecord, txn: "MemoryTxn | None" = None
-    ) -> None:
+    async def upsert_observation(self, *, conn, bank_id: str, record: FactRecord) -> None:
         """Write an observation, replacing any earlier one with the same id."""
         raise NotImplementedError
 
@@ -1118,7 +1921,14 @@ class MemoriesExtension(Extension, ABC):
     # join table to sweep, so those passes are no-ops for it.
 
     async def record_unit_entities(
-        self, *, conn, ops, fq_table, bank_id: str | None = None, unit_ids: list[Any], entity_ids: list[Any]
+        self,
+        *,
+        conn,
+        ops,
+        fq_table,
+        bank_id: str | None = None,
+        unit_ids: list[Any],
+        entity_ids: list[Any],
     ) -> None:
         """Record the unit→entity postings for a batch of memories.
 
@@ -1129,6 +1939,10 @@ class MemoriesExtension(Extension, ABC):
         the memory (rather than in a global join table) needs to know which
         namespace the units live in — the Postgres join is keyed by global unit id
         and ignores it.
+
+        For a store that keeps the posting ON the memory this call re-writes rows
+        an earlier :meth:`insert_facts` created, so it must be idempotent: it is
+        reached again whenever a retain re-resolves the same batch's entities.
         """
 
     async def enqueue_relink_victims(
@@ -1143,17 +1957,28 @@ class MemoriesExtension(Extension, ABC):
         """
         return 0
 
-    async def relink_pass(self, *, backend, fq_table, bank_id: str, config) -> dict:
-        """Top up links for queued victims. ``{}`` when there is nothing to relink."""
-        return {}
+    async def relink_pass(
+        self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None
+    ) -> "RelinkPassResult":
+        """Top up links for queued victims. All-zero when there is nothing to relink."""
+        return RelinkPassResult()
 
-    async def prune_orphan_entities(self, *, conn, fq_table, bank_id: str) -> int:
-        """Delete `entities` rows no live memory references. Returns the count."""
+    async def enqueue_entity_prune_candidates(self, *, conn, fq_table, bank_id: str, affected_unit_ids: list) -> int:
+        """Queue the entities ``affected_unit_ids`` reference as prune candidates.
+
+        Zero for a store that never wrote `unit_entities`: it has no entity
+        postings to lose, so nothing can become an orphan.
+        """
         return 0
 
-    async def prune_stale_cooccurrences(self, *, conn, fq_table, bank_id: str) -> int:
-        """Delete co-occurrence rows whose witnessing memories are all gone."""
-        return 0
+    async def entity_prune_pass(
+        self, *, backend, fq_table, bank_id: str, deadline: float | None = None
+    ) -> "EntityPrunePassResult":
+        """Prune queued candidate entities and the co-occurrences they stranded.
+
+        All-zero when the store keeps no entity postings and so queues nothing.
+        """
+        return EntityPrunePassResult()
 
 
 __all__ = [
@@ -1173,10 +1998,11 @@ __all__ = [
     "META_UPDATED_AT",
     "CausalEdgeRecord",
     "DeletePredicate",
+    "EntityPrunePassResult",
     "FactRecord",
     "MemoriesExtension",
     "MemoryPatch",
-    "MemoryTxn",
+    "RelinkPassResult",
     "ScanPage",
     "StoredMemory",
     "build_fact_records",

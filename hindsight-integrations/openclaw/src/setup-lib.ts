@@ -49,6 +49,7 @@ export type SetupMode = "cloud" | "api" | "embedded";
 
 export const NO_KEY_PROVIDERS: ReadonlySet<string> = new Set([
   "claude-code",
+  "github-copilot",
   "openai-codex",
   "ollama",
 ]);

@@ -131,6 +131,30 @@ def test_parse_members_vertexai_service_account_key(clean_llm_env):
     assert members[0].vertexai_service_account_key == "/keys/sa.json"
 
 
+def test_parse_members_codex_home(clean_llm_env):
+    # An openai-codex member can carry its own credentials directory so a chain
+    # can fail over between two independently authorized ChatGPT profiles.
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "openai-codex")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_CODEX_HOME", "/creds/codex-b")
+    members = _parse_llm_members("")
+    assert members[0].provider == "openai-codex"
+    assert members[0].codex_home == "/creds/codex-b"
+
+
+def test_parse_members_codex_home_per_op_prefix(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_RETAIN_LLM_1_PROVIDER", "openai-codex")
+    clean_llm_env.setenv("HINDSIGHT_API_RETAIN_LLM_1_CODEX_HOME", "/creds/retain-b")
+    retain = _parse_llm_members("RETAIN_")
+    assert retain[0].codex_home == "/creds/retain-b"
+    # Scoped to the prefix; the global chain is unaffected.
+    assert _parse_llm_members("") == []
+
+
+def test_parse_members_without_codex_home_defaults_none(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "ollama")
+    assert _parse_llm_members("")[0].codex_home is None
+
+
 def test_parse_members_litellmrouter_config(clean_llm_env):
     # A litellmrouter member can carry its own router config so a chain can fail
     # over between differently-routed LiteLLM routers.
@@ -396,6 +420,130 @@ def test_member_to_llm_passes_vertexai_service_account_key(clean_llm_env, monkey
     # The member's key path was loaded, and the credentials reached the SDK client.
     assert captured["key_path"] == "/keys/member-sa.json"
     assert captured["credentials"] is sentinel_creds
+
+
+# ── codex member build path (_member_to_llm) ────────────────────────────────────
+
+
+def _write_codex_auth(auth_dir, access_token):
+    """Write a minimal chatgpt-mode ``auth.json`` under ``auth_dir``."""
+    import json
+
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    (auth_dir / "auth.json").write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": access_token,
+                    "refresh_token": "rt",
+                    "account_id": "acct",
+                },
+            }
+        )
+    )
+    return auth_dir
+
+
+def test_member_to_llm_passes_codex_home(clean_llm_env, tmp_path, monkeypatch):
+    """A codex member's own ``CODEX_HOME`` reaches the built provider.
+
+    The process-wide ``CODEX_HOME`` points at a different profile, so this also
+    proves the member's value wins over the ambient environment.
+    """
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import _member_to_llm
+
+    ambient = _write_codex_auth(tmp_path / "ambient", "at-ambient")
+    member_home = _write_codex_auth(tmp_path / "member", "at-member")
+    monkeypatch.setenv("CODEX_HOME", str(ambient))
+    clear_config_cache()
+
+    member = LLMMemberConfig(
+        provider="openai-codex",
+        api_key=None,
+        model="gpt-5-codex",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+        codex_home=str(member_home),
+    )
+    provider = _member_to_llm(member, _empty_config(llm_codex_home=None), _NO_CALL_DEFAULTS)
+
+    assert provider._provider_impl.access_token == "at-member"
+
+
+def test_member_to_llm_codex_home_falls_back_to_global(clean_llm_env, tmp_path, monkeypatch):
+    """A member with no ``CODEX_HOME`` inherits the primary's configured one."""
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import _member_to_llm
+
+    _write_codex_auth(tmp_path / "ambient", "at-ambient")
+    global_home = _write_codex_auth(tmp_path / "global", "at-global")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient"))
+    clear_config_cache()
+
+    member = LLMMemberConfig(
+        provider="openai-codex",
+        api_key=None,
+        model="gpt-5-codex",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+    )
+    provider = _member_to_llm(member, _empty_config(llm_codex_home=str(global_home)), _NO_CALL_DEFAULTS)
+
+    assert provider._provider_impl.access_token == "at-global"
+
+
+def test_build_llm_codex_chain_spans_two_profiles(clean_llm_env, tmp_path, monkeypatch):
+    """The #3793 use case end to end: a failover chain of two Codex profiles.
+
+    Both members are ``openai-codex``; each resolves its own ``auth.json``, so
+    falling over from a rate-limited profile actually reaches a second account.
+    """
+    from hindsight_api.config import clear_config_cache
+
+    primary_home = _write_codex_auth(tmp_path / "primary", "at-primary")
+    fallback_home = _write_codex_auth(tmp_path / "fallback", "at-fallback")
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    clear_config_cache()
+
+    fallback = LLMMemberConfig(
+        provider="openai-codex",
+        api_key=None,
+        model="gpt-5-codex",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+        codex_home=str(fallback_home),
+    )
+    config = _empty_config(
+        llm_codex_home=str(primary_home),
+        llm_members=[fallback],
+        llm_strategy=LLMStrategyConfig(mode="failover"),
+    )
+    base = LLMProvider(
+        provider="openai-codex",
+        api_key="",
+        base_url="",
+        model="gpt-5-codex",
+        codex_home=config.llm_codex_home,
+    )
+
+    chain = _build_llm(base, config, "", _NO_CALL_DEFAULTS)
+
+    assert isinstance(chain, MultiLLMProvider)
+    assert [m._provider_impl.access_token for m in chain.members] == ["at-primary", "at-fallback"]
 
 
 # ── litellmrouter member build path (_member_to_llm) ─────────────────────────────

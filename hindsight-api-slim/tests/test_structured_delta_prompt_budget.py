@@ -5,7 +5,7 @@ from hindsight_api.engine.reflect.prompts import (
     _fit_structured_delta_prompt_parts,
     build_structured_delta_prompt,
 )
-from hindsight_api.engine.reflect.tokenization import count_cl100k_tokens
+from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
 
 
 def test_build_structured_delta_prompt_truncates_huge_document():
@@ -21,7 +21,7 @@ def test_build_structured_delta_prompt_truncates_huge_document():
         source_query="topic?",
         max_input_tokens=4000,
     )
-    total = count_cl100k_tokens(STRUCTURED_DELTA_SYSTEM_PROMPT) + count_cl100k_tokens(prompt)
+    total = count_prompt_tokens(STRUCTURED_DELTA_SYSTEM_PROMPT) + count_prompt_tokens(prompt)
     assert total < 12_000
     assert "truncated to fit the model" in prompt
 

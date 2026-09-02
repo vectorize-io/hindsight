@@ -159,6 +159,32 @@ describe("deriveBankId", () => {
       expect(deriveBankId(config, "/srv/git/myrepo.git")).toBe("myrepo.git");
     });
 
+    it("uses the hub name for a hidden bare repository shared by worktrees", () => {
+      mockExec.mockImplementation((_, args) => {
+        if (args.includes("--git-common-dir")) return "/home/user/myrepo/.bare\n" as never;
+        if (args.includes("--is-bare-repository")) return "true\n" as never;
+        throw new Error("unexpected git command");
+      });
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["gitProject"],
+      });
+      expect(deriveBankId(config, "/home/user/myrepo/main")).toBe("myrepo");
+    });
+
+    it("keeps a hidden non-bare common directory unchanged", () => {
+      mockExec.mockImplementation((_, args) => {
+        if (args.includes("--git-common-dir")) return "/home/user/project/.git-bare\n" as never;
+        if (args.includes("--is-bare-repository")) return "false\n" as never;
+        throw new Error("unexpected git command");
+      });
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["gitProject"],
+      });
+      expect(deriveBankId(config, "/home/user/project")).toBe(".git-bare");
+    });
+
     it("falls back to directory basename when git is unavailable or directory is not a repo", () => {
       mockExec.mockImplementationOnce(() => {
         throw new Error("git: command not found");

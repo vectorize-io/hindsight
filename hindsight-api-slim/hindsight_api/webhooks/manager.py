@@ -52,8 +52,26 @@ class WebhookManager:
         self._tenant_extension = tenant_extension
 
     def _sign_payload(self, secret: str, payload_bytes: bytes) -> str:
-        """Compute HMAC-SHA256 signature for a payload."""
+        """Compute the body-only HMAC-SHA256 signature for a payload.
+
+        Returns ``sha256=<hex>`` over the exact bytes sent on the wire -- the same
+        construction GitHub uses, which is why it ships under both
+        ``X-Hindsight-Signature`` and ``X-Hub-Signature-256``.
+        """
         return "sha256=" + hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
+
+    def _sign_payload_v2(self, secret: str, payload_bytes: bytes, timestamp: int) -> str:
+        """Compute a timestamped HMAC-SHA256 signature for a payload.
+
+        Returns ``t=<unix_seconds>,v1=<hex>`` where the MAC covers
+        ``<timestamp>.<raw body>``. The timestamp is inside the signed string, so a
+        receiver can trust it and reject deliveries outside a tolerance window --
+        something the body-only signature cannot express, which leaves a captured
+        delivery replayable forever.
+        """
+        signed = f"{timestamp}.".encode() + payload_bytes
+        mac = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+        return f"t={timestamp},v1={mac}"
 
     async def fire_event(self, event: WebhookEvent, schema: str | None = None) -> None:
         """

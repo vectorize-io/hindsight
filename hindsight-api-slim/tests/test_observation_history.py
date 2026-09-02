@@ -31,6 +31,9 @@ def _entry(i: int) -> _ObservationHistorySnapshot:
 
 @pytest.mark.asyncio
 class TestObservationHistory:
+    # Seeds the observation with a raw INSERT INTO memory_units, which a store-owned bank leaves
+    # empty — the store has no such observation, so the engine correctly returns None.
+    @pytest.mark.memory_backend_incompatible
     async def test_append_read_and_cap(
         self, memory: MemoryEngine, request_context: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -16,11 +16,7 @@ struct HealthResponse {
 }
 
 /// Check API health
-pub fn health(
-    client: &ApiClient,
-    verbose: bool,
-    output_format: OutputFormat,
-) -> Result<()> {
+pub fn health(client: &ApiClient, verbose: bool, output_format: OutputFormat) -> Result<()> {
     let spinner = if output_format == OutputFormat::Pretty {
         Some(ui::create_spinner("Checking health..."))
     } else {
@@ -36,8 +32,8 @@ pub fn health(
     match response {
         Ok(value) => {
             if output_format == OutputFormat::Pretty {
-                let result: HealthResponse = serde_json::from_value(value.clone())
-                    .unwrap_or(HealthResponse {
+                let result: HealthResponse =
+                    serde_json::from_value(value.clone()).unwrap_or(HealthResponse {
                         status: "unknown".to_string(),
                         database: None,
                         version: None,
@@ -76,11 +72,7 @@ pub fn health(
 }
 
 /// Get API version information
-pub fn version(
-    client: &ApiClient,
-    verbose: bool,
-    output_format: OutputFormat,
-) -> Result<()> {
+pub fn version(client: &ApiClient, verbose: bool, output_format: OutputFormat) -> Result<()> {
     let spinner = if output_format == OutputFormat::Pretty {
         Some(ui::create_spinner("Fetching version..."))
     } else {
@@ -101,9 +93,33 @@ pub fn version(
 
                 println!();
                 println!("  {}", ui::dim("Features:"));
-                println!("    {} MCP Server: {}", ui::gradient_start("•"), if result.features.mcp { "enabled" } else { "disabled" });
-                println!("    {} Observations: {}", ui::gradient_start("•"), if result.features.observations { "enabled" } else { "disabled" });
-                println!("    {} Background Worker: {}", ui::gradient_start("•"), if result.features.worker { "enabled" } else { "disabled" });
+                println!(
+                    "    {} MCP Server: {}",
+                    ui::gradient_start("•"),
+                    if result.features.mcp {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                println!(
+                    "    {} Observations: {}",
+                    ui::gradient_start("•"),
+                    if result.features.observations {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                println!(
+                    "    {} Background Worker: {}",
+                    ui::gradient_start("•"),
+                    if result.features.worker {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
                 println!();
             } else {
                 output::print_output(&result, output_format)?;
@@ -115,11 +131,7 @@ pub fn version(
 }
 
 /// Get Prometheus metrics
-pub fn metrics(
-    client: &ApiClient,
-    verbose: bool,
-    output_format: OutputFormat,
-) -> Result<()> {
+pub fn metrics(client: &ApiClient, verbose: bool, output_format: OutputFormat) -> Result<()> {
     let spinner = if output_format == OutputFormat::Pretty {
         Some(ui::create_spinner("Fetching metrics..."))
     } else {

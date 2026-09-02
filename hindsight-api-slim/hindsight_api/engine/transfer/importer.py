@@ -14,11 +14,13 @@ import json
 import logging
 import uuid
 import zipfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
+from ..db.ops_postgresql import pg_search_vector_expr
 from ..db_utils import acquire_with_retry
 from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, link_utils, orchestrator
 from ..retain.types import (
@@ -27,6 +29,7 @@ from ..retain.types import (
     ExtractedFact,
     ProcessedFact,
     RetainContent,
+    pack_embedding,
 )
 from ..schema import fq_table
 from .schema import (
@@ -36,6 +39,7 @@ from .schema import (
     BankRowsJSONEncoding,
     TransferDocument,
     TransferFact,
+    TransferKnowledgePage,
     TransferManifest,
     TransferObservation,
 )
@@ -44,6 +48,13 @@ logger = logging.getLogger(__name__)
 
 OnConflict = Literal["skip", "replace", "new-id"]
 _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
+
+#: Texts per embedding call for the import phases that are sized by the *bank* rather
+#: than by a document: observations and mental models arrive as one list covering the
+#: whole archive. Slicing here, above the provider, bounds peak memory for every
+#: provider — including in-process ones with nothing downstream to slice for them
+#: (issue #3891). Retain bounds itself the same way (#3763).
+_EMBED_BATCH_SIZE = 128
 
 
 @dataclass
@@ -71,12 +82,20 @@ class ImportResult:
     observations_imported: int = 0
     # Observations dropped because some source fact was not imported in this run.
     observations_skipped: int = 0
+    mental_models_imported: int = 0
+    knowledge_pages_imported: int = 0
+    #: Pages pushed into the STORE's index. Zero when Postgres owns it (the column writes feed it
+    #: instead), so a nonzero value is proof the store-owned path ran.
+    knowledge_pages_indexed: int = 0
     skipped_document_ids: list[str] = field(default_factory=list)
     # Original id -> freshly generated id, for documents imported under "new-id".
     remapped_document_ids: dict[str, str] = field(default_factory=dict)
     # Per-document outcomes, for the engine's post-retain hook. Not serialized
     # into operation result_metadata (the worker handler writes counts only).
     imported_documents: list[ImportedDocument] = field(default_factory=list)
+    # Source memory-unit id -> regenerated target id. Used by whole-bank import
+    # to repair mental-model evidence after the replayed facts are inserted.
+    remapped_unit_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -85,6 +104,7 @@ class _ObservationOutcome:
 
     imported: int = 0
     skipped: int = 0
+    remapped_unit_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -102,14 +122,40 @@ class ParsedArchive:
     manifest: TransferManifest
     documents: list[TransferDocument]
     observations: list[TransferObservation] = field(default_factory=list)
+    mental_models: list[dict] = field(default_factory=list)
+    knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
+
+
+def _open_archive(archive_bytes: bytes, *, produced_by: str) -> zipfile.ZipFile:
+    """Open a transfer archive, rejecting non-archives as caller errors.
+
+    Both failure modes here are a wrong file, not a server fault, so they must
+    surface as ``ValueError`` (the API maps that to a 400 with the message) —
+    a bare ``zipfile.BadZipFile`` or a missing manifest would otherwise escape
+    as an opaque 500 or an unexplained "manifest.json is missing".
+
+    Args:
+        archive_bytes: The uploaded bytes.
+        produced_by: How the caller obtains a valid archive, named in the error.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(archive_bytes), "r")
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"Invalid transfer archive: the uploaded file is not a readable .zip ({e})") from e
+    if "manifest.json" not in set(zf.namelist()):
+        zf.close()
+        raise ValueError(
+            f"Invalid transfer archive: manifest.json is missing. This endpoint only accepts a .zip produced "
+            f"by {produced_by} — it is not a way to upload a zip of ordinary files (PDF, text, Markdown). "
+            f"Use the file upload / retain endpoint for those."
+        )
+    return zf
 
 
 def parse_archive(archive_bytes: bytes) -> ParsedArchive:
     """Parse and validate a transfer ZIP archive produced by ``export_documents``."""
-    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
+    with _open_archive(archive_bytes, produced_by="the document export endpoint") as zf:
         names = set(zf.namelist())
-        if "manifest.json" not in names:
-            raise ValueError("Invalid transfer archive: manifest.json is missing")
         manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
         if manifest.schema_version != SCHEMA_VERSION:
             raise ValueError(
@@ -121,7 +167,19 @@ def parse_archive(archive_bytes: bytes) -> ParsedArchive:
         observations: list[TransferObservation] = []
         if "observations.json" in names:
             observations = [TransferObservation.model_validate(o) for o in json.loads(zf.read("observations.json"))]
-    return ParsedArchive(manifest=manifest, documents=documents, observations=observations)
+        mental_models = json.loads(zf.read("mental_models.json")) if "mental_models.json" in names else []
+        knowledge_pages = (
+            [TransferKnowledgePage.model_validate(p) for p in json.loads(zf.read("knowledge_pages.json"))]
+            if "knowledge_pages.json" in names
+            else []
+        )
+    return ParsedArchive(
+        manifest=manifest,
+        documents=documents,
+        observations=observations,
+        mental_models=mental_models,
+        knowledge_pages=knowledge_pages,
+    )
 
 
 async def import_documents(
@@ -136,6 +194,7 @@ async def import_documents(
     on_conflict: OnConflict = "skip",
     ops: Any = None,
     outbox_callback_factory: Any = None,
+    restore_bank_scoped_rows: bool = True,
 ) -> ImportResult:
     """Import every document in ``archive_bytes`` into ``bank_id``.
 
@@ -152,6 +211,15 @@ async def import_documents(
             bank — ``skip`` (default), ``replace`` (delete old data and re-import),
             or ``new-id`` (import under a freshly generated id).
         ops: Backend ``DataAccessOps``. Defaults to ``backend.ops``.
+        restore_bank_scoped_rows: Whether to restore the archive's mental models
+            and knowledge pages. True for a documents archive, which merges them
+            into an existing bank. False for a whole-bank restore, which owns
+            those rows: ``import_bank`` carries the same ``mental_models.json``
+            in ``bank_rows``, restores it with the archive's own JSON encoding
+            alongside ``mental_model_history``, and — the reason this switch
+            exists — rewrites the persisted ``based_on`` evidence ids onto the
+            replayed facts first. ``_restore_rows`` is ON CONFLICT DO NOTHING,
+            so a copy inserted here would win and strip that repair (#3833).
 
     Returns:
         An :class:`ImportResult` with per-document counts.
@@ -162,6 +230,14 @@ async def import_documents(
         ops = backend.ops
 
     parsed = parse_archive(archive_bytes)
+    if parsed.knowledge_pages and not parsed.mental_models:
+        raise ValueError("Knowledge Pages require their backing mental models in the transfer archive")
+    # Document transfer merges into an existing target bank. Reuse the logical
+    # mental-model ids, but always pin the carried rows to the destination bank;
+    # otherwise ON CONFLICT can silently match the source-bank row on same-schema
+    # transfers and leave the imported page without a backing model.
+    for row in parsed.mental_models:
+        row["bank_id"] = bank_id
     result = ImportResult()
 
     # (original document_id, fact ordinal) -> freshly inserted unit id. Used to
@@ -201,6 +277,10 @@ async def import_documents(
         )
         for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
             ref_map[(document.id, ordinal)] = unit_id
+        for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
+            source_id = document.facts[ordinal].source_id
+            if source_id is not None:
+                result.remapped_unit_ids[source_id] = unit_id
 
     if parsed.observations:
         outcome = await _import_observations(
@@ -213,16 +293,40 @@ async def import_documents(
         )
         result.observations_imported = outcome.imported
         result.observations_skipped = outcome.skipped
+        result.remapped_unit_ids.update(outcome.remapped_unit_ids)
+
+    if restore_bank_scoped_rows and (parsed.mental_models or parsed.knowledge_pages):
+        mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
+        async with acquire_with_retry(backend) as conn:
+            # Document archives serialize bank-row JSON values directly. Keep
+            # JSON strings as raw JSON here; treating them as decoded values
+            # would encode an object such as trigger_data as a JSON string,
+            # which later makes mental-model listing/tree endpoints fail.
+            result.mental_models_imported = await _restore_rows(
+                conn,
+                "mental_models",
+                parsed.mental_models,
+                bank_rows_json_encoding="serialized",
+            )
+            await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
+            result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
+            # After the tree AND its mental models exist: the index is derived from rows that
+            # must already be there, and is read back from them rather than from the archive.
+            result.knowledge_pages_indexed = await _index_restored_pages(
+                conn, bank_id, parsed.knowledge_pages, mm_embeddings
+            )
 
     logger.info(
         "[transfer] Imported %d document(s), %d fact(s), %d observation(s) into bank %s "
-        "(%d docs skipped, %d observations skipped)",
+        "(%d docs skipped, %d observations skipped, %d mental model(s), %d knowledge page(s))",
         result.documents_imported,
         result.facts_imported,
         result.observations_imported,
         bank_id,
         result.documents_skipped,
         result.observations_skipped,
+        result.mental_models_imported,
+        result.knowledge_pages_imported,
     )
     return result
 
@@ -245,6 +349,10 @@ class BankImportResult:
     observations_imported: int = 0
     mental_models_imported: int = 0
     mental_model_history_imported: int = 0
+    knowledge_pages_imported: int = 0
+    #: Pages pushed into the STORE's index. Zero when Postgres owns it (the column writes feed it
+    #: instead), so a nonzero value is proof the store-owned path ran.
+    knowledge_pages_indexed: int = 0
     directives_imported: int = 0
     webhooks_imported: int = 0
     history_rows_imported: int = 0
@@ -257,16 +365,16 @@ class ParsedBankArchive:
     manifest: TransferManifest
     # table name -> list of verbatim row dicts (banks, mental_models, directives, webhooks)
     bank_rows: dict[str, list[dict]] = field(default_factory=dict)
+    # Typed knowledge-base tree (folders + pages), restored parent-first.
+    knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
     # table name -> rows (audit_log, llm_requests), present only with --include-history
     history_rows: dict[str, list[dict]] = field(default_factory=dict)
 
 
 def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
     """Parse the bank-level sections of a whole-bank archive (``archive_type='bank'``)."""
-    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
+    with _open_archive(archive_bytes, produced_by="the bank export endpoint") as zf:
         names = set(zf.namelist())
-        if "manifest.json" not in names:
-            raise ValueError("Invalid transfer archive: manifest.json is missing")
         manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
         if manifest.archive_type != "bank":
             raise ValueError(
@@ -276,12 +384,20 @@ def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
         for table in ("banks", *_BANK_CHILD_TABLES, *CARRIED_HISTORY_TABLES):
             fname = f"{table}.json"
             bank_rows[table] = json.loads(zf.read(fname)) if fname in names else []
+        # Typed tree — absent on pre-tree archives, which restore with no pages.
+        knowledge_pages: list[TransferKnowledgePage] = []
+        if "knowledge_pages.json" in names:
+            knowledge_pages = [
+                TransferKnowledgePage.model_validate(p) for p in json.loads(zf.read("knowledge_pages.json"))
+            ]
         history_rows: dict[str, list[dict]] = {}
         for table in HISTORY_TABLES:
             fname = f"history/{table}.json"
             if fname in names:
                 history_rows[table] = json.loads(zf.read(fname))
-    return ParsedBankArchive(manifest=manifest, bank_rows=bank_rows, history_rows=history_rows)
+    return ParsedBankArchive(
+        manifest=manifest, bank_rows=bank_rows, knowledge_pages=knowledge_pages, history_rows=history_rows
+    )
 
 
 def _resolve_bank_rows_json_encoding(manifest: TransferManifest) -> BankRowsJSONEncoding:
@@ -348,12 +464,191 @@ async def _restore_rows(
     return inserted
 
 
+async def _embed_in_batches(embeddings_model: Any, texts: list[str]) -> list[list[float]]:
+    """Embed ``texts`` in ``_EMBED_BATCH_SIZE`` slices, preserving input order."""
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+        vectors.extend(
+            await embedding_processing.generate_embeddings_batch(
+                embeddings_model, texts[start : start + _EMBED_BATCH_SIZE]
+            )
+        )
+    return vectors
+
+
+async def _regenerate_mental_model_embeddings(embeddings_model: Any, mm_rows: list[dict]) -> dict[str, list[float]]:
+    """Re-embed each restored mental model with the *target* model.
+
+    Export strips the source embedding (target-derived). Embeds the same
+    ``"{name} {content}"`` text ``create_mental_model`` embeds so a restored model
+    ranks identically to a freshly written one. Runs off-connection (no DB conn is
+    held across the embedding call — see the retain path); returns id -> vector
+    literal for the caller to apply in the restore transaction.
+    """
+    if not mm_rows:
+        return {}
+    texts = [f"{(r.get('name') or '')} {(r.get('content') or '')}" for r in mm_rows]
+    vectors = await _embed_in_batches(embeddings_model, texts)
+    # The vectors themselves, not the ``str(...)`` Postgres wants: a store-owned bank indexes the
+    # same vector, and re-parsing a repr to recover it would be lossy for nothing. The one caller
+    # that needs the literal stringifies at its own INSERT.
+    return {r["id"]: list(v) for r, v in zip(mm_rows, vectors, strict=True)}
+
+
+async def _apply_mental_model_derived_state(
+    conn: Any,
+    bank_id: str,
+    mm_embeddings: dict[str, list[float]],
+    config: Any,
+) -> None:
+    """Write the regenerated embedding (and vchord lexical state) onto restored models.
+
+    ``search_vector`` is rebuilt only for vchord: native's column is GENERATED and
+    already repopulated when the row was inserted, and pg_search / pg_textsearch /
+    pgroonga index the base ``name`` / ``content`` columns directly. Same
+    per-backend expression the live mental-model writes use (``pg_search_vector_expr``).
+    """
+    if not mm_embeddings:
+        return
+    sv_expr = pg_search_vector_expr(
+        config, text_col="name", context_col="content", signals_col=None, native_inline=False
+    )
+    sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
+    for mm_id, vector in mm_embeddings.items():
+        await conn.execute(
+            f"UPDATE {fq_table('mental_models')} SET embedding = $3::vector{sv_clause} WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            mm_id,
+            str(vector),
+        )
+
+
+def _topological_page_order(pages: list[TransferKnowledgePage]) -> list[TransferKnowledgePage]:
+    """Order nodes parents-before-children so the self-referential ``parent_id`` FK
+    always resolves on insert. A node whose parent is absent from the archive (only
+    possible in a corrupt export) or part of a cycle is emitted last so the FK, not
+    a silent drop, surfaces it."""
+    by_id = {p.id: p for p in pages}
+    ordered: list[TransferKnowledgePage] = []
+    placed: set[str] = set()
+    remaining = list(pages)
+    while remaining:
+        ready = [p for p in remaining if p.parent_id is None or p.parent_id not in by_id or p.parent_id in placed]
+        if not ready:
+            # Unresolvable parents (cycle / dangling) — emit the rest as-is.
+            ordered.extend(remaining)
+            break
+        for p in ready:
+            ordered.append(p)
+            placed.add(p.id)
+        ready_ids = {p.id for p in ready}
+        remaining = [p for p in remaining if p.id not in ready_ids]
+    return ordered
+
+
+async def _index_restored_pages(
+    conn: Any,
+    bank_id: str,
+    pages: list[TransferKnowledgePage],
+    mm_embeddings: dict[str, list[float]],
+) -> int:
+    """Push restored pages into the store's search index.
+
+    Restoring a page writes its row and rebuilds the Postgres derived columns. For a bank whose
+    store owns the knowledge index that is the wrong half: search routes to the store, the store
+    was never told these pages exist, and it answers with an empty list rather than an error. The
+    bank reads back perfectly -- tree, bodies, everything -- and is findable by nothing, which is
+    why it survives a restore that looks entirely successful.
+
+    Rows are read back rather than taken from the archive, matching the live write path: both index
+    ``"{name} {content}"``, and a second place assembling that string differently is a second place
+    for the index to disagree with the row it is derived from.
+    """
+    from ..memories import KnowledgePageEntry, get_memories
+
+    store = get_memories()
+    if not store.store_owned_for(bank_id):
+        return 0
+    mm_ids = [p.mental_model_id for p in pages if p.kind == "page" and p.mental_model_id]
+    if not mm_ids:
+        return 0
+
+    rows = await conn.fetch(
+        f"SELECT id, name, content, tags, last_refreshed_at FROM {fq_table('mental_models')} "
+        f"WHERE bank_id = $1 AND id = ANY($2::text[])",
+        bank_id,
+        mm_ids,
+    )
+    entries = [
+        KnowledgePageEntry(
+            page_id=r["id"],
+            index_text=f"{r['name'] or ''} {r['content'] or ''}",
+            # A page whose re-embed produced nothing is still indexed, for text search only:
+            # better findable by its words than findable by nothing.
+            embedding=mm_embeddings.get(r["id"]),
+            tags=list(r["tags"] or []),
+            updated_at=r["last_refreshed_at"],
+        )
+        for r in rows
+    ]
+    if entries:
+        await store.index_knowledge_pages(bank_id, entries)
+    return len(entries)
+
+
+async def _restore_knowledge_pages(conn: Any, bank_id: str, pages: list[TransferKnowledgePage]) -> int:
+    """Restore the knowledge-base tree into ``bank_id`` parents-first.
+
+    IDs, ``parent_id``, ``mental_model_id``, ``managed``, ``sort_order``, name and
+    timestamps are preserved; ``bank_id`` is applied to the target. Pages are
+    restored after their backing mental models (the caller sequences that), and
+    folders before their children (topological order here). ``ON CONFLICT DO
+    NOTHING`` keeps the import idempotent.
+    """
+    if not pages:
+        return 0
+    inserted = 0
+    id_map: dict[str, str] = {}
+    for page in pages:
+        # Knowledge-page ids are globally unique within a schema, unlike the
+        # bank-scoped mental-model ids. A document transfer is a merge, so a
+        # source page can already exist in the target schema; remap only those
+        # collisions and rewrite parent links below.
+        page_id = page.id
+        if await conn.fetchval(
+            f"SELECT 1 FROM {fq_table('knowledge_pages')} WHERE id = $1 AND bank_id <> $2", page_id, bank_id
+        ):
+            page_id = str(uuid.uuid4())
+        id_map[page.id] = page_id
+    for page in _topological_page_order(pages):
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("knowledge_pages")}
+                (id, bank_id, parent_id, kind, name, mental_model_id, sort_order, managed, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, now()), COALESCE($10, now()))
+            ON CONFLICT DO NOTHING
+            """,
+            id_map[page.id],
+            bank_id,
+            id_map.get(page.parent_id) if page.parent_id else None,
+            page.kind,
+            page.name,
+            page.mental_model_id,
+            page.sort_order,
+            page.managed,
+            page.created_at,
+            page.updated_at,
+        )
+        inserted += 1
+    return inserted
+
+
 async def import_bank(
     *,
     backend: Any,
     embeddings_model: Any,
     entity_resolver: Any,
-    config: Any,
+    resolve_config: Callable[[], Awaitable[Any]],
     format_date_fn: Any,
     archive_bytes: bytes,
     target_bank_id: str | None = None,
@@ -372,6 +667,12 @@ async def import_bank(
     for a fresh id. A migration restores *exact* state, so unlike the document
     import it fires no retain webhooks and triggers no consolidation/graph
     maintenance: observations and mental models are restored as exported.
+
+    Takes ``resolve_config`` rather than a resolved config because the only correct
+    moment to resolve one is *inside* this function, after the archive's bank row
+    lands. Before that the target bank does not exist (import refuses to write into
+    an existing one), so any config a caller resolved carries global + tenant values
+    and none of the bank's own — which is exactly the bug in #3236.
     """
     if ops is None:
         ops = backend.ops
@@ -387,6 +688,16 @@ async def import_bank(
             for row in rows:
                 if "bank_id" in row:
                     row["bank_id"] = bank_id
+
+    # `internal_id` is a globally-unique (banks_internal_id_unique) local identifier
+    # used only for per-bank index naming — it is NOT part of the bank's logical
+    # state and nothing in the archive references it. Drop it so the column DEFAULT
+    # (gen_random_uuid) mints a fresh one on insert. Keeping the source value makes
+    # the banks INSERT collide with the source bank on a same-instance re-import,
+    # where `ON CONFLICT DO NOTHING` then silently skips the parent row and every
+    # child (mental_models, …) trips its bank_id foreign key. See #3270.
+    for row in parsed.bank_rows.get("banks", []):
+        row.pop("internal_id", None)
 
     async with acquire_with_retry(backend) as conn:
         # Refuse to import into an existing bank — this restores a whole bank, it
@@ -412,9 +723,23 @@ async def import_bank(
         # exists, so it takes the SELECT branch and skips index creation —
         # leaving the restored bank falling back to the global index +
         # post-filter (slower, under-returning recall). See #2645.
+        #
+        # A no-op when a size threshold is set: entitlement is by size then, and
+        # the restored rows land through the normal import path, where the
+        # maintenance operation picks them up (#3485).
         internal_id = await conn.fetchval(f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
         if internal_id is not None:
             await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+
+    # Only now does the bank row — and with it the archive's own config — exist, so
+    # this is where the config the documents are replayed with has to come from.
+    # Until #3236 the import ran on a config resolved before the restore, which
+    # could not contain the bank's `entity_labels`: every label entity was
+    # classified as a regular one, which both exposed label values to fuzzy merging
+    # (#3187) and left them inside the trigram index that the partial index is
+    # supposed to keep them out of (#3208), so an imported bank silently lost that
+    # fix.
+    config = await resolve_config()
 
     doc_result = await import_documents(
         backend=backend,
@@ -426,6 +751,9 @@ async def import_bank(
         archive_bytes=archive_bytes,
         ops=ops,
         outbox_callback_factory=None,
+        # The bank path restores mental models and knowledge pages itself, below,
+        # after remapping their evidence ids onto the facts just replayed.
+        restore_bank_scoped_rows=False,
     )
 
     result = BankImportResult(
@@ -434,19 +762,44 @@ async def import_bank(
         facts_imported=doc_result.facts_imported,
         observations_imported=doc_result.observations_imported,
     )
+
+    # Facts and observations are replayed with fresh ids, but mental-model rows
+    # keep their ids and are restored verbatim below. Repair their grounding
+    # references before insertion so current and historical based_on data points
+    # at the target bank's units rather than the source bank's units.
+    unit_id_map = doc_result.remapped_unit_ids
+    _remap_mental_model_evidence(parsed.bank_rows.get("mental_models", []), unit_id_map)
+    _remap_mental_model_evidence(parsed.bank_rows.get("mental_model_history", []), unit_id_map)
+
+    # Re-embed restored mental models off-connection (the source embedding was
+    # stripped on export), so no DB connection is held across the embedding call.
+    mm_rows = parsed.bank_rows.get("mental_models", [])
+    mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, mm_rows)
+
     async with acquire_with_retry(backend) as conn:
         result.mental_models_imported = await _restore_rows(
             conn,
             "mental_models",
-            parsed.bank_rows.get("mental_models", []),
+            mm_rows,
             bank_rows_json_encoding=bank_rows_json_encoding,
         )
+        # Apply the regenerated embedding + backend-specific lexical state onto the
+        # restored rows (native search_vector already repopulated on insert).
+        await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
         # Restored after mental_models so the (mental_model_id, bank_id) FK resolves.
         result.mental_model_history_imported = await _restore_rows(
             conn,
             "mental_model_history",
             parsed.bank_rows.get("mental_model_history", []),
             bank_rows_json_encoding=bank_rows_json_encoding,
+        )
+        # Knowledge-base tree after its backing mental models exist (page FK) and
+        # parents-first (self-referential parent_id FK).
+        result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
+        # After the tree AND its mental models exist: the index is derived from rows that
+        # must already be there, and is read back from them rather than from the archive.
+        result.knowledge_pages_indexed = await _index_restored_pages(
+            conn, bank_id, parsed.knowledge_pages, mm_embeddings
         )
         result.directives_imported = await _restore_rows(
             conn,
@@ -471,13 +824,15 @@ async def import_bank(
 
     logger.info(
         "[transfer] Imported bank %s: %d doc(s), %d fact(s), %d observation(s), "
-        "%d mental model(s), %d mm-history row(s), %d directive(s), %d webhook(s), %d history row(s)",
+        "%d mental model(s), %d mm-history row(s), %d knowledge page(s), %d directive(s), "
+        "%d webhook(s), %d history row(s)",
         bank_id,
         result.documents_imported,
         result.facts_imported,
         result.observations_imported,
         result.mental_models_imported,
         result.mental_model_history_imported,
+        result.knowledge_pages_imported,
         result.directives_imported,
         result.webhooks_imported,
         result.history_rows_imported,
@@ -492,12 +847,23 @@ async def _resolve_target_id(backend: Any, bank_id: str, document_id: str, on_co
     ``new-id``, the original id under ``replace`` (the insert path cascades the
     old data away), or ``None`` under ``skip`` when the document already exists.
     """
-    async with acquire_with_retry(backend) as conn:
-        exists = await conn.fetchval(
-            f"SELECT 1 FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-            document_id,
-            bank_id,
-        )
+    # Ask whichever store actually holds the document. A bank whose document store is external
+    # leaves the SQL `documents` table empty, so the query below finds nothing and EVERY conflict
+    # mode goes inert: `skip` re-imports the document it was asked to leave alone, `new-id` keeps
+    # the original id instead of duplicating under a fresh one, and `replace` degenerates to a
+    # plain insert. Silent in all three cases — the import reports success either way.
+    from ..memories import get_memories
+
+    _store = get_memories()
+    if _store.store_owned_for(bank_id):
+        exists = await _store.get_document_record(bank_id=bank_id, document_id=document_id) is not None
+    else:
+        async with acquire_with_retry(backend) as conn:
+            exists = await conn.fetchval(
+                f"SELECT 1 FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                document_id,
+                bank_id,
+            )
     if not exists:
         return document_id
     if on_conflict == "skip":
@@ -553,6 +919,24 @@ async def _import_one_document(
         ChunkMetadata(chunk_text=chunk.chunk_text, fact_count=0, content_index=0, chunk_index=chunk.chunk_index)
         for chunk in document.chunks
     ]
+
+    # Put the document itself where the store expects it. Retain does this via
+    # `_store_document_bodies`; the importer never did, so for a bank whose document store is
+    # external the import wrote the SQL metadata row and the chunk rows and NOTHING to the store —
+    # the restored bank listed no documents at all, because that listing reads the store. A no-op
+    # for Postgres, which keeps the body in the `documents` row written below.
+    #
+    # Before the connection is taken, like the retain path: this is the slow object-store write and
+    # it has no business inside the write transaction.
+    await orchestrator._store_document_bodies(
+        bank_id=bank_id,
+        document_id=target_id,
+        combined_content=document.original_text or "",
+        chunk_texts=[c.chunk_text for c in sorted(document.chunks, key=lambda c: c.chunk_index)],
+        merged_tags=list(document.tags or []),
+        config=config,
+        retain_params=document.retain_params,
+    )
 
     # Phase 1 (entity resolution + semantic ANN) on its own connection, outside
     # the write transaction — mirrors the retain pipeline.
@@ -687,6 +1071,11 @@ async def _restore_fact_lifecycle(
     when present (mirroring the document-row handling); ``consolidated_at`` /
     ``consolidation_failed_at`` are set verbatim — a source-``NULL`` (unconsolidated)
     fact stays eligible, which is correct.
+
+    No ``updated_at`` stamp (see :data:`~..memories.base.META_UPDATED_AT`): this fixup
+    runs in the same transaction as the insert that created the row, so the column
+    already carries this transaction's timestamp. The same holds for the observation
+    fixups below.
     """
     rows: list[tuple[uuid.UUID, datetime | None, datetime | None, datetime | None]] = []
     for original_index, fact in enumerate(facts):
@@ -757,14 +1146,12 @@ async def _import_observations(
 
     # Observations embed the raw text (matching consolidation), not the
     # date-augmented text used for facts.
-    embeddings = await embedding_processing.generate_embeddings_batch(
-        embeddings_model, [obs.text for obs, _ in resolved]
-    )
+    embeddings = await _embed_in_batches(embeddings_model, [obs.text for obs, _ in resolved])
     processed = [
         ProcessedFact(
             fact_text=obs.text,
             fact_type="observation",
-            embedding=embedding,
+            embedding=pack_embedding(embedding),
             occurred_start=obs.occurred_start,
             occurred_end=obs.occurred_end,
             mentioned_at=_observation_mentioned_at(obs),
@@ -785,6 +1172,13 @@ async def _import_observations(
             all_source_ids: set[uuid.UUID] = set()
             for (obs, sources), obs_unit_id in zip(resolved, obs_unit_ids):
                 observation_uuid = uuid.UUID(obs_unit_id)
+                if obs.created_at is not None:
+                    await conn.execute(
+                        f"UPDATE {fq_table('memory_units')} SET created_at = $1 WHERE id = $2 AND bank_id = $3",
+                        obs.created_at,
+                        observation_uuid,
+                        bank_id,
+                    )
                 if obs.event_date is not None:
                     # insert_facts_batch derives event_date for normal writes;
                     # transfer restores the source value carried by the archive.
@@ -797,6 +1191,8 @@ async def _import_observations(
                 source_uuids = [uuid.UUID(s) for s in sources]
                 all_source_ids.update(source_uuids)
                 await _link_observation_sources(conn, ops, bank_id, observation_uuid, source_uuids, obs.proof_count)
+                if obs.source_id is not None:
+                    outcome.remapped_unit_ids[obs.source_id] = str(observation_uuid)
 
             # Mark source facts consolidated so the target consolidator skips
             # them. COALESCE keeps the exact source timestamp already restored by
@@ -812,6 +1208,68 @@ async def _import_observations(
 
     outcome.imported = len(resolved)
     return outcome
+
+
+def _remap_based_on_ids(payload: dict[str, Any] | None, unit_id_map: dict[str, str]) -> None:
+    """Rewrite memory-unit ids in a persisted reflect response after transfer.
+
+    Mental-model rows retain their ids during a whole-bank restore, while facts
+    and observations are replayed and receive new ids. The response is otherwise
+    copied verbatim, so update only evidence ids and preserve all generated text
+    and metadata. Older archives without source ids simply have no entries to
+    rewrite.
+    """
+    if not payload or not unit_id_map:
+        return
+    based_on = payload.get("based_on")
+    if not isinstance(based_on, dict):
+        return
+    for entries in based_on.values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if isinstance(entry, dict):
+                source_id = entry.get("id")
+                if isinstance(source_id, str) and source_id in unit_id_map:
+                    entry["id"] = unit_id_map[source_id]
+
+
+def _remap_mental_model_evidence(rows: list[dict], unit_id_map: dict[str, str]) -> None:
+    """Repair current and historical mental-model reflect-response evidence.
+
+    Handles both row shapes. A ``mental_models`` row carries the response in its
+    own ``reflect_response`` column. A ``mental_model_history`` row carries one
+    snapshot as a single JSONB ``content`` blob holding ``previous_content`` and
+    ``previous_reflect_response`` — there is no top-level column of that name, so
+    the nested payload has to be decoded, rewritten and put back.
+    """
+    for row in rows:
+        reflect_response = _decode_json_object(row.get("reflect_response"))
+        if isinstance(reflect_response, dict):
+            _remap_based_on_ids(reflect_response, unit_id_map)
+            row["reflect_response"] = reflect_response
+        content = _decode_json_object(row.get("content"))
+        if isinstance(content, dict):
+            previous = _decode_json_object(content.get("previous_reflect_response"))
+            if isinstance(previous, dict):
+                _remap_based_on_ids(previous, unit_id_map)
+                content["previous_reflect_response"] = previous
+                row["content"] = content
+
+
+def _decode_json_object(value: Any) -> Any:
+    """Accept decoded JSONB values and one or more serialized JSON layers."""
+    for _ in range(3):
+        if not isinstance(value, str):
+            return value
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        if decoded == value:
+            return value
+        value = decoded
+    return value
 
 
 async def _link_observation_sources(

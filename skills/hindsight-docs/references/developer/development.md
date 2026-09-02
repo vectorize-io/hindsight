@@ -11,7 +11,7 @@ Guide to setting up a local development environment for contributing to Hindsigh
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) - Fast Python package manager
 - Docker and Docker Compose
-- An LLM API key (OpenAI, Groq, or Ollama)
+- An LLM provider credential, or a local/subscription-backed provider such as Ollama or GitHub Copilot
 
 ## Local Development Setup
 

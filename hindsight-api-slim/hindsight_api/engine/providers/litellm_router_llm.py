@@ -66,7 +66,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         base_url: str,
         model: str,
         config: dict[str, Any],
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         timeout: float | None = None,
         **kwargs: Any,
     ):
@@ -146,6 +146,13 @@ class LiteLLMRouterLLM(LiteLLMLLM):
             kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
         if temperature is not None:
             kwargs["temperature"] = temperature
+        # Like api_key/base_url, per-deployment reasoning could live in the Router config,
+        # but the operator-level setting is cross-cutting and LiteLLM translates it per
+        # target provider — so this override forwards it exactly as the base provider does.
+        # Omitting it made HINDSIGHT_API_*_REASONING_EFFORT a no-op on the router lane
+        # alone (issue #3449); only sent when configured.
+        if self.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.reasoning_effort
 
         # Forward operator-configured default headers as ``extra_headers`` so they
         # reach the provider behind the Router (proxies / request-tracing middleware).

@@ -133,6 +133,18 @@ The local server exposes the full tool set (29 tools in multi-bank mode, 26 in s
 | `list_banks` | List all memory banks (multi-bank only) |
 | `create_bank` | Create or configure a memory bank (multi-bank only) |
 
+**Knowledge Base**
+
+| Tool | Description |
+|------|-------------|
+| `get_knowledge_base_tree` | Browse the folder/page tree |
+| `search_knowledge_base` | Hybrid search over knowledge pages |
+| `get_knowledge_page` | Read a page as a markdown document |
+| `create_knowledge_folder` | Create a folder |
+| `create_knowledge_page` | Create a page (a living document over the bank's memories) |
+| `update_knowledge_node` | Rename/move a node or update a page's options |
+| `delete_knowledge_node` | Delete a folder or page and its subtree |
+
 For detailed parameter documentation, see the [MCP Server reference](/developer/mcp-server#available-tools).
 
 ## Environment Variables

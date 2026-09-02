@@ -282,6 +282,9 @@ describe("before_prompt_build hook", () => {
     const mem = makeMemoryResult("User prefers dark mode");
     mem.tags = ["preference"];
     mem.entities = ["dark_mode"];
+    mem.document_id = "openclaw:agent:main:tg:-1003825475854";
+    mem.occurred_start = "2026-01-14T09:00:00Z";
+    mem.occurred_end = "2026-01-14T11:00:00Z";
     recallSpy.mockResolvedValue({
       results: [mem],
       entities: null,
@@ -300,6 +303,10 @@ describe("before_prompt_build hook", () => {
     expect(result.prependContext).toContain("- User prefers dark mode");
     expect(result.prependContext).toContain("<hindsight_memories>");
     expect(result.prependContext).toContain("</hindsight_memories>");
+    expect(result.prependContext).toContain(
+      "[occurred: 2026-01-14T09:00:00Z → 2026-01-14T11:00:00Z]"
+    );
+    expect(result.prependContext).toContain("[doc:openclaw:agent:main:tg:-1003825475854]");
   });
 
   it("extracts the inner query from an envelope-formatted prompt when rawMessage is absent", async () => {

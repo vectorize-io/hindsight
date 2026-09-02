@@ -6,13 +6,17 @@ maintenance-routines migration and loop over every schema holding the relevant
 table in a single round-trip. These tests drive them directly against pg0.
 """
 
+import asyncio
 import importlib.util
 import uuid
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
+from hindsight_api.alembic import _owned
 from hindsight_api.engine.memory_engine import MemoryEngine
 
 
@@ -163,6 +167,58 @@ async def test_banks_needing_consolidation_skips_schema_with_vanished_table(memo
 
 
 @pytest.mark.asyncio
+async def test_banks_needing_consolidation_skips_schema_locked_by_ddl(memory: MemoryEngine, request_context):
+    """A schema whose tables are held under AccessExclusiveLock by concurrent DDL is
+    skipped, and the rest of the scan still reports its work.
+
+    The other half of the same race as the vanished-table test: the schema is not
+    gone, it is being rewritten. Its DDL holds (or has queued) AccessExclusiveLock,
+    and a queued AccessExclusiveLock blocks the AccessShareLock this routine needs —
+    while the DDL waits on the locks the routine already holds from earlier schemas.
+    That is a cycle, and PostgreSQL breaks it by killing one side; when it picked the
+    routine, one tenant being dropped aborted an entire maintenance pass with
+    ``DeadlockDetectedError``. Migration c8b4e2a71f95 gives each per-schema query a
+    short lock_timeout and skips the schema instead of waiting.
+
+    ``asyncio.wait_for`` is the actual regression guard: before the fix the routine
+    blocks until the DDL transaction ends, so this times out rather than asserting.
+    """
+    bank_id = await _make_bank(memory, request_context, "locked")
+    schema = f"mtlocked{uuid.uuid4().hex[:8]}"
+    try:
+        async with memory._pool.acquire() as conn:
+            # Real, eligible work in the public schema — the scan must still find it.
+            await _insert_fact(conn, bank_id)
+            await conn.execute(f'CREATE SCHEMA "{schema}"')
+            await conn.execute(f'CREATE TABLE "{schema}".memory_units (LIKE public.memory_units INCLUDING DEFAULTS)')
+            await conn.execute(f'CREATE TABLE "{schema}".banks (LIKE public.banks INCLUDING DEFAULTS)')
+
+        # Hold the lock a DROP/ALTER would hold, from a separate connection, for the
+        # whole call — the routine must not wait on it.
+        async with memory._pool.acquire() as blocker:
+            blocker_tx = blocker.transaction()
+            await blocker_tx.start()
+            try:
+                await blocker.execute(f'LOCK TABLE "{schema}".banks IN ACCESS EXCLUSIVE MODE')
+
+                async with memory._pool.acquire() as conn:
+                    rows = await asyncio.wait_for(
+                        conn.fetch("SELECT schema_name, bank_id FROM public.banks_needing_consolidation()"),
+                        timeout=15,
+                    )
+            finally:
+                await blocker_tx.rollback()
+
+        reported = {r["schema_name"] for r in rows}
+        assert schema not in reported, "a schema under concurrent DDL must be skipped"
+        assert "public" in reported, "skipping the locked schema must not abort the rest of the scan"
+        assert bank_id in {r["bank_id"] for r in rows}
+    finally:
+        async with memory._pool.acquire() as conn:
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+@pytest.mark.asyncio
 async def test_schemas_with_expired_rows(memory: MemoryEngine):
     """Returns schemas holding a row older than p_days; respects the p_days<=0 guard."""
     async with memory._pool.acquire() as conn:
@@ -186,7 +242,12 @@ async def test_schemas_with_expired_rows(memory: MemoryEngine):
 
 
 def _load_schema_local_migration():
-    """Import the #2638 schema-local install migration by path."""
+    """Import the #2638 schema-local install migration by path.
+
+    Pinned on purpose: the tests below assert what THIS migration's install
+    gating emits. Anything that runs the routine bodies must use
+    ``_load_current_routines_migration`` instead — see there.
+    """
     path = (
         Path(__file__).resolve().parent.parent
         / "hindsight_api/alembic/versions/b6d2f8a4c1e7_maintenance_routines_schema_local.py"
@@ -198,12 +259,86 @@ def _load_schema_local_migration():
     return module
 
 
+_VERSIONS_DIR = Path(__file__).resolve().parent.parent / "hindsight_api/alembic/versions"
+
+
+def _load_migration(path: Path):
+    spec = importlib.util.spec_from_file_location(f"_maint_routines_{path.stem}", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _current_routines_migration_path() -> Path:
+    """The newest migration that (re)defines ``banks_needing_consolidation``.
+
+    Resolved from the revision chain rather than hard-coded, because a test that
+    *executes* the routine must execute the body a real deployment ends up with.
+    Pinning the superseded ``b6d2f8a4c1e7`` body is what made
+    ``test_routines_callable_from_non_public_schema`` a recurring
+    ``DeadlockDetectedError`` flake under xdist: that body waits indefinitely for
+    AccessShareLock on every schema it scans, so a peer worker's concurrent
+    DROP closes a lock cycle and PostgreSQL kills one side. ``c8b4e2a71f95``
+    fixed exactly that — with a per-schema ``lock_timeout`` and skip arms — but
+    the test never installed it, so the fix could not reach the test that
+    reported the bug.
+    """
+    # walk_revisions() yields head -> base in topological order, so the first
+    # match is the definition a fully migrated database ends up with. Asked of
+    # Alembic rather than parsed here because the DAG has merge revisions with
+    # tuple down_revisions, which a line-wise parse gets wrong.
+    cfg = Config()
+    cfg.set_main_option("script_location", str(_VERSIONS_DIR.parent))
+    for script in ScriptDirectory.from_config(cfg).walk_revisions():
+        path = Path(script.path)
+        text = path.read_text()
+        if "banks_needing_consolidation" in text and "CREATE OR REPLACE FUNCTION" in text:
+            return path
+    raise AssertionError("no migration defines banks_needing_consolidation")
+
+
+def _load_current_routines_migration():
+    return _load_migration(_current_routines_migration_path())
+
+
+def test_current_routine_bodies_keep_the_concurrent_ddl_guard():
+    """Whichever migration owns the routine bodies must still skip a locked schema.
+
+    The guard is what stops the cross-schema scan from waiting on a tenant that is
+    being dropped or migrated, which is one half of a lock cycle
+    (``c8b4e2a71f95``). ``test_banks_needing_consolidation_skips_schema_locked_by_ddl``
+    proves the installed ``public`` copy behaves; this asserts a future
+    ``CREATE OR REPLACE`` cannot quietly drop the guard from the source it is
+    installed from.
+    """
+    body = _current_routines_migration_path().read_text()
+    assert "lock_timeout" in body
+    assert "lock_not_available" in body
+    assert "deadlock_detected" in body
+
+
 class _FakeAlembicContext:
     """Stands in for ``alembic.context``, whose ``config`` only exists inside a
     live migration run."""
 
     def __init__(self, target_schema: str | None) -> None:
         self.config = SimpleNamespace(get_main_option=lambda name: target_schema if name == "target_schema" else None)
+
+
+def _capture_sql(monkeypatch) -> list[str]:
+    """Redirect every statement these migrations issue into a list.
+
+    They route their SQL through ``execute_unless_owned``, so the sink is
+    ``_owned.op`` — the same ``alembic.op`` proxy the migrations used to call
+    directly. ``HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES`` is cleared as well:
+    with it set, the guard would swallow the statements and every assertion
+    below would pass vacuously on an empty list.
+    """
+    monkeypatch.delenv(_owned.ENV_EXTERNALLY_OWNED_ROUTINES, raising=False)
+    executed: list[str] = []
+    monkeypatch.setattr(_owned.op, "execute", lambda sql: executed.append(str(sql)))
+    return executed
 
 
 def _capture_upgrade(migration, monkeypatch, target_schema: str | None, configured_schema: str = "public") -> list[str]:
@@ -215,8 +350,7 @@ def _capture_upgrade(migration, monkeypatch, target_schema: str | None, configur
     monkeypatch.setattr(migration, "context", _FakeAlembicContext(target_schema))
     if hasattr(migration, "get_config"):
         monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema=configured_schema))
-    executed: list[str] = []
-    monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(str(sql)))
+    executed = _capture_sql(monkeypatch)
     migration._pg_upgrade()
     return executed
 
@@ -248,6 +382,29 @@ def test_routines_install_in_the_configured_schema(monkeypatch, target_schema, c
     assert "advisory" not in joined.lower()
 
 
+def test_an_owned_routine_is_left_alone_by_a_real_migration(monkeypatch):
+    """A deployment that owns a routine keeps its own implementation.
+
+    ``test_externally_owned_routines.py`` covers the guard and proves every
+    install site uses it; this drives a real migration end to end, so the two
+    halves cannot pass while the wiring between them is broken. Only the named
+    routine is skipped — the rest install exactly as before.
+    """
+    migration = _load_schema_local_migration()
+    monkeypatch.setattr(migration, "context", _FakeAlembicContext("hs_tenant"))
+    monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema="hs_tenant"))
+    executed: list[str] = []
+    monkeypatch.setattr(_owned.op, "execute", lambda sql: executed.append(str(sql)))
+    monkeypatch.setenv(_owned.ENV_EXTERNALLY_OWNED_ROUTINES, "mental_models_with_cron")
+
+    migration._pg_upgrade()
+    joined = "\n".join(executed)
+
+    assert "mental_models_with_cron" not in joined
+    for routine in ("banks_needing_consolidation", "schemas_with_expired_rows"):
+        assert f'CREATE OR REPLACE FUNCTION "hs_tenant".{routine}' in joined
+
+
 def test_tenant_runs_install_nothing_and_clean_up_strays(monkeypatch):
     """A tenant schema must not carry its own copy.
 
@@ -269,10 +426,19 @@ async def test_routines_callable_from_non_public_schema(memory: MemoryEngine, re
     """End-to-end #2638: with the deployment schema set to a non-``public`` schema,
     the migration installs the routines there and ``fq_routine()`` resolves to that
     copy, which returns the same cross-tenant results as the ``public`` one.
+
+    Installs the CURRENT routine bodies, not ``b6d2f8a4c1e7``'s. #2638's install
+    gating has been carried forward unchanged by every migration since, but the
+    bodies have not: this test executes the routine against a live database that
+    xdist peers are creating and dropping schemas in, and the pre-``c8b4e2a71f95``
+    body waits indefinitely for AccessShareLock on every schema it scans. A peer's
+    concurrent DROP closes the lock cycle and PostgreSQL kills one side — a
+    recurring ``DeadlockDetectedError`` here, on a body no deployment runs.
+    ``_current_routines_migration_path`` keeps it on the real one.
     """
     from hindsight_api.engine import schema as schema_mod
 
-    migration = _load_schema_local_migration()
+    migration = _load_current_routines_migration()
     schema = f"tenant_{uuid.uuid4().hex[:8]}"
 
     bank_id = await _make_bank(memory, request_context, "nonpublic")
@@ -302,8 +468,7 @@ async def test_routines_callable_from_non_public_schema(memory: MemoryEngine, re
 def _capture_downgrade(migration, monkeypatch, target_schema, configured_schema) -> list[str]:
     monkeypatch.setattr(migration, "context", _FakeAlembicContext(target_schema))
     monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema=configured_schema))
-    executed: list[str] = []
-    monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(str(sql)))
+    executed = _capture_sql(monkeypatch)
     migration._pg_downgrade()
     return executed
 

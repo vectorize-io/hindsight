@@ -8,9 +8,12 @@ needing to re-import the module with custom env vars.
 
 import asyncio
 from contextlib import AsyncExitStack
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import pytest
+from openai import APIConnectionError
 
 from hindsight_api.engine import llm_wrapper
 from hindsight_api.engine.llm_wrapper import (
@@ -18,6 +21,7 @@ from hindsight_api.engine.llm_wrapper import (
     _scope_to_operation,
     _semaphores_for_scope,
 )
+from hindsight_api.worker.stage import StageHolder, bind_holder
 
 
 class TestScopeToOperation:
@@ -200,6 +204,182 @@ class TestSemaphoreEnforcement:
             )
 
         assert peak == 2, f"retain cap should hold even for end-to-end calls, peak={peak}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("with_tools", [False, True])
+    async def test_unrelated_call_can_run_while_retrying_call_backs_off(self, with_tools):
+        """A logical call's retry sleep must not occupy the global permit."""
+        provider = LLMProvider(provider="openai", api_key="test", base_url="", model="test-model")
+        entered_backoff = asyncio.Event()
+        release_backoff = asyncio.Event()
+        unrelated_started = asyncio.Event()
+
+        async def retrying_mock_call(**kwargs):
+            content = kwargs["messages"][0]["content"]
+            attempt_context = kwargs["attempt_context"]
+            async with attempt_context():
+                if content != "retrying":
+                    unrelated_started.set()
+            if content == "retrying":
+                entered_backoff.set()
+                await release_backoff.wait()
+            return "ok"
+
+        method = "call_with_tools" if with_tools else "call"
+        setattr(provider._provider_impl, method, retrying_mock_call)
+
+        async def invoke(content):
+            kwargs = {"messages": [{"role": "user", "content": content}], "scope": "retain"}
+            if with_tools:
+                kwargs["tools"] = []
+                return await provider.call_with_tools(**kwargs)
+            return await provider.call(**kwargs)
+
+        with patch.object(llm_wrapper, "_global_llm_semaphore", asyncio.Semaphore(1)):
+            retrying = asyncio.create_task(invoke("retrying"))
+            await asyncio.wait_for(entered_backoff.wait(), timeout=1)
+            unrelated = asyncio.create_task(invoke("unrelated"))
+            try:
+                await asyncio.wait_for(unrelated_started.wait(), timeout=0.1)
+            finally:
+                release_backoff.set()
+                await asyncio.gather(retrying, unrelated)
+
+    @pytest.mark.asyncio
+    async def test_real_retry_loop_releases_permit_during_backoff_and_reacquires(self):
+        """End-to-end through the real OpenAI-compatible retry loop: attempt 1
+        fails with a retryable error and, while the provider sleeps out its
+        backoff, an unrelated call takes the global permit; attempt 2 then
+        reacquires it before hitting the upstream."""
+        provider = LLMProvider(provider="openai", api_key="test", base_url="", model="test-model")
+        global_sem = asyncio.Semaphore(1)
+        events: list[str] = []
+        first_attempt_failed = asyncio.Event()
+
+        def _ok_response():
+            choice = SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content="ok", tool_calls=None, refusal=None),
+            )
+            return SimpleNamespace(error=None, usage=None, choices=[choice])
+
+        async def create(**kwargs):
+            content = kwargs["messages"][0]["content"]
+            assert global_sem.locked(), "an upstream attempt must hold the global permit"
+            if content == "retrying" and not first_attempt_failed.is_set():
+                events.append("retrying-attempt-1")
+                first_attempt_failed.set()
+                raise APIConnectionError(request=httpx.Request("POST", "http://test"))
+            events.append(content)
+            return _ok_response()
+
+        provider._provider_impl._client.chat.completions.create = create
+
+        with (
+            patch.object(llm_wrapper, "_per_op_llm_semaphores", {}),
+            patch.object(llm_wrapper, "_global_llm_semaphore", global_sem),
+        ):
+            retrying = asyncio.create_task(
+                provider.call(
+                    messages=[{"role": "user", "content": "retrying"}],
+                    scope="retain",
+                    max_retries=1,
+                    initial_backoff=1.0,
+                    max_backoff=1.0,
+                )
+            )
+            await asyncio.wait_for(first_attempt_failed.wait(), timeout=1)
+            # While the retrying call sleeps out its ~1s backoff, an unrelated
+            # call must be able to take the global permit and complete.
+            await asyncio.wait_for(
+                provider.call(messages=[{"role": "user", "content": "unrelated"}], scope="retain"),
+                timeout=0.5,
+            )
+            assert await asyncio.wait_for(retrying, timeout=3) == "ok"
+
+        assert events == ["retrying-attempt-1", "unrelated", "retrying"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_while_waiting_for_global_releases_per_op_permit(self):
+        """Cancelling an attempt that holds the per-op permit but is still
+        queued on the global one must release the per-op permit."""
+        retain_sem = asyncio.Semaphore(1)
+        global_sem = asyncio.Semaphore(1)
+        with (
+            patch.object(llm_wrapper, "_per_op_llm_semaphores", {"retain": retain_sem}),
+            patch.object(llm_wrapper, "_global_llm_semaphore", global_sem),
+        ):
+            await global_sem.acquire()  # an unrelated holder saturates the global cap
+
+            async def waiter():
+                async with llm_wrapper._attempt_permits("retain"):
+                    pass
+
+            task = asyncio.create_task(waiter())
+            for _ in range(50):
+                if retain_sem.locked():
+                    break
+                await asyncio.sleep(0)
+            assert retain_sem.locked(), "waiter should hold the per-op permit while queued on global"
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert not retain_sem.locked(), "cancellation must release the per-op permit"
+            global_sem.release()
+
+    @pytest.mark.asyncio
+    async def test_stage_stays_queued_until_permit_then_marks_backoff(self):
+        """Through the real wrapper flow: the stage keeps its `.queued` suffix
+        while the call waits for a permit (#3002), shows `attempt=N` only while
+        permits are held, and gains a `.backoff` suffix while the provider
+        sleeps between attempts without permits."""
+        provider = LLMProvider(provider="openai", api_key="test", base_url="", model="test-model")
+        holder = StageHolder()
+        global_sem = asyncio.Semaphore(1)
+        first_attempt_failed = asyncio.Event()
+
+        async def create(**kwargs):
+            assert holder.stage == f"llm.openai.retain.attempt={1 if not first_attempt_failed.is_set() else 2}/2"
+            if not first_attempt_failed.is_set():
+                first_attempt_failed.set()
+                raise APIConnectionError(request=httpx.Request("POST", "http://test"))
+            choice = SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content="ok", tool_calls=None, refusal=None),
+            )
+            return SimpleNamespace(error=None, usage=None, choices=[choice])
+
+        provider._provider_impl._client.chat.completions.create = create
+
+        async def invoke():
+            bind_holder(holder)
+            return await provider.call(
+                messages=[{"role": "user", "content": "hello"}],
+                scope="retain",
+                max_retries=1,
+                initial_backoff=0.2,
+                max_backoff=0.2,
+            )
+
+        with (
+            patch.object(llm_wrapper, "_per_op_llm_semaphores", {}),
+            patch.object(llm_wrapper, "_global_llm_semaphore", global_sem),
+        ):
+            await global_sem.acquire()  # saturate so the call queues
+            task = asyncio.create_task(invoke())
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert holder.stage == "llm.openai.retain.queued", "must stay `.queued` while waiting for the permit"
+
+            global_sem.release()
+            await asyncio.wait_for(first_attempt_failed.wait(), timeout=1)
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert holder.stage == "llm.openai.retain.attempt=1/2.backoff", (
+                "backoff sleep must be visible in the stage while no permit is held"
+            )
+            assert await asyncio.wait_for(task, timeout=3) == "ok"
 
     @pytest.mark.asyncio
     async def test_per_op_composes_with_global(self):

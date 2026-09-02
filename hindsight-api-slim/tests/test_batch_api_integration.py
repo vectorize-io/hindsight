@@ -163,7 +163,6 @@ async def test_real_openai_batch_api(real_llm_config, test_contents_real, integr
         facts, chunks, usage = await extract_facts_from_contents_batch_api(
             contents=test_contents_real,
             llm_config=real_llm_config,
-            agent_name="test_agent",
             config=integration_config,
             pool=pool,
             operation_id=None,  # No crash recovery for this test

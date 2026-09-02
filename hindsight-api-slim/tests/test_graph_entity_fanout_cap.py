@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 
 import pytest
 
+# These read `result.trace["retrieval_results"]` and assert an entry per ARM (method_name ==
+# "graph"). That structure is produced by the engine running the arms itself; a store that answers
+# a whole recall in one hop runs them internally and reports phases ("arms", "fuse", "trim"), not
+# one entry per arm -- so there is nothing here to assert against for such a store, and the arm
+# behaviour is covered by the extension's own recall suite instead.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(1200)

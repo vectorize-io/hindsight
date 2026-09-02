@@ -12,7 +12,7 @@
  * need a real `--harness` flag, not added here.
  */
 import { loadConfig } from "./core/config";
-import { deriveBankId } from "./core/bank";
+import { deriveBankIdOrSkip } from "./core/bank";
 import { seedControl } from "./core/seed";
 
 function arg(name: string): string | undefined {
@@ -23,7 +23,13 @@ function arg(name: string): string | undefined {
 const command = process.argv[2] || "";
 const repo = arg("repo") || process.cwd();
 const cfg = loadConfig({ harness: "claude-code" });
-const bankId = deriveBankId(cfg, repo, "claude-code");
+const bankId = deriveBankIdOrSkip(cfg, repo, "claude-code");
+if (bankId === null) {
+  console.error(
+    `seed: cannot identify the repository at ${repo} — refusing to seed a guessed bank`
+  );
+  process.exit(1);
+}
 const result = seedControl(command, { repo, bankId });
 console.log(result.message);
 process.exit(result.ok ? 0 : 1);

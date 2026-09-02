@@ -23,6 +23,7 @@ reads the same retain-scoped field rather than the global flag, keeping the batc
 and streaming paths in agreement.
 """
 
+import dataclasses
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -45,18 +46,16 @@ class _Resp(BaseModel):
 
 
 def _config_with(strict: bool) -> object:
-    """A config proxy that overrides only llm_strict_schema (avoids recursion)."""
-    from hindsight_api.config import get_config
+    """A real config overriding only llm_strict_schema.
 
-    real = get_config()
+    Delegating to ``get_config()`` used to work by accident: the retain path read
+    bank-configurable fields through getattr defaults, so the StaticConfigProxy
+    guard was swallowed. It now reads them directly, so the test needs the raw
+    resolved config rather than the global proxy.
+    """
+    from hindsight_api.config import _get_raw_config
 
-    class _Cfg:
-        llm_strict_schema = strict
-
-        def __getattr__(self, name):
-            return getattr(real, name)
-
-    return _Cfg()
+    return dataclasses.replace(_get_raw_config(), llm_strict_schema=strict)
 
 
 # --------------------------------------------------------------------------- #
@@ -142,7 +141,10 @@ def test_operation_strict_schema_opts_out_of_global(clean_strict_env, env, field
 async def _strict_passed_to_provider(*, config_flag: bool, call_arg: bool | None) -> bool:
     """Return the strict_schema value the wrapper forwards to the provider impl."""
     llm = LLMProvider(provider="anthropic", api_key="test-key", base_url="", model="claude-x")
-    impl = SimpleNamespace(call=AsyncMock(return_value=_Resp(ok=True)))
+    impl = SimpleNamespace(
+        call=AsyncMock(return_value=_Resp(ok=True)),
+        supports_attempt_scoped_concurrency=lambda: False,
+    )
     llm._provider_impl = impl
 
     cfg = _config_with(config_flag)  # build before patching to avoid get_config recursion
@@ -268,7 +270,10 @@ def test_batch_request_body_strict_follows_retain_config(strict):
     """
     from hindsight_api.engine.retain.fact_extraction import _build_request_body
 
-    llm_config = SimpleNamespace(model="gpt-4o-mini", provider="openai", _provider_impl=SimpleNamespace())
+    # The batch impl that serves the batch — since #3649 this is what
+    # _build_request_body reads model/provider/service tier off, rather than the
+    # wrapper, so that they match the account the batch is submitted to.
+    batch_impl = SimpleNamespace(model="gpt-4o-mini", provider="openai", openai_service_tier=None)
     config = SimpleNamespace(
         retain_max_completion_tokens=None,
         # Global deliberately set opposite to the retain override: if the batch path
@@ -277,10 +282,8 @@ def test_batch_request_body_strict_follows_retain_config(strict):
         llm_strict_schema_retain=strict,
         llm_temperature_retain=None,
     )
-    # provider != "openai" service-tier branch skipped via _provider_impl without attr
-    llm_config._provider_impl.openai_service_tier = None
 
-    body = _build_request_body(llm_config, config, "system prompt", "user message", _Resp)
+    body = _build_request_body(batch_impl, config, "system prompt", "user message", _Resp)
     assert body["response_format"]["json_schema"]["strict"] is strict
 
 
@@ -295,22 +298,23 @@ def _retain_config(strict_retain: bool):
     A bank-resolved config, not the global one -- retain_extraction_mode and friends
     are bank-configurable and raise if read off global config.
     """
-    from hindsight_api.config import HindsightConfig
+    from hindsight_api.config import _get_raw_config
 
-    cfg = MagicMock(spec=HindsightConfig)
-    cfg.retain_llm_max_retries = 1
-    cfg.llm_max_retries = 1
-    cfg.retain_llm_initial_backoff = 0.0
-    cfg.llm_initial_backoff = 0.0
-    cfg.retain_llm_max_backoff = 0.0
-    cfg.llm_max_backoff = 0.0
-    cfg.retain_max_completion_tokens = 8192
-    cfg.retain_extraction_mode = "concise"
-    cfg.retain_extract_causal_links = False
-    cfg.retain_mission = None
-    cfg.llm_temperature_retain = 0.1
-    cfg.llm_strict_schema_retain = strict_retain
-    return cfg
+    return dataclasses.replace(
+        _get_raw_config(),
+        retain_llm_max_retries=1,
+        llm_max_retries=1,
+        retain_llm_initial_backoff=0.0,
+        llm_initial_backoff=0.0,
+        retain_llm_max_backoff=0.0,
+        llm_max_backoff=0.0,
+        retain_max_completion_tokens=8192,
+        retain_extraction_mode="concise",
+        retain_extract_causal_links=False,
+        retain_mission=None,
+        llm_temperature_retain=0.1,
+        llm_strict_schema_retain=strict_retain,
+    )
 
 
 @pytest.mark.asyncio

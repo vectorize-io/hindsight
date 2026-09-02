@@ -46,6 +46,7 @@ class _HangingCrossEncoder:
     """Cross-encoder whose initialize() never returns (simulates a stuck download)."""
 
     provider_name = "remote"  # non-local: stays on the event loop, no executor thread
+    blocking_init = False
 
     async def initialize(self) -> None:
         await asyncio.Event().wait()  # hangs forever
@@ -53,6 +54,7 @@ class _HangingCrossEncoder:
 
 class _FastCrossEncoder:
     provider_name = "remote"
+    blocking_init = False
 
     def __init__(self) -> None:
         self.initialized = False

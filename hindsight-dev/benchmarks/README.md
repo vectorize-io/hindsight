@@ -105,6 +105,46 @@ No external dependencies needed.
 
 See [perf/README.md](perf/README.md) for detailed documentation.
 
+### Token Counting (micro)
+
+Measures the token counting recall does per candidate fact, chunk and
+reranker document — wall time, CPU time (all threads) and peak *traced*
+allocation, against a set of cheaper spellings of the same count. No DB, no LLM,
+no network.
+
+```bash
+# All workloads
+./scripts/benchmarks/run-token-count-bench.sh
+
+# One call site, more repeats, raw results
+./scripts/benchmarks/run-token-count-bench.sh --workload facts_200 --repeats 10 --json tok.json
+
+# Against real text rather than the synthetic generator (a small vocabulary
+# flatters every BPE implementation)
+./scripts/benchmarks/run-token-count-bench.sh --corpus /path/to/text
+
+# On another vocabulary instead of production's o200k_base
+./scripts/benchmarks/run-token-count-bench.sh --encoding cl100k_base
+
+# Include the tiktoken baseline (deliberately not a project dependency)
+cd hindsight-dev && uv run --with tiktoken token-count-bench
+```
+
+**Options:**
+- `--workload NAME` - Run one workload (repeatable); shaped after a real call site
+- `--encoding NAME` - Vocabulary to measure (default `o200k_base`, what production
+  uses). A 200k vocabulary is a different amount of work per byte, so a ranking
+  measured on one does not transfer to another for free.
+- `--repeats N` - Timed repeats per variant, best-of (default: 5)
+- `--threads N` - `num_threads` for the parallel batch variant
+- `--corpus PATH` - Slice workload texts out of a real text file
+- `--no-conformance` - Skip the count-agreement check on adversarial inputs
+- `--json PATH` - Save raw results
+
+Every variant is checked against the production count first, on inputs that have
+broken token counting before (special-token literals, unicode, empty). A variant
+that counts differently — or raises — is reported as such, never as a speedup.
+
 ## Visualizer
 
 View benchmark results in a web UI:

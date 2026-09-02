@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .structured_doc import StructuredDocument
+
 
 class ObservationSection(BaseModel):
     """A section within an observation with its supporting memories."""
@@ -110,6 +112,13 @@ class ReflectAgentResult(BaseModel):
     """Result from the reflect agent."""
 
     text: str = Field(description="Final answer text")
+    document: StructuredDocument | None = Field(
+        default=None,
+        description=(
+            "The structured document the agent emitted, when it was asked for one. "
+            "``text`` is its deterministic render — the model never wrote that markdown."
+        ),
+    )
     structured_output: dict[str, Any] | None = Field(
         default=None, description="Structured output parsed according to provided response_schema"
     )

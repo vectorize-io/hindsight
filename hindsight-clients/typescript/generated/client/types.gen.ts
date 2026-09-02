@@ -63,6 +63,7 @@ export interface RequestOptions<
     }>,
     Pick<
       ServerSentEventsOptions<TData>,
+      | "onRequest"
       | "onSseError"
       | "onSseEvent"
       | "sseDefaultRetryDelay"
@@ -89,6 +90,7 @@ export interface ResolvedRequestOptions<
   ThrowOnError extends boolean = boolean,
   Url extends string = string,
 > extends RequestOptions<unknown, TResponseStyle, ThrowOnError, Url> {
+  headers: Headers;
   serializedBody?: string;
 }
 
@@ -122,8 +124,10 @@ export type RequestResult<
                 error: TError extends Record<string, unknown> ? TError[keyof TError] : TError;
               }
           ) & {
-            request: Request;
-            response: Response;
+            /** request may be undefined, because error may be from building the request object itself */
+            request?: Request;
+            /** response may be undefined, because error may be from building the request object itself or from a network error */
+            response?: Response;
           }
     >;
 
@@ -144,12 +148,13 @@ type MethodFn = <
 
 type SseFn = <
   TData = unknown,
-  TError = unknown,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _TError = unknown,
   ThrowOnError extends boolean = false,
   TResponseStyle extends ResponseStyle = "fields",
 >(
-  options: Omit<RequestOptions<TData, TResponseStyle, ThrowOnError>, "method">
-) => Promise<ServerSentEventsResult<TData, TError>>;
+  options: Omit<RequestOptions<never, TResponseStyle, ThrowOnError>, "method">
+) => Promise<ServerSentEventsResult<TData>>;
 
 type RequestFn = <
   TData = unknown,

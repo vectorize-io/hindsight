@@ -1,6 +1,19 @@
 from datetime import datetime
 
 
+def format_task_error(e: BaseException) -> str:
+    """Render an exception for a task failure log line / stored error_message.
+
+    Always prefixes the exception class. Plenty of exceptions carry an empty
+    ``str()`` — ``TimeoutError()``, ``CancelledError()``, a bare ``raise
+    SomeError()`` — and the bare interpolation those log lines used produced
+    ``Task execution failed: graph_maintenance, error: ``, which says nothing at
+    all about what went wrong (issue #3218).
+    """
+    message = str(e)
+    return f"{type(e).__name__}: {message}" if message else type(e).__name__
+
+
 class RetryTaskAt(Exception):
     """Raise from a task handler to schedule a retry at a specific time."""
 

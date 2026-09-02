@@ -72,6 +72,54 @@ def _get_judge():
     return _judge_instance
 
 
+def build_judge_messages(response: str, criteria: str, context: str | None) -> list[dict[str, str]]:
+    """Assemble the judge prompt.
+
+    The three inputs must be unambiguously separated, and they were not: the
+    response and criteria carried ``##`` headers while the context was emitted as
+    a bare ``Context provided to the system:`` line, so a multi-line response ran
+    straight into the context with nothing marking the boundary.
+
+    The judge duly confused them. ``test_facts_from_distinct_chunks_reach_the_answer``
+    failed four times in a row, always with the judge quoting the *context* back as
+    if it were the answer ("It only states that the memory data contained two hobby
+    facts") while the real response — a two-bullet markdown list naming both facts —
+    satisfied the criteria. A bullet-list response followed by prose context is
+    exactly the shape that blurs.
+
+    So each section is tagged rather than merely headed: tags survive a response
+    that is itself markdown, which fenced blocks and headers do not. The system
+    prompt states outright that only ``<response>`` is judged, so context can never
+    become the thing under test.
+
+    Kept as a pure function so the assembly is covered by fast unit tests instead
+    of only by the LLM tests it decides the outcome of.
+    """
+    context_block = f"\n## Context provided to the system\n<context>\n{context}\n</context>\n" if context else ""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a test evaluation judge. Given a response and evaluation criteria, "
+                "determine whether the response meets the criteria. "
+                "Judge ONLY the text inside <response></response>. A <context></context> block "
+                "is background on how that response was produced — it is never the thing being "
+                "judged, and must never be treated as part of the response. "
+                'Respond with JSON: {"meets_criteria": true/false, "reasoning": "brief explanation"}'
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"## Response to evaluate\n<response>\n{response}\n</response>\n"
+                f"{context_block}\n"
+                f"## Criteria\n<criteria>\n{criteria}\n</criteria>\n\n"
+                "Does the response meet the criteria?"
+            ),
+        },
+    ]
+
+
 async def _judge_once(
     response: str,
     criteria: str,
@@ -80,26 +128,7 @@ async def _judge_once(
 ) -> JudgeVerdict:
     """Run a single judge verdict, retrying transient call errors."""
     judge = _get_judge()
-    context_block = f"\n\nContext provided to the system:\n{context}" if context else ""
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a test evaluation judge. Given a response and evaluation criteria, "
-                "determine whether the response meets the criteria. "
-                'Respond with JSON: {"meets_criteria": true/false, "reasoning": "brief explanation"}'
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"## Response to evaluate\n{response}\n"
-                f"{context_block}\n"
-                f"## Criteria\n{criteria}\n\n"
-                "Does the response meet the criteria?"
-            ),
-        },
-    ]
+    messages = build_judge_messages(response, criteria, context)
 
     last_error: Exception | None = None
     for attempt in range(max(1, _JUDGE_CALL_ATTEMPTS)):

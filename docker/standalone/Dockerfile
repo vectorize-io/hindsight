@@ -8,7 +8,6 @@
 #                                     Set to false when using external providers (TEI, OpenAI, Cohere)
 #   PRELOAD_ML_MODELS=true/false   - Pre-download ML models during build (default: true)
 #                                     Only effective when INCLUDE_LOCAL_MODELS=true
-#                                     NOTE: tiktoken encodings are ALWAYS preloaded (required for air-gapped deployments)
 #
 # Examples:
 #   docker build -t hindsight .                                          # Both (standalone)
@@ -162,7 +161,13 @@ WORKDIR /app
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
-RUN apt-get update && apt-get install -y \
+# `upgrade` before `install`: without it the image ships whatever package
+# snapshot the base image was cut with, so security updates published since
+# never reach the runtime layers - that is how 0.9.2 shipped openssl 3.5.6 with
+# 3.5.7 available (#3906). The tradeoff is deliberate: two builds of the same
+# commit can now resolve different package versions.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y \
     curl \
     procps \
     libxml2 \
@@ -198,27 +203,8 @@ RUN chmod 755 /home/hindsight
 
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
-# Pre-download tiktoken encoding (ALWAYS - required for token counting even in air-gapped envs)
-# Tiktoken is a core runtime dependency, not an optional ML model
-RUN MAX_RETRIES=3; \
-    RETRY_DELAY=5; \
-    for i in $(seq 1 $MAX_RETRIES); do \
-      echo "Attempt $i/$MAX_RETRIES: Downloading tiktoken encoding..."; \
-      /app/api/.venv/bin/python -c "\
-import tiktoken; \
-print('Downloading cl100k_base encoding...'); \
-tiktoken.get_encoding('cl100k_base'); \
-print('Tiktoken encoding cached successfully')" && break; \
-      if [ $i -lt $MAX_RETRIES ]; then \
-        echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
-        sleep $RETRY_DELAY; \
-        RETRY_DELAY=$((RETRY_DELAY * 2)); \
-      fi; \
-    done; \
-    if [ $i -eq $MAX_RETRIES ]; then \
-      echo "ERROR: Failed to download tiktoken encoding after $MAX_RETRIES attempts"; \
-      exit 1; \
-    fi
+# No tokenizer pre-download step: toktok compiles its vocabularies into the wheel,
+# so token counting works offline with nothing cached at build time.
 
 # Pre-download ML models to avoid runtime download (conditional)
 # Only runs if both PRELOAD_ML_MODELS=true AND INCLUDE_LOCAL_MODELS=true
@@ -289,8 +275,22 @@ WORKDIR /app
 COPY docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
 
-# Install curl for health checks
-RUN apk add --no-cache curl bash
+# Install curl for health checks. `apk upgrade` first, for the same reason the
+# Debian stages run `apt-get upgrade` - see the comment on the api-only stage.
+# npm is removed for the same reason the Debian stages remove pip's build
+# tooling: nothing invokes it at runtime - start-all.sh launches the pre-built
+# Next standalone bundle with `node server.js` - and dropping it leaves no
+# scannable vulnerable tar component in the stage. corepack is deliberately
+# kept: it has no node_modules tree and ships no tar package metadata, so a
+# scanner reports nothing for it. The node base image unpacks npm from its own
+# tarball rather than installing an apk package, so it has to go by path.
+# The `[ -e ]` guard is deliberate: a bare `rm -rf` on a path a future base
+# image no longer uses succeeds silently and npm quietly ships again. Fail the
+# build instead, so the path assumption has to be revisited on a base bump.
+RUN apk upgrade --no-cache && apk add --no-cache curl bash \
+    && [ -e /usr/local/lib/node_modules/npm ] \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+    && ! command -v npm
 
 EXPOSE 9999
 
@@ -312,7 +312,22 @@ WORKDIR /app
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
-RUN apt-get update && apt-get install -y \
+# npm goes the same way: nothing invokes it at runtime - start-all.sh launches
+# the pre-built Next standalone bundle with `node server.js` - and dropping it
+# leaves no scannable vulnerable tar component in the stage. corepack is
+# deliberately kept: it has no node_modules tree and ships no tar package
+# metadata, so a scanner reports nothing for it. npm is not installed as a
+# separate apt package here - NodeSource's `nodejs` package ships it
+# (`dpkg -S /usr/bin/npm` resolves to `nodejs`), so `apt-get remove npm` is a
+# no-op and removal by path is the only option. The `[ -e ]` guard fails the
+# build if a base bump moves that path, rather than silently shipping npm.
+# `upgrade` before `install`: without it the image ships whatever package
+# snapshot the base image was cut with, so security updates published since
+# never reach the runtime layers - that is how 0.9.2 shipped openssl 3.5.6 with
+# 3.5.7 available (#3906). The tradeoff is deliberate: two builds of the same
+# commit can now resolve different package versions.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y \
     curl \
     procps \
     libxml2 \
@@ -322,6 +337,9 @@ RUN apt-get update && apt-get install -y \
     && (apt-get install -y libicu72 2>/dev/null || apt-get install -y libicu74 2>/dev/null || apt-get install -y libicu76 2>/dev/null || true) \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && [ -e /usr/lib/node_modules/npm ] \
+    && rm -rf /usr/lib/node_modules/npm /usr/bin/npm /usr/bin/npx \
+    && ! command -v npm \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv \
     && pip uninstall --yes setuptools wheel
@@ -361,27 +379,8 @@ RUN chmod 755 /home/hindsight
 
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
-# Pre-download tiktoken encoding (ALWAYS - required for token counting even in air-gapped envs)
-# Tiktoken is a core runtime dependency, not an optional ML model
-RUN MAX_RETRIES=3; \
-    RETRY_DELAY=5; \
-    for i in $(seq 1 $MAX_RETRIES); do \
-      echo "Attempt $i/$MAX_RETRIES: Downloading tiktoken encoding..."; \
-      /app/api/.venv/bin/python -c "\
-import tiktoken; \
-print('Downloading cl100k_base encoding...'); \
-tiktoken.get_encoding('cl100k_base'); \
-print('Tiktoken encoding cached successfully')" && break; \
-      if [ $i -lt $MAX_RETRIES ]; then \
-        echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
-        sleep $RETRY_DELAY; \
-        RETRY_DELAY=$((RETRY_DELAY * 2)); \
-      fi; \
-    done; \
-    if [ $i -eq $MAX_RETRIES ]; then \
-      echo "ERROR: Failed to download tiktoken encoding after $MAX_RETRIES attempts"; \
-      exit 1; \
-    fi
+# No tokenizer pre-download step: toktok compiles its vocabularies into the wheel,
+# so token counting works offline with nothing cached at build time.
 
 # Pre-download ML models to avoid runtime download (conditional)
 # Only runs if both PRELOAD_ML_MODELS=true AND INCLUDE_LOCAL_MODELS=true

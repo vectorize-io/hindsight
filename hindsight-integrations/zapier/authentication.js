@@ -11,7 +11,10 @@ const { baseUrl, DEFAULT_API_URL } = require("./utils");
  * call below exercises the credential against a real authenticated endpoint.
  */
 
-const test = (z, bundle) => z.request({ url: `${baseUrl(bundle)}/v1/default/banks` });
+// `limit=1`: the call only has to prove the key authenticates, so don't pull a
+// full page of banks on every credential test.
+const test = (z, bundle) =>
+  z.request({ url: `${baseUrl(bundle)}/v1/default/banks`, params: { limit: 1 } });
 
 const connectionLabel = (z, bundle) => {
   const host = ((bundle.authData && bundle.authData.apiUrl) || DEFAULT_API_URL).replace(

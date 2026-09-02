@@ -55,6 +55,7 @@ from benchmarks.perf.recall_perf import (
     _make_fact_callback,
     _RRFReranker,
     _wait_for_operation,
+    configure_entity_vocabulary,
 )
 
 console = Console()
@@ -68,6 +69,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 20,
         "recall_bank_size": 20,
         "recall_iterations": 5,
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 1,
         "consolidation_items": 20,
         "graph_maintenance_bank_size": 20,
@@ -82,6 +84,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 200,
         "recall_bank_size": 200,
         "recall_iterations": 20,
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 4,
         "consolidation_items": 200,
         "graph_maintenance_bank_size": 200,
@@ -96,6 +99,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 1_000,
         "recall_bank_size": 1_000,
         "recall_iterations": 50,
+        "recall_obs_sources_per_observation": 3,
         "recall_concurrency": 8,
         "consolidation_items": 1_000,
         "graph_maintenance_bank_size": 1_000,
@@ -110,6 +114,19 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 5_000,
         "recall_bank_size": 5_000,
         "recall_iterations": 100,
+        # *Mean* source facts per synthetic observation; the counts are drawn
+        # long-tailed around it (see _insert_synthetic_observations). Real banks
+        # sit low with a thin wide tail — the bank in #3510 ran mean 1.7, p95 4 —
+        # and at this mean the fixture still produces observations carrying
+        # several hundred sources, so the array-length cost path from #3085 stays
+        # exercised without pinning every observation to it.
+        #
+        # This was a constant 113 (the mean of the aged bank in #3085). Pinning
+        # every observation to that mean made a handful of seeds reach almost the
+        # whole entity graph, so the observation graph arm sat permanently in a
+        # regime real banks are never in: the suite measured 0.45s here where a
+        # realistically-shaped bank measures 15s, and #3510 went unseen.
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 16,
         "consolidation_items": 5_000,
         # Past the seqscan→HNSW crossover (~10k units) so this suite exercises
@@ -141,6 +158,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 5_000,
         "recall_bank_size": 5_000,
         "recall_iterations": 10,
+        "recall_obs_sources_per_observation": 2,
         "recall_concurrency": 4,
         "consolidation_items": 5_000,
         "graph_maintenance_bank_size": 15_000,
@@ -241,6 +259,10 @@ class RecallResult:
     latency: PercentileStats
     throughput_queries_per_sec: float
     phase_timings: dict[str, PercentileStats] = field(default_factory=dict)
+    # Only set by recall-with-observations: source facts per observation. Published
+    # so a change to the fixture is visible on the dashboard rather than reading as
+    # a latency regression (or masking one).
+    sources_per_observation: int | None = None
 
 
 @dataclass
@@ -388,7 +410,10 @@ async def _populate_bank(engine: Any, bank_id: str, size: int, event_date: str |
 
     _attach_mock_callback(engine)
 
-    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(size)]
+    # Size the entity vocabulary to this corpus so the entity graph keeps a real
+    # bank's long tail instead of turning every entity into a hub (#3510).
+    configure_entity_vocabulary(size)
+    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)]).text} for i in range(size)]
     if event_date:
         for item in contents:
             item["event_date"] = event_date
@@ -679,7 +704,8 @@ async def run_retain_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     await engine.initialize()
     _attach_mock_callback(engine)
 
-    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(total_items)]
+    configure_entity_vocabulary(total_items)
+    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)]).text} for i in range(total_items)]
     request_context = RequestContext()
 
     t0 = time.perf_counter()
@@ -846,11 +872,13 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
     bank_size = scale_cfg["recall_bank_size"]
     iterations = scale_cfg["recall_iterations"]
     concurrency = scale_cfg["recall_concurrency"]
+    sources_per_obs = scale_cfg["recall_obs_sources_per_observation"]
     bank_id = f"perf-recall-obs-{uuid.uuid4().hex[:8]}"
 
     console.print(
         f"\n[bold cyan]Suite: recall-with-observations[/bold cyan]  "
-        f"bank_size={bank_size}  iterations={iterations}  concurrency={concurrency}  bank={bank_id}"
+        f"bank_size={bank_size}  iterations={iterations}  concurrency={concurrency}  "
+        f"sources/obs={sources_per_obs}  bank={bank_id}"
     )
 
     engine = _build_engine()
@@ -859,7 +887,9 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
     # Use RRF reranker to isolate DB performance from cross-encoder CPU cost
     engine._cross_encoder_reranker = _RRFReranker()
 
-    # Populate bank with facts then insert synthetic observations (1 per fact)
+    # Populate bank with facts then insert synthetic observations (1 per fact,
+    # each carrying a long-tailed draw averaging `sources_per_obs` source
+    # facts — see the scale config)
     await _populate_bank(engine, bank_id, bank_size)
 
     pool = await engine._get_pool()
@@ -870,8 +900,8 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
         console=console,
     ) as progress:
         progress.add_task("Inserting synthetic observations…")
-        n_obs = await _insert_synthetic_observations(pool, bank_id)
-    console.print(f"  Inserted {n_obs:,} observations")
+        n_obs = await _insert_synthetic_observations(pool, bank_id, sources_per_obs)
+    console.print(f"  Inserted {n_obs:,} observations (mean {sources_per_obs} source facts each)")
 
     request_context = RequestContext()
     durations: list[float] = []
@@ -931,6 +961,7 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
         latency=latency_stats,
         throughput_queries_per_sec=round(throughput, 2),
         phase_timings=phase_stats,
+        sources_per_observation=sources_per_obs,
     )
 
     # Print summary
@@ -1184,7 +1215,8 @@ async def run_consolidation_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     # This queues consolidation tasks (since observations are enabled) but
     # no worker is running so they just sit in the queue — we run consolidation
     # explicitly below.
-    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(total_items)]
+    configure_entity_vocabulary(total_items)
+    contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)]).text} for i in range(total_items)]
     request_context = RequestContext()
 
     with Progress(
@@ -1341,7 +1373,10 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
     """
     import uuid as uuid_module
 
-    from hindsight_api.engine.graph_maintenance import enqueue_relink_victims
+    from hindsight_api.engine.graph_maintenance import (
+        enqueue_entity_prune_candidates,
+        enqueue_relink_victims,
+    )
     from hindsight_api.engine.memory_engine import acquire_with_retry
     from hindsight_api.engine.schema import fq_table
 
@@ -1351,6 +1386,10 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
     async with acquire_with_retry(backend) as conn:
         async with conn.transaction():
             await enqueue_relink_victims(conn, bank_id, deleted_ids)
+            # The entity/cooccurrence prunes are queue-driven too, so the
+            # capture-then-delete order has to enqueue both kinds of candidate
+            # or this suite stops measuring Pass 2 entirely.
+            await enqueue_entity_prune_candidates(conn, bank_id, deleted_ids)
             await conn.execute(
                 f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2",
                 deleted_uuids,
@@ -1672,9 +1711,24 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
                     # retain retries at a higher level; keep the load flowing.
                     counters.upsert_deadlocks += 1
 
+    # The prune is queue-driven (#3222): it only looks at entities a delete
+    # enqueued. This suite has no deletes — it measures the prune's contention
+    # against retain's upserts — so re-arm the queue before each round, or the
+    # first drain empties it and every later round measures nothing.
+    entity_ids = sorted({eid for pair in pair_list for eid in pair})
+
+    async def _rearm_entity_queue() -> None:
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                f"INSERT INTO {fq_table('entity_maintenance_queue')} (bank_id, entity_id) "
+                f"VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                [(bank_id, eid) for eid in entity_ids],
+            )
+
     async def _sweep_worker(stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
             counters.attempted += 1
+            await _rearm_entity_queue()
             t0 = time.perf_counter()
             try:
                 await run_graph_maintenance_job(engine, bank_id, request_context)

@@ -19,18 +19,13 @@ HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTen
 HINDSIGHT_API_TENANT_API_KEY=your-secret-key
 ```
 
-**Built-in: SupabaseTenantExtension**
+**No longer built in: SupabaseTenantExtension**
 
-Validates [Supabase](https://supabase.com) JWTs and provides multi-tenant memory isolation. Each authenticated user gets their own PostgreSQL schema (`{prefix}_{user_id}`), ensuring complete data separation. Performs local JWT verification using JWKS for optimal performance (no network call per request).
+Validates [Supabase](https://supabase.com) JWTs and gives each authenticated user their own PostgreSQL schema. It now lives in the [extensions registry](https://github.com/vectorize-io/hindsight/tree/main/hindsight-extensions/supabase-tenant), which documents its configuration and ships a Dockerfile that builds an image with it.
 
-```bash
-HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.supabase_tenant:SupabaseTenantExtension
-HINDSIGHT_API_TENANT_SUPABASE_URL=https://your-project.supabase.co
-# Optional - only needed for legacy HS256 projects or health check
-HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY=your-service-role-key
-```
-
-See the [source code](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/extensions/builtin/supabase_tenant.py) for complete configuration options and implementation details.
+:::warning Breaking change in 0.9.3
+Up to 0.9.2 this extension was built in, at `hindsight_api.extensions.builtin.supabase_tenant`. That path no longer exists, so an install still pointing at it fails at startup with `ModuleNotFoundError`. Add the extension to your image and set `HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_supabase_tenant:SupabaseTenantExtension`. All `HINDSIGHT_API_TENANT_*` settings and the schema naming are unchanged.
+:::
 
 For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT-based auth), implement a custom `TenantExtension`.
 
@@ -142,6 +137,36 @@ raise AuthenticationError(
     headers={"WWW-Authenticate": 'Bearer realm="example"'},
 )
 ```
+
+### Reading additional request headers
+
+`RequestContext` carries the `Authorization` header as `api_key`. To authenticate on a *different* header — for instance when a gateway terminates auth with one shared identity and forwards the per-caller identity separately — name the headers you want forwarded:
+
+```bash
+HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS=x-user-assertion
+```
+
+They are available as `context.extra_headers`, keyed by lower-cased name:
+
+```python
+async def authenticate(self, context: RequestContext) -> TenantContext:
+    assertion = context.extra_headers.get("x-user-assertion")
+    if not assertion:
+        raise AuthenticationError("x-user-assertion header required")
+
+    user_id = verify_assertion(assertion)  # your verification
+    return TenantContext(schema_name=f"tenant_{user_id}")
+```
+
+This works on both the HTTP and MCP transports, and the same `RequestContext` is passed to `OperationValidatorExtension` hooks, so a validator can enforce rules against the identity resolved here.
+
+Only headers you list are forwarded, and only when present on the request. The variable is unset by default, so extensions see no header data unless you opt in.
+
+A header sent **more than once** is not forwarded at all, and a warning is logged. There is no safe way to choose between the copies — a proxy may append its trusted value either before or after a client-supplied one — so an extension reading it sees nothing and fails the request, rather than silently accepting a value that may be spoofed. Make sure your proxy *replaces* the identity header it injects instead of appending to it.
+
+:::caution Deferred operations
+`extra_headers` describes the request being served. Operations that run later — a queued retain, a scheduled consolidation, a mental-model refresh — are executed by a background worker with no request behind them, so their `RequestContext` carries no headers. Authorize on the header at request time; do not rely on it inside work that continues after the response.
+:::
 
 ### Example: Custom HttpExtension
 
@@ -284,28 +309,24 @@ class MyMCPExtension(MCPExtension):
 
 ### With Docker
 
-Mount your extension package as a volume and set the environment variable:
-
-```yaml
-# docker-compose.yml
-services:
-  hindsight-api:
-    image: vectorize/hindsight-api:latest
-    volumes:
-      - ./my_extensions:/app/my_extensions
-    environment:
-      - HINDSIGHT_API_TENANT_EXTENSION=my_extensions.auth:JwtTenantExtension
-      - HINDSIGHT_API_TENANT_JWT_SECRET=${JWT_SECRET}
-      - PYTHONPATH=/app
-```
-
-Or build a custom image with your extensions:
+Extensions are not bundled in the image. Build one on top of Hindsight that installs your extension's dependencies and copies it in. Install into the image's virtualenv explicitly — it was created by `uv sync` and ships no `pip` of its own, so a bare `pip install` lands where the server can't see it:
 
 ```dockerfile
-FROM vectorize/hindsight-api:latest
-COPY my_extensions /app/my_extensions
-ENV PYTHONPATH=/app
+FROM ghcr.io/vectorize-io/hindsight:latest
+
+RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
+      'PyJWT[crypto]>=2.12.0' 'httpx>=0.27.0'
+
+COPY my_extension /app/extensions/my_extension
+ENV PYTHONPATH=/app/extensions
+
+# Fail the build, not the first request, if it isn't importable.
+RUN /app/api/.venv/bin/python -c "import my_extension"
 ```
+
+Then point the service at that image and pass the extension's variables as environment. Give the API and worker containers the same extension configuration — the worker uses the tenant extension to enumerate schemas for background consolidation.
+
+See the [extensions registry README](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md#docker-packaging) for the full recipe.
 
 ### Bare Metal
 
@@ -340,4 +361,6 @@ Custom extensions that solve common use cases are welcome contributions to the H
 - Metrics exporters (Datadog, New Relic, etc.)
 - Custom HTTP endpoints for specific platforms
 
-Consider contributing it to the `hindsight_api.extensions.builtin` package. Open an issue or pull request on [GitHub](https://github.com/vectorize-io/hindsight) to discuss your extension.
+Add it to the [extensions registry](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md) — either as a directory under `hindsight-extensions/`, or as a registry entry linking to your own repository. That README covers the layout, the development workflow, and Docker packaging.
+
+Extensions live outside the server so that installing Hindsight does not pull in a vendor's client library, and so changing an extension does not require a Hindsight release. Only extensions that add no dependencies and are useful to any deployment (`ApiKeyTenantExtension`, `MemoryDefenseRegexExtension`) stay in `hindsight_api.extensions.builtin`.

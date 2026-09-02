@@ -161,6 +161,7 @@ async def test_progress_absent_returns_null(api_client, memory: MemoryEngine):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_consolidation_records_advancing_progress(memory: MemoryEngine, request_context, monkeypatch):
     """A real consolidation run emits scanning → processing_batch → refreshing_mental_models,
     with processed advancing and a durable snapshot left on the operation row."""

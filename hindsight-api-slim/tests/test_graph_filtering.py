@@ -150,6 +150,7 @@ async def test_graph_q_and_tags_filter_combined(api_client, test_bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_graph_document_filter_includes_observations_via_source_memories(
     memory, api_client, test_bank_id, request_context
 ):
@@ -297,6 +298,7 @@ async def _seed_scoped_observations(memory, bank_id, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_observation_scopes_enumeration(memory, api_client, test_bank_id, request_context):
     """The scopes endpoint enumerates distinct tag sets (order-normalized) with counts."""
     await _seed_scoped_observations(memory, test_bank_id, request_context)
@@ -313,6 +315,7 @@ async def test_observation_scopes_enumeration(memory, api_client, test_bank_id, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_graph_exact_scope_filter(memory, api_client, test_bank_id, request_context):
     """tags_match=exact filters observations to exactly one scope, not supersets."""
     await _seed_scoped_observations(memory, test_bank_id, request_context)
@@ -337,6 +340,7 @@ async def test_graph_exact_scope_filter(memory, api_client, test_bank_id, reques
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_graph_exact_global_scope_filter(memory, api_client, test_bank_id, request_context):
     """tags_match=exact with no tags is the global scope: untagged observations only."""
     await _seed_scoped_observations(memory, test_bank_id, request_context)

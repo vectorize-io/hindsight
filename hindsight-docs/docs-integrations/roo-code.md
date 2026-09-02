@@ -8,6 +8,8 @@ description: "Add persistent long-term memory to Roo Code via Hindsight MCP. Aut
 
 Persistent long-term memory for [Roo Code](https://github.com/RooVetGit/Roo-Code) via [Hindsight](https://vectorize.io/hindsight). A one-command installer registers Hindsight's MCP server and injects custom rules that teach Roo to recall context before tasks and retain learnings after.
 
+[View Changelog →](/changelog/integrations/roo-code)
+
 ## Quick Start
 
 :::tip Hindsight Cloud (recommended)

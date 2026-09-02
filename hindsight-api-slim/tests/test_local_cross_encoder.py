@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from hindsight_api.config import DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
 from hindsight_api.engine import cross_encoder as ce_module
 from hindsight_api.engine.cross_encoder import (
     FlashRankCrossEncoder,
@@ -128,8 +129,8 @@ class TestLocalSTCrossEncoder:
 class TestFlashRankCrossEncoder:
     """Unit tests for the FlashRank ONNX reranker."""
 
-    def _make_encoder(self):
-        encoder = FlashRankCrossEncoder(model_name="ms-marco-MiniLM-L-12-v2")
+    def _make_encoder(self, *, batch_size: int = DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE):
+        encoder = FlashRankCrossEncoder(model_name="ms-marco-MiniLM-L-12-v2", batch_size=batch_size)
         # Bypass initialize() — no model load, no executor needed (we call
         # _predict_sync directly).
         encoder._ranker = MagicMock()
@@ -229,3 +230,82 @@ class TestFlashRankCrossEncoder:
             encoder._predict_sync([])
 
         assert cleanup_calls == []
+
+    def test_predict_sync_splits_into_batches(self):
+        """A candidate pool larger than batch_size must never reach FlashRank as a
+        single request: one forward pass allocates attention tensors sized
+        batch * heads * seq^2, which OOM-killed containers on large banks (#3355).
+        """
+        encoder = self._make_encoder(batch_size=32)
+
+        batch_sizes = []
+
+        def fake_rerank(request):
+            batch_sizes.append(len(request.passages))
+            return [{"id": i, "score": 0.5} for i in range(len(request.passages))]
+
+        encoder._ranker.rerank.side_effect = fake_rerank
+
+        fake_flashrank = MagicMock()
+        fake_flashrank.RerankRequest = lambda query, passages: MagicMock(query=query, passages=passages)
+
+        pairs = [("q", f"doc-{i}") for i in range(300)]
+        with patch.dict("sys.modules", {"flashrank": fake_flashrank}):
+            scores = encoder._predict_sync(pairs)
+
+        assert len(scores) == 300
+        # ceil(300 / 32) == 10 passes, none exceeding the batch size.
+        assert batch_sizes == [32] * 9 + [12]
+
+    def test_predict_sync_batching_preserves_pair_positions(self):
+        """Batch-local FlashRank ids must be shifted back onto the caller's
+        positions, or scores land on the wrong candidates past the first batch."""
+        encoder = self._make_encoder(batch_size=2)
+
+        def fake_rerank(request):
+            # Score by passage text so a misplaced score is detectable, and return
+            # them out of order the way FlashRank does (score-descending).
+            scored = [{"id": i, "score": float(p["text"])} for i, p in enumerate(request.passages)]
+            return sorted(scored, key=lambda r: r["score"], reverse=True)
+
+        encoder._ranker.rerank.side_effect = fake_rerank
+
+        fake_flashrank = MagicMock()
+        fake_flashrank.RerankRequest = lambda query, passages: MagicMock(query=query, passages=passages)
+
+        pairs = [("q", str(i)) for i in range(5)]
+        with patch.dict("sys.modules", {"flashrank": fake_flashrank}):
+            scores = encoder._predict_sync(pairs)
+
+        assert scores == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+    def test_predict_sync_batches_each_query_group_independently(self):
+        """Grouping by query and batching within a group compose: two queries of
+        three passages at batch_size=2 give two passes each, not three overall."""
+        encoder = self._make_encoder(batch_size=2)
+
+        seen = []
+
+        def fake_rerank(request):
+            seen.append((request.query, len(request.passages)))
+            return [{"id": i, "score": 0.5} for i in range(len(request.passages))]
+
+        encoder._ranker.rerank.side_effect = fake_rerank
+
+        fake_flashrank = MagicMock()
+        fake_flashrank.RerankRequest = lambda query, passages: MagicMock(query=query, passages=passages)
+
+        pairs = [("q1", "a"), ("q2", "d"), ("q1", "b"), ("q2", "e"), ("q1", "c"), ("q2", "f")]
+        with patch.dict("sys.modules", {"flashrank": fake_flashrank}):
+            scores = encoder._predict_sync(pairs)
+
+        assert scores == [0.5] * 6
+        assert seen == [("q1", 2), ("q1", 1), ("q2", 2), ("q2", 1)]
+
+    @pytest.mark.parametrize("configured", [0, -1])
+    def test_non_positive_batch_size_clamps_to_one(self, configured):
+        """A misconfigured 0/-1 must not silently restore the unbounded single pass."""
+        assert FlashRankCrossEncoder(batch_size=configured).batch_size == 1
+
+    def test_default_batch_size_matches_config(self):
+        assert FlashRankCrossEncoder().batch_size == DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE

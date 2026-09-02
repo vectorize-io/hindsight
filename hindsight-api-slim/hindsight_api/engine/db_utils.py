@@ -102,12 +102,12 @@ async def retry_with_backoff(
                     )
                 else:
                     logger.warning(
-                        f"Database operation failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                        f"Database operation failed (attempt {attempt + 1}/{max_retries + 1}): {e!r}. "
                         f"Retrying in {delay:.1f}s..."
                     )
                 await asyncio.sleep(delay)
             else:
-                logger.error(f"Database operation failed after {max_retries + 1} attempts: {e}")
+                logger.error(f"Database operation failed after {max_retries + 1} attempts: {e!r}")
     raise last_exception
 
 
@@ -152,13 +152,19 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
                         raise
                     if attempt < max_retries:
                         delay = _backoff_delay(attempt, DEFAULT_BASE_DELAY, DEFAULT_MAX_DELAY)
+                        # !r, not str(): asyncpg raises several of these with no
+                        # args, so str(e) is "" and the line renders as
+                        # "Database acquire failed ... : " — the one field that
+                        # says whether this was a dropped connection, a closed
+                        # pool or an acquire timeout. repr() always carries the
+                        # class name.
                         logger.warning(
-                            f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e!r}. "
                             f"Retrying in {delay:.1f}s..."
                         )
                         await asyncio.sleep(delay)
                     else:
-                        logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e}")
+                        logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e!r}")
                         raise
 
             acquire_time = time.time() - start
@@ -186,3 +192,24 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
             yield conn
         finally:
             await pool.release(conn)
+
+
+@asynccontextmanager
+async def use_or_acquire(backend_or_pool: Any, conn: Any | None) -> AsyncIterator[Any]:
+    """Reuse the caller's connection, or acquire one when there isn't one.
+
+    Lets a method that normally manages its own connection also run as one step
+    of a caller's transaction: pass ``conn`` and its writes commit or roll back
+    with everything else in that transaction, rather than landing on a separate
+    connection that a later failure cannot undo. A borrowed connection is left
+    open here — the caller that opened it closes it.
+
+    Usage:
+        async with use_or_acquire(backend, conn) as c:
+            await c.execute(...)
+    """
+    if conn is not None:
+        yield conn
+        return
+    async with acquire_with_retry(backend_or_pool) as owned:
+        yield owned

@@ -101,7 +101,6 @@ Optional settings in `~/.openclaw/openclaw.json`:
         "enabled": true,
         "config": {
           "apiPort": 9077,
-          "daemonIdleTimeout": 0,
           "embedVersion": "latest"
         }
       }
@@ -112,7 +111,6 @@ Optional settings in `~/.openclaw/openclaw.json`:
 
 **Options:**
 - `apiPort` - Port for the openclaw profile daemon (default: `9077`)
-- `daemonIdleTimeout` - Seconds before daemon shuts down from inactivity (default: `0` = never)
 - `embedVersion` - hindsight-embed version (default: `"latest"`)
 - `llmProvider` - LLM provider for memory extraction (`openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`). Required unless `hindsightApiUrl` is set.
 - `llmModel` - LLM model used with `llmProvider` (provider default if omitted)
@@ -145,6 +143,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `recallInjectionPosition` - Where to inject recalled memories: `"user"` (default), `"prepend"`, or `"append"`. The default injects before the user message and preserves the system prompt cache. Use `"prepend"` or `"append"` when memories need system-level context.
 - `recallRoles` - Which message roles to include when composing the contextual recall query (default: `["user", "assistant"]`).
 - `retainEveryNTurns` - Retain every Nth turn (default: `1` = every turn). Values > 1 enable chunked retention.
+- `senderPrefixPattern` - Regex matching a human display-name prefix that some channels prepend to the user's text (e.g. `Alice: today weather?`). Supply the name part only — `Alice|Bob` or `[A-Za-z ]{1,20}` — the `:` separator and anchoring are added by the plugin. When set, the prefix is stripped from both the recall query and the retained transcript, so the sender's name no longer pollutes vector search or get extracted as a fact. Unset (default) strips nothing; an invalid regex is ignored.
 - `retainOverlapTurns` - Extra prior turns included when chunked retention fires (default: `0`).
 - `enableKnowledgeTools` - Register `agent_knowledge_*` tools for explicit agent-driven lookup, reflection, ingest, and knowledge-page management (default: `false`).
 - `debug` - Enable debug logging (default: `false`).

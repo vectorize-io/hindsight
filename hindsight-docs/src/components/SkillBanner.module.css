@@ -1,152 +1,161 @@
 .container {
-  margin: 0 0 20px 0;
+  margin: 0 0 1.5rem 0;
   width: 100%;
 }
 
+/* One slim bar rather than the previous block with the command printed in it:
+   the command now lives behind the Install button, so the strip only has to
+   say what it is for. */
 .banner {
-  background: linear-gradient(135deg, #0074d9 0%, #005db0 100%);
-  border-radius: 8px;
-  padding: 10px 14px;
-  color: white;
-  box-shadow: 0 2px 8px rgba(0, 116, 217, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
-  gap: 12px;
-  transition: box-shadow 0.2s ease;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.375rem 0.375rem 0.375rem 0.875rem;
+  border: 1px solid var(--skill-banner-border);
+  border-radius: 0.625rem;
+  background: var(--skill-banner-surface);
 }
 
-.banner:hover {
-  box-shadow: 0 4px 12px rgba(0, 116, 217, 0.2);
-}
-
-.icon {
-  font-size: 20px;
-  line-height: 1;
+.prompt {
   flex-shrink: 0;
-}
-
-.content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8125rem;
+  color: var(--ifm-color-primary);
+  opacity: 0.9;
 }
 
 .title {
-  font-weight: 600;
-  font-size: 12px;
-  line-height: 1.4;
-  color: white;
-}
-
-.commandWrapper {
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.command {
-  background: rgba(0, 0, 0, 0.25);
-  padding: 6px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Consolas, monospace;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #e6f7f8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   flex: 1;
   min-width: 0;
-}
-
-.copyButton {
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  padding: 6px 8px;
-  color: white;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
-  height: 28px;
-  width: 28px;
-}
-
-.copyButton:hover {
-  background: rgba(255, 255, 255, 0.25);
-  transform: scale(1.05);
-}
-
-.copyButton:active {
-  transform: scale(0.95);
-}
-
-.copyButton svg {
-  display: block;
-}
-
-.titleRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.copyPageButton {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  padding: 3px 7px;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 10px;
+  font-family: 'Space Grotesk', var(--ifm-font-family-base);
   font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--ifm-font-color-base);
+}
+
+/* Brand marks only — which agents this works with. Nothing to click. */
+.agents {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   flex-shrink: 0;
-  transition: all 0.2s ease;
 }
 
-.copyPageButton:hover {
-  background: rgba(255, 255, 255, 0.22);
-  color: white;
+.agentLogo {
+  width: 1.125rem;
+  height: 1.125rem;
+  object-fit: contain;
+  border-radius: 0.1875rem;
+  opacity: 0.85;
 }
 
-.copyPageButton:active {
-  transform: scale(0.95);
+/* Split control: the action on the left, the page menu behind the chevron. */
+.actions {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  border: 1px solid var(--skill-banner-border);
+  border-radius: 0.5rem;
+  background: var(--skill-banner-button);
 }
 
-.copyPageButton.copyPageCopied {
-  background: rgba(255, 255, 255, 0.22);
-  color: white;
+.installButton,
+.menuButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 0.75rem;
+  border: none;
+  background: none;
+  font-family: 'Space Grotesk', var(--ifm-font-family-base);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  line-height: 1;
+  color: var(--ifm-font-color-base);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
 }
 
-/* Dark mode - make it stand out even more */
-html[data-theme='dark'] .banner {
-  box-shadow: 0 4px 12px rgba(0, 116, 217, 0.2),
-              0 0 0 1px rgba(255, 255, 255, 0.15);
+.installButton {
+  height: 1.875rem;
+  border-radius: 0.4375rem 0 0 0.4375rem;
 }
 
-html[data-theme='dark'] .banner:hover {
-  box-shadow: 0 6px 16px rgba(0, 116, 217, 0.3),
-              0 0 0 1px rgba(255, 255, 255, 0.2);
+.menuButton {
+  padding: 0 0.4375rem;
+  border-left: 1px solid var(--skill-banner-border);
+  border-radius: 0 0.4375rem 0.4375rem 0;
 }
 
-/* Light mode adjustments */
-html[data-theme='light'] .banner {
-  box-shadow: 0 4px 12px rgba(0, 116, 217, 0.15),
-              0 2px 4px rgba(0, 0, 0, 0.05);
+.installButton:hover,
+.menuButton:hover,
+.menuButton[aria-expanded='true'] {
+  background-color: var(--skill-banner-button-hover);
 }
 
-html[data-theme='light'] .banner:hover {
-  box-shadow: 0 6px 16px rgba(0, 116, 217, 0.25),
-              0 4px 8px rgba(0, 0, 0, 0.08);
+.installButton svg,
+.menuButton svg {
+  flex-shrink: 0;
+}
+
+.copied {
+  color: var(--ifm-color-primary);
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  right: 0;
+  z-index: 10;
+  min-width: 12rem;
+  padding: 0.375rem;
+  border: 1px solid var(--skill-banner-border);
+  border-radius: 0.625rem;
+  background: var(--ifm-background-surface-color);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.35);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: none;
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.8125rem;
+  color: var(--ifm-font-color-base);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.menuItem:hover {
+  background-color: var(--skill-banner-button-hover);
+}
+
+.menuItem svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* Below the docs sidebar breakpoint the strip has to give up the label before
+   it gives up the button. */
+@media (max-width: 600px) {
+  .title {
+    font-size: 0.75rem;
+  }
+
+  .agents {
+    display: none;
+  }
+}
+
+/* A black one-colour mark would vanish against the dark theme. */
+[data-theme='dark'] .agentLogoMono {
+  filter: invert(1);
 }

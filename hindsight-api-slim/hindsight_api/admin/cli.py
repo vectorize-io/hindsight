@@ -19,11 +19,17 @@ import asyncpg
 import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
+from ..engine.memories import get_memories
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
-from ..engine.vector_index_health import SchemaVectorIndexResult, repair_vector_indexes
+from ..engine.vector_index_health import (
+    BankIndexResult,
+    drop_orphaned_bank_indexes,
+    list_bank_ids,
+    reconcile_bank_vector_indexes,
+)
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -68,6 +74,7 @@ BACKUP_TABLES = [
     "audit_log",
     "llm_requests",
     "graph_maintenance_queue",
+    "entity_maintenance_queue",
 ]
 
 MANIFEST_VERSION = "2"
@@ -216,6 +223,66 @@ async def _validate_restore_schema(
         details = "; ".join(errors)
         raise ValueError(f"Backup schema is incompatible with target schema '{schema}': {details}")
     return plans
+
+
+def _quote_identifier(identifier: str) -> str:
+    """Quote a PostgreSQL identifier for catalog-derived dynamic SQL."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+async def _sync_owned_sequences(conn: asyncpg.Connection, schema: str, tables: list[str]) -> None:
+    """Advance non-cyclic identity sequences past restored column values."""
+    sequences = await conn.fetch(
+        """
+        SELECT tbl.relname AS table_name,
+               attr.attname AS column_name,
+               seq_ns.nspname AS sequence_schema,
+               seq.relname AS sequence_name,
+               pg_seq.seqstart AS sequence_start,
+               pg_seq.seqincrement AS sequence_increment,
+               pg_seq.seqmin AS sequence_min,
+               pg_seq.seqmax AS sequence_max
+        FROM pg_catalog.pg_class AS tbl
+        JOIN pg_catalog.pg_namespace AS tbl_ns ON tbl_ns.oid = tbl.relnamespace
+        JOIN pg_catalog.pg_attribute AS attr
+          ON attr.attrelid = tbl.oid AND attr.attnum > 0 AND NOT attr.attisdropped
+        JOIN pg_catalog.pg_depend AS dep
+          ON dep.refobjid = tbl.oid
+         AND dep.refobjsubid = attr.attnum
+         AND dep.classid = 'pg_catalog.pg_class'::regclass
+         AND dep.refclassid = 'pg_catalog.pg_class'::regclass
+         AND dep.deptype = 'i'
+        JOIN pg_catalog.pg_class AS seq ON seq.oid = dep.objid AND seq.relkind = 'S'
+        JOIN pg_catalog.pg_namespace AS seq_ns ON seq_ns.oid = seq.relnamespace
+        JOIN pg_catalog.pg_sequence AS pg_seq ON pg_seq.seqrelid = seq.oid
+        WHERE tbl_ns.nspname = $1
+          AND tbl.relname = ANY($2::text[])
+          AND attr.attidentity <> ''
+          AND NOT pg_seq.seqcycle
+        ORDER BY tbl.relname, attr.attnum
+        """,
+        schema,
+        tables,
+    )
+
+    for sequence in sequences:
+        aggregate = "MAX" if sequence["sequence_increment"] > 0 else "MIN"
+        qualified_table = f"{_quote_identifier(schema)}.{_quote_identifier(sequence['table_name'])}"
+        column = _quote_identifier(sequence["column_name"])
+        restored_edge = await conn.fetchval(
+            f"SELECT {aggregate}({column}) FROM {qualified_table} "
+            f"WHERE {column} BETWEEN {int(sequence['sequence_min'])} AND {int(sequence['sequence_max'])}"
+        )
+        qualified_sequence = (
+            f"{_quote_identifier(sequence['sequence_schema'])}.{_quote_identifier(sequence['sequence_name'])}"
+        )
+        restart_value = sequence["sequence_start"] if restored_edge is None else restored_edge
+        await conn.execute(f"ALTER SEQUENCE {qualified_sequence} RESTART WITH {int(restart_value)}")
+        if restored_edge is not None:
+            # RESTART is transactional; consuming the restored edge gives the
+            # sequence setval(edge, true) semantics without calculating a value
+            # beyond a finite sequence's min/max bound.
+            await conn.fetchval("SELECT nextval($1::regclass)", qualified_sequence)
 
 
 def _effective_backup_tables() -> list[str]:
@@ -387,6 +454,9 @@ async def _restore(
                 # Refresh materialized view
                 typer.echo("  Refreshing materialized views...")
                 await conn.execute(f"REFRESH MATERIALIZED VIEW {_fq_table('memory_units_bm25', schema)}")
+
+                typer.echo("  Synchronizing identity sequences...")
+                await _sync_owned_sequences(conn, schema, backup_tables)
 
         return manifest
     finally:
@@ -617,11 +687,14 @@ async def _run_repair_bank(
     schema: str | None,
     bank_id: str | None,
     dry_run: bool,
-) -> list[SchemaVectorIndexResult]:
+) -> list[BankIndexResult]:
     """Reconcile per-(bank, fact_type) vector index coverage over a raw connection.
 
     A single autocommit connection is used because ``CREATE INDEX CONCURRENTLY``
-    (used by ``repair_vector_indexes``) cannot run inside a transaction block.
+    cannot run inside a transaction block.
+
+    Deliberately unbudgeted, unlike the background operation: this is an operator
+    asking for convergence now, across as many banks as they named.
     """
     schemas = [schema] if schema else await _resolve_schemas(base_schema)
     index_clause = _vector_index_clause()
@@ -630,13 +703,38 @@ async def _run_repair_bank(
     assert index_clause is not None
 
     conn = await _admin_connect(db_url)
+    results: list[BankIndexResult] = []
     try:
-        results = await repair_vector_indexes(conn, schemas, index_clause, dry_run=dry_run, bank_id=bank_id)
-        for result in results:
+        for target_schema in schemas:
+            try:
+                bank_ids = [bank_id] if bank_id else await list_bank_ids(conn, target_schema)
+            except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
+                typer.echo(f"  schema '{target_schema}': skipped ({exc})", err=True)
+                continue
+            schema_results = [
+                await reconcile_bank_vector_indexes(conn, target_schema, bid, index_clause, dry_run=dry_run)
+                for bid in bank_ids
+            ]
+            results.extend(schema_results)
+            # Only in --all mode: an index whose bank row is gone is unreachable
+            # from every bank-scoped path, so this is the one place that can
+            # collect it. Normally finds nothing — delete_bank drops a bank's
+            # indexes while it still knows their names — but a deployment that
+            # hit the #3485 wall could not run delete_bank at all.
+            orphans = [] if bank_id else await drop_orphaned_bank_indexes(conn, target_schema, dry_run=dry_run)
+            if orphans:
+                typer.echo(
+                    f"  schema '{target_schema}': {len(orphans)} orphaned index(es) "
+                    f"{'to drop (dry-run)' if dry_run else 'dropped'} (no matching bank)"
+                )
             typer.echo(
-                f"  schema '{result.schema}': {result.banks_scanned} bank(s) scanned, "
-                f"{result.already_present} present, {result.created} created, "
-                f"{result.skipped} to-create (dry-run), {result.failed} failed"
+                f"  schema '{target_schema}': {len(bank_ids)} bank(s) scanned, "
+                f"{sum(r.already_present for r in schema_results)} present, "
+                f"{sum(r.created for r in schema_results)} created, "
+                f"{sum(r.dropped for r in schema_results)} dropped, "
+                f"{sum(r.skipped for r in schema_results)} to-create (dry-run), "
+                f"{sum(r.would_drop for r in schema_results)} to-drop (dry-run), "
+                f"{sum(r.failed for r in schema_results)} failed"
             )
         return results
     finally:
@@ -668,17 +766,27 @@ def repair_bank(
         help="Report what would be repaired without creating or dropping any index.",
     ),
 ):
-    """Verify and repair a bank's per-(bank, fact_type) vector index coverage.
+    """Reconcile per-(bank, fact_type) vector index coverage.
 
-    Per-bank partial vector indexes are created when a bank is first created
-    (instant on an empty bank). Banks that arrive populated — via logical
-    restore, a cross-version upgrade, or a vector-extension switch — never hit
-    that path, so their recall silently falls back to a global index +
-    post-filter (slower, under-returning). This command detects missing OR
-    invalid coverage (an INVALID leftover or an index whose access method
-    drifted counts as missing) and rebuilds it with CREATE INDEX CONCURRENTLY,
-    so it never blocks the live fleet. Idempotent and safe to re-run — the
-    escape hatch after a restore, upgrade, or backend switch.
+    With HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS at its default of 0 every bank is
+    owed all three indexes from the moment it exists, and this rebuilds whatever
+    is missing or invalid — a bank whose creation lost its DDL to a deadlock, one
+    restored around it, or one whose access method drifted after a backend
+    switch. Nothing is dropped in that mode.
+
+    With a threshold set, a (bank, fact_type) earns its index once it holds that
+    many rows; below it the planner answers the same query exactly, and faster,
+    from the (bank_id, fact_type) B-tree plus a top-N sort. This command then
+    also drops what no longer qualifies. Either way it sheds indexes orphaned by
+    a deleted bank, and all DDL is CONCURRENTLY, so it never blocks the live
+    fleet.
+
+    With a threshold set, writes keep this converged on their own — every write
+    that could move a bank across it queues a vector_index_maintenance operation.
+    Reach for the command when you want convergence without waiting for a write:
+    after a restore or upgrade, after a backend switch, or to shed indexes in
+    bulk on a deployment recovering from lock-table exhaustion (#3485).
+    Idempotent and safe to re-run.
     """
     if bool(bank_id) == all_banks:
         typer.echo("Error: pass exactly one of --bank <id> or --all.", err=True)
@@ -712,15 +820,18 @@ def repair_bank(
         )
     )
 
-    total_banks = sum(r.banks_scanned for r in results)
+    total_banks = len(results)
     total_present = sum(r.already_present for r in results)
     total_created = sum(r.created for r in results)
+    total_dropped = sum(r.dropped for r in results)
     total_skipped = sum(r.skipped for r in results)
+    total_would_drop = sum(r.would_drop for r in results)
     total_failed = sum(r.failed for r in results)
     typer.echo(
         f"Done: {len(results)} schema(s), {total_banks} bank(s) scanned, "
-        f"{total_present} already present, {total_created} created, "
-        f"{total_skipped} to-create (dry-run), {total_failed} failed"
+        f"{total_present} already present, {total_created} created, {total_dropped} dropped, "
+        f"{total_skipped} to-create (dry-run), {total_would_drop} to-drop (dry-run), "
+        f"{total_failed} failed"
     )
     if total_failed:
         failed_names = [name for r in results for name in r.failed_indexes]
@@ -729,7 +840,17 @@ def repair_bank(
 
 
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
-    """Export a whole bank to a ZIP archive."""
+    """Export a whole bank to a ZIP archive.
+
+    The memories store is resolved from config here and handed to the export, because a bank whose
+    memories live outside SQL cannot be read from this connection: the tables would be empty and the
+    archive would come out well-formed and empty, which an operator only discovers at restore time.
+    A Postgres deployment resolves to the SQL store, whose capability probe sends the export down
+    exactly the path it always took.
+
+    Resolving it in a short-lived CLI process is safe because the store connects lazily on first
+    use rather than in `initialize()`.
+    """
     conn = await _admin_connect(db_url)
     try:
         # export_bank resolves table names via fq_table (the _current_schema
@@ -742,6 +863,7 @@ async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str,
             bank_id,
             include_history=include_history,
             bank_rows_json_encoding="decoded",
+            memories=get_memories(),
         )
     finally:
         await conn.close()
@@ -847,7 +969,8 @@ def import_bank_command(
         f"Imported bank '{result.bank_id}': {result.documents_imported} doc(s), "
         f"{result.facts_imported} fact(s), {result.observations_imported} observation(s), "
         f"{result.mental_models_imported} mental model(s), "
-        f"{result.mental_model_history_imported} mm-history row(s), {result.directives_imported} directive(s), "
+        f"{result.mental_model_history_imported} mm-history row(s), "
+        f"{result.knowledge_pages_imported} knowledge page(s), {result.directives_imported} directive(s), "
         f"{result.webhooks_imported} webhook(s), {result.history_rows_imported} history row(s)"
     )
 

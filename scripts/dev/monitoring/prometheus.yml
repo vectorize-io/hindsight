@@ -28,3 +28,9 @@ scrape_configs:
       - targets: ['host.docker.internal:8888']
     metrics_path: '/metrics'
     scrape_interval: 5s
+  - job_name: 'hindsight-worker'
+    static_configs:
+      # Dedicated workers (helm: worker.enabled, port 8889). Harmless 404-less
+      # no-op when no worker runs on the host.
+      - targets: ['host.docker.internal:8889']
+    metrics_path: '/metrics'

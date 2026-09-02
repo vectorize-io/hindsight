@@ -179,23 +179,20 @@ A minimal native local config looks like this:
 
 If you want a deeper mental model of what the provider is doing during retention and recall, the [Recall API reference](https://hindsight.vectorize.io/docs/api/recall) and [Retain API reference](https://hindsight.vectorize.io/docs/api/retain) are worth reading.
 
-### 4. Decide whether to disable Hermes's built-in memory tool
+### 4. Decide whether to disable Hermes's built-in memory store
 
-The native Hindsight provider gives you automatic recall through lifecycle hooks and can also expose explicit Hindsight tools. Hermes still has its built-in `memory` tool, which writes local markdown notes. If both are active, the model may keep choosing the built-in tool out of habit.
+The native Hindsight provider gives you automatic recall through lifecycle hooks and can also expose explicit Hindsight tools. Hermes still has its built-in memory store, which writes local markdown notes (`MEMORY.md`, plus a slimmer `USER.md` profile). If both are active, the model may keep choosing the built-in path out of habit.
 
-If you want Hindsight to be the only memory path, disable the built-in tool:
-
-```bash
-hermes tools disable memory
-```
-
-This is especially helpful after migration because it removes ambiguity. When you test storage and recall, you know the result came from Hindsight, not from the old markdown path.
-
-You can always turn it back on later:
+If you want Hindsight to be the only memory path, turn the flat-file stores off:
 
 ```bash
-hermes tools enable memory
+hermes config set memory.memory_enabled false
+hermes config set memory.user_profile_enabled false
 ```
+
+Setting both to `false` removes the built-in `memory` tool from the agent entirely. This is especially helpful after migration because it removes ambiguity. When you test storage and recall, you know the result came from Hindsight, not from the old markdown path.
+
+You can always turn them back on later by setting the same flags to `true`.
 
 ### 5. Set the integration mode you actually want
 

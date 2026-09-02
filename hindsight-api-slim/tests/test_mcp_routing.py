@@ -360,6 +360,26 @@ async def test_middleware_handles_both_endpoints(mock_memory):
     assert "create_bank" not in single_bank_tools
 
 
+def test_registered_tool_sets_match_the_allowlists(mock_memory):
+    """Every allowlisted tool name must resolve to a really-registered tool.
+
+    Three hand-maintained lists have to agree: ``_ALL_TOOLS``, the default set in
+    ``register_mcp_tools()``, and the single-bank allowlist in
+    ``create_mcp_server()``. A name added to one but not the others is silent —
+    the tool simply never appears on the endpoint and nothing fails — so assert
+    over the whole sets rather than spot-checking tool names.
+    """
+    from hindsight_api.api.mcp import create_mcp_server
+    from hindsight_api.mcp_tools import _ALL_TOOLS
+
+    multi = set(_tools(create_mcp_server(mock_memory, multi_bank=True)))
+    single = set(_tools(create_mcp_server(mock_memory, multi_bank=False)))
+
+    assert multi == set(_ALL_TOOLS)
+    # Single-bank mode drops exactly the tools that operate across banks.
+    assert multi - single == {"list_banks", "create_bank", "get_bank_stats"}
+
+
 def test_global_mcp_enabled_tools_filter_restricts_registered_tools(mock_memory):
     """Test that global mcp_enabled_tools env setting restricts which tools are registered."""
     from unittest.mock import MagicMock, patch

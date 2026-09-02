@@ -16,11 +16,18 @@ import pytest_asyncio
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.retain import embedding_utils
 
+# This module seeds every case with `_insert_fact`, an INSERT into `memory_units`, and one case UPDATEs `updated_at` on that row. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# table empty, so the seed lands nowhere the code under test can see it: the failing cases find
+# nothing, and the ones that still pass do so vacuously (an assertion that a result set is EMPTY
+# holds trivially when nothing was ever seeded). Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+
+
 # Tests in this file insert memory_units with shared hardcoded UUIDs and
 # memory_units.id is a global PK, so parallel xdist workers running these
 # tests simultaneously hit pk_memory_units conflicts. Share an xdist group
 # so the eight tests serialize on the same worker.
-pytestmark = pytest.mark.xdist_group("recall_time_range")
+pytestmark = [pytest.mark.memory_backend_incompatible, pytest.mark.xdist_group("recall_time_range")]
 
 # Three points in time, each 1 hour apart
 T1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
@@ -132,6 +139,7 @@ def _result_ids(result) -> set[str]:
 class TestRecallTimeRange:
     """Verify created_after / created_before filtering at the recall level."""
 
+    @pytest.mark.memory_backend_incompatible
     async def test_no_filter_returns_all(self, seeded_memory):
         engine, bank_id = seeded_memory
         result = await engine.recall_async(
@@ -145,6 +153,7 @@ class TestRecallTimeRange:
         assert ID_MID in ids
         assert ID_NEW in ids
 
+    @pytest.mark.memory_backend_incompatible
     async def test_created_after_excludes_old(self, seeded_memory):
         """created_after=T1 excludes fact-old (updated_at == T1, not > T1)."""
         engine, bank_id = seeded_memory
@@ -160,6 +169,7 @@ class TestRecallTimeRange:
         assert ID_MID in ids
         assert ID_NEW in ids
 
+    @pytest.mark.memory_backend_incompatible
     async def test_created_after_excludes_old_and_mid(self, seeded_memory):
         """created_after=T2 returns only fact-new."""
         engine, bank_id = seeded_memory
@@ -175,6 +185,7 @@ class TestRecallTimeRange:
         assert ID_MID not in ids, "fact-mid (updated_at=T2) must be excluded by created_after=T2"
         assert ID_NEW in ids
 
+    @pytest.mark.memory_backend_incompatible
     async def test_created_before_excludes_new(self, seeded_memory):
         """created_before=T3 excludes fact-new (updated_at == T3, not < T3)."""
         engine, bank_id = seeded_memory
@@ -190,6 +201,7 @@ class TestRecallTimeRange:
         assert ID_MID in ids
         assert ID_NEW not in ids, "fact-new (updated_at=T3) must be excluded by created_before=T3"
 
+    @pytest.mark.memory_backend_incompatible
     async def test_created_before_excludes_mid_and_new(self, seeded_memory):
         """created_before=T2 returns only fact-old."""
         engine, bank_id = seeded_memory
@@ -205,6 +217,7 @@ class TestRecallTimeRange:
         assert ID_MID not in ids
         assert ID_NEW not in ids
 
+    @pytest.mark.memory_backend_incompatible
     async def test_range_both_bounds(self, seeded_memory):
         """created_after=T1, created_before=T3 returns only fact-mid."""
         engine, bank_id = seeded_memory
@@ -233,6 +246,7 @@ class TestRecallTimeRange:
         )
         assert len(result.results) == 0, f"Expected no results after T3, got: {_result_ids(result)}"
 
+    @pytest.mark.memory_backend_incompatible
     async def test_updated_at_catches_consolidation_updates(self, seeded_memory):
         """A fact created at T1 but updated at T3 appears with created_after=T2."""
         engine, bank_id = seeded_memory

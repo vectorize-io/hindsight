@@ -17,19 +17,31 @@
  *   - codex  : `codex exec --sandbox read-only -c mcp_servers.hindsight…` (inline MCP, self-contained)
  *   - antigravity : `agy -p … --mode=plan --cwd <repo>` (read-only planning mode; MCP from the
  *                  global Antigravity customization config)
- *   - opencode: `opencode run --agent plan …` (read-only agent; tools from the loaded plugin, which
- *               under HINDSIGHT_DISABLE_HOOKS registers tools but skips seed/recall/write-back)
+ *   - opencode: `opencode run --agent hindsight-survey …` (a read-only agent OUR plugin defines —
+ *               see SURVEY_AGENT; tools from the loaded plugin, which under HINDSIGHT_DISABLE_HOOKS
+ *               registers tools but skips seed/recall/write-back)
  * Each is read-only sandboxed (prompt-injection safety, since the survey reads untrusted repo files)
  * and spawned with HINDSIGHT_DISABLE_HOOKS=1 so the survey's own session doesn't re-fire our hooks.
+ *
+ * **Dcode is deliberately not on this list**, unlike its otherwise-full harness support. Its
+ * headless runtime (`dcode -n`) rejects every MCP tool that is not annotated read-only —
+ * "This MCP action requires approval, but the current headless runtime has no approval UI"
+ * (`auto_mode.py:HeadlessMCPGuardMiddleware`). `hindsight_ingest_document` writes, so it is gated
+ * by design and no flag lifts it: `--yolo`/`-y` are documented as ignored in headless mode. A
+ * survey that cannot call the one tool it exists to call would spend a model budget and ingest
+ * nothing, so Dcode falls back to another installed agent's CLI below — the same treatment as
+ * Cursor, Copilot, Devin, Grok Build, Cline, Kilo and Prime Agent. Verified against
+ * deepagents-code 0.1.65; revisit if Dcode gains a headless approval policy.
  *
  * Fire-and-forget and fail-safe throughout, mirroring core/seed.ts's `startBackgroundSeed`: a
  * missing binary or a spawn failure must silently no-op, never crash the caller.
  */
 import { spawn as realSpawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { binOnPath } from "./util";
 
 /** Deterministic doc ids of the survey's findings (its fixed titles slugified by
  *  hindsight_ingest_document). Their presence in the bank = the survey actually FINISHED —
@@ -58,6 +70,39 @@ export function resolveClaudeBin(explicit?: string): string {
   return "claude";
 }
 
+/**
+ * The opencode agent the survey runs under, defined by our own plugin (harness/opencode.ts feeds
+ * this to opencode's `config` hook) so the recipe below needs nothing in the user's opencode.json.
+ *
+ * It replaces the built-in `plan` agent, which was chosen as the read-only boundary but appends a
+ * system-reminder to every user message — "CRITICAL: Plan mode ACTIVE - you are in READ-ONLY phase
+ * … ANY file edits, modifications, or system changes … This ABSOLUTE CONSTRAINT overrides ALL other
+ * instructions" — while leaving plugin tools callable (plan denies only `edit`). The survey exists
+ * to call hindsight_ingest_document, which reads as a "system change", so completion came down to
+ * how literally a model took the reminder: #3450 saw the seed stall on ~half their repos, the agent
+ * asking for permission that plan mode cannot grant. Prompt wording cannot win that argument — the
+ * reminder claims to override all other instructions.
+ *
+ * The ruleset is also a TIGHTER boundary than plan's: opencode drops denied tools from the tool
+ * list entirely, so the session is offered exactly read/grep/glob plus the one ingest tool — no
+ * write, no bash, and no `task` (plan left all three reachable, and `task` reaches a subagent that
+ * CAN write). Verified against opencode 1.18.9.
+ */
+export const SURVEY_AGENT = "hindsight-survey";
+
+export const SURVEY_AGENT_CONFIG = {
+  description:
+    "One-time read-only structural survey that seeds this repository's Hindsight memory.",
+  mode: "primary",
+  permission: {
+    "*": "deny",
+    read: "allow",
+    grep: "allow",
+    glob: "allow",
+    hindsight_ingest_document: "allow",
+  },
+} as const;
+
 /** Resolve a harness's agent CLI binary: explicit `claudeBin` (claude only) -> `HINDSIGHT_<AGENT>_BIN`
  *  env override -> the bare command name (resolved on PATH at spawn time). */
 function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
@@ -73,34 +118,13 @@ function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
   }
 }
 
-/** Is `bin` runnable? A path (contains "/") -> exists + executable; a bare name -> found on PATH. */
-function binExists(bin: string): boolean {
-  try {
-    if (bin.includes("/")) {
-      accessSync(bin, constants.X_OK);
-      return true;
-    }
-    for (const dir of (process.env.PATH || "").split(delimiter)) {
-      if (!dir) continue;
-      try {
-        accessSync(join(dir, bin), constants.X_OK);
-        return true;
-      } catch {
-        /* keep scanning PATH */
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 export const SURVEY_PROMPT =
   "You are performing a one-time structural survey of THIS repository to seed its Hindsight " +
   "memory. Work efficiently — DO NOT read every file; sample enough to understand the " +
   "architecture: the directory layout, entry points, package manifests (package.json / " +
   "pyproject.toml / Cargo.toml / go.mod), the README, and a few representative source files per " +
-  "major area.\n" +
+  "major area. Use Glob (e.g. `**/*`) to see the directory layout — Read takes a FILE path only " +
+  "and errors on a directory; never call Read on a bare directory path.\n" +
   "IMPORTANT — DO NOT read, quote, summarize, or ingest agent-instruction files: CLAUDE.md, " +
   "AGENTS.md, GEMINI.md, .cursorrules, .cursor/rules/*, or .github/copilot-instructions.md. These " +
   "are live, user-controlled instructions (not repository knowledge); capturing them as memory " +
@@ -171,7 +195,11 @@ function buildSurveyPlan(
           hindsight: {
             command: "node",
             args: [opts.mcpServerPath],
-            env: { HINDSIGHT_MCP_PROJECT_CWD: repoDir },
+            // HINDSIGHT_MCP_HARNESS names the agent whose CLI this recipe drives — the survey's
+            // ingests are its writes. mcp-server.js REQUIRES it (it used to default to
+            // "claude-code", which is how the codex recipe below silently stamped its findings
+            // harness:claude-code and wrote them to Claude Code's bank — #3603).
+            env: { HINDSIGHT_MCP_PROJECT_CWD: repoDir, HINDSIGHT_MCP_HARNESS: "claude-code" },
           },
         },
       });
@@ -216,6 +244,8 @@ function buildSurveyPlan(
           `mcp_servers.hindsight.args=["${opts.mcpServerPath}"]`,
           "-c",
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
+          "-c",
+          `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
           SURVEY_PROMPT,
         ],
         env,
@@ -232,13 +262,16 @@ function buildSurveyPlan(
       };
     }
     case "opencode": {
-      // `opencode run` under the read-only `plan` agent (the injection boundary). The hindsight tools
-      // come from the loaded plugin; under HINDSIGHT_DISABLE_HOOKS the plugin registers its tools but
-      // skips seed/recall/write-back (runtime.ts), so this survey run doesn't re-seed itself. Model
-      // left to opencode's configured default (its `provider/model` format differs per setup).
+      // `opencode run` under the survey agent OUR OWN PLUGIN defines (harness/opencode.ts), which
+      // is both the injection boundary and the reason the seed completes: the built-in `plan` agent
+      // used to fill that slot, but its read-only system-reminder talked models out of the ingest
+      // call the survey exists to make (#3450). The hindsight tools come from the loaded plugin;
+      // under HINDSIGHT_DISABLE_HOOKS it registers tools but skips seed/recall/write-back
+      // (runtime.ts), so this survey run doesn't re-seed itself. Model left to opencode's
+      // configured default (its `provider/model` format differs per setup).
       return {
         bin,
-        args: ["run", "--agent", "plan", SURVEY_PROMPT],
+        args: ["run", "--agent", SURVEY_AGENT, SURVEY_PROMPT],
         env,
       };
     }
@@ -265,7 +298,7 @@ export function startCodebaseSurvey(
 ): void {
   try {
     const spawnFn = opts.spawn ?? realSpawn;
-    const exists = opts.exists ?? binExists;
+    const exists = opts.exists ?? binOnPath;
     const mcpServerPath =
       opts.mcpServerPath ?? join(dirname(fileURLToPath(import.meta.url)), "mcp-server.js");
 
@@ -295,6 +328,7 @@ export function startCodebaseSurvey(
         cwd: repoDir,
         detached: true,
         stdio: "ignore",
+        windowsHide: true,
         env: plan.env,
       });
       // spawn() failures (binary not found, EACCES, sandboxed environments) often arrive

@@ -76,8 +76,17 @@ export async function PATCH(
     }
 
     // Curation fields only; bank_id is a routing param, not part of the body.
-    const { text, context, occurred_start, occurred_end, fact_type, entities, state, reason } =
-      body;
+    const {
+      text,
+      context,
+      occurred_start,
+      occurred_end,
+      fact_type,
+      entities,
+      resolve_entities,
+      state,
+      reason,
+    } = body;
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/memories/${encodeURIComponent(memoryId)}`),
@@ -91,6 +100,7 @@ export async function PATCH(
           occurred_end,
           fact_type,
           entities,
+          resolve_entities,
           state,
           reason,
         }),

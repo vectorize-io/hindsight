@@ -62,6 +62,7 @@ def build_tags_where_clause(
     param_offset: int = 1,
     table_alias: str = "",
     match: TagsMatch = "any",
+    value_expr: str | None = None,
 ) -> tuple[str, list, int]:
     """
     Build a SQL WHERE clause for filtering by tags.
@@ -77,6 +78,12 @@ def build_tags_where_clause(
         param_offset: Starting parameter number for SQL placeholders (default 1).
         table_alias: Optional table alias prefix (e.g., "mu." for "memory_units mu").
         match: Matching mode. Defaults to "any".
+        value_expr: SQL expression to match the tags column against, in place of a
+            bind parameter — e.g. ``"s.tags"`` when the clause is applied per row of
+            a joined scope set (the batched staleness check). When given, ``tags``
+            only decides *which* clause is built, nothing is bound, and
+            ``param_offset`` comes back unchanged. It lands in the SQL verbatim, so
+            it must be a literal the caller controls, never user input.
 
     Returns:
         Tuple of (sql_clause, params, next_param_offset):
@@ -89,6 +96,14 @@ def build_tags_where_clause(
         >>> print(clause)  # "AND mu.tags IS NOT NULL AND mu.tags != '{}' AND mu.tags && $3"
     """
     column = f"{table_alias}tags" if table_alias else "tags"
+    # Every branch below matches the column against one right-hand side. Naming it
+    # once is what lets a bound parameter and a joined column share these match
+    # semantics instead of growing a second implementation of them.
+    value = value_expr if value_expr is not None else f"${param_offset}"
+    # A caller supplying the expression binds nothing, so the parameter cursor must
+    # not advance and no value is appended.
+    next_offset = param_offset if value_expr is not None else param_offset + 1
+    bound: list = [] if value_expr is not None else [tags]
 
     if match == "exact" and not tags:
         # Empty/absent scope = global/untagged: match only untagged rows. No bind param
@@ -101,19 +116,19 @@ def build_tags_where_clause(
     if match == "exact":
         # Set equality (order-independent): superset AND subset. Untagged rows
         # (empty array) never satisfy `@>` of a non-empty scope, so they're excluded.
-        clause = f"AND ({column} @> ${param_offset} AND {column} <@ ${param_offset})"
-        return clause, [tags], param_offset + 1
+        clause = f"AND ({column} @> {value} AND {column} <@ {value})"
+        return clause, bound, next_offset
 
     operator, include_untagged = _parse_tags_match(match)
 
     if include_untagged:
         # Include untagged memories (NULL or empty array) OR matching tags
-        clause = f"AND ({column} IS NULL OR {column} = '{{}}' OR {column} {operator} ${param_offset})"
+        clause = f"AND ({column} IS NULL OR {column} = '{{}}' OR {column} {operator} {value})"
     else:
         # Strict: only memories with matching tags (exclude NULL and empty)
-        clause = f"AND {column} IS NOT NULL AND {column} != '{{}}' AND {column} {operator} ${param_offset}"
+        clause = f"AND {column} IS NOT NULL AND {column} != '{{}}' AND {column} {operator} {value}"
 
-    return clause, [tags], param_offset + 1
+    return clause, bound, next_offset
 
 
 def build_tags_where_clause_simple(

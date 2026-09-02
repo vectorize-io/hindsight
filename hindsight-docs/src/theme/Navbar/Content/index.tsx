@@ -20,6 +20,27 @@ function useNavbarItems() {
   return useThemeConfig().navbar.items as NavbarItemConfig[];
 }
 
+// The sign-up button is the one call to action in the navbar, so it renders
+// last on the right — after the icon buttons and past the divider — instead of
+// in the middle of them where its config position would otherwise put it.
+function isCallToAction(item: NavbarItemConfig): boolean {
+  return hasClassName(item, 'navbar-item-signup');
+}
+
+// "Docs" and the version dropdown read as one control — the version qualifies
+// the docs section rather than pointing somewhere of its own. They share a
+// wrapper so custom.css can draw a single surface behind both; splitting the
+// background across two siblings would seam down the middle.
+const DOCS_GROUP_CLASSNAMES = ['navbar-item-developer', 'navbar-item-version'];
+
+function isDocsGroupItem(item: NavbarItemConfig): boolean {
+  return DOCS_GROUP_CLASSNAMES.some((name) => hasClassName(item, name));
+}
+
+function hasClassName(item: NavbarItemConfig, name: string): boolean {
+  return typeof item.className === 'string' && item.className.includes(name);
+}
+
 function NavbarItems({items}: {items: NavbarItemConfig[]}): ReactNode {
   return (
     <>
@@ -71,6 +92,10 @@ function NavbarContentLayout({
 export default function NavbarContent(): ReactNode {
   const items = useNavbarItems();
   const [leftItems, rightItems] = splitNavbarItems(items);
+  const ctaItems = rightItems.filter(isCallToAction);
+  const secondaryRightItems = rightItems.filter((item) => !isCallToAction(item));
+  const docsGroupItems = leftItems.filter(isDocsGroupItem);
+  const otherLeftItems = leftItems.filter((item) => !isDocsGroupItem(item));
 
   const searchBarItem = items.find((item) => item.type === 'search');
 
@@ -80,22 +105,32 @@ export default function NavbarContent(): ReactNode {
         // TODO stop hardcoding items?
         // Always render toggle, CSS controls visibility at 1400px breakpoint
         <>
-          <NavbarMobileSidebarToggle />
-          <NavbarLogo />
-          <NavbarItems items={leftItems} />
+          {/* Brand block: spans the sidebar's column, so the divider closing
+              it continues the sidebar's own edge (see custom.css). */}
+          <div className="navbar__brand-block">
+            <NavbarMobileSidebarToggle />
+            <NavbarLogo />
+          </div>
+          {docsGroupItems.length > 0 && (
+            <div className="navbar__docs-group">
+              <NavbarItems items={docsGroupItems} />
+            </div>
+          )}
+          <NavbarItems items={otherLeftItems} />
         </>
       }
       right={
         // TODO stop hardcoding items?
         // Ask the user to add the respective navbar items => more flexible
         <>
-          <NavbarItems items={rightItems} />
+          <NavbarItems items={secondaryRightItems} />
           <NavbarColorModeToggle className={styles.colorModeToggle} />
           {!searchBarItem && (
             <NavbarSearch>
               <SearchBar />
             </NavbarSearch>
           )}
+          <NavbarItems items={ctaItems} />
         </>
       }
     />

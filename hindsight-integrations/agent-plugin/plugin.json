@@ -1,0 +1,29 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hindsight",
+  "version": "1.0.0",
+  "description": "Long-term memory for AI agents. Recalls relevant past context before you answer and retains durable facts as you work, backed by Hindsight's retain/recall/reflect memory engine.",
+  "author": {
+    "name": "Hindsight (Vectorize)",
+    "url": "https://hindsight.vectorize.io"
+  },
+  "homepage": "https://hindsight.vectorize.io",
+  "repository": "https://github.com/vectorize-io/hindsight",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "long-term-memory",
+    "recall",
+    "retain",
+    "reflect",
+    "mcp",
+    "agent-memory"
+  ],
+  "extensions": {
+    "io.vectorize.hindsight": {
+      "bankSelection": "Set HINDSIGHT_BANK_ID to scope memory to a user, project, or team. The mcp.json endpoint is per-bank, so tools never need a bank_id argument.",
+      "selfHosted": "Point HINDSIGHT_MCP_URL at your own deployment instead of Hindsight Cloud; the plugin is transport-only and stays otherwise identical.",
+      "deepIntegration": "For automatic capture/injection (session hooks that recall before each prompt and retain transcripts on exit), see the native Claude Code plugin at hindsight-integrations/claude-code. This portable plugin exposes the same memory via explicit MCP tools."
+    }
+  }
+}

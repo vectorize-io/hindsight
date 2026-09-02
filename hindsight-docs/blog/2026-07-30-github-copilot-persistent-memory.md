@@ -3,7 +3,7 @@ title: "Give GitHub Copilot CLI a Memory of Your Codebase"
 authors: [benfrank241]
 slug: "2026/07/30/github-copilot-persistent-memory"
 date: 2026-07-30T12:00
-tags: [hindsight, github-copilot, copilot-cli, agent-memory, persistent-memory, coding-agent]
+tags: [hindsight, github-copilot, copilot-cli, agent-memory, persistent-memory, coding-agent, tutorial]
 description: "GitHub Copilot CLI forgets your project between sessions. Add Hindsight so it recalls past decisions and retains what it learns, automatically via hooks."
 image: /img/blog/github-copilot-persistent-memory.png
 hide_table_of_contents: true

@@ -67,6 +67,28 @@ Open **Settings → Hindsight**:
 - **Ingest current note** — force-sync the active note.
 - **Open chat** — open the grounded chat panel.
 
+## Headless / CLI ingestion (no desktop app)
+
+Running your vault on an always-on headless server (kept current on disk by Obsidian Sync)? The same ingestion runs without the Obsidian app, via the `hindsight-obsidian-sync` CLI shipped in this package. It drives the **same sync engine** as the plugin, so it produces identical document ids, scope tags, and prune-ownership — a vault can be synced from a server and later opened interactively elsewhere without the two ingesters fighting or duplicating documents.
+
+```bash
+npm install -g @vectorize-io/hindsight-obsidian
+
+# one-shot reconcile (cron-friendly)
+hindsight-obsidian-sync reconcile \
+  --vault ~/Vaults/Brain --bank my-vault \
+  --api-url https://api.hindsight.vectorize.io --api-token hsk_...
+
+# or keep it running and sync changes live
+hindsight-obsidian-sync reconcile --vault ~/Vaults/Brain --bank my-vault --watch
+```
+
+`--api-url` / `--api-token` fall back to `HINDSIGHT_API_URL` / `HINDSIGHT_API_TOKEN`. Other flags: `--include <folder>` / `--exclude <folder>` (repeatable), `--vault-name <name>` (defaults to the vault dir name), `--prefix-doc-id` (prefix document ids with the vault name for multi-vault banks), `--index <file>`, and `--help`.
+
+The sync index (the CLI's equivalent of the plugin's `data.json`) defaults to a **per-target** file under `~/.hindsight/obsidian/` — `<vault>-<bank>-<fingerprint>.json`, deliberately **outside** the vault so Obsidian Sync never propagates it. The index is bound to the destination it was built against (API origin, bank, vault path, and the `--vault-name`/`--prefix-doc-id` document-id namespace); pointing a saved index at a different bank or API — whether via the default path or an explicit `--index` — **fails closed** with an actionable message rather than silently skipping files or mis-attributing deletes to a bank it never wrote to. Changing `--include`/`--exclude` on the _same_ destination is fine (it reuses the index and prunes newly-excluded notes it owns there).
+
+> **Running the CLI and the plugin against the same bank + vault?** Keep their scope config identical (`--include`/`--exclude`, `--vault-name`, `--prefix-doc-id` matching the plugin's settings). They each keep their own index, and a reconcile prunes only what its own index tracks — so mismatched scope on the two frontends could let one prune documents the other owns.
+
 ## How it works
 
 ```

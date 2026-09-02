@@ -33,6 +33,7 @@ async def _insert_memory(
     text: str,
     fact_type: str = "experience",
     document_id: str | None = None,
+    chunk_id: str | None = None,
 ) -> uuid.UUID:
     """Seed one memory through the store, bypassing the LLM retain pipeline.
 
@@ -47,7 +48,7 @@ async def _insert_memory(
         tags=[],
         context=None,
         document_id=document_id,
-        chunk_id=None,
+        chunk_id=chunk_id,
         metadata=None,
         observation_scopes=None,
         entities=[],
@@ -77,7 +78,7 @@ async def _insert_observation(
     """
     store = get_memories()
     obs_id = uuid.uuid4()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         await conn.execute(
             """
             INSERT INTO memory_units (
@@ -112,7 +113,7 @@ async def _insert_observation(
 async def _get_observation_ids(conn, bank_id: str) -> list[str]:
     """Ids of the bank's observations, read from whichever store holds them."""
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         rows = await conn.fetch(
             "SELECT id FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
             bank_id,
@@ -127,7 +128,7 @@ async def _get_observation_ids(conn, bank_id: str) -> list[str]:
 async def _get_consolidated_at(conn, memory_id: uuid.UUID, bank_id: str | None = None):
     """A memory's consolidated marker. ``bank_id`` is required for a bank-partitioned store."""
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if not store.store_owned:
         return await conn.fetchval(
             "SELECT consolidated_at FROM memory_units WHERE id = $1",
             memory_id,
@@ -431,6 +432,187 @@ class TestDocumentUpsertObservationCleanup:
             # The two doc-scoped memories are gone via FK cascade.
             doc_mem_count = await _count_surviving(conn, bank_id, [doc_mem_a, doc_mem_b])
             assert doc_mem_count == 0
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Tests: delta retain chunk delete (regression for orphan observations, #3294)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_chunked_document(memory: MemoryEngine, conn, bank_id: str, chunk_texts: list[str]) -> tuple[str, list]:
+    """One document with ``len(chunk_texts)`` chunks, each owning one fact.
+
+    Returns the document id and, per chunk, the (chunk_id, fact_id) it owns.
+    """
+    doc_id = str(uuid.uuid4())
+    await conn.execute(
+        """
+        INSERT INTO documents (id, bank_id, original_text, content_hash, created_at, updated_at)
+        VALUES ($1, $2, $3, 'hash-old', NOW(), NOW())
+        """,
+        doc_id,
+        bank_id,
+        "\n\n".join(chunk_texts),
+    )
+    seeded = []
+    for idx, text in enumerate(chunk_texts):
+        chunk_id = f"{bank_id}_{doc_id}_{idx}"
+        await conn.execute(
+            """
+            INSERT INTO chunks (chunk_id, document_id, bank_id, chunk_index, chunk_text, content_hash)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            chunk_id,
+            doc_id,
+            bank_id,
+            idx,
+            text,
+            f"chunk-hash-{idx}",
+        )
+        fact_id = await _insert_memory(memory, conn, bank_id, text, "experience", document_id=doc_id, chunk_id=chunk_id)
+        seeded.append((chunk_id, fact_id))
+    return doc_id, seeded
+
+
+class TestDeltaChunkDeleteObservationCleanup:
+    """Regression: delta retain drops facts by deleting their chunks, and that
+    cascade must invalidate the observations derived from them.
+
+    ``handle_document_tracking`` (full replace) sweeps observations before its
+    delete, but the delta path never calls it — it upserts the document row and
+    deletes the changed/removed chunks directly, cascading to memory_units. Every
+    delta re-ingest therefore used to leave the observations of the changed chunks
+    behind, valid and recallable, pointing at ids that no longer exist. Nothing
+    could reach them afterwards: consolidation batches are built from facts, so an
+    observation whose sources are all gone is never selected into a batch again.
+    """
+
+    @pytest.mark.asyncio
+    async def test_chunk_delete_removes_observations_from_outgoing_memories(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The observation of a deleted chunk's fact goes with it; its surviving
+        co-source is requeued for re-consolidation."""
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
+
+        bank_id = f"test-delta-obs-cleanup-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            _doc_id, seeded = await _seed_chunked_document(
+                memory, conn, bank_id, ["Alice works at Google.", "Bob works at Microsoft."]
+            )
+            (outgoing_chunk, outgoing_fact), (_kept_chunk, kept_fact) = seeded
+            standalone_fact = await _insert_memory(memory, conn, bank_id, "Carol works at Netflix.")
+            obs_id = await _insert_observation(
+                memory,
+                conn,
+                bank_id,
+                "The team is spread across Google, Microsoft and Netflix.",
+                [outgoing_fact, kept_fact, standalone_fact],
+            )
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                invalidated = await delete_chunks_by_ids(conn, [outgoing_chunk], bank_id, ops=memory._backend.ops)
+
+        assert invalidated == 1, "delete_chunks_by_ids should report the observation it invalidated"
+
+        async with pool.acquire() as conn:
+            assert str(obs_id) not in await _get_observation_ids(conn, bank_id), (
+                "Observation derived from the deleted chunk's fact should have been invalidated "
+                "(regression #3294: the delta path cascaded the fact away and left the orphan)"
+            )
+            assert await _count_surviving(conn, bank_id, [outgoing_fact]) == 0, "The chunk's fact is gone"
+            # Both surviving co-sources lost an observation, so both are due for re-consolidation.
+            for survivor in (kept_fact, standalone_fact):
+                assert await _get_consolidated_at(conn, survivor, bank_id) is None, (
+                    "Surviving co-source should be reset for re-consolidation"
+                )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_chunk_delete_keeps_observations_of_unchanged_chunks(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Precision: an observation sourced only from chunks that stay is untouched.
+
+        A sweep keyed on the document rather than on the deleted chunks would take
+        this one too — and needlessly requeue the whole document for consolidation
+        on every small edit, which is exactly the case delta retain exists for.
+        """
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
+
+        bank_id = f"test-delta-obs-keep-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            _doc_id, seeded = await _seed_chunked_document(
+                memory, conn, bank_id, ["Alice works at Google.", "Bob works at Microsoft."]
+            )
+            (outgoing_chunk, _outgoing_fact), (_kept_chunk, kept_fact) = seeded
+            kept_obs = await _insert_observation(memory, conn, bank_id, "Bob is at Microsoft.", [kept_fact])
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                invalidated = await delete_chunks_by_ids(conn, [outgoing_chunk], bank_id, ops=memory._backend.ops)
+
+        assert invalidated == 0, "No observation of the surviving chunk should have been touched"
+
+        async with pool.acquire() as conn:
+            assert str(kept_obs) in await _get_observation_ids(conn, bank_id), (
+                "Observation of an unchanged chunk must survive the delta delete"
+            )
+            assert await _get_consolidated_at(conn, kept_fact, bank_id) is not None, (
+                "An untouched fact must not be requeued for consolidation"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_chunk_delete_sweeps_every_deleted_chunk(self, memory: MemoryEngine, request_context: RequestContext):
+        """Multiple chunks in one call: each one's observations are swept.
+
+        The reporter's bank lost the observations of a whole document at once
+        (25 fully orphaned from a single replace), so the sweep must cover the
+        entire ``chunks_to_delete`` list, not just the first entry.
+        """
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
+
+        bank_id = f"test-delta-obs-multi-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            _doc_id, seeded = await _seed_chunked_document(
+                memory,
+                conn,
+                bank_id,
+                ["Alice works at Google.", "Bob works at Microsoft.", "Dan works at Apple."],
+            )
+            observations = [
+                await _insert_observation(memory, conn, bank_id, f"Observation of chunk {i}.", [fact])
+                for i, (_chunk, fact) in enumerate(seeded)
+            ]
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                invalidated = await delete_chunks_by_ids(
+                    conn, [chunk for chunk, _fact in seeded], bank_id, ops=memory._backend.ops
+                )
+
+        assert invalidated == 3
+
+        async with pool.acquire() as conn:
+            remaining = await _get_observation_ids(conn, bank_id)
+            assert [o for o in observations if str(o) in remaining] == [], (
+                "Every deleted chunk's observations should be swept, not just the first chunk's"
+            )
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -825,6 +1007,158 @@ class TestUpdateDocumentTagsObservationCleanup:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_repatching_identical_tags_invalidates_nothing(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """A PATCH re-sending the tags the document already has must not run the cascade.
+
+        This is what an idempotent tag-normalisation sweep does on its second run. The
+        retag cascade reaches past the document — it requeues every co-source of every
+        observation it deletes — so paying it for a no-op re-consolidates a large slice
+        of the bank for a write that changes nothing.
+        """
+        bank_id = f"test-tag-update-noop-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+            doc_mem_ids = await _insert_document_with_memories(
+                memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
+            )
+            other_mem = await _insert_memory(memory, conn, bank_id, "Alice also rock-climbs.")
+
+        # First PATCH is a real change and is expected to invalidate.
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_document(
+                doc_id, bank_id, tags=["kind:handoff", "pickup"], request_context=request_context
+            )
+
+        # Rebuild the observation the way consolidation would have, then re-send the
+        # SAME tags.
+        async with pool.acquire() as conn:
+            obs_id = await _insert_observation(
+                memory, conn, bank_id, "Alice loves outdoor activities.", doc_mem_ids + [other_mem]
+            )
+            assert await _get_consolidated_at(conn, other_mem, bank_id) is not None
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()) as mock_consolidate:
+            result = await memory.update_document(
+                doc_id, bank_id, tags=["kind:handoff", "pickup"], request_context=request_context
+            )
+            assert result is True, "A no-op retag still updates the document and reports success"
+            mock_consolidate.assert_not_awaited()
+
+        async with pool.acquire() as conn:
+            assert str(obs_id) in await _get_observation_ids(conn, bank_id), (
+                "Observation must survive a PATCH that does not change the tag set"
+            )
+            assert await _get_consolidated_at(conn, other_mem, bank_id) is not None, (
+                "Co-source memory must not be requeued by a no-op retag"
+            )
+            for mem_id in doc_mem_ids:
+                assert await _get_consolidated_at(conn, mem_id, bank_id) is not None, (
+                    "Document's own memories must not be requeued by a no-op retag"
+                )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_reordered_tags_are_not_a_change(self, memory: MemoryEngine, request_context: RequestContext):
+        """Tags are compared as a set: a reordered array changes nothing consolidation can see."""
+        bank_id = f"test-tag-update-reorder-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+            doc_mem_ids = await _insert_document_with_memories(
+                memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
+            )
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_document(doc_id, bank_id, tags=["a", "b", "c"], request_context=request_context)
+
+        async with pool.acquire() as conn:
+            obs_id = await _insert_observation(memory, conn, bank_id, "Alice is outdoorsy.", doc_mem_ids)
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()) as mock_consolidate:
+            await memory.update_document(doc_id, bank_id, tags=["c", "a", "b"], request_context=request_context)
+            mock_consolidate.assert_not_awaited()
+
+        async with pool.acquire() as conn:
+            assert str(obs_id) in await _get_observation_ids(conn, bank_id)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_partial_tag_overlap_still_invalidates(self, memory: MemoryEngine, request_context: RequestContext):
+        """The no-op guard is exact: a tag set that differs at all still runs the cascade."""
+        bank_id = f"test-tag-update-changed-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+            doc_mem_ids = await _insert_document_with_memories(
+                memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
+            )
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_document(doc_id, bank_id, tags=["a", "b"], request_context=request_context)
+
+        async with pool.acquire() as conn:
+            obs_id = await _insert_observation(memory, conn, bank_id, "Alice is outdoorsy.", doc_mem_ids)
+
+        # Adding one tag to the existing set is a real change.
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()) as mock_consolidate:
+            await memory.update_document(doc_id, bank_id, tags=["a", "b", "c"], request_context=request_context)
+            mock_consolidate.assert_awaited()
+
+        async with pool.acquire() as conn:
+            assert str(obs_id) not in await _get_observation_ids(conn, bank_id)
+            for mem_id in doc_mem_ids:
+                assert await _get_consolidated_at(conn, mem_id, bank_id) is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_tag_change_stamps_memory_units_updated_at(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """A real retag stamps the units' ``updated_at``; a no-op retag leaves it alone."""
+        store = get_memories()
+        if store.store_owned:
+            pytest.skip("updated_at is a SQL memory_units column")
+
+        bank_id = f"test-tag-update-stamp-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+            doc_mem_ids = await _insert_document_with_memories(
+                memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
+            )
+
+        async def _updated_at():
+            async with pool.acquire() as conn:
+                return await conn.fetchval("SELECT updated_at FROM memory_units WHERE id = $1", doc_mem_ids[0])
+
+        before = await _updated_at()
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_document(doc_id, bank_id, tags=["a"], request_context=request_context)
+        after_change = await _updated_at()
+        assert after_change > before, "A tag change must stamp the memory unit's updated_at"
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_document(doc_id, bank_id, tags=["a"], request_context=request_context)
+        assert await _updated_at() == after_change, "A no-op retag must not restamp updated_at"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_update_tags_does_not_affect_unrelated_observations(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
@@ -867,7 +1201,7 @@ class TestConsolidationSourceMemoryFiltering:
     async def test_create_observation_filters_deleted_source_memories(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        from hindsight_api.engine.consolidation.consolidator import _create_observation_directly
+        from tests.consolidation_actions import create_observation as _create_observation_directly
 
         bank_id = f"test-race-create-filter-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -900,7 +1234,7 @@ class TestConsolidationSourceMemoryFiltering:
     async def test_create_observation_skipped_when_all_sources_deleted(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        from hindsight_api.engine.consolidation.consolidator import _create_observation_directly
+        from tests.consolidation_actions import create_observation as _create_observation_directly
 
         bank_id = f"test-race-create-skip-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -927,7 +1261,7 @@ class TestConsolidationSourceMemoryFiltering:
     async def test_update_observation_skipped_when_all_new_sources_deleted(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        from hindsight_api.engine.consolidation.consolidator import _execute_update_action
+        from tests.consolidation_actions import execute_update_action as _execute_update_action
         from hindsight_api.engine.response_models import MemoryFact
 
         bank_id = f"test-race-update-skip-{uuid.uuid4().hex[:8]}"
@@ -967,13 +1301,16 @@ class TestConsolidationSourceMemoryFiltering:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    # Asserts the in-transaction `FOR SHARE` liveness skip — a Postgres row-locking mechanism. The
+    # store-owned path re-checks liveness through the store instead, so there is no lock to observe.
+    @pytest.mark.memory_backend_incompatible
     async def test_update_observation_skipped_when_source_deleted_after_preflight(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
         # The preflight sees the source live, but it is deleted while the embedder runs
         # off-connection. The authoritative in-txn FOR SHARE liveness guard (not the preflight) must
         # then skip the update, so a dead source is never written back into the observation.
-        from hindsight_api.engine.consolidation.consolidator import _execute_update_action
+        from tests.consolidation_actions import execute_update_action as _execute_update_action
         from hindsight_api.engine.response_models import MemoryFact
 
         bank_id = f"test-race-update-inflight-{uuid.uuid4().hex[:8]}"

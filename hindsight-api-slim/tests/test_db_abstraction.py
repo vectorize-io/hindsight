@@ -8,11 +8,13 @@ import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
+import asyncpg
 import pytest
 
 from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
 from hindsight_api.engine.db.ops import UpdatedWindow
-from hindsight_api.engine.db.postgresql import PostgreSQLBackend
+from hindsight_api.engine.db import postgresql as pg_backend
+from hindsight_api.engine.db.postgresql import PostgreSQLBackend, apply_session_settings
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
 from hindsight_api.engine.sql.postgresql import PostgreSQLDialect
@@ -283,7 +285,26 @@ class TestPostgreSQLDialect:
             text_search_extension="vchord",
             bm25_min_score=2.5,
         )
-        assert "> 2.5" in arm
+        # Inclusive (`>=`), matching the documented `min_scores` contract and the
+        # semantic arm's `>= min_similarity`. This was `>` until #3882: the same
+        # parameter served as both vchord's structural match gate and the caller's
+        # floor, and the gate's `>` leaked into the public contract.
+        assert ">= 2.5" in arm
+
+    def test_build_bm25_arm_pg_textsearch_scores_each_row(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_textsearch",
+        )
+        expected_distance = "text <@> to_bm25query($4, 'idx_memory_units_text_search')"
+        assert f"-({expected_distance}) AS bm25_score" in arm
+        assert f"ORDER BY {expected_distance} ASC" in arm
+        assert "$4 <@>" not in arm
 
     def test_build_bm25_arm_pgroonga(self, d):
         arm = d.build_bm25_arm(
@@ -295,11 +316,10 @@ class TestPostgreSQLDialect:
             text_param="$4",
             text_search_extension="pgroonga",
         )
-        # pgroonga uses the &@~ operator + pgroonga_score for ranking. Escape
-        # the query parameter so literal text containing pgroonga operators is
-        # not parsed as query syntax.
-        assert "&@~ pgroonga_query_escape($4)" in arm
-        assert "&@~ $4" not in arm
+        # pgroonga uses the &@~ operator + pgroonga_score for ranking with inline
+        # pgroonga_tokenize aggregation.
+        assert "&@~ (SELECT string_agg(pgroonga_query_escape(elem->>'value'), ' OR ')" in arm
+        assert "pgroonga_tokenize($4, 'tokenizer', 'TokenBigram', 'normalizer', 'NormalizerNFKC150')" in arm
         assert "pgroonga_score(tableoid, ctid)" in arm
         assert "to_tsquery" not in arm
 
@@ -338,6 +358,26 @@ class TestPostgreSQLDialect:
         assert "'bm25' AS source" in arm
         assert "LIMIT $3" in arm
 
+    def test_build_bm25_arm_pg_search_custom_schema(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_function_schema="pgsearch",
+        )
+        assert "pgsearch.score(id)" in arm
+        assert "id @@@ pgsearch.boolean(should =>" in arm
+        assert "pgsearch.match('text', $4)" in arm
+        assert "pgsearch.match('context', $4)" in arm
+        assert "pgsearch.match('text_signals', $4)" in arm
+        assert "pgsearch.score(id) DESC" in arm
+        assert "'bm25' AS source" in arm
+        assert "LIMIT $3" in arm
+
     def test_prepare_bm25_text_native(self, d):
         result = d.prepare_bm25_text(["hello", "world"], "hello world")
         assert result == "hello | world"
@@ -347,10 +387,11 @@ class TestPostgreSQLDialect:
         assert result == "hello world"
 
     def test_prepare_bm25_text_pgroonga(self, d):
-        # Keep the user's text unchanged here; the SQL builder escapes the bind
-        # parameter at query time before invoking pgroonga's query parser.
         result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pgroonga")
         assert result == "hello world"
+
+        result = d.prepare_bm25_text(["网关计划任务"], "网关计划任务", text_search_extension="pgroonga")
+        assert result == "网关计划任务"
 
     def test_prepare_bm25_text_pg_search(self, d):
         result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pg_search")
@@ -623,6 +664,146 @@ class TestPostgreSQLBackendUnit:
         kwargs = create_pool.call_args.kwargs
         assert kwargs["init"] is cb
         assert kwargs["setup"] is cb
+
+
+class _RecordingConnection:
+    """Captures every statement, optionally failing the first (batched) one."""
+
+    def __init__(
+        self,
+        fail_batched: bool = False,
+        reject: str | None = None,
+        reject_error: type[Exception] = asyncpg.exceptions.UndefinedObjectError,
+    ) -> None:
+        self.calls: list[tuple[str, tuple]] = []
+        self._fail_batched = fail_batched
+        self._reject = reject
+        self._reject_error = reject_error
+
+    async def execute(self, query: str, *args) -> None:
+        self.calls.append((query, args))
+        if self._fail_batched and len(self.calls) == 1:
+            raise self._reject_error("unrecognized configuration parameter")
+        if self._reject is not None and self._reject in args:
+            raise self._reject_error("unrecognized configuration parameter")
+
+
+class TestApplySessionSettings:
+    """The pool's setup callback runs on every acquire — it must be one round trip (#3499)."""
+
+    @pytest.fixture(autouse=True)
+    def _forget_rejected_settings(self):
+        """The rejected-GUC memo is process-wide, so it must not leak between tests."""
+        pg_backend._unsupported_settings.clear()
+        yield
+        pg_backend._unsupported_settings.clear()
+
+    _SETTINGS = [
+        ("hnsw.ef_search", "200"),
+        ("statement_timeout", "600s"),
+        ("pg_trgm.similarity_threshold", "0.3"),
+    ]
+
+    @pytest.mark.asyncio
+    async def test_all_settings_applied_in_one_statement(self):
+        conn = _RecordingConnection()
+
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert len(conn.calls) == 1, f"expected one round trip, got {len(conn.calls)}: {conn.calls}"
+        query, args = conn.calls[0]
+        assert query.startswith("SELECT set_config(")
+        # Values are bound, not interpolated, and ordered name/value per setting.
+        assert args == ("hnsw.ef_search", "200", "statement_timeout", "600s", "pg_trgm.similarity_threshold", "0.3")
+        # `false` = session-scoped, so the GUC survives past the current transaction.
+        assert ", false)" in query
+
+    @pytest.mark.asyncio
+    async def test_no_statement_when_nothing_to_set(self):
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, [])
+        assert conn.calls == []
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_individual_settings_when_batch_fails(self):
+        # An extension GUC the cluster doesn't know fails the whole batched
+        # statement; the rest must still be applied.
+        conn = _RecordingConnection(fail_batched=True, reject="pg_trgm.similarity_threshold")
+
+        await apply_session_settings(conn, self._SETTINGS)
+
+        applied = [args[0] for query, args in conn.calls[1:]]
+        assert applied == ["hnsw.ef_search", "statement_timeout", "pg_trgm.similarity_threshold"]
+        # The rejected one raised and was skipped rather than aborting setup.
+        assert len(conn.calls) == 1 + len(self._SETTINGS)
+
+    @pytest.mark.asyncio
+    async def test_a_setting_the_server_rejects_is_not_sent_again(self):
+        """Otherwise every acquire re-pays a failed batch plus one statement per setting.
+
+        Reached by any GUC the cluster does not define — pg_trgm when the extension is
+        absent, or hnsw.iterative_scan on a pgvector older than 0.8, which reserves the
+        "hnsw." prefix and so rejects it rather than accepting a placeholder.
+        """
+        conn = _RecordingConnection(fail_batched=True, reject="pg_trgm.similarity_threshold")
+        await apply_session_settings(conn, self._SETTINGS)
+
+        # Next acquire: one batched statement again, carrying only what the server took.
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert len(conn.calls) == 1
+        _, args = conn.calls[0]
+        assert "pg_trgm.similarity_threshold" not in args
+        assert args == ("hnsw.ef_search", "200", "statement_timeout", "600s")
+
+    @pytest.mark.asyncio
+    async def test_invalid_name_rejection_is_remembered_like_undefined_object(self):
+        """A reserved-prefix GUC rejection (InvalidNameError) must also be permanent.
+
+        The docstring above assumes an old server answers "unrecognized configuration
+        parameter" (UndefinedObjectError, 42704). PG16 + pgvector 0.6.0 answers
+        `invalid configuration parameter name "hnsw.iterative_scan"` instead —
+        InvalidNameError (42602), because the loaded extension reserves the "hnsw."
+        prefix but predates the GUC. If only UndefinedObjectError is remembered,
+        the name never reaches the unsupported-set, ``setting_rejected_by_server``
+        keeps answering False, and retain's link probing sends the GUC via SET LOCAL
+        inside its own transaction — aborting the whole link computation on every
+        retain (observed in production on PG16 + pgvector 0.6.0, 2026-08-26).
+        """
+        conn = _RecordingConnection(
+            fail_batched=True,
+            reject="hnsw.ef_search",
+            reject_error=asyncpg.exceptions.InvalidNameError,
+        )
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert pg_backend.setting_rejected_by_server("hnsw.ef_search")
+
+        # Next acquire must not re-send the rejected name.
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+        assert len(conn.calls) == 1
+        _, args = conn.calls[0]
+        assert "hnsw.ef_search" not in args
+
+    @pytest.mark.asyncio
+    async def test_a_transient_failure_does_not_disable_a_setting(self):
+        """Only "unrecognized configuration parameter" is permanent; anything else retries."""
+
+        class _FlakyConnection(_RecordingConnection):
+            async def execute(self, query: str, *args) -> None:
+                self.calls.append((query, args))
+                if len(self.calls) == 1:
+                    raise asyncpg.exceptions.UndefinedObjectError("unrecognized configuration parameter")
+                if "hnsw.ef_search" in args:
+                    raise asyncpg.exceptions.DeadlockDetectedError("transient")
+
+        await apply_session_settings(_FlakyConnection(), self._SETTINGS)
+
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+        assert "hnsw.ef_search" in conn.calls[0][1]
 
 
 # ---------------------------------------------------------------------------

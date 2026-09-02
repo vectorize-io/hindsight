@@ -64,7 +64,15 @@ llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats c
 # Document transfer (export/import) is an admin/ops operation used from the API
 # and the control plane, not the end-user Rust CLI.
 export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+export_documents_sync_removed = "Removed sync export endpoint kept as a 410 stub; nothing should call it"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+download_file = "Serves async export archives; fetched via the API/control plane, not the end-user CLI"
+
+# Kubernetes probe endpoints. `hindsight health` already calls /health, which is
+# the readiness check; /health/ready is its alias and /health/live is a DB-free
+# liveness signal meant for kubelet, not for a human at a terminal.
+get_liveness = "Liveness probe for orchestrators; `hindsight health` covers the human-facing check"
+get_readiness = "Alias of /health, which `hindsight health` already calls"
 
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
@@ -86,6 +94,10 @@ retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
 retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
 enable_observations = "Set via `bank set-config` (hierarchical config)."
 observations_mission = "Set via `bank set-config --observations-mission`."
+enable_text_search = "Set via `bank set-config` (hierarchical config)."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
 
 [fields.update_bank]
 disposition = "Flattened into --skepticism / --literalism / --empathy on `bank update`."
@@ -100,6 +112,10 @@ retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
 retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
 enable_observations = "Set via `bank set-config` (hierarchical config)."
 observations_mission = "Set via `bank set-config --observations-mission`."
+enable_text_search = "Set via `bank set-config` (hierarchical config)."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
 
 [fields.update_bank_disposition]
 disposition = "Flattened into --skepticism / --literalism / --empathy on `bank set-disposition`."
@@ -118,6 +134,7 @@ types = "CLI exposes this as --fact-type (the schema property is named `types` b
 include = "Flattened into --include-chunks / --chunk-max-tokens (facts are always included)."
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
 min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/final) not yet exposed in the CLI."
+temporal_window = "Flattened into --window-start / --window-end on `memory recall`."
 
 [fields.reflect]
 include = "Flattened into --include-facts and related flags."
@@ -131,8 +148,11 @@ items = "Constructed from the single positional content argument on `memory reta
 [fields.create_knowledge_page]
 trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the remaining nested trigger fields (tag_groups, refresh_cron, recall_* budgets) are page-level tuning best done via the API."
 
+[fields.update_knowledge_node]
+trigger = "Changing an existing page's refresh policy (cron vs after-consolidation) is page-level tuning done via the API, SDKs, or control plane; `knowledge-base update-node` leaves the page's current trigger alone."
+
 [fields.create_mental_model]
-trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
+trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation and --tags-match on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
 
 [fields.update_mental_model]
-trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model update` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
+trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation, --trigger-refresh-cron, --trigger-min-refresh-interval-seconds, --trigger-tags-match, --trigger-keep-trace and --trigger-exclude-mental-models on `mental-model update`; the update merges these over the model's stored trigger, so the remaining nested fields (fact_types, tag_groups, response_schema, recall_* budgets) are left untouched and stay API-only."

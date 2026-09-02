@@ -7,6 +7,8 @@ Covers:
 - HTTP API integration tests for CRUD and delivery listing endpoints
 """
 
+import hashlib
+import hmac
 import json
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +21,7 @@ import pytest_asyncio
 from hindsight_api import LLMConfig
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.extensions import OperationValidationError
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
 from hindsight_api.webhooks.models import (
     ConsolidationEventData,
@@ -52,15 +55,18 @@ def _make_delivery_task(
     url: str = "https://example.com/hook",
     retry_count: int = 0,
     webhook_id: str | None = None,
+    secret: str | None = None,
+    http_config: dict | None = None,
 ) -> dict:
     return {
         "type": "webhook_delivery",
         "bank_id": bank_id,
         "url": url,
-        "secret": None,
+        "secret": secret,
         "event_type": "consolidation.completed",
         "payload": '{"event":"consolidation.completed"}',
         "webhook_id": webhook_id,
+        "http_config": http_config,
         "_retry_count": retry_count,
     }
 
@@ -111,6 +117,59 @@ class TestHmacSigning:
         sig1 = manager._sign_payload("secret", b"payload-one")
         sig2 = manager._sign_payload("secret", b"payload-two")
         assert sig1 != sig2
+
+    def test_hmac_signing_matches_github_construction(self):
+        """The body-only signature is plain HMAC-SHA256 over the raw body.
+
+        This is what makes X-Hub-Signature-256 a legitimate name for it: a stock
+        GitHub-style receiver must verify it byte for byte.
+        """
+        manager = self._make_manager()
+        payload = b'{"event":"consolidation.completed"}'
+        expected = hmac.new(b"my-secret", payload, hashlib.sha256).hexdigest()
+        assert manager._sign_payload("my-secret", payload) == f"sha256={expected}"
+
+
+class TestTimestampedHmacSigning:
+    """Unit tests for WebhookManager._sign_payload_v2()."""
+
+    def _make_manager(self) -> WebhookManager:
+        pool = MagicMock()
+        return WebhookManager(backend=pool, global_webhooks=[])
+
+    def test_v2_format(self):
+        """_sign_payload_v2 returns 't=<unix>,v1=<64 hex chars>'."""
+        manager = self._make_manager()
+        sig = manager._sign_payload_v2("my-secret", b"hello world", 1772000000)
+        t_part, v1_part = sig.split(",")
+        assert t_part == "t=1772000000"
+        assert v1_part.startswith("v1=")
+        hex_part = v1_part[len("v1=") :]
+        assert len(hex_part) == 64
+        assert all(c in "0123456789abcdef" for c in hex_part)
+
+    def test_v2_signs_timestamp_dot_body(self):
+        """The MAC covers '<timestamp>.<raw body>', so the timestamp is authenticated."""
+        manager = self._make_manager()
+        payload = b'{"event":"consolidation.completed"}'
+        expected = hmac.new(b"secret", b"1772000000." + payload, hashlib.sha256).hexdigest()
+        assert manager._sign_payload_v2("secret", payload, 1772000000) == f"t=1772000000,v1={expected}"
+
+    def test_v2_differs_with_timestamp(self):
+        """A replayed body with a fresh timestamp cannot reuse the old MAC."""
+        manager = self._make_manager()
+        payload = b"payload"
+        sig1 = manager._sign_payload_v2("secret", payload, 1772000000)
+        sig2 = manager._sign_payload_v2("secret", payload, 1772000060)
+        assert sig1 != sig2
+
+    def test_v2_differs_from_body_only_signature(self):
+        """The two schemes must not collide - a body-only MAC is not a valid v2 MAC."""
+        manager = self._make_manager()
+        payload = b"payload"
+        body_only = manager._sign_payload("secret", payload)[len("sha256=") :]
+        v2 = manager._sign_payload_v2("secret", payload, 1772000000).split("v1=")[1]
+        assert body_only != v2
 
 
 class TestRetryConstants:
@@ -407,6 +466,83 @@ class TestHandleWebhookDelivery:
             # Should not raise
             await memory._handle_webhook_delivery(task_dict)
 
+    @staticmethod
+    async def _capture_headers(memory: MemoryEngine, task_dict: dict) -> dict[str, str]:
+        """Run one delivery against a stubbed transport and return the sent headers."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        post = AsyncMock(return_value=mock_response)
+        with patch.object(memory._http_client, "post", new=post):
+            await memory._handle_webhook_delivery(task_dict)
+        return post.call_args.kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_unsigned_delivery_sends_no_signature_headers(self, memory: MemoryEngine):
+        """Without a secret there is nothing to sign, so no signature header is sent."""
+        headers = await self._capture_headers(memory, _make_delivery_task(secret=None))
+
+        assert "X-Hindsight-Signature" not in headers
+        assert "X-Hub-Signature-256" not in headers
+        assert "X-Hindsight-Signature-V2" not in headers
+
+    @pytest.mark.asyncio
+    async def test_signed_delivery_emits_both_body_only_signature_headers(self, memory: MemoryEngine):
+        """X-Hub-Signature-256 carries the same value as X-Hindsight-Signature.
+
+        Same secret, same algorithm, same bytes: the second name exists only so stock
+        GitHub-style receivers can verify without a Hindsight-specific shim.
+        """
+        task_dict = _make_delivery_task(secret="my-secret")
+        headers = await self._capture_headers(memory, task_dict)
+
+        payload_bytes = task_dict["payload"].encode()
+        expected = "sha256=" + hmac.new(b"my-secret", payload_bytes, hashlib.sha256).hexdigest()
+        assert headers["X-Hindsight-Signature"] == expected
+        assert headers["X-Hub-Signature-256"] == expected
+
+    @pytest.mark.asyncio
+    async def test_signed_delivery_emits_verifiable_timestamped_signature(self, memory: MemoryEngine):
+        """X-Hindsight-Signature-V2 verifies against '<t>.<body>' with a fresh timestamp."""
+        task_dict = _make_delivery_task(secret="my-secret")
+        before = int(datetime.now(timezone.utc).timestamp())
+        headers = await self._capture_headers(memory, task_dict)
+        after = int(datetime.now(timezone.utc).timestamp())
+
+        t_part, v1_part = headers["X-Hindsight-Signature-V2"].split(",")
+        timestamp = int(t_part[len("t=") :])
+        assert before <= timestamp <= after, "signature timestamp must be the attempt time"
+
+        payload_bytes = task_dict["payload"].encode()
+        expected = hmac.new(b"my-secret", f"{timestamp}.".encode() + payload_bytes, hashlib.sha256).hexdigest()
+        assert v1_part == f"v1={expected}"
+
+    @pytest.mark.asyncio
+    async def test_custom_headers_cannot_override_signature_or_event(self, memory: MemoryEngine):
+        """http_config.headers must not be able to forge the event type or a signature.
+
+        The spread order in _handle_webhook_delivery is load-bearing: a receiver that
+        trusts these headers would otherwise be trusting caller-controlled values.
+        """
+        task_dict = _make_delivery_task(
+            secret="my-secret",
+            http_config={
+                "headers": {
+                    "X-Hindsight-Event": "attacker.controlled",
+                    "X-Hindsight-Signature": "sha256=forged",
+                    "X-Hub-Signature-256": "sha256=forged",
+                    "X-Hindsight-Signature-V2": "t=0,v1=forged",
+                    "X-Custom": "kept",
+                }
+            },
+        )
+        headers = await self._capture_headers(memory, task_dict)
+
+        assert headers["X-Hindsight-Event"] == "consolidation.completed"
+        assert headers["X-Hindsight-Signature"] != "sha256=forged"
+        assert headers["X-Hub-Signature-256"] != "sha256=forged"
+        assert headers["X-Hindsight-Signature-V2"] != "t=0,v1=forged"
+        assert headers["X-Custom"] == "kept", "unrelated custom headers still pass through"
+
     @pytest.mark.asyncio
     async def test_deliver_failure_raises_retry_task_at(self, memory: MemoryEngine):
         """A failed HTTP POST raises RetryTaskAt when retries remain."""
@@ -504,8 +640,88 @@ async def api_client(memory: MemoryEngine):
         yield client
 
 
+@pytest_asyncio.fixture
+async def webhook_validation_api_client():
+    """HTTP client with a mock engine for route-level validation failures."""
+    memory = MagicMock()
+    memory.audit_logger = None
+    app = create_app(memory, initialize_memory=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, memory
+
+
 class TestWebhookHttpApi:
     """HTTP API integration tests for webhook CRUD endpoints."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body", "memory_method"),
+        [
+            ("POST", "/webhooks", {"url": "https://example.com/hook"}, "create_webhook"),
+            ("GET", "/webhooks", None, "list_webhooks"),
+            # Fixed uuids, not uuid.uuid4(): the value is interpolated into the
+            # parameter — and therefore into the test id — at collection time, and
+            # every xdist worker collects independently. Random ids made each
+            # worker's node-id list differ, so the shard aborted with "Different
+            # tests were collected between gw0 and gw2" whenever more than one
+            # worker picked these up. The endpoint never looks the id up (the
+            # validator rejects the call first), so any well-formed uuid does.
+            ("DELETE", "/webhooks/44499a74-6ba1-4c39-bc1e-7ee63635429d", None, "delete_webhook"),
+            ("PATCH", "/webhooks/66935c96-7b4c-417b-8c60-db8f102bafe9", {"enabled": False}, "update_webhook"),
+            ("GET", "/webhooks/75daa3bb-0cb3-4106-9bac-ac003d8f7b23/deliveries", None, "list_webhook_deliveries"),
+        ],
+    )
+    async def test_http_preserves_operation_validation_error(
+        self,
+        webhook_validation_api_client,
+        method: str,
+        path: str,
+        json_body: dict | None,
+        memory_method: str,
+    ):
+        """Webhook routes preserve validator status and reason instead of returning 500."""
+        api_client, memory = webhook_validation_api_client
+        setattr(
+            memory,
+            memory_method,
+            AsyncMock(side_effect=OperationValidationError("webhooks denied", status_code=403)),
+        )
+
+        response = await api_client.request(
+            method,
+            f"/v1/default/banks/validation-bank{path}",
+            json=json_body,
+        )
+
+        assert response.status_code == 403, response.text
+        assert response.json() == {"detail": "webhooks denied"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body"),
+        [
+            ("DELETE", "/webhooks/not-a-uuid", None),
+            ("PATCH", "/webhooks/not-a-uuid", {"enabled": False}),
+            ("GET", "/webhooks/not-a-uuid/deliveries", None),
+        ],
+    )
+    async def test_http_rejects_malformed_webhook_id(
+        self,
+        webhook_validation_api_client,
+        method: str,
+        path: str,
+        json_body: dict | None,
+    ):
+        """Malformed webhook IDs are client errors, not generic server failures."""
+        api_client, _ = webhook_validation_api_client
+        response = await api_client.request(
+            method,
+            f"/v1/default/banks/validation-bank{path}",
+            json=json_body,
+        )
+
+        assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
     async def test_http_create_webhook(self, api_client: httpx.AsyncClient):
@@ -544,7 +760,7 @@ class TestWebhookHttpApi:
         assert response.status_code == 201, response.text
         webhook_id = response.json()["id"]
 
-        banks_resp = await api_client.get("/v1/default/banks")
+        banks_resp = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert banks_resp.status_code == 200
         bank_ids = {bank["bank_id"] for bank in banks_resp.json()["banks"]}
         assert bank_id in bank_ids
@@ -669,6 +885,117 @@ class TestWebhookHttpApi:
         missing_id = str(uuid.uuid4())
         response = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{missing_id}/deliveries")
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "http://169.254.169.254/latest/meta-data/",  # cloud metadata
+            "http://127.0.0.1:8080/admin",  # loopback
+            "https://10.1.2.3/hook",  # private
+            "ftp://example.com/x",  # scheme
+        ],
+    )
+    async def test_http_create_webhook_rejects_internal_url(self, api_client: httpx.AsyncClient, bad_url: str):
+        """POST /webhooks with an internal/unsafe destination is rejected with 400 (SSRF guard)."""
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        response = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": bad_url, "event_types": ["consolidation.completed"]},
+        )
+        assert response.status_code == 400, response.text
+
+    @pytest.mark.asyncio
+    async def test_http_update_webhook_rejects_internal_url(self, api_client: httpx.AsyncClient):
+        """PATCH /webhooks/{id} to an internal destination is rejected with 400."""
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        create_resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": "https://example.com/hook", "event_types": ["consolidation.completed"]},
+        )
+        assert create_resp.status_code == 201
+        webhook_id = create_resp.json()["id"]
+        try:
+            patch_resp = await api_client.patch(
+                f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
+                json={"url": "http://169.254.169.254/latest/meta-data/"},
+            )
+            assert patch_resp.status_code == 400, patch_resp.text
+        finally:
+            await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
+
+    async def _insert_delivery_with_body(self, memory: MemoryEngine, bank_id: str, webhook_id: str) -> uuid.UUID:
+        delivery_id = uuid.uuid4()
+        now = datetime.now(timezone.utc)
+        task_payload = json.dumps(
+            {
+                "type": "webhook_delivery",
+                "bank_id": bank_id,
+                "url": "https://example.com/deliveries",
+                "event_type": "consolidation.completed",
+                "payload": "{}",
+                "webhook_id": webhook_id,
+            }
+        )
+        result_metadata = json.dumps({"last_status_code": 200, "last_response_body": "INTERNAL_SECRET_BODY"})
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO async_operations
+                  (operation_id, bank_id, operation_type, status, retry_count, task_payload, result_metadata, created_at, updated_at)
+                VALUES ($1, $2, 'webhook_delivery', 'completed', 0, $3::jsonb, $4::jsonb, $5, $5)
+                """,
+                delivery_id,
+                bank_id,
+                task_payload,
+                result_metadata,
+                now,
+            )
+        return delivery_id
+
+    @pytest.mark.asyncio
+    async def test_deliveries_hide_response_body_by_default(self, memory: MemoryEngine, api_client: httpx.AsyncClient):
+        """By default the raw upstream body is withheld; the status is still returned."""
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        create_resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": "https://example.com/deliveries", "event_types": ["consolidation.completed"]},
+        )
+        webhook_id = create_resp.json()["id"]
+        delivery_id = await self._insert_delivery_with_body(memory, bank_id, webhook_id)
+        try:
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
+            delivery = next(i for i in resp.json()["items"] if i["id"] == str(delivery_id))
+            assert delivery["last_response_body"] is None
+            assert delivery["last_response_status"] == 200  # status stays useful for debugging
+        finally:
+            async with memory._pool.acquire() as conn:
+                await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", delivery_id)
+            await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
+
+    @pytest.mark.asyncio
+    async def test_deliveries_expose_response_body_when_opted_in(
+        self, memory: MemoryEngine, api_client: httpx.AsyncClient, monkeypatch
+    ):
+        """When the operator opts in, the raw body is returned."""
+        from hindsight_api.config import _get_raw_config
+
+        monkeypatch.setattr(_get_raw_config(), "webhook_expose_response_body", True)
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+        create_resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={"url": "https://example.com/deliveries", "event_types": ["consolidation.completed"]},
+        )
+        webhook_id = create_resp.json()["id"]
+        delivery_id = await self._insert_delivery_with_body(memory, bank_id, webhook_id)
+        try:
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
+            delivery = next(i for i in resp.json()["items"] if i["id"] == str(delivery_id))
+            assert delivery["last_response_body"] == "INTERNAL_SECRET_BODY"
+        finally:
+            async with memory._pool.acquire() as conn:
+                await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", delivery_id)
+            await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @pytest.mark.asyncio
     async def test_http_update_webhook_url(self, api_client: httpx.AsyncClient):
@@ -1068,6 +1395,190 @@ class TestRetainCompletedWebhook:
                 await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
             await memory.delete_bank(bank_id, request_context=request_context)
 
+    @staticmethod
+    async def _insert_retain_webhook(pool, webhook_id, bank_id: str) -> None:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                """,
+                webhook_id,
+                bank_id,
+                "https://example.com/retain-hook",
+                ["retain.completed"],
+            )
+
+    @staticmethod
+    async def _cleanup_retain_webhook(memory: MemoryEngine, bank_id: str, webhook_id, request_context) -> None:
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                bank_id,
+            )
+            await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @staticmethod
+    def _split_at(memory: MemoryEngine, monkeypatch, tokens_per_batch: int) -> list[int]:
+        """Force ``_run_retain_execution`` to split, and record how many sub-batches it made.
+
+        ``retain_batch_tokens`` is a static field read through the module-level
+        ``get_config``, so the override goes there rather than on the per-bank resolver.
+        Only that one field differs from the real config.
+
+        The returned list receives the sub-batch count. Without checking it these tests
+        would still pass if the batch never split at all — one sub-batch trivially satisfies
+        "fires once", and the invariant under test would go unexercised.
+        """
+        import dataclasses
+
+        from hindsight_api.config import _get_raw_config
+        from hindsight_api.engine import memory_engine as engine_module
+
+        narrowed = dataclasses.replace(_get_raw_config(), retain_batch_tokens=tokens_per_batch)
+        monkeypatch.setattr(engine_module, "get_config", lambda: narrowed)
+
+        counts: list[int] = []
+        real_iter = engine_module.iter_sub_batches
+
+        def _spy(*args, **kwargs):
+            # Counting means draining, and the retain loop consumes this lazily on purpose,
+            # so the spy re-yields from a list instead of returning the generator. Only the
+            # test pays for materialising it.
+            collected = list(real_iter(*args, **kwargs))
+            counts.append(len(collected))
+            return iter(collected)
+
+        monkeypatch.setattr(engine_module, "iter_sub_batches", _spy)
+        return counts
+
+    @pytest.mark.asyncio
+    async def test_retain_fires_outbox_once_across_packed_sub_batches(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """Items packed across several sub-batches queue each document's event exactly once.
+
+        A pre-built callback covers the whole operation and queues one row per content item,
+        so it must fire on exactly one sub-batch — the last, inside its transaction. Nothing
+        else guarantees delivery at this level, and both ways of getting it wrong are
+        silent: never firing loses every webhook while the retain still reports success,
+        and firing per sub-batch multiplies them. Asserting the exact count catches both —
+        four documents across four sub-batches is 4, against 0 and 16.
+        """
+        bank_id = f"wh-packed-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            await _ensure_bank(memory._pool, bank_id)
+            await self._insert_retain_webhook(memory._pool, webhook_id, bank_id)
+
+            # A budget small enough that each item lands in its own sub-batch.
+            split_counts = self._split_at(memory, monkeypatch, tokens_per_batch=12)
+            contents = [
+                {"content": f"Person {i} works at Company {i} in City {i}.", "document_id": f"doc-packed-{i}"}
+                for i in range(4)
+            ]
+
+            callback = memory._build_retain_outbox_callback(
+                bank_id=bank_id, contents=contents, operation_id="op-packed"
+            )
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            if not (split_counts and split_counts[0] > 1):
+                # A store that owns retain persistence buffers to its own session and commits once,
+                # so the engine does not sub-batch for it and there are no slices to spread a
+                # webhook across. The delivery count below is still the property under test and
+                # still asserted; what is absent is the multi-slice SHAPE this case exists to
+                # exercise, so say that rather than fail as though the webhook misfired.
+                from hindsight_api.engine.memories import get_memories
+
+                if get_memories().store_owned:
+                    pytest.skip("the memories store does not sub-batch; no slices to fire across")
+            assert split_counts and split_counts[0] > 1, (
+                f"the batch never split, so nothing was tested (sub-batches: {split_counts})"
+            )
+            deliveries = await self._count_retain_deliveries(memory._pool, bank_id)
+            assert deliveries == len(contents), (
+                f"expected one retain.completed per document ({len(contents)}) fired from a single "
+                f"sub-batch, got {deliveries} across {split_counts[0]} sub-batches"
+            )
+        finally:
+            memory._webhook_manager = original_manager
+            await self._cleanup_retain_webhook(memory, bank_id, webhook_id, request_context)
+
+    @pytest.mark.asyncio
+    async def test_retain_fires_outbox_once_across_sliced_sub_batches(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """One oversized item sliced into many sub-batches queues retain.completed ONCE.
+
+        The other way a batch splits: a single document too large for the budget is cut
+        into slices that all share a document_id and run sequentially. The slices are
+        generated rather than enumerated from the input, so "which one is last" is decided
+        differently here than for packed items and needs its own coverage.
+        """
+        bank_id = f"wh-sliced-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            await _ensure_bank(memory._pool, bank_id)
+            await self._insert_retain_webhook(memory._pool, webhook_id, bank_id)
+
+            split_counts = self._split_at(memory, monkeypatch, tokens_per_batch=12)
+            # Long enough to span several native chunks: slices are cut on
+            # ``retain_chunk_size`` (3000 chars) boundaries, never inside one, so a body
+            # under that limit is a single chunk and yields a single sub-batch however
+            # small the token budget is. At ~12k chars this is four chunks, hence four
+            # slices — without the length the test passes without slicing anything.
+            contents = [
+                {
+                    "content": " ".join(f"Fact number {i} concerns Team {i} in Region {i}." for i in range(300)),
+                    "document_id": "doc-sliced",
+                }
+            ]
+
+            callback = memory._build_retain_outbox_callback(
+                bank_id=bank_id, contents=contents, operation_id="op-sliced"
+            )
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            if not (split_counts and split_counts[0] > 1):
+                # A store that owns retain persistence buffers to its own session and commits once,
+                # so the engine does not sub-batch for it and there are no slices to spread a
+                # webhook across. The delivery count below is still the property under test and
+                # still asserted; what is absent is the multi-slice SHAPE this case exists to
+                # exercise, so say that rather than fail as though the webhook misfired.
+                from hindsight_api.engine.memories import get_memories
+
+                if get_memories().store_owned:
+                    pytest.skip("the memories store does not sub-batch; no slices to fire across")
+            assert split_counts and split_counts[0] > 1, (
+                f"the document was never sliced, so nothing was tested (sub-batches: {split_counts})"
+            )
+            deliveries = await self._count_retain_deliveries(memory._pool, bank_id)
+            assert deliveries == 1, (
+                f"expected exactly one retain.completed for the document, got {deliveries} "
+                f"across {split_counts[0]} slices"
+            )
+        finally:
+            memory._webhook_manager = original_manager
+            await self._cleanup_retain_webhook(memory, bank_id, webhook_id, request_context)
+
     @pytest.mark.asyncio
     async def test_retain_fires_outbox_when_final_batch_extracts_zero_facts(
         self, memory: MemoryEngine, request_context, monkeypatch
@@ -1166,12 +1677,11 @@ class TestRetainCompletedWebhook:
                 outbox_callback=callback,
             )
 
-            async with memory._pool.acquire() as conn:
-                stored_units = await conn.fetchval(
-                    "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                    bank_id,
-                    "doc-counted",
+            stored_units = (
+                await memory.list_memory_units(
+                    bank_id, document_id="doc-counted", limit=1000, request_context=request_context
                 )
+            )["total"]
             assert stored_units > 0, "fixture precondition: the mock LLM must extract facts here"
 
             payloads = await self._retain_delivery_payloads(memory._pool, bank_id)

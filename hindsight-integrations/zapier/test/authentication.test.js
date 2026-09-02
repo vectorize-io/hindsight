@@ -18,7 +18,8 @@ describe("authentication", () => {
       reqheaders: { authorization: "Bearer hsk_test" },
     })
       .get("/v1/default/banks")
-      .reply(200, { banks: [] });
+      .query({ limit: 1 })
+      .reply(200, { banks: [], total: 0, limit: 1, offset: 0 });
 
     const response = await appTester(App.authentication.test, { authData });
     response.status.should.eql(200);
@@ -26,7 +27,10 @@ describe("authentication", () => {
   });
 
   it("throws an AuthenticationError on 401", async () => {
-    nock("https://api.example.com").get("/v1/default/banks").reply(401, { error: "nope" });
+    nock("https://api.example.com")
+      .get("/v1/default/banks")
+      .query({ limit: 1 })
+      .reply(401, { error: "nope" });
 
     await appTester(App.authentication.test, { authData }).should.be.rejectedWith(
       /Invalid or unauthorized/
@@ -36,7 +40,8 @@ describe("authentication", () => {
   it("strips a trailing slash from the API URL", async () => {
     const scope = nock("https://api.example.com")
       .get("/v1/default/banks")
-      .reply(200, { banks: [] });
+      .query({ limit: 1 })
+      .reply(200, { banks: [], total: 0, limit: 1, offset: 0 });
 
     await appTester(App.authentication.test, {
       authData: { apiKey: "hsk_test", apiUrl: "https://api.example.com/" },

@@ -31,8 +31,14 @@ const ICON_MAP: Record<string, IconType> = {
 type Props = WrapperProps<typeof DefaultNavbarItemType>;
 
 export default function DefaultNavbarItemWrapper(props: Props): JSX.Element {
-  const isExternal = typeof props.href === 'string' && props.href.startsWith('http');
-  const isGithub = (props.className as string | undefined)?.includes('header-github-link');
+  const className = props.className as string | undefined;
+  // The sign-up button is styled as a solid CTA — the "leaving the site" arrow
+  // every other external item gets would only clutter it.
+  const isExternal =
+    typeof props.href === 'string' &&
+    props.href.startsWith('http') &&
+    !className?.includes('navbar-item-signup');
+  const isGithub = className?.includes('header-github-link');
   const iconKey = props.customProps?.icon as string | undefined;
   const IconComponent = iconKey ? ICON_MAP[iconKey] : undefined;
 

@@ -6,6 +6,13 @@ from datetime import datetime, timezone
 
 import pytest
 
+# These read `result.trace["retrieval_results"]` and assert an entry per ARM (method_name ==
+# "graph"). That structure is produced by the engine running the arms itself; a store that answers
+# a whole recall in one hop runs them internally and reports phases ("arms", "fuse", "trim"), not
+# one entry per arm -- so there is nothing here to assert against for such a store, and the arm
+# behaviour is covered by the extension's own recall suite instead.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.search.tracer import SearchTracer
 
@@ -92,14 +99,20 @@ async def test_search_with_trace(memory, request_context):
             assert visit["node_id"], "Visit should have node_id"
             assert visit["text"], "Visit should have text"
             assert visit["weights"]["final_weight"] >= 0, "Weight should be non-negative"
-            # Entry points should have no parent
-            if visit["is_entry_point"]:
-                assert visit["parent_node_id"] is None
-                assert visit["link_type"] is None
-            else:
-                # Non-entry points should have parent info (unless they're isolated)
-                # But we allow None parent if the node was reached differently
-                pass
+
+        # Retrieval is parallel and fused, so the trace carries no traversal
+        # vocabulary: link-follow counters and pruning decisions were removed
+        # rather than reported as a constant zero (issue #3817).
+        summary_keys = set(trace["summary"])
+        assert not summary_keys & {
+            "total_nodes_pruned",
+            "temporal_links_followed",
+            "semantic_links_followed",
+            "entity_links_followed",
+        }, "Structurally-zero counters should be gone from the summary"
+        assert "pruned" not in trace
+        for visit in trace["visits"]:
+            assert not set(visit) & {"parent_node_id", "link_type", "link_weight", "neighbors_explored"}
 
         # Verify summary
         assert trace["summary"]["total_nodes_visited"] == len(trace["visits"])
@@ -119,7 +132,6 @@ async def test_search_with_trace(memory, request_context):
         print(f"  - Query: {trace['query']['query_text']}")
         print(f"  - Entry points: {len(trace['entry_points'])}")
         print(f"  - Nodes visited: {trace['summary']['total_nodes_visited']}")
-        print(f"  - Nodes pruned: {trace['summary']['total_nodes_pruned']}")
         print(f"  - Results returned: {trace['summary']['results_returned']}")
         print(f"  - Duration: {trace['summary']['total_duration_seconds']:.3f}s")
 

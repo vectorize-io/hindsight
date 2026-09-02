@@ -37,7 +37,7 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "js-yaml": "^4.3.0"
+    "js-yaml": "^4.3.1"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
@@ -50,6 +50,7 @@
   },
   "overrides": {
     "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
-    "vite": ">=8.0.5"
+    "vite": ">=8.0.5",
+    "postcss": ">=8.5.23 <9.0.0"
   }
 }

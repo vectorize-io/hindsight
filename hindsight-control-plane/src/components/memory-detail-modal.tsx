@@ -160,6 +160,9 @@ export function MemoryDetailModal({
         occurredEnd: fields.occurredEnd,
         factType: fields.factType,
         entities: fields.entities,
+        // A person editing the entity list here is naming the entity they mean, so the
+        // correction must not be re-resolved onto a similar existing one (#3479).
+        resolveEntities: false,
       });
       const data = await client.getMemory(memory.id, currentBank);
       setMemory(data);

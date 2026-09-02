@@ -17,7 +17,6 @@ Environment variables:
     HINDSIGHT_EMBED_API_URL: Optional. Use external API server instead of starting local daemon.
     HINDSIGHT_EMBED_API_TOKEN: Optional. Authentication token for external API (sent as Bearer token).
     HINDSIGHT_EMBED_API_DATABASE_URL: Optional. Database URL for daemon (default: "pg0://hindsight-embed").
-    HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: Optional. Seconds before daemon auto-exits when idle (default: 300).
     HINDSIGHT_EMBED_API_VERSION: Optional. hindsight-api version to use (default: matches embed version).
                                  Note: Only applies when starting daemon. To change version, stop daemon first.
     HINDSIGHT_EMBED_CLI_VERSION: Optional. hindsight CLI version to install (default: {embed_version}).
@@ -104,7 +103,7 @@ def load_config_file():
 
     # Load ONLY this profile's config, never fall back to default
     if config_path.exists():
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -126,9 +125,14 @@ def get_config():
     venvs (e.g. `uvx hindsight-embed`) where `hindsight-api` isn't installed.
     """
     load_config_file()
+    provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
     return {
-        "llm_api_key": os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"),
-        "llm_provider": os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai"),
+        "llm_api_key": (
+            None
+            if provider in NO_API_KEY_PROVIDERS
+            else os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        ),
+        "llm_provider": provider,
         "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL"),
     }
 
@@ -140,7 +144,9 @@ PROVIDER_API_KEYS = {
     "gemini": "GEMINI_API_KEY",
     "ollama": None,
     "vertexai": None,
+    "github-copilot": None,
 }
+NO_API_KEY_PROVIDERS = frozenset(provider for provider, key_env in PROVIDER_API_KEYS.items() if key_env is None)
 
 
 def do_configure(args):
@@ -194,29 +200,31 @@ def _has_non_interactive_env() -> bool:
     """Whether the env vars required by _do_configure_from_env are already set.
 
     Returns True when an API key is present, OR when the provider is one that
-    doesn't need a key (ollama, vertexai — the latter authenticates via a
-    service-account file path). Prevents the interactive prompt from kicking
-    in when the user clearly wants CI/scripted behavior.
+    doesn't need a key. Prevents the interactive prompt from kicking in when
+    the user clearly wants CI/scripted behavior.
     """
     if os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"):
         return True
-    return os.environ.get("HINDSIGHT_API_LLM_PROVIDER") in ("ollama", "vertexai")
+    return os.environ.get("HINDSIGHT_API_LLM_PROVIDER") in NO_API_KEY_PROVIDERS
 
 
 def _do_configure_from_env():
     """Non-interactive configuration from environment variables (for CI)."""
     # Check for required environment variables
-    api_key = os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
     provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
+    api_key = (
+        None
+        if provider in NO_API_KEY_PROVIDERS
+        else os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    )
 
-    # Don't gate on PROVIDER_API_KEYS — that's only the interactive-menu set
-    # (5 entries). hindsight-api's PROVIDER_DEFAULT_MODELS supports ~18
+    # Don't gate on PROVIDER_API_KEYS — that's only the small interactive-menu
+    # set. hindsight-api's PROVIDER_DEFAULT_MODELS supports many more
     # providers (anthropic, claude-code, bedrock, openrouter, ...). Let the
     # daemon validate; rejecting here would block valid configurations.
 
-    # Check for API key (required for non-ollama and non-vertexai providers)
-    # vertexai uses GCP service account credentials instead of an API key
-    if not api_key and provider not in ("ollama", "vertexai"):
+    # These providers authenticate locally rather than through an LLM API key.
+    if not api_key and provider not in NO_API_KEY_PROVIDERS:
         print("Error: Cannot run interactive configuration without a terminal.", file=sys.stderr)
         print("", file=sys.stderr)
         print("For non-interactive (CI) mode, set environment variables:", file=sys.stderr)
@@ -246,7 +254,7 @@ def _do_configure_from_env():
 
     from .env_template import render_config
 
-    CONFIG_FILE.write_text(render_config(config_values))
+    CONFIG_FILE.write_text(render_config(config_values), encoding="utf-8")
     CONFIG_FILE.chmod(0o600)
 
     print()
@@ -373,6 +381,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
         ("Groq (fast & free tier)", "groq"),
         ("Google Gemini", "gemini"),
         ("Ollama (local, no API key)", "ollama"),
+        ("GitHub Copilot (signed-in account, no LLM API key)", "github-copilot"),
     ]
 
     provider = _prompt_choice("Select your LLM provider:", providers, default=1)
@@ -432,7 +441,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
         # Save to default profile
         from .env_template import render_config
 
-        CONFIG_FILE.write_text(render_config(config_dict))
+        CONFIG_FILE.write_text(render_config(config_dict), encoding="utf-8")
         CONFIG_FILE.chmod(0o600)
 
     # Stop existing daemon if running (it needs to pick up new config)
@@ -666,7 +675,7 @@ def do_daemon(args, config: dict, logger):
         else:
             # Show last N lines
             try:
-                with open(daemon_log_path) as f:
+                with open(daemon_log_path, encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
                     for line in lines[-args.lines :]:
                         print(line, end="")
@@ -785,7 +794,8 @@ def do_ui(args, config: dict, logger):
             status_text = Text()
             status_text.append("UI is running\n\n", style="green bold")
             status_text.append("  URL: ", style="dim")
-            status_text.append(f"http://127.0.0.1:{effective_port}\n", style="cyan")
+            # localhost, not a loopback literal: the UI can be bound to ::1 only.
+            status_text.append(f"http://localhost:{effective_port}\n", style="cyan")
             status_text.append("  Logs: ", style="dim")
             status_text.append(f"{paths.ui_log}", style="")
 
@@ -827,7 +837,7 @@ def do_ui(args, config: dict, logger):
             return 0
         else:
             try:
-                with open(ui_log_path) as f:
+                with open(ui_log_path, encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
                     for line in lines[-args.lines :]:
                         print(line, end="")
@@ -1046,7 +1056,7 @@ def do_control(args) -> int:
             except KeyboardInterrupt:
                 pass
             return 0
-        with open(log_path) as f:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
             for line in f.readlines()[-getattr(args, "lines", 50) :]:
                 print(line, end="")
         return 0
@@ -1205,7 +1215,7 @@ def do_profile_command(args: list[str]) -> int:
                 config_path = CONFIG_FILE
 
             if config_path.exists():
-                for line in config_path.read_text().splitlines():
+                for line in config_path.read_text(encoding="utf-8").splitlines():
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
@@ -1257,7 +1267,7 @@ def do_profile_command(args: list[str]) -> int:
         # Parse existing config
         config = {}
         if config_path.exists():
-            for line in config_path.read_text().splitlines():
+            for line in config_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
@@ -1302,7 +1312,7 @@ def do_profile_command(args: list[str]) -> int:
         # Parse existing config
         config = {}
         if config_path.exists():
-            for line in config_path.read_text().splitlines():
+            for line in config_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)

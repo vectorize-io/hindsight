@@ -9,7 +9,7 @@ import pytest
 async def test_reflect_creates_child_spans(memory, request_context):
     """Test that reflect operation creates child LLM spans."""
     from datetime import datetime, timezone
-    from hindsight_api.tracing import initialize_tracing, get_span_recorder, create_span_recorder
+    from hindsight_api.tracing import initialize_tracing, get_span_recorder, create_span_recorder, shutdown_tracing
 
     # Initialize tracing with a mock endpoint
     initialize_tracing(service_name="test-hindsight", endpoint="http://localhost:4318", deployment_environment="test")
@@ -40,3 +40,9 @@ async def test_reflect_creates_child_spans(memory, request_context):
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+        # initialize_tracing flips process-global state, so leaving it on leaks
+        # into every later test in this xdist worker: test_tracing's
+        # `is_tracing_enabled() is False` assertions then fail, depending purely
+        # on how xdist happened to distribute the files. Same shape as the
+        # leaked-span-recorder fail-safe in conftest (#2229).
+        shutdown_tracing()

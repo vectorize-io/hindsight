@@ -3,6 +3,6 @@
 from ..token_encoding import count_tokens as _count_tokens
 
 
-def count_cl100k_tokens(text: str) -> int:
-    """Return the number of cl100k_base tokens in text."""
+def count_prompt_tokens(text: str) -> int:
+    """Return the number of tokens in text under the configured encoding."""
     return _count_tokens(text)

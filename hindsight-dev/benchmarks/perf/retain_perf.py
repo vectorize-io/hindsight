@@ -257,7 +257,7 @@ async def stress_test_deadlocks(
     from hindsight_api.engine.retain.fact_storage import ensure_bank_exists
 
     async with pool.acquire() as conn:
-        await ensure_bank_exists(conn, bank_id)
+        await ensure_bank_exists(conn, bank_id, ops=pool.ops)
 
     console.print("\n[bold]Stress test config:[/bold]")
     console.print(f"  Bank:          {bank_id}")

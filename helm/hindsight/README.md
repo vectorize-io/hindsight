@@ -82,6 +82,8 @@ helm install hindsight ./helm/hindsight -n hindsight --create-namespace -f value
 | `postgresql.external.username` | Database username | `hindsight` |
 | `ingress.enabled` | Enable ingress | `false` |
 | `autoscaling.enabled` | Enable HPA | `false` |
+| `metrics.serviceMonitor.enabled` | Create ServiceMonitors for api/worker (needs Prometheus operator) | `false` |
+| `metrics.serviceMonitor.labels` | Labels for Prometheus operator selection, e.g. `release: kube-prometheus-stack` | `{}` |
 
 ### Environment Variables
 
@@ -117,6 +119,27 @@ postgresql:
     password: "your-password"
 ```
 
+### Sidecars and Init Containers
+
+`api`, `worker`, and `controlPlane` each take `extraContainers` and `extraInitContainers`. Both default to `[]` and render nothing when empty. Use them for containers that have to share the pod, such as a database auth proxy reached over localhost:
+
+```yaml
+api:
+  extraContainers:
+    - name: cloud-sql-proxy
+      image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.24.1
+      args:
+        - --port=5432
+        - my-project:us-west1:my-instance
+      securityContext:
+        runAsNonRoot: true
+
+postgresql:
+  enabled: false
+  external:
+    host: "127.0.0.1"
+```
+
 ### Ingress
 
 To expose the services via ingress:
@@ -141,6 +164,25 @@ ingress:
       hosts:
         - hindsight.example.com
 ```
+
+### Prometheus metrics
+
+The api (port 8888) and worker (port 8889) containers expose Prometheus
+format metrics at `/metrics`. The control plane does not expose metrics.
+On clusters running the Prometheus operator (e.g. kube-prometheus-stack),
+enable ServiceMonitor discovery:
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack  # must match the stack's serviceMonitorSelector
+```
+
+The worker monitor requires `worker.enabled: true`. Without the operator,
+scrape `svc/<release>-api:8888/metrics` and `svc/<release>-worker:8889/metrics`
+directly with annotation-based discovery or static targets.
 
 ## Upgrading
 

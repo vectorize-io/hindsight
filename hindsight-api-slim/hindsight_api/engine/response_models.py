@@ -6,9 +6,12 @@ API response models should be kept separate and convert from these core models t
 API stability even if internal models change.
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .metadata_utils import as_string_metadata
 
 VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "observation"])
 
@@ -197,20 +200,89 @@ class RecallScores(BaseModel):
 
 
 class MinScores(BaseModel):
-    """Optional per-stage score floors for recall (all inclusive, AND-ed).
+    """Optional per-stage score floors for recall. Every floor is inclusive (``>=``).
 
-    ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
-    arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
-    config for this request), so they prune weak matches before fusion. ``reranker``
-    and ``final`` are **post-query** filters applied to the scored results after
-    reranking. Any field left None imposes no floor; all-None (the default) means
-    no score filtering.
+    The four floors act at two different levels, and the distinction decides what a
+    returned result is guaranteed to satisfy.
+
+    ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into their own
+    SQL arm (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
+    config for this request), so they prune weak matches before fusion. Each one
+    constrains **only the arm it names**. Recall fuses four arms — semantic, keyword,
+    graph and temporal — and a result reaches the response if *any* arm surfaced it,
+    so a returned result may legitimately carry ``null`` for a stage it was not
+    surfaced by, and results reached through the graph or temporal arm carry neither
+    ``semantic`` nor ``keyword``. A *non-null* score always clears its floor — the
+    gap is only ever a ``null``. Setting both does **not** restrict the response to
+    results that clear both: they are not a predicate over each fused result. This is
+    deliberate — an intersection would discard the strong single-arm matches that
+    hybrid retrieval exists to find (a paraphrase with no lexical overlap, an exact
+    identifier the embedding scores poorly).
+
+    ``reranker`` and ``final`` are **post-query** filters applied to every scored
+    result after fusion and reranking, so these *are* per-result predicates: a
+    returned result always clears them. Use them, not the retrieval floors, to make
+    recall abstain on low-confidence queries.
+
+    Any field left None imposes no floor; all-None (the default) means no score
+    filtering.
     """
 
-    semantic: float | None = Field(default=None, description="Retrieval-level: minimum vector similarity (0-1).")
-    keyword: float | None = Field(default=None, description="Retrieval-level: minimum keyword/full-text (BM25) score.")
-    reranker: float | None = Field(default=None, description="Post-query: minimum normalized reranker score (0-1).")
-    final: float | None = Field(default=None, description="Post-query: minimum final ranking score.")
+    semantic: float | None = Field(
+        default=None,
+        description="Retrieval-level, semantic arm only: minimum vector similarity (0-1). A result the semantic "
+        "arm did not surface reports `semantic: null` and is unaffected by this floor.",
+    )
+    keyword: float | None = Field(
+        default=None,
+        description="Retrieval-level, keyword arm only: minimum keyword/full-text (BM25) score. A result the "
+        "keyword arm did not surface reports `keyword: null` and is unaffected by this floor.",
+    )
+    reranker: float | None = Field(
+        default=None,
+        description="Post-query: minimum normalized reranker score (0-1). Applied to every returned result.",
+    )
+    final: float | None = Field(
+        default=None,
+        description="Post-query: minimum final ranking score. Applied to every returned result.",
+    )
+
+
+class TemporalWindow(BaseModel):
+    """A caller-supplied window for recall's temporal arm.
+
+    Supplying this **replaces the date extraction** recall would otherwise run
+    over the query text, so a caller that already knows the range it means does
+    not have to phrase it in English and hope the parser agrees.
+
+    It is **not a filter**. The temporal arm is one of four retrieval arms: it
+    surfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /
+    ``occurred_end``) fall inside the window so fusion can rank them higher.
+    The semantic, keyword and graph arms are unaffected, so results dated
+    outside the window are still returned. Narrowing results to a date range is
+    a different operation this does not provide.
+
+    Has no effect when the bank's ``enable_temporal_retrieval`` config is off:
+    that flag gates the arm itself, and stays the single switch for it.
+    """
+
+    start: datetime = Field(description="Start of the window (inclusive).")
+    end: datetime = Field(description="End of the window (inclusive).")
+
+    @field_validator("start", "end")
+    @classmethod
+    def ensure_tz_aware(cls, v: datetime) -> datetime:
+        # The arm coerces naive datetimes to UTC before querying; do it here
+        # instead so both bounds are unambiguous the moment the request parses.
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "TemporalWindow":
+        if self.end < self.start:
+            raise ValueError("temporal_window.end must not be earlier than temporal_window.start")
+        return self
 
 
 class MemoryFact(BaseModel):
@@ -260,6 +332,9 @@ class MemoryFact(BaseModel):
         Also coerces non-string dict values (e.g., integer IDs stored in JSONB)
         to strings, preventing ValidationError when consolidation encounters
         metadata like {"original_id": 348} instead of {"original_id": "348"}.
+        Null-valued keys are dropped rather than stringified to "None" (issue
+        #3209), so rows written before retain normalized its input stay
+        readable without a data migration.
         """
         if v is None:
             return None
@@ -268,7 +343,7 @@ class MemoryFact(BaseModel):
 
             v = json.loads(v)
         if isinstance(v, dict):
-            return {str(k): str(val) for k, val in v.items()}
+            return as_string_metadata(v)
         return v
 
     chunk_id: str | None = Field(
@@ -344,6 +419,11 @@ class RecallResult(BaseModel):
 
     results: list[MemoryFact] = Field(description="List of memory facts matching the query")
     trace: dict[str, Any] | None = Field(None, description="Trace information for debugging")
+    #: Per-stage timings, in microseconds, measured INSIDE a store that answered the whole recall
+    #: (``MemoriesExtension.full_recall``). ``None`` when the engine ran its own pipeline, where the
+    #: stages are already in the trace. Excluded from the API response — it exists so the recall
+    #: trace can still attribute time once the stages no longer run here.
+    store_stages: dict[str, int] | None = Field(default=None, exclude=True)
     entities: dict[str, "EntityState"] | None = Field(
         None, description="Entity states for entities mentioned in results (keyed by canonical name)"
     )
@@ -352,6 +432,14 @@ class RecallResult(BaseModel):
     )
     source_facts: dict[str, MemoryFact] | None = Field(
         None, description="Source facts for observation-type results, keyed by fact ID"
+    )
+    source_facts_truncated: bool | None = Field(
+        None,
+        description=(
+            "Whether the source_facts map was cut short by the token budget. When true, some IDs in "
+            "results[].source_fact_ids have no entry in source_facts — the budget ran out, the "
+            "references are not dangling. Only set when source facts were requested."
+        ),
     )
 
 
@@ -398,6 +486,15 @@ class ReflectResult(BaseModel):
     )
 
     text: str = Field(description="The formulated answer text")
+    document: Any | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Internal: the structured document the agent emitted when the caller asked for one. "
+            "``text`` is its deterministic render. Excluded from the API response — callers read "
+            "the rendered text; the structure is persistence-side state."
+        ),
+    )
     based_on: dict[str, Any] = Field(
         description="Facts used to formulate the answer, organized by type (world, experience, observation, mental-models, directives)"
     )

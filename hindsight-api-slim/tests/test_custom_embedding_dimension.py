@@ -27,6 +27,10 @@ from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.extensions import TenantContext, TenantExtension
 from hindsight_api.migrations import ensure_embedding_dimension, run_migrations
 
+# The whole point of this module is the physical embedding column: it counts
+# memory_units rows with a non-NULL embedding of a configured dimension.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 # =============================================================================
 # Shared Utilities
 # =============================================================================

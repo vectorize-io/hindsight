@@ -19,6 +19,7 @@ from hindsight_api.engine.memory_engine import MentalModelRefreshError
 from hindsight_api.engine.reflect import agent as reflect_agent
 from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
 from hindsight_api.engine.response_models import ReflectResult
+from tests.conftest import stub_refresh_has_sources
 
 _SCHEMA = {
     "type": "object",
@@ -84,6 +85,7 @@ class TestMentalModelStructuredOutput:
             return _canned_reflect_result("# Team\n\nRegenerated answer.")
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        stub_refresh_has_sources(monkeypatch, memory)
         so_calls = _patch_structured_output(monkeypatch, {"summary": "A team."})
 
         refreshed = await memory.refresh_mental_model(
@@ -93,7 +95,7 @@ class TestMentalModelStructuredOutput:
         # reflect is no longer asked to derive structured_output.
         assert reflect_calls[0].get("response_schema") is None
         # Extraction runs against the final content (== the answer in full mode).
-        assert so_calls == ["# Team\n\nRegenerated answer."]
+        assert so_calls == ["# Team\n\nRegenerated answer.\n"]
         assert refreshed["reflect_response"]["structured_output"] == {"summary": "A team."}
 
     async def test_no_schema_no_structured_output(
@@ -115,6 +117,7 @@ class TestMentalModelStructuredOutput:
             return _canned_reflect_result("# Team\n\nRegenerated.")
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        stub_refresh_has_sources(monkeypatch, memory)
         so_calls = _patch_structured_output(monkeypatch, {"summary": "x"})
 
         refreshed = await memory.refresh_mental_model(
@@ -149,6 +152,7 @@ class TestMentalModelStructuredOutput:
             )
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        stub_refresh_has_sources(monkeypatch, memory)
 
         # Delta-ops call returns no operations → the document is preserved and
         # re-rendered, so final_content is the merged doc (here: the original).
@@ -190,6 +194,7 @@ class TestMentalModelStructuredOutput:
             return _canned_reflect_result("# Doc\n\nBrand new content.")
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        stub_refresh_has_sources(monkeypatch, memory)
         # Extraction "fails": returns no structured output.
         _patch_structured_output(monkeypatch, None)
 
@@ -200,4 +205,8 @@ class TestMentalModelStructuredOutput:
 
         # The refresh was aborted, so the prior content is untouched.
         reloaded = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
-        assert reloaded["content"] == "# Doc\n\nOriginal."
+        assert reloaded["content"] == "# Doc\n\nOriginal.\n"
+        # …and the failure is auditable, like every other refresh failure: this
+        # path used to raise without recording anything, so the only trace of it
+        # was a log line.
+        assert (reloaded.get("reflect_response") or {}).get("refresh_skipped") == "structured_output_failed"

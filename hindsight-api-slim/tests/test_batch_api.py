@@ -12,7 +12,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,6 +34,26 @@ def mock_llm_config():
     mock.provider = "openai"
     mock.model = "gpt-4o-mini"
     mock._provider_impl = AsyncMock()
+    # The serving impl is what the request body and the crash-recovery guard read,
+    # so it carries real values rather than auto-created mock attributes.
+    mock._provider_impl.provider = "openai"
+    mock._provider_impl.model = "gpt-4o-mini"
+    mock._provider_impl.openai_service_tier = None
+    mock._provider_impl.batch_account_key = "openai|https://api.openai.com/v1|000000000000"
+
+    # The batch path resolves its serving impl via ``batch_provider_impl()`` (a
+    # multi-LLM chain returns the first batch-capable member); for a single mock
+    # provider that is ``_provider_impl`` itself — or None when the test declares
+    # the provider batch-incapable, or when a resume names a different account,
+    # mirroring LLMProvider.batch_provider_impl.
+    async def _batch_provider_impl(account_key: str | None = None):
+        if not await mock._provider_impl.supports_batch_api():
+            return None
+        if account_key is not None and mock._provider_impl.batch_account_key != account_key:
+            return None
+        return mock._provider_impl
+
+    mock.batch_provider_impl = _batch_provider_impl
     return mock
 
 
@@ -161,7 +181,6 @@ async def test_batch_api_normal_flow(mock_llm_config, test_contents, hindsight_c
         facts, chunks, usage = await extract_facts_from_contents_batch_api(
             contents=test_contents,
             llm_config=mock_llm_config,
-            agent_name="test_agent",
             config=hindsight_config,
             pool=None,  # No DB pool for this test
             operation_id=None,
@@ -249,7 +268,6 @@ async def test_batch_api_accepts_top_level_fact_list(mock_llm_config, test_conte
     facts, chunks, usage = await extract_facts_from_contents_batch_api(
         contents=[test_contents[0]],
         llm_config=mock_llm_config,
-        agent_name="test_agent",
         config=hindsight_config,
         pool=None,
         operation_id=None,
@@ -289,7 +307,6 @@ async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_c
     facts, chunks, usage = await extract_facts_from_contents_batch_api(
         contents=[test_contents[0]],
         llm_config=mock_llm_config,
-        agent_name="test_agent",
         config=hindsight_config,
         pool=None,
         operation_id=None,
@@ -300,6 +317,76 @@ async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_c
     assert len(chunks) == 1
     assert chunks[0].fact_count == 0
     assert usage.total_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_api_records_schema_drifted_facts_as_extraction_errors(
+    mock_llm_config, test_contents, hindsight_config
+):
+    """Issue #3708.
+
+    A fact object carrying none of the text keys means the model ignored the
+    schema. The batch API cannot re-prompt one request, so the drop has to reach
+    the operation's extraction_errors instead of only the server log. A 'what'
+    that IS present but empty is the model saying "nothing here" — stays quiet.
+    """
+    batch_id = "batch_schema_drift"
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "facts": [
+                                                {"when": "2024", "who": "Alice", "fact_type": "world"},
+                                                {"what": "", "fact_type": "world"},
+                                            ]
+                                        }
+                                    )
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    }
+                },
+            }
+        ]
+    )
+
+    recorded = []
+
+    async def _capture(pool, operation_id, schema, errors):
+        recorded.append(errors)
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._write_batch_extraction_errors",
+        side_effect=_capture,
+    ):
+        facts, chunks, _usage = await extract_facts_from_contents_batch_api(
+            contents=[test_contents[0]],
+            llm_config=mock_llm_config,
+            config=hindsight_config,
+            pool=None,
+            operation_id=None,
+            schema=None,
+        )
+
+    assert facts == []
+    assert chunks[0].fact_count == 0
+    assert len(recorded) == 1
+    # Only the fact with no text key at all is an error; the empty 'what' is not.
+    assert recorded[0].count == 1
+    assert recorded[0].sample == ["chunk_0: fact 0 has no 'what'/'factual_core'/'text' field"]
 
 
 @pytest.mark.asyncio
@@ -355,7 +442,6 @@ async def test_batch_api_recovers_fenced_and_control_char_json(mock_llm_config, 
     facts, chunks, usage = await extract_facts_from_contents_batch_api(
         contents=[test_contents[0]],
         llm_config=mock_llm_config,
-        agent_name="test_agent",
         config=hindsight_config,
         pool=None,
         operation_id=None,
@@ -404,7 +490,6 @@ async def test_batch_api_unparseable_json_still_records_error(mock_llm_config, t
     facts, chunks, usage = await extract_facts_from_contents_batch_api(
         contents=[test_contents[0]],
         llm_config=mock_llm_config,
-        agent_name="test_agent",
         config=hindsight_config,
         pool=None,
         operation_id=None,
@@ -531,7 +616,6 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
         facts, chunks, usage = await extract_facts_from_contents_batch_api(
             contents=test_contents,
             llm_config=mock_llm_config,
-            agent_name="test_agent",
             config=hindsight_config,
             pool=pool,
             operation_id=operation_id,  # Provides crash recovery context
@@ -632,7 +716,6 @@ async def test_batch_api_records_non_fatal_extraction_errors(
         facts, chunks, usage = await extract_facts_from_contents_batch_api(
             contents=test_contents,
             llm_config=mock_llm_config,
-            agent_name="test_agent",
             config=hindsight_config,
             pool=pool,
             operation_id=operation_id,
@@ -676,7 +759,6 @@ async def test_batch_api_raises_for_unsupported_provider(mock_llm_config, test_c
         await extract_facts_from_contents_batch_api(
             contents=test_contents,
             llm_config=mock_llm_config,
-            agent_name="test_agent",
             config=hindsight_config,
             pool=None,
             operation_id=None,
@@ -806,7 +888,6 @@ async def test_batch_api_via_extract_facts_from_contents(
         facts, chunks, usage = await extract_facts_from_contents(
             contents=test_contents,
             llm_config=mock_llm_config,
-            agent_name="test_agent",
             config=hindsight_config,
             pool=None,
             operation_id=None,
@@ -824,3 +905,63 @@ async def test_batch_api_via_extract_facts_from_contents(
             await memory.delete_bank(bank_id, request_context=request_context)
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+async def test_batch_api_sanitizes_model_authored_text(mock_llm_config, hindsight_config):
+    """Batch results bypass ``LLMProvider.call``, so they need their own scrub (#3729).
+
+    A model can write ``\\udXXX`` in any string field of a batch response. The raw
+    JSONL carries harmless ASCII; the surrogate is born when the batch path parses it,
+    and from there the fact text and the entity names go straight to the embedder,
+    the reranker and an asyncpg bind.
+    """
+    batch_id = "batch_surrogate"
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value={
+            "batch_id": batch_id,
+            "status": "validating",
+            "request_counts": {"total": 1, "completed": 0, "failed": 0},
+        }
+    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": (
+                                        '{"facts": [{"what": "Alex laughed \ud83d", "when": "N/A", '
+                                        '"where": "N/A", "who": "Alex", "why": "N/A", "fact_type": "world", '
+                                        '"fact_kind": "conversation", "entities": ["Al\ud83dex"]}]}'
+                                    )
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                    }
+                },
+            }
+        ]
+    )
+
+    facts, _chunks, _usage = await extract_facts_from_contents_batch_api(
+        contents=[RetainContent(content="Alex laughed at the joke.")],
+        llm_config=mock_llm_config,
+        config=hindsight_config,
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    assert len(facts) == 1
+    assert facts[0].fact_text.encode("utf-8")  # raised UnicodeEncodeError before the fix
+    assert "Alex laughed" in facts[0].fact_text
+    assert facts[0].entities == ["Alex"]

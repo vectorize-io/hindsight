@@ -252,6 +252,10 @@ hindsight document update-tags my-bank meeting-2024-03-15
 > **ℹ️ Observations are re-consolidated**
 >
 When tags change, any consolidated observations derived from the document's memories are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset.
+
+This is required for correctness rather than incidental: consolidation scopes a memory by its tag set, so an observation built under the old tags is no longer valid, and deleting it would strand every other memory that observation was consolidated from unless those are requeued too. The size of that requeue is the number of memories co-sourced with this document's — on a densely co-sourced bank it can be many times the document's own memory count.
+
+Tags are compared as a **set** against the document's current tags, and an update that leaves the set unchanged — including one that only reorders the array — performs no retag and queues no re-consolidation. A repeatable tag-normalisation sweep therefore only pays the re-consolidation cost on the run that actually changes something.
 ## Delete Document
 
 Remove a document and all its associated memories:

@@ -40,28 +40,32 @@ const TOOL_GUIDE =
   "repo's full memory for the past decision and exact values that explain a behavior or bug (slower — " +
   'use deliberately, and credit results with a blockquote header "> 🧠 **From Hindsight memory** — <summary>").\n' +
   "- hindsight_capture_initiative(title, summary) — right after the user approves a plan or finishes brainstorming a " +
-  "new feature/capability and you are about to start implementing (BEFORE you write any code), call this ONCE to " +
-  "record it as a tracked page. Skip bug fixes, small tweaks, and chores.\n" +
+  "new feature/capability and you are about to start implementing (BEFORE you write any code), call this to " +
+  "record it as a tracked page; then call it AGAIN with relates_to_page_id set to that page whenever the goal, " +
+  "scope, or rationale materially changes mid-work, so the page tracks the current plan and not the opening one. " +
+  "Skip bug fixes, small tweaks, chores, and trivial course-corrections.\n" +
   "- hindsight_ingest_document(title, content) — save an external document or durable notes/findings you want " +
   "remembered (not the current conversation — that is captured automatically at session end).";
 
 /**
- * autoReflect=false replaces the injected first-prompt synthesis, so the pull trigger must be
- * explicit and prominent: without it the agent has no reason to suspect the bank holds anything
- * about a fresh goal, and the session silently runs memoryless.
+ * autoReflect=false suppresses the injected first-prompt synthesis. Keep the pull trigger explicit,
+ * but start with the curated pages: they are the fast path, while reflection is the slower fallback
+ * when those pages do not contain enough depth for the new goal.
  */
-const REFLECT_ON_GOALS =
-  "- The user just set a NEW task or goal → call hindsight_reflect with that goal FIRST, before " +
-  "planning: no memory is injected automatically in this configuration, so this call is the only " +
-  "way past decisions, constraints, and failed attempts relevant to the goal reach you.\n";
+const PAGES_FIRST_ON_GOALS =
+  "- The user just set a NEW task or goal → search the knowledge pages FIRST with " +
+  "hindsight_search_knowledge_pages. No synthesis is injected automatically in this configuration; " +
+  "call hindsight_reflect only when those pages are too shallow and deeper reasoning is needed.\n";
 
 export interface ToolGuideOpts {
-  /** Add the reflect-on-new-goals trigger (tool-only reflect mode, cfg.autoReflect=false). */
+  /** Add the new-goal pull trigger (tool-only reflect mode, cfg.autoReflect=false). It used to send
+   *  the agent straight to hindsight_reflect; it now goes to the knowledge pages first and keeps
+   *  reflect for what they don't cover. The field name is unchanged so call sites stay stable. */
   reflectOnNewGoals?: boolean;
 }
 
 function toolGuide(opts?: ToolGuideOpts): string {
-  return (opts?.reflectOnNewGoals ? REFLECT_ON_GOALS : "") + TOOL_GUIDE;
+  return (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE;
 }
 
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */

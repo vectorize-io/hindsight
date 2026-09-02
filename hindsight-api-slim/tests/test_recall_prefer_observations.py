@@ -19,6 +19,14 @@ import pytest_asyncio
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.retain import embedding_utils
 
+# This module seeds every case with `_insert_unit`, an INSERT into `memory_units`. A MEMORIES extension owns those rows in its own store and leaves the Postgres
+# table empty, so the seed lands nowhere the code under test can see it: the failing cases find
+# nothing, and the ones that still pass do so vacuously (an assertion that a result set is EMPTY
+# holds trivially when nothing was ever seeded). Deselected when the suite runs against an
+# alternative store; unchanged, and still required, on Postgres.
+pytestmark = pytest.mark.memory_backend_incompatible
+
+
 RC = RequestContext(tenant_id="default")
 
 QUERY = "Alice mountain hiking"
@@ -105,6 +113,7 @@ async def seeded_obs_memory(memory_no_llm_verify: MemoryEngine):
 
 
 class TestPreferObservations:
+    @pytest.mark.memory_backend_incompatible
     async def test_disabled_returns_sources_and_observation(self, seeded_obs_memory):
         """Without the flag, the source facts AND the observation are all returned."""
         engine, bank_id, ids = seeded_obs_memory
@@ -121,6 +130,7 @@ class TestPreferObservations:
         assert ids["src2"] in found
         assert ids["obs"] in found
 
+    @pytest.mark.memory_backend_incompatible
     async def test_enabled_drops_source_facts_keeps_observation(self, seeded_obs_memory):
         """With the flag, the observation supersedes the facts it was consolidated from."""
         engine, bank_id, ids = seeded_obs_memory
@@ -137,6 +147,7 @@ class TestPreferObservations:
         assert ids["src1"] not in found, "source fact 1 is superseded by the observation"
         assert ids["src2"] not in found, "source fact 2 is superseded by the observation"
 
+    @pytest.mark.memory_backend_incompatible
     async def test_enabled_keeps_non_source_fact(self, seeded_obs_memory):
         """Dedup is provenance-based: a similar fact NOT in source_memory_ids survives."""
         engine, bank_id, ids = seeded_obs_memory
@@ -151,6 +162,7 @@ class TestPreferObservations:
         found = _result_ids(result)
         assert ids["non_src"] in found, "a non-source fact must not be dropped, even if semantically similar"
 
+    @pytest.mark.memory_backend_incompatible
     async def test_noop_without_observation_type(self, seeded_obs_memory):
         """The flag is a no-op when 'observation' is not among the requested types."""
         engine, bank_id, ids = seeded_obs_memory

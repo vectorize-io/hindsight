@@ -97,11 +97,40 @@ def _cleanup_leaked_span_recorders():
     from hindsight_api.tracing import get_span_recorder
 
     recorders = get_span_recorder()._recorders
-    before = {id(r) for r in recorders}
+    # Strong references compared by identity, not a set of id()s. An id is only
+    # unique while its object is alive: a recorder registered and dropped during
+    # the test could be collected, and CPython would hand the same address to the
+    # *next* recorder — which then matched `before` and was left in the registry.
+    # That is how #2229 kept flaking after the first fix, as a leaked enabled
+    # recorder writing rows for a later test's bank. Holding the objects also
+    # keeps them alive, so no address can be recycled underneath the comparison.
+    before = list(recorders)
     yield
     for recorder in list(recorders):
-        if id(recorder) not in before:
+        if not any(recorder is known for known in before):
             recorders.remove(recorder)
+
+
+@pytest.fixture(autouse=True)
+def _restore_global_metrics_collector():
+    """Fail-safe for the process-global metrics collector (#3780).
+
+    ``create_metrics_collector()`` swaps the module-global collector in
+    ``hindsight_api.metrics`` for a real ``MetricsCollector``. The API lifespan
+    now restores it on shutdown, but a test that starts the app and never runs
+    shutdown (or calls ``create_metrics_collector()`` itself) still leaves the
+    real collector installed for every test that follows in the same xdist
+    worker. ``NoOpMetricsCollector`` ignores its arguments while the real one
+    compares them, so provider tests that pass a bare ``MagicMock`` usage object
+    then blow up with "'>' not supported between instances of 'MagicMock' and
+    'int'" — in whichever files the worker happened to be given, which is why
+    the failure count moved every time someone added a test.
+    """
+    from hindsight_api import metrics as metrics_module
+
+    before = metrics_module.get_metrics_collector()
+    yield
+    metrics_module.reset_metrics_collector(before)
 
 
 # Default pg0 instance configuration for tests
@@ -116,6 +145,10 @@ DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 # no job enabled, so the loop never starts. Tests that exercise it call
 # MaintenanceLoop methods (_run_reconcile / _run_scheduled_mm_refresh /
 # _purge_expired) directly.
+#
+# Every job added to the loop must be switched off here too: one job left on is
+# enough to start the loop for the whole suite, which reintroduces exactly the
+# races the others are disabled to avoid.
 os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
@@ -359,8 +392,16 @@ def oracle_db_url(_oracle_admin_dsn):
                 f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS'
             )
         except oracledb.DatabaseError as e:
-            if hasattr(e.args[0], "code") and e.args[0].code == 1920:
+            code = getattr(e.args[0], "code", None)
+            if code == 1920:
                 # ORA-01920: user name conflicts with another user or role name
+                pass
+            elif code == 1031:
+                # ORA-01031: we are not an admin. CI provisions the user with a
+                # privileged account before pytest runs and then points
+                # ORACLE_TEST_DSN at that same unprivileged user, so this bootstrap
+                # cannot (and need not) create it. Assume it exists — if it does
+                # not, run_migrations below fails with a plain login error.
                 pass
             else:
                 raise
@@ -627,6 +668,27 @@ async def api_client(memory):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
+
+def stub_refresh_has_sources(monkeypatch, memory) -> None:
+    """Tell a mental-model refresh that its bank holds something to read.
+
+    A refresh whose scope is empty skips the reflect loop outright (#3875): running
+    the agent over nothing is its worst case, not a cheap one. Tests that stub
+    ``reflect_async`` almost always do so on a bank with no memories, where that
+    short-circuit would pre-empt the stub instead of the test exercising it — so any
+    test that fakes retrieval has to say the bank is not empty. Tests that are about
+    the short-circuit itself let the real check run (``TestRefreshSkipsEmptyScope``).
+
+    Answered on the sibling-documents leg, which is the one that runs when no memory
+    is in scope: that is the state these tests are in, and it needs no fake timestamps
+    to line up against a delta window.
+    """
+
+    async def _has_document(*args, **kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(memory, "_bank_has_readable_document", _has_document)
 
 
 def enable_audit_default(memory, enabled: bool) -> None:

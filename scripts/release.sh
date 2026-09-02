@@ -91,6 +91,19 @@ for pin_file in "${META_PIN_FILES[@]}"; do
     fi
 done
 
+# hindsight-all also bundles the embedded daemon. Keep it in lockstep with the
+# metapackage so upgrades cannot retain an older, still-compatible release.
+EMBED_PIN_FILES=("hindsight-all/pyproject.toml" "hindsight-all-slim/pyproject.toml")
+for pin_file in "${EMBED_PIN_FILES[@]}"; do
+    if [ -f "$pin_file" ]; then
+        print_info "Repinning hindsight-embed in $pin_file"
+        sed -i.bak -E "s/\"hindsight-embed(==|>=)[0-9]+\.[0-9]+\.[0-9]+\"/\"hindsight-embed==$VERSION\"/g" "$pin_file"
+        rm "${pin_file}.bak"
+    else
+        print_warn "File $pin_file not found, skipping"
+    fi
+done
+
 DEV_PYPROJECT="hindsight-dev/pyproject.toml"
 if [ -f "$DEV_PYPROJECT" ]; then
     print_info "Repinning hindsight-api in $DEV_PYPROJECT"

@@ -17,10 +17,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.config import debug_log, load_config
 from lib.daemon import get_api_url, prestart_daemon_background
+from lib.upgrade_notice import upgrade_notice
 
 
 def main():
     config = load_config()
+
+    # Emitted BEFORE any of the early returns below: whether memory is enabled, or the server is
+    # even reachable, has no bearing on whether this plugin has been superseded. `systemMessage` is
+    # the channel Claude Code shows to the USER (additionalContext would only reach the model).
+    notice = upgrade_notice(config)
+    if notice:
+        print(json.dumps({"systemMessage": notice, "hookSpecificOutput": {"hookEventName": "SessionStart"}}))
 
     if not config.get("autoRecall") and not config.get("autoRetain"):
         debug_log(config, "Both autoRecall and autoRetain disabled, skipping session start")

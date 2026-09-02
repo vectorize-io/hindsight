@@ -122,6 +122,67 @@ async def test_document_deletion(memory, request_context):
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+async def _retain_shared_document(memory, request_context, banks, document_id):
+    """Give each bank its own copy of the same document_id — legal, `documents` is keyed on (id, bank_id)."""
+    for bank_id in banks:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google.",
+            context="Test",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+
+async def _units(memory, request_context, bank_id, document_id):
+    page = await memory.list_memory_units(bank_id=bank_id, document_id=document_id, request_context=request_context)
+    return page["items"]
+
+
+@pytest.mark.asyncio
+async def test_document_deletion_counts_only_its_own_bank_units(memory, request_context):
+    """`memory_units_deleted` must report the caller's units, not those of every bank sharing the document_id."""
+    stamp = datetime.now(timezone.utc).timestamp()
+    bank_a, bank_b = f"test_del_scope_a_{stamp}", f"test_del_scope_b_{stamp}"
+    document_id = f"shared-document-id-{stamp}"
+
+    try:
+        await _retain_shared_document(memory, request_context, (bank_a, bank_b), document_id)
+        a_count = len(await _units(memory, request_context, bank_a, document_id))
+        assert a_count > 0
+
+        result = await memory.delete_document(document_id, bank_a, request_context=request_context)
+
+        assert result["memory_units_deleted"] == a_count
+        assert len(await _units(memory, request_context, bank_b, document_id)) == a_count
+
+    finally:
+        for bank_id in (bank_a, bank_b):
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_tag_update_is_scoped_to_its_bank(memory, request_context):
+    """Re-tagging a document must not re-tag the memory units of another bank sharing the document_id."""
+    stamp = datetime.now(timezone.utc).timestamp()
+    bank_a, bank_b = f"test_tag_scope_a_{stamp}", f"test_tag_scope_b_{stamp}"
+    document_id = f"shared-document-id-{stamp}"
+
+    try:
+        await _retain_shared_document(memory, request_context, (bank_a, bank_b), document_id)
+
+        await memory.update_document(document_id, bank_a, tags=["rewritten"], request_context=request_context)
+
+        for unit in await _units(memory, request_context, bank_a, document_id):
+            assert unit["tags"] == ["rewritten"]
+        for unit in await _units(memory, request_context, bank_b, document_id):
+            assert "rewritten" not in (unit["tags"] or [])
+
+    finally:
+        for bank_id in (bank_a, bank_b):
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
 @pytest.mark.asyncio
 async def test_memory_without_document(memory, request_context):
     """Test that memories can still be created without document tracking."""

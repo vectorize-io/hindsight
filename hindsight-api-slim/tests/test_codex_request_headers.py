@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from hindsight_api.engine.providers.codex_llm import CodexLLM
+from tests.codex_stream_stub import stub_codex_stream
 
 
 def build_llm() -> CodexLLM:
@@ -29,17 +30,16 @@ def assert_codex_request_identity(headers: httpx.Headers) -> None:
 @pytest.mark.asyncio
 async def test_call_sends_codex_request_identity() -> None:
     llm = build_llm()
-    response = MagicMock()
+    response = MagicMock(status_code=200)
     response.raise_for_status.return_value = None
 
     with (
-        patch.object(llm._client, "post", new_callable=AsyncMock) as mock_post,
+        stub_codex_stream(llm, response) as mock_stream,
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
-        mock_post.return_value = response
         await llm.call(messages=[{"role": "user", "content": "hello"}], max_retries=0)
 
-    assert_codex_request_identity(mock_post.call_args.kwargs["headers"])
+    assert_codex_request_identity(mock_stream.call_args.kwargs["headers"])
 
 
 @pytest.mark.asyncio
@@ -50,14 +50,13 @@ async def test_call_with_tools_sends_codex_request_identity() -> None:
     response.raise_for_status.return_value = None
 
     with (
-        patch.object(llm._client, "post", new_callable=AsyncMock) as mock_post,
+        stub_codex_stream(llm, response) as mock_stream,
         patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
     ):
-        mock_post.return_value = response
         await llm.call_with_tools(
             messages=[{"role": "user", "content": "hello"}],
             tools=[],
             max_retries=0,
         )
 
-    assert_codex_request_identity(mock_post.call_args.kwargs["headers"])
+    assert_codex_request_identity(mock_stream.call_args.kwargs["headers"])

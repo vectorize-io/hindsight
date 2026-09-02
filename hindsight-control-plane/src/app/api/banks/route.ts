@@ -6,7 +6,18 @@ import { respondWithSdk } from "@/lib/sdk-response";
 const HTTP_CREATED = 201;
 
 export async function GET(request: Request) {
-  const response = await sdk.listBanks({ client: lowLevelClient });
+  const { searchParams } = new URL(request.url);
+  const q = searchParams.get("q");
+  const limit = searchParams.get("limit");
+  const offset = searchParams.get("offset");
+  const response = await sdk.listBanks({
+    client: lowLevelClient,
+    query: {
+      ...(q ? { q } : {}),
+      ...(limit !== null ? { limit: Number(limit) } : {}),
+      ...(offset !== null ? { offset: Number(offset) } : {}),
+    },
+  });
   return respondWithSdk(response, "Failed to fetch banks", { request });
 }
 

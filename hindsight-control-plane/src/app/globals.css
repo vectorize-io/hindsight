@@ -572,6 +572,48 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   }
 }
 
+/* List rows that stream in a page at a time (the bank selector pages as it is
+   scrolled). Defined here rather than reached for from tailwindcss-animate:
+   this app is on Tailwind v4 with the CSS-first config, so the v3 plugin in
+   tailwind.config.ts is never loaded and its `animate-in` / `fade-in-0`
+   utilities emit nothing. Callers stagger rows with an inline animation-delay,
+   so `both` matters — without it a delayed row would sit fully drawn until its
+   turn came, which is the pop the stagger exists to avoid. */
+@keyframes list-row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-list-row-enter {
+  animation: list-row-enter 200ms ease-out both;
+}
+
+@keyframes soft-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-soft-fade-in {
+  animation: soft-fade-in 200ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-list-row-enter,
+  .animate-soft-fade-in {
+    animation: none;
+  }
+}
+
 /* Themed scrollbars — match the app surface instead of the default white track.
    color-mix is what applies the opacity to the theme token. */
 * {

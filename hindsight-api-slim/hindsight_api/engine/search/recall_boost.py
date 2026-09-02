@@ -10,8 +10,9 @@ structurally different places that live on different score scales, so a single
 number could not mean the same thing in both. The level maps to a tuned
 :class:`BoostWeights` pair:
 
-1. **Before the reranker cap** — :func:`boosted_rrf_score` uses ``BoostWeights.rrf``
-   as a weighted-RRF multiplier on the boosted arm's rank contribution, so its
+1. **Before the reranker cap** — :func:`boosted_rrf_score` promotes the boosted
+   arm in *rank space*: the arm's RRF contribution is recomputed as if the
+   candidate had placed ``rank / rank_divisor`` instead of ``rank``, so its
    candidates survive the global reranker candidate budget instead of being
    trimmed by raw RRF score. Rank-aware: a candidate ranked #1 in the boosted
    arm is protected more than one ranked #200.
@@ -22,6 +23,28 @@ number could not mean the same thing in both. The level maps to a tuned
    boosted arm's candidates up the final ordering.
 
 Both functions are no-ops when ``boosts`` is empty, preserving current behaviour.
+
+Why stage 1 boosts the rank and not the score
+---------------------------------------------
+The original implementation multiplied the arm's ``1/(k+rank)`` contribution by
+a weight ``w``. That is standard weighted RRF, but it interacts badly with the
+hard ``RERANKER_MAX_CANDIDATES`` cut that immediately follows it (issue #3956).
+
+RRF with ``k=60`` is deliberately flat: across the whole 300-candidate cap window
+the score only spans ``1/61 -> 1/360``, a factor of 5.9. Any ``w`` above that
+spread exceeds the entire dynamic range of the rank term, so the sort degenerates
+into a *lexicographic* one — boosted arm first, rank merely a tiebreaker. ``high``
+was ``w=7``, over the line, and on a bank whose merged pool is far larger than the
+cap the boosted arm then filled all 300 slots and no semantic-only candidate ever
+reached the cross-encoder (measured: recall@20 0.97 -> 0.40).
+
+The culprit is the ``k`` term. In score space the displacement reach is
+``r_max = w*(k+s) - k``, so at the head of the ranking the constant ``w*k``
+dominates and the boosted arm's ~360th hit outranks the other arm's *first*.
+Boosting the rank instead — ``1/(k + rank/w)`` — cancels ``k``: the boosted arm's
+rank ``r`` beats another arm's rank ``s`` iff ``r < w*s``. Displacement becomes
+strictly proportional rather than an absolute offset, so it can never invert the
+head of the ranking, and the behaviour no longer depends on the pool size.
 """
 
 from dataclasses import dataclass
@@ -34,27 +57,33 @@ class BoostWeights:
     """Per-stage boost magnitudes for one priority level.
 
     The two fields live on different scales on purpose (see module docstring):
-    ``rrf`` multiplies an arm's ``1/(k+rank)`` RRF contribution; ``additive`` is
-    added directly to the post-rerank weight in ~[0, 1].
+    ``rank_divisor`` divides an arm's rank before the ``1/(k+rank)`` RRF
+    contribution is computed; ``additive`` is added directly to the post-rerank
+    weight in ~[0, 1].
     """
 
-    rrf: float
+    rank_divisor: float
     additive: float
 
 
-# Priority level -> per-stage boost magnitudes. Tuned against real recall traces
-# (LoCoMo bank, 336 merged candidates → 300-cap, local ms-marco cross-encoder):
+# Priority level -> per-stage boost magnitudes.
 #
-# Stage 1 (rrf, weighted-RRF multiplier on the arm's 1/(k+rank) contribution).
-# The observed 300-cap boundary RRF score was ~0.0055; a graph-only candidate
-# falls below it past graph-rank ~120. The multipliers map to that boundary:
-#   low=1.0   doubles the arm's vote — rescues at-risk candidates from the cut
-#             (graph-rank 150: 0.0048 → 0.0095) without reshuffling much.
-#   medium=3.0 promotes them into the middle of the pool (~rank 60).
-#   high=6.0   makes the boosted arm dominate the top of the candidate pool.
+# Stage 1 (rank_divisor, applied in rank space: the arm's contribution becomes
+# 1/(k + rank/divisor)). A boosted candidate at arm-rank r outranks an unboosted
+# candidate at arm-rank s exactly when r < divisor * s, independent of k, of the
+# cap, and of the merged pool size. Simulated against 1000-deep arms and the
+# default 300-cap: the share of the reranker budget left to unboosted-only
+# candidates, and how deep into the boosted arm the cut still reaches:
+#   (unboosted baseline: 150 slots each, boosted arm protected to rank 150)
+#   low=2.0    100 slots left to other arms; boosted arm protected to rank 200.
+#   medium=4.0  60 slots left;               protected to rank 240.
+#   high=8.0    33 slots left;               protected to rank 267.
+# Every level keeps the *head* of every other arm — the top-ranked semantic hit
+# is only ever displaced by boosted hits from the arm's own top `divisor` ranks —
+# which is the property the score-space form could not offer at `high`.
 #
 # Stage 2 (additive, flat bump to the post-rerank weight in [0, 1]). The local
-# cross-encoder is sharply bimodal: strong direct matches score 0.5–0.999, while
+# cross-encoder is sharply bimodal: strong direct matches score 0.5-0.999, while
 # everything else — including graph hits the CE undervalues, which is exactly
 # what we boost — collapses near 0. So the additive lifts a ~0 candidate up the
 # weight scale. Levels are calibrated as relevance thresholds it can outrank:
@@ -66,18 +95,18 @@ class BoostWeights:
 # The keys are the user-facing contract; config.py validates env input against
 # them (kept in sync by a guard test).
 BOOST_LEVELS: dict[str, BoostWeights] = {
-    "low": BoostWeights(rrf=1.0, additive=0.05),
-    "medium": BoostWeights(rrf=3.0, additive=0.2),
-    "high": BoostWeights(rrf=6.0, additive=0.5),
+    "low": BoostWeights(rank_divisor=2.0, additive=0.05),
+    "medium": BoostWeights(rank_divisor=4.0, additive=0.2),
+    "high": BoostWeights(rank_divisor=8.0, additive=0.5),
 }
 
 
 def boosted_rrf_score(candidate: MergedCandidate, boosts: dict[str, str], k: int = 60) -> float:
-    """Return ``candidate``'s RRF score plus a weighted-RRF boost delta.
+    """Return ``candidate``'s RRF score with boosted arms promoted in rank space.
 
-    For each boosted arm the candidate appeared in, adds ``level.rrf * 1/(k+rank)``
-    — i.e. scales that arm's RRF contribution by the level's multiplier. Staying
-    in RRF units keeps the boost comparable to the base score and rank-aware.
+    For each boosted arm the candidate appeared in, replaces that arm's
+    ``1/(k+rank)`` contribution with ``1/(k + rank/divisor)`` — expressed as a
+    delta so ``rrf_score`` stays authoritative and unboosted arms are untouched.
 
     Args:
         candidate: Merged candidate carrying ``rrf_score`` and ``source_ranks``.
@@ -94,7 +123,8 @@ def boosted_rrf_score(candidate: MergedCandidate, boosts: dict[str, str], k: int
     for strategy, level in boosts.items():
         rank = candidate.source_ranks.get(f"{strategy}_rank")
         if rank is not None:
-            delta += BOOST_LEVELS[level].rrf * (1.0 / (k + rank))
+            divisor = BOOST_LEVELS[level].rank_divisor
+            delta += 1.0 / (k + rank / divisor) - 1.0 / (k + rank)
     return candidate.rrf_score + delta
 
 

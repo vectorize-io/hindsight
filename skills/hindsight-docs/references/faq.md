@@ -89,9 +89,11 @@ Browse all supported integrations in the Integrations Hub.
 - Requesty
 - OpenAI Codex
 - Claude Code
+- GitHub Copilot
 - AWS Bedrock
 - Fireworks AI
 - Nous Portal
+- SuperGrok (OAuth)
 - OpenAI Compatible
 - LiteLLM (100+)
 

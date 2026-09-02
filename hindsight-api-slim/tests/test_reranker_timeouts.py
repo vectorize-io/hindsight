@@ -33,6 +33,8 @@ def _make_config(**overrides) -> HindsightConfig:
             defaults[f.name] = None
         elif f.type == "bool":
             defaults[f.name] = False
+        elif str(f.type).startswith("list["):
+            defaults[f.name] = []
         else:
             defaults[f.name] = None
     defaults.update(overrides)

@@ -10,6 +10,18 @@ For the source code, see [`hindsight-integrations/obsidian`](https://github.com/
 
 ← [Back to main changelog](/changelog)
 
+## [0.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.2.1)
+
+**Bug Fixes**
+
+- Fix sync index scoping so Obsidian syncs/reconciliation are isolated per memory bank and API target, preventing cross-target index conflicts.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/benfrank241.png?size=40" alt="@benfrank241" width="18" height="18" style={{borderRadius: "50%"}} />@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ea81cf345" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ea81cf345</a>
+
+## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.2.0)
+
+**Features**
+
+- Added a headless CLI tool (hindsight-obsidian-sync) to ingest/sync an Obsidian vault into Hindsight without running the Obsidian app.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/benfrank241.png?size=40" alt="@benfrank241" width="18" height="18" style={{borderRadius: "50%"}} />@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/93fa0b016" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>93fa0b016</a>
+
 ## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.1.2)
 
 **Bug Fixes**

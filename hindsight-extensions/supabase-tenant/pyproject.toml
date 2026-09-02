@@ -1,0 +1,35 @@
+# This file exists to run the tests, nothing else. The extension is not
+# published to PyPI and is not built into a wheel — it is shipped by copying
+# hindsight_ext_supabase_tenant/ into a derived image (see Dockerfile).
+#
+# `package = false` keeps uv from trying to build or install this directory:
+# there is no build backend and no distribution here, just sources on the path.
+[project]
+name = "hindsight-ext-supabase-tenant"
+version = "0"
+requires-python = ">=3.11"
+dependencies = [
+    # What the extension itself imports. The runtime versions that matter are
+    # the ones pinned in the Dockerfile; these are here so the tests run
+    # against the same libraries.
+    "PyJWT[crypto]>=2.12.0", # JWKS/RS256 verification; >=2.12 accepts unknown crit header extensions
+    "httpx>=0.27.0",
+    # The server provides the extension interfaces this is written against.
+    # It is a test-time dependency only: at runtime the server is the host
+    # process that imports the extension, not something it installs.
+    "hindsight-api-slim",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+hindsight-api-slim = { path = "../../hindsight-api-slim", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

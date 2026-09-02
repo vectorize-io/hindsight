@@ -29,6 +29,10 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.controlPlane.extraInitContainers }}
+      initContainers:
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
       containers:
       - name: control-plane
         securityContext:
@@ -67,6 +71,9 @@ spec:
           {{- toYaml .Values.controlPlane.readinessProbe | nindent 10 }}
         resources:
           {{- toYaml .Values.controlPlane.resources | nindent 10 }}
+      {{- with .Values.controlPlane.extraContainers }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

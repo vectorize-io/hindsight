@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HindsightClient } from "./hindsight";
-import { PAGE_MAX_TOKENS, PAGES } from "./missions";
+import {
+  buildPageTrigger,
+  KNOWLEDGE_LABELS,
+  PAGE_MAX_TOKENS,
+  pagesFor,
+  RETAIN_STRATEGIES,
+} from "./missions";
+import { resolveConfig } from "./config";
+
+/** What a client built with `bank: "repo-a"` and no `project` seeds — the bank id is the fallback. */
+const PAGES = pagesFor("repo-a");
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -176,10 +186,37 @@ describe("HindsightClient.seedPages", () => {
       );
       expect(post.body.max_tokens).toBe(PAGE_MAX_TOKENS);
       expect(post.body.trigger.refresh_after_consolidation).toBe(true);
+      // NOT the server's `all_strict` default for a tagged model: that excludes untagged
+      // memories, and every observation this plugin's banks consolidate is untagged.
+      expect(post.body.trigger.tags_match).toBe("all");
+      expect(post.body.trigger.fact_types).toContain("observation");
       expect(post.body.parent_id).toBeUndefined(); // seeded at the tree root
     }
     // Nothing on the mental-models surface.
     expect(calls.some((k) => k.url.includes("/mental-models"))).toBe(false);
+  });
+
+  // The trigger decides what these pages cost to keep current (#3506); it used to be hardcoded.
+  it("stamps the configured refresh policy on every page it seeds", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.configureBank({
+      pageTrigger: buildPageTrigger(
+        resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "0 3 * * *" })
+      ),
+    });
+
+    const posts = calls.filter(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(posts).toHaveLength(PAGES.length);
+    for (const post of posts) {
+      expect(post.body.trigger.refresh_cron).toBe("0 3 * * *");
+      expect(post.body.trigger.refresh_after_consolidation).toBeUndefined();
+    }
   });
 
   it("is idempotent: an already-seeded bank issues no writes at all", async () => {
@@ -193,6 +230,7 @@ describe("HindsightClient.seedPages", () => {
             kind: "page",
             name: p.name,
             description: p.source_query,
+            trigger: { tags_match: buildPageTrigger().tags_match },
           })),
         },
       },
@@ -238,6 +276,7 @@ describe("HindsightClient.seedPages", () => {
             kind: "page",
             name: p.name.toUpperCase(),
             description: p === drifted ? "an older wording of the query" : p.source_query,
+            trigger: { tags_match: buildPageTrigger().tags_match },
           })),
         },
       },
@@ -254,6 +293,160 @@ describe("HindsightClient.seedPages", () => {
       source_query: drifted.source_query,
       tags: drifted.tags,
     });
+  });
+
+  // A page seeded before `tags_match` existed keeps the server's `all_strict` default, which
+  // excludes the untagged shared observations these pages are meant to synthesize from. The
+  // source query is unchanged on such a bank, so the trigger has to be its own drift signal.
+  it("re-syncs the refresh trigger onto a page whose query did NOT drift", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p.source_query,
+            trigger: { tags_match: "all_strict" },
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(PAGES.length);
+    for (const patch of patches) {
+      // ONLY the trigger: sending `source_query` would schedule a full rebuild of every page on
+      // a bank whose question never changed.
+      expect(patch.body).toEqual({ trigger: buildPageTrigger() });
+    }
+  });
+
+  // A server older than #3572 does not report a page's trigger. That makes the policy unknowable,
+  // not divergent; sending a trigger-only PATCH would be rejected by servers older than #3549.
+  it("does not write when a server does not report a trigger", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p.source_query,
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
+    expect(calls).toHaveLength(1); // the tree GET only
+    expect(calls.every((k) => k.method === "GET")).toBe(true);
+  });
+
+  it("still reconciles source-query drift when the server hides trigger", async () => {
+    const calls: any[] = [];
+    const drifted = PAGES[0];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p === drifted ? "an older wording of the query" : p.source_query,
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect(patches[0].body).toEqual({
+      source_query: drifted.source_query,
+      tags: drifted.tags,
+    });
+  });
+
+  it("names the repository in every seeded query, so synthesis can exclude a dependency's facts", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "coding-agent::dotfiles",
+      project: "dotfiles",
+    });
+    await c.seedPages();
+
+    const posts = calls.filter(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(posts).toHaveLength(PAGES.length);
+    for (const post of posts) {
+      // The repo is NAMED (not "this project"), and the exclusion is stated — the bank holds
+      // facts about dependencies the repo merely discusses, and they are not its own (#3476).
+      expect(post.body.source_query).toContain("dotfiles");
+      expect(post.body.source_query).toMatch(/external tools, libraries and services/);
+      expect(post.body.source_query).toMatch(/dependency/);
+    }
+  });
+
+  it("falls back to the bank id when no project is supplied, never an unscoped query", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "coding-agent::dotfiles" });
+    await c.seedPages();
+
+    for (const post of calls.filter((k) => k.method === "POST")) {
+      expect(post.body.source_query).toContain("coding-agent::dotfiles");
+    }
+  });
+});
+
+describe("pagesFor", () => {
+  it("scopes every page in the taxonomy to the named repository", () => {
+    const pages = pagesFor("dotfiles");
+    expect(pages).toHaveLength(5);
+    for (const page of pages) {
+      expect(page.source_query).toContain("Scope this page to dotfiles ITSELF");
+    }
+  });
+
+  it("is a pure function of the project, so a re-seed does not PATCH the same query back", () => {
+    // seedPages() compares the live description against this text on every deepen run; anything
+    // varying per call (a timestamp, a set iteration order) would re-PATCH all five pages forever.
+    expect(pagesFor("dotfiles")).toEqual(pagesFor("dotfiles"));
+    expect(pagesFor("dotfiles")).not.toEqual(pagesFor("other-repo"));
+  });
+
+  it("keeps the taxonomy's names and tier tags untouched", () => {
+    expect(pagesFor("dotfiles").map((p) => p.name)).toEqual([
+      "Component map",
+      "Core concepts",
+      "Conventions and patterns",
+      "Key decisions and rationale",
+      "Initiatives and enhancements",
+    ]);
+    expect(pagesFor("dotfiles").flatMap((p) => p.tags)).toEqual([
+      "knowledge:component",
+      "knowledge:concept",
+      "knowledge:convention",
+      "knowledge:decision",
+      "knowledge:feature-work",
+    ]);
   });
 });
 
@@ -310,7 +503,7 @@ describe("HindsightClient.ensureFolder", () => {
 });
 
 describe("HindsightClient.captureInitiative", () => {
-  it("new initiative: POSTs a per-initiative page + a marker retain sharing the same relatedPageId", async () => {
+  it("new initiative: POSTs a per-initiative page + a marker retain naming the same page id", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
@@ -347,26 +540,31 @@ describe("HindsightClient.captureInitiative", () => {
     expect(pagePost.body.parent_id).toBe("folder-abc");
     expect(pagePost.body.tags).toEqual(["knowledge:feature-work"]);
 
-    // Marker retain POST to /memories: the ONLY tag is relatedPageId, pointing at the REAL
-    // server-assigned page id ("pg").
+    // Marker retain POST to /memories. The page id rides on the metadata and on the context —
+    // NEVER on a tag: tags are matched with exact set-ops against a fixed vocabulary, and one
+    // more tag value per initiative both isolates nothing and pollutes every fact (#3641).
     const memPost = calls.find((k) => k.method === "POST" && k.url.endsWith("/memories"));
     expect(memPost).toBeDefined();
     const item = memPost.body.items[0];
-    expect(item.tags).toEqual(["knowledge:feature-work", "relatedPageId:pg"]);
+    expect(item.tags).toEqual(["knowledge:feature-work"]);
+    expect(item.metadata).toEqual({ relatedPageId: "pg" });
+    // The context is the one channel a page synthesis reads back (reflect strips `metadata` from
+    // its search results), so this is what lets the overview link to the REAL page id.
+    expect(item.context).toBe("initiative marker for [[page:pg]]");
     expect(item.strategy).toBe("document");
+    // A marker consolidates into the same single scope as everything else this plugin writes.
+    expect(item.observation_scopes).toBe("shared");
     expect(memPost.body.async).toBe(true);
     // Unique per-marker document id (NOT the page id) so repeated captures accrue.
     expect(item.document_id).not.toBe("pg");
     expect(item.document_id).toContain("initiative-marker-retry-backoff-for-the-uploader-");
 
-    // The returned page id and the marker tag's id must be identical (the real page node id).
-    const tagId = item.tags
-      .find((t: string) => t.startsWith("relatedPageId:"))
-      .slice("relatedPageId:".length);
-    expect(tagId).toBe(result.page_id);
+    // The returned page id and the id the marker names must be the same (the real page node id).
+    expect(item.metadata.relatedPageId).toBe(result.page_id);
+    expect(item.context).toContain(`[[page:${result.page_id}]]`);
   });
 
-  it("enhancement (relatesToPageId): NO page POST; marker tagged the existing page id", async () => {
+  it("enhancement (relatesToPageId): NO page POST; marker names the existing page id", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
       {
@@ -395,8 +593,39 @@ describe("HindsightClient.captureInitiative", () => {
     const memPost = calls.find((k) => k.method === "POST" && k.url.endsWith("/memories"));
     expect(memPost).toBeDefined();
     const item = memPost.body.items[0];
-    expect(item.tags).toEqual(["knowledge:feature-work", "relatedPageId:initiative-x"]);
-    expect(item.content).toContain("Enhancement to an existing initiative");
+    expect(item.tags).toEqual(["knowledge:feature-work"]);
+    expect(item.metadata).toEqual({ relatedPageId: "initiative-x" });
+    expect(item.context).toBe("initiative marker for [[page:initiative-x]]");
+    expect(item.content).toContain("Update to an existing initiative");
+  });
+
+  it("applies retain attribution to initiative markers", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "POST" && u.endsWith("/memories"),
+        json: { operation_id: "op-1" },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.captureInitiative({
+      title: "Attributed initiative",
+      summary: "Keep its project provenance.",
+      relatesToPageId: "initiative-x",
+      stamp: {
+        tags: ["project:repo-a"],
+        metadata: { project: "repo-a", source: "configured" },
+      },
+    });
+
+    const item = calls.find((k) => k.url.endsWith("/memories")).body.items[0];
+    expect(item.tags).toEqual(["project:repo-a", "knowledge:feature-work"]);
+    // The configured attribution survives alongside the page id the marker adds.
+    expect(item.metadata).toEqual({
+      project: "repo-a",
+      source: "configured",
+      relatedPageId: "initiative-x",
+    });
   });
 });
 
@@ -411,7 +640,11 @@ describe("HindsightClient.configureBank template import", () => {
 
     const importPosts = calls.filter((k) => k.method === "POST" && k.url.endsWith("/import"));
     expect(importPosts).toHaveLength(1);
-    expect(calls[0]).toBe(importPosts[0]); // config first — page seeding needs the bank to exist
+    // Config before the knowledge base — page seeding needs the bank to exist. (The very first
+    // call is the GET /config probe that decides whether the missions are still ours to seed.)
+    expect(calls.indexOf(importPosts[0])).toBeLessThan(
+      calls.findIndex((k) => k.url.includes("/knowledge-base/"))
+    );
 
     const body = importPosts[0].body;
     expect(body.version).toBe("1");
@@ -447,5 +680,137 @@ describe("HindsightClient.configureBank template import", () => {
     expect(calls[0].url.endsWith("/import")).toBe(false);
     expect(calls[1].method).toBe("POST");
     expect(calls[1].url.endsWith("/import")).toBe(true);
+  });
+});
+
+describe("HindsightClient.configureBank — missions are seeded once (#2492)", () => {
+  const routes = (overrides: Record<string, unknown> | undefined, ok = true) => [
+    {
+      match: (m: string, u: string) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+      json: { roots: [] },
+    },
+    {
+      match: (m: string, u: string) => m === "GET" && u.endsWith("/config"),
+      json: { bank_id: "repo-a", config: {}, overrides },
+      ok,
+    },
+  ];
+
+  const run = async (calls: any[], routeList: any[]) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        const method = init?.method;
+        calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
+        const route = routeList.find((r) => r.match(method, url));
+        return {
+          ok: route?.ok ?? true,
+          status: route?.ok === false ? 404 : 200,
+          json: async () => route?.json ?? { ok: true },
+        } as any;
+      })
+    );
+    await new HindsightClient({ apiUrl: "http://x", bank: "repo-a" }).configureBank();
+    // Optional: a bank that already carries the whole structure is not imported to at all (#3927).
+    return calls.find((k) => k.method === "POST" && k.url.endsWith("/import"))?.body;
+  };
+
+  it("seeds the full template — missions included — on a bank with no mission overrides", async () => {
+    const body = await run([], routes({}));
+    expect(typeof body.bank.reflect_mission).toBe("string");
+    expect(body.bank.retain_strategies).toBeDefined();
+  });
+
+  it("leaves the missions alone once the bank carries its own", async () => {
+    // The user rewrote reflect_mission in the control plane; a later seed pass must not stamp the
+    // default back over it — the whole of #2492.
+    const body = await run([], routes({ reflect_mission: "MY OWN MISSION" }));
+    expect(body.bank.reflect_mission).toBeUndefined();
+    expect(body.bank.retain_mission).toBeUndefined();
+    expect(body.bank.observations_mission).toBeUndefined();
+  });
+
+  it("still adds the strategies and labels the plugin writes through", async () => {
+    // Not preferences: without `conversation` the session write-back silently extracts under the
+    // bank's own config (the server warns on an unknown strategy, it does not reject), so a
+    // transcript would get whatever a commit diff gets. A bank that has none must still get them.
+    const body = await run([], routes({ retain_mission: "mine" }));
+    expect(Object.keys(body.bank.retain_strategies)).toEqual(
+      expect.arrayContaining(["git", "gitlog", "conversation", "document"])
+    );
+    expect(body.bank.entity_labels).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "knowledge" })])
+    );
+  });
+
+  it("treats a blank override as unset", async () => {
+    const body = await run([], routes({ reflect_mission: "   " }));
+    expect(typeof body.bank.reflect_mission).toBe("string");
+  });
+
+  it("seeds when the bank-config API is unavailable — nothing to preserve there", async () => {
+    // With that API off a user cannot set per-bank missions at all, so there is no edit to protect.
+    const body = await run([], routes(undefined, false));
+    expect(typeof body.bank.reflect_mission).toBe("string");
+  });
+
+  it("makes no import call at all once the bank carries the whole structure (#3927)", async () => {
+    // The settled steady state: deepen runs on every session start, and on a bank that already has
+    // everything there is nothing left to write. Not a harmless no-op POST — an import of the
+    // strategies IS the overwrite, since the server replaces the whole map.
+    const calls: any[] = [];
+    await run(
+      calls,
+      routes({
+        reflect_mission: "mine",
+        retain_default_strategy: "git",
+        entities_allow_free_form: true,
+        retain_strategies: RETAIN_STRATEGIES,
+        entity_labels: [KNOWLEDGE_LABELS],
+      })
+    );
+    expect(calls.some((k) => k.method === "POST" && k.url.endsWith("/import"))).toBe(false);
+    // Pages are seeded either way — they are not bank configuration.
+    expect(calls.some((k) => k.url.includes("/knowledge-base/"))).toBe(true);
+  });
+
+  it("manageBankConfig: false keeps the plugin out of the bank's config entirely", async () => {
+    const calls: any[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        calls.push({ url, method: init?.method });
+        return { ok: true, status: 200, json: async () => ({ roots: [] }) } as any;
+      })
+    );
+    await new HindsightClient({ apiUrl: "http://x", bank: "repo-a" }).configureBank({
+      manage: false,
+    });
+    expect(calls.some((k) => k.url.endsWith("/import"))).toBe(false);
+    // Not even the probe: the bank's configuration is none of this plugin's business.
+    expect(calls.some((k) => k.url.endsWith("/config"))).toBe(false);
+    expect(calls.some((k) => k.url.includes("/knowledge-base/"))).toBe(true);
+  });
+
+  it("re-seeds the missions after an explicit reset", async () => {
+    const calls: any[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        calls.push({
+          url,
+          method: init?.method,
+          body: init?.body ? JSON.parse(init.body) : undefined,
+        });
+        return { ok: true, status: 200, json: async () => ({ roots: [] }) } as any;
+      })
+    );
+    await new HindsightClient({ apiUrl: "http://x", bank: "repo-a" }).configureBank({
+      reset: true,
+    });
+    const body = calls.find((k) => k.method === "POST" && k.url.endsWith("/import")).body;
+    expect(typeof body.bank.reflect_mission).toBe("string");
+    // reset deletes the bank, so there is nothing to probe
+    expect(calls.some((k) => k.method === "GET" && k.url.endsWith("/config"))).toBe(false);
   });
 });

@@ -166,6 +166,98 @@ describe("readClaudeTranscript", () => {
     expect(result[0].content).not.toContain("hindsight_memories");
   });
 
+  it("drops the compaction summary — Claude Code's recap, not the user's words", () => {
+    // Written when the context window fills, as a plain type:"user" record with no isMeta flag.
+    // Measured at 29 records / 474,016 chars across local transcripts, averaging 16KB each, every
+    // one retained as if the user had typed it — and each one summarising turns already retained,
+    // since compaction APPENDS to the transcript rather than rewriting it (#3379).
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "user",
+          isCompactSummary: true,
+          message: {
+            role: "user",
+            content:
+              "This session is being continued from a previous conversation that ran out of " +
+              "context. The summary below covers <analysis>…</analysis>",
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          message: { role: "user", content: "now add the retry backoff" },
+        }),
+      ].join("\n")
+    );
+
+    const result = readClaudeTranscript(file);
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toBe("now add the retry backoff");
+  });
+
+  it("drops a <task-notification>: the harness's background-task plumbing, not the user's words", () => {
+    // Claude Code delivers these as an ordinary type:"user" message with a string body and no
+    // isMeta flag, so nothing else filters them and extraction saw task ids and status lines as
+    // things the user said. Measured at 39 across 400 local transcripts, each the whole message
+    // (#3023 — which named skill bodies and <system-reminder>; both are already handled, this is
+    // the case that actually survived).
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content:
+            "<task-notification>\n<task-id>b46ca19nr</task-id>\n" +
+            "<tool-use-id>toolu_0127NeaVZbdiAsbacNvasB78</tool-use-id>\n" +
+            "<status>stopped</status>\n<summary>No completion record</summary>\n</task-notification>",
+        },
+      })
+    );
+
+    expect(readClaudeTranscript(file)).toEqual([]); // renders empty -> no turn at all
+  });
+
+  it("keeps what the user wrote around a harness wrapper", () => {
+    // The stripper removes the BLOCK, never the message: replacing the whole turn with the tag's
+    // contents is what made the old plugin's strip_channel_envelope discard real user text (#3124).
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: "before <task-notification><status>done</status></task-notification> after",
+        },
+      })
+    );
+
+    const result = readClaudeTranscript(file);
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toBe("before  after");
+    expect(result[0].content).not.toContain("status");
+  });
+
+  it("drops a <system-reminder> block if the harness ever delivers one as user text", () => {
+    // Today these ride inside tool_result blocks, which this reader already drops entirely; the
+    // rule is tag-structural so it holds if that placement changes.
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: "<system-reminder>plan mode is active</system-reminder>\nship the fix",
+        },
+      })
+    );
+
+    const result = readClaudeTranscript(file);
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toBe("ship the fix");
+  });
+
   it("strips the reflect hook's <hindsight_memory> injection block (buildSystemInjection output)", () => {
     // The exact block the UserPromptSubmit hook injects — wrapper tags, preamble, attribution
     // text and the surfaced memory itself must ALL be gone from retained text, or the session

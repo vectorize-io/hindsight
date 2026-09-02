@@ -60,7 +60,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { BankInfo } from "@/lib/bank-context";
+import { BANKS_PAGE_SIZE, type BankInfo } from "@/lib/bank-context";
 
 function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -95,7 +95,20 @@ function BankSelectorInner() {
   const tNavBank = useTranslations("nav.bank");
   const tCommon = useTranslations("common");
   const tAddDocument = useTranslations("addDocument");
-  const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
+  const tApiError = useTranslations("api.errors.files");
+  const {
+    currentBank,
+    setCurrentBank,
+    bankInfos,
+    banksLoading,
+    banksLoadingMore,
+    hasMoreBanks,
+    bankSearch,
+    currentBankName,
+    searchBanks,
+    loadBanks,
+    loadMoreBanks,
+  } = useBank();
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
   const [open, setOpen] = React.useState(false);
@@ -188,20 +201,42 @@ function BankSelectorInner() {
     return () => window.removeEventListener("hindsight:logo-spin", spin);
   }, []);
 
-  const sortedBanks = React.useMemo(() => {
-    // Sort by last write descending, then by created_at. last_write_at covers appends to
-    // an existing document, which leave last_document_at (ingestion time) untouched.
-    return [...bankInfos].sort((a, b) => {
-      const aTime = a.last_write_at || a.last_document_at || a.created_at || "";
-      const bTime = b.last_write_at || b.last_document_at || b.created_at || "";
-      return bTime.localeCompare(aTime);
-    });
-  }, [bankInfos]);
-
+  // Banks arrive already ordered by last write descending, one page at a time, so the
+  // list is rendered in server order — re-sorting here would only shuffle a later page
+  // above an earlier one.
   const maxFactCount = React.useMemo(
-    () => Math.max(1, ...sortedBanks.map((b) => b.fact_count)),
-    [sortedBanks]
+    () => Math.max(1, ...bankInfos.map((b) => b.fact_count)),
+    [bankInfos]
   );
+
+  // Search runs server-side (the bank list is paginated), so the input holds a draft
+  // that is debounced into a fresh first page.
+  const [searchDraft, setSearchDraft] = React.useState("");
+  React.useEffect(() => {
+    if (!open || searchDraft === bankSearch) return;
+    const timer = setTimeout(() => searchBanks(searchDraft), 250);
+    return () => clearTimeout(timer);
+  }, [open, searchDraft, bankSearch, searchBanks]);
+
+  // Infinite scroll: fetch the next page once the end of the list scrolls into view.
+  // The nodes are tracked as state via callback refs, not useRef: the popover content
+  // mounts in a portal after the commit that flips `open`, so an effect reading
+  // ref.current would find null and never re-run. The observer is also rebuilt
+  // whenever a page lands, so a sentinel that is still visible (a page shorter than
+  // the list viewport) keeps paging instead of stalling.
+  const [listEl, setListEl] = React.useState<HTMLDivElement | null>(null);
+  const [sentinelEl, setSentinelEl] = React.useState<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    if (!hasMoreBanks || !listEl || !sentinelEl) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMoreBanks();
+      },
+      { root: listEl, rootMargin: "120px" }
+    );
+    observer.observe(sentinelEl);
+    return () => observer.disconnect();
+  }, [hasMoreBanks, listEl, sentinelEl, loadMoreBanks, bankInfos.length]);
 
   const handleCreateBank = async () => {
     if (!newBankId.trim()) return;
@@ -401,8 +436,9 @@ function BankSelectorInner() {
 
       // Navigate to documents view
       router.push(bankRoute(currentBank!, "?view=documents"));
-    } catch {
-      // Error toast is shown automatically by the API client interceptor
+    } catch (error) {
+      // Multipart uploads bypass the API client's shared error interceptor.
+      toast.error(error instanceof Error ? error.message : tApiError("upload"));
     } finally {
       setIsCreatingDoc(false);
       setUploadProgress("");
@@ -525,7 +561,12 @@ function BankSelectorInner() {
           open={open}
           onOpenChange={(isOpen) => {
             setOpen(isOpen);
-            if (isOpen) loadBanks();
+            if (isOpen) {
+              // Reopen on an unfiltered first page rather than whatever was typed last.
+              setSearchDraft("");
+              if (bankSearch) searchBanks("");
+              else loadBanks();
+            }
           }}
         >
           <PopoverTrigger asChild>
@@ -536,29 +577,47 @@ function BankSelectorInner() {
               className="w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
             >
               <span className="truncate">
-                {bankInfos.find((b) => b.bank_id === currentBank)?.name ||
-                  currentBank ||
-                  tNavBank("select")}
+                {currentBankName || currentBank || tNavBank("select")}
               </span>
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-[420px] p-0" align="start">
-            <Command>
-              {sortedBanks.length > 0 && <CommandInput placeholder={tNavBank("search")} />}
-              <CommandList>
+            {/* shouldFilter={false}: matching is done by the server so search reaches
+                banks that haven't been paged in yet. */}
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder={tNavBank("search")}
+                value={searchDraft}
+                onValueChange={setSearchDraft}
+              />
+              <CommandList
+                ref={setListEl}
+                // cmdk keeps --cmdk-list-height in sync with the rendered rows, so the
+                // popover eases down to the filtered set instead of snapping shut.
+                className="h-[min(300px,var(--cmdk-list-height,300px))] transition-[height] duration-200 ease-out motion-reduce:transition-none"
+              >
                 <CommandEmpty>
                   {banksLoading ? (
                     <div className="flex items-center justify-center gap-2 py-2">
                       <Spinner size="sm" />
                       <span>{tCommon("loading")}</span>
                     </div>
+                  ) : bankSearch ? (
+                    tNavBank("noSearchResults")
                   ) : (
                     tNavBank("empty")
                   )}
                 </CommandEmpty>
-                <CommandGroup>
-                  {sortedBanks.map((bank) => {
+                {/* The previous results stay put and dim while a search is in flight —
+                    blanking the list first makes every keystroke flash. */}
+                <CommandGroup
+                  className={cn(
+                    "transition-opacity duration-150 motion-reduce:transition-none",
+                    banksLoading && bankInfos.length > 0 && "opacity-40"
+                  )}
+                >
+                  {bankInfos.map((bank, index) => {
                     const barPct = (bank.fact_count / maxFactCount) * 100;
                     const isSelected = currentBank === bank.bank_id;
                     // Last write, not last ingestion: appends to an existing document
@@ -578,7 +637,14 @@ function BankSelectorInner() {
                             : `?view=${view}`;
                           router.push(bankRoute(value, queryString));
                         }}
-                        className="relative overflow-hidden py-2.5 mb-0.5 group"
+                        // Only rows that actually mount animate: React keeps the pages
+                        // already on screen, so appending page 2 flows in without
+                        // replaying page 1. The stagger restarts per page and is capped
+                        // so the tail of a 50-row page doesn't crawl in.
+                        className="relative overflow-hidden py-2.5 mb-0.5 group animate-list-row-enter"
+                        style={{
+                          animationDelay: `${Math.min(index % BANKS_PAGE_SIZE, 10) * 18}ms`,
+                        }}
                       >
                         {/* Background bar — proportional to memory count */}
                         <div
@@ -635,6 +701,15 @@ function BankSelectorInner() {
                     );
                   })}
                 </CommandGroup>
+                {hasMoreBanks && (
+                  <div ref={setSentinelEl} className="flex items-center justify-center py-2">
+                    {banksLoadingMore && (
+                      <span className="animate-soft-fade-in">
+                        <Spinner size="sm" />
+                      </span>
+                    )}
+                  </div>
+                )}
               </CommandList>
               {/* Footer: Create new bank */}
               <div className="border-t border-border p-1">

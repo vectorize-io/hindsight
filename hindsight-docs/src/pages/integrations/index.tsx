@@ -2,9 +2,39 @@ import React, {useMemo, useState} from 'react';
 import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
+import {usePluginData} from '@docusaurus/useGlobalData';
 import IntegrationsBanner from '@site/src/components/IntegrationsBanner';
-import {integrationsSorted} from '@site/src/lib/integrations';
+import {integrationsSorted, CATEGORY_LABELS, groupByCategory} from '@site/src/lib/integrations';
 import styles from './index.module.css';
+
+/**
+ * Pinned above the grid. These three are the ones we want a first-time visitor to see: the umbrella
+ * coding-agent plugin, the SDK most TypeScript apps reach for, and the agent harness with the
+ * deepest native integration.
+ */
+const FEATURED_IDS = ['coding-agents', 'vercel-ai-sdk', 'openclaw'];
+
+/**
+ * Agents covered by the Coding Agents plugin, drawn on its card. The whole pitch of that package is
+ * "one install, every agent", which a single icon cannot convey — the row of logos is the pitch.
+ * Files live in static/img/harness/, named by the harness id the plugin itself uses.
+ */
+const CODING_AGENT_LOGOS: {id: string; name: string; file: string}[] = [
+  {id: 'claude-code', name: 'Claude Code', file: 'claude-code.png'},
+  {id: 'codex', name: 'Codex CLI', file: 'codex.svg'},
+  {id: 'opencode', name: 'opencode', file: 'opencode.png'},
+  {id: 'kilo', name: 'Kilo CLI', file: 'kilo.svg'},
+  {id: 'cursor-cli', name: 'Cursor CLI', file: 'cursor-cli.svg'},
+  {id: 'copilot-cli', name: 'GitHub Copilot CLI', file: 'copilot-cli.svg'},
+  {id: 'grok-build', name: 'Grok Build', file: 'grok-build.svg'},
+  {id: 'qwen-code', name: 'Qwen Code', file: 'qwen-code.svg'},
+  {id: 'antigravity-cli', name: 'Antigravity CLI', file: 'antigravity-cli.png'},
+  {id: 'devin-cli', name: 'Devin CLI', file: 'devin-cli.svg'},
+  {id: 'cline-cli', name: 'Cline CLI', file: 'cline-cli.svg'},
+  {id: 'dsh', name: 'DeepSeek Harness', file: 'dsh.svg'},
+  {id: 'pi', name: 'pi', file: 'pi.svg'},
+  {id: 'prime-agent', name: 'Prime Agent', file: 'prime-agent.svg'},
+];
 
 const INTEGRATIONS_JSON_URL =
   'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/integrations.json';
@@ -22,37 +52,82 @@ interface Integration {
   icon?: string;
 }
 
-function IntegrationCard({integration}: {integration: Integration}) {
+/**
+ * The gallery is a browse surface, not a reading surface: 60 three-line cards with a repeated
+ * "Hindsight Team" byline made the page long enough that scanning it meant scrolling past what you
+ * were looking for. This is the same row the changelog listing uses — icon, name, two lines of
+ * description — grouped by category so the shape of the catalogue is visible at a glance.
+ *
+ * Featured uses the same row, tinted and spanning wider tracks, so the page reads as one list with
+ * three entries lifted out of it rather than two competing card designs. The coding-agents card
+ * keeps its harness strip: "one install, every agent" is a claim a single icon cannot make.
+ */
+function IntegrationCard({
+  integration,
+  changelogSlug,
+  featured = false,
+}: {
+  integration: Integration;
+  changelogSlug?: string;
+  featured?: boolean;
+}) {
+  const harnessBase = useBaseUrl('/img/harness/');
   const iconSrc = useBaseUrl(integration.icon ?? '');
-  const faviconSrc = useBaseUrl('/img/favicon.png');
   const isExternal = integration.link.startsWith('http');
 
   return (
-    <Link to={integration.link} className={styles.card} {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
-      <div className={styles.cardHeader}>
-        {integration.icon && <img src={iconSrc} alt="" className={styles.cardIcon} aria-hidden />}
-        <span className={`${styles.typeBadge} ${integration.type === 'official' ? styles.typeBadgeOfficial : styles.typeBadgeCommunity}`}>
-          {integration.type === 'official' ? 'Official' : 'Community'}
-        </span>
-      </div>
-      <div className={styles.cardBody}>
-        <h3 className={styles.cardTitle}>{integration.name}</h3>
-        <p className={styles.cardDescription}>{integration.description}</p>
-      </div>
-      <div className={styles.cardFooter}>
-        {integration.type === 'official' ? (
-          <span className={styles.byLine}>
-            <img src={faviconSrc} alt="" className={styles.authorIcon} aria-hidden />
-            <span className={styles.authorName}>Hindsight Team</span>
-          </span>
-        ) : (
-          <span className={styles.byLine}>
-            <img src={`https://github.com/${integration.by}.png?size=40`} alt="" className={styles.authorIcon} aria-hidden />
-            <span className={styles.authorName}>@{integration.by}</span>
-          </span>
+    <div className={`${styles.compactCard} ${featured ? styles.compactCardFeatured : ''}`}>
+      <div className={styles.compactHeader}>
+        {integration.icon && <img src={iconSrc} alt="" className={styles.compactIcon} aria-hidden />}
+        <Link
+          to={integration.link}
+          className={styles.compactName}
+          {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
+          {integration.name}
+        </Link>
+        {integration.type === 'community' && (
+          <img
+            src={`https://github.com/${integration.by}.png?size=40`}
+            alt={`Community integration by @${integration.by}`}
+            title={`Community integration by @${integration.by}`}
+            className={styles.compactAuthor}
+            loading="lazy"
+          />
         )}
       </div>
-    </Link>
+
+      <p className={styles.compactDescription}>{integration.description}</p>
+
+      {featured && integration.id === 'coding-agents' && (
+        <div className={styles.harnessStrip} aria-label="Supported coding agents">
+          {CODING_AGENT_LOGOS.map((h) => (
+            <img
+              key={h.id}
+              src={`${harnessBase}${h.file}`}
+              alt={h.name}
+              title={h.name}
+              className={styles.harnessLogo}
+              loading="lazy"
+            />
+          ))}
+        </div>
+      )}
+
+      <div className={styles.compactActions}>
+        <Link
+          to={integration.link}
+          className={styles.actionPill}
+          {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
+          {isExternal ? 'Site ↗' : 'Docs'}
+        </Link>
+        {/* Only integrations that publish a package have a changelog; the rest would link to a 404. */}
+        {changelogSlug && (
+          <Link to={`/changelog/integrations/${changelogSlug}`} className={styles.actionPill}>
+            Changelog
+          </Link>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -60,7 +135,23 @@ export default function IntegrationsHub(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState<IntegrationType | 'all'>('all');
 
-  const integrations = integrationsSorted as unknown as Integration[];
+  // Which integrations have a changelog page, from the same build-time index the /changelog
+  // listing uses — so a card grows a Changelog button the release after its first release,
+  // with nothing here to update.
+  const {entries: changelogEntries} = usePluginData('integration-changelogs') as {
+    entries: {id: string; slug: string}[];
+  };
+  const changelogSlugs = useMemo(
+    () => new Map(changelogEntries.map((e) => [e.id, e.slug])),
+    [changelogEntries],
+  );
+
+  // Superseded pages stay published and linked from the docs sidebar, but the gallery is where
+  // people come to CHOOSE an integration — offering something we are actively migrating them off
+  // would be pointing them at a dead end.
+  const integrations = (integrationsSorted as unknown as Integration[]).filter(
+    (i) => i.category !== 'legacy',
+  );
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -70,6 +161,21 @@ export default function IntegrationsHub(): React.ReactElement {
       return true;
     });
   }, [integrations, search, selectedType]);
+
+  // Featured only makes sense on the unfiltered view: once someone searches or filters, pinned
+  // cards would sit above results that don't match them and read as noise.
+  const showFeatured = !search.trim() && selectedType === 'all';
+  const featured = useMemo(
+    () =>
+      FEATURED_IDS.map((id) => integrations.find((i) => i.id === id)).filter(
+        (i): i is Integration => Boolean(i),
+      ),
+    [integrations],
+  );
+  const rest = useMemo(
+    () => (showFeatured ? filtered.filter((i) => !FEATURED_IDS.includes(i.id)) : filtered),
+    [filtered, showFeatured],
+  );
 
   const officialCount = integrations.filter((i) => i.type === 'official').length;
   const communityCount = integrations.filter((i) => i.type === 'community').length;
@@ -127,6 +233,29 @@ export default function IntegrationsHub(): React.ReactElement {
           <span className={styles.resultCount}>{filtered.length} integration{filtered.length !== 1 ? 's' : ''}</span>
         </div>
 
+        {showFeatured && featured.length > 0 && (
+          <section className={styles.featuredSection}>
+            <h2 className={styles.featuredTitle}>Featured</h2>
+            <div className={styles.featuredGrid}>
+              {featured.map((integration) => (
+                <IntegrationCard
+                  key={integration.id}
+                  integration={integration}
+                  changelogSlug={changelogSlugs.get(integration.id)}
+                  featured
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {showFeatured && (
+          <>
+            <hr className={styles.sectionDivider} />
+            <h2 className={styles.sectionTitle}>All integrations</h2>
+          </>
+        )}
+
         {filtered.length === 0 ? (
           <div className={styles.empty}>
             <p>No integrations match your search.</p>
@@ -135,9 +264,23 @@ export default function IntegrationsHub(): React.ReactElement {
             </button>
           </div>
         ) : (
-          <div className={styles.grid}>
-            {filtered.map((integration) => (
-              <IntegrationCard key={integration.id} integration={integration} />
+          <div className={styles.groups}>
+            {groupByCategory(rest).map(([category, items]) => (
+              <section key={category} className={styles.group}>
+                <h3 className={styles.groupTitle}>
+                  {CATEGORY_LABELS[category] ?? category}
+                  <span className={styles.groupCount}>{items.length}</span>
+                </h3>
+                <div className={styles.compactGrid}>
+                  {items.map((integration) => (
+                    <IntegrationCard
+                      key={integration.id}
+                      integration={integration}
+                      changelogSlug={changelogSlugs.get(integration.id)}
+                    />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}

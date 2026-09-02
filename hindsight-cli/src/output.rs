@@ -75,8 +75,16 @@ mod tests {
     #[test]
     fn test_to_json_array() {
         let data = vec![
-            TestData { name: "a".to_string(), count: 1, active: true },
-            TestData { name: "b".to_string(), count: 2, active: false },
+            TestData {
+                name: "a".to_string(),
+                count: 1,
+                active: true,
+            },
+            TestData {
+                name: "b".to_string(),
+                count: 2,
+                active: false,
+            },
         ];
         let json = to_json(&data).unwrap();
         assert!(json.contains("\"name\": \"a\""));
@@ -86,8 +94,16 @@ mod tests {
     #[test]
     fn test_to_yaml_array() {
         let data = vec![
-            TestData { name: "a".to_string(), count: 1, active: true },
-            TestData { name: "b".to_string(), count: 2, active: false },
+            TestData {
+                name: "a".to_string(),
+                count: 1,
+                active: true,
+            },
+            TestData {
+                name: "b".to_string(),
+                count: 2,
+                active: false,
+            },
         ];
         let yaml = to_yaml(&data).unwrap();
         assert!(yaml.contains("name: a"));

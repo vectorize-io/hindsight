@@ -19,25 +19,28 @@
  *   - empty set (cold)                 -> start the background seed, seededAt written, note added
  */
 import { readFileSync } from "node:fs";
-import { gitHeadSha, hasGitHistory, commitsSince } from "./git";
+import { gitHeadSha, hasGitHistory, commitsSince, repoNameOf } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
+import { maybeAutoUpdate } from "./auto-update";
 import { syncCompanionSkill } from "./skill-sync";
 import { SURVEY_DOC_IDS, startCodebaseSurvey, type SurveyHarness } from "./survey";
 import { applyBankConfig, loadConfig } from "./config";
+import { DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import type { Config } from "./config";
-import { deriveBankId } from "./bank";
+import { deriveBankIdOrSkip } from "./bank";
 import { brandWord } from "./brand";
 import { diag } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge-injection";
-import type { ClientOpts } from "./hindsight";
+import type { ClientOpts, RetainOpts } from "./hindsight";
+import { buildRetainStamp } from "./retain-stamp";
 import { HindsightClient } from "./hindsight";
-import { sessionCacheFile, writeSessionCache } from "./session-cache";
+import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-cache";
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
-  listDocumentIds(tag: string): Promise<Set<string>>;
+  listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
@@ -48,7 +51,7 @@ interface SeedContextClient {
     documentId: string,
     tags: string[],
     strategy: string,
-    opts?: { async?: boolean }
+    opts?: RetainOpts
   ): Promise<void>;
 }
 
@@ -85,8 +88,8 @@ async function gitSyncNote(args: {
   const head = gitHeadSha(cwd);
   if (!head) return undefined;
   const gitlogCurrent = await client
-    .listDocumentIds(`gitlog-head:${head}`)
-    .then((s) => s.size > 0)
+    .listDocumentIds(`gitlog-head:${head}`, "all_strict")
+    .then((s) => s.has(`gitlog:${repoNameOf(cwd)}`))
     .catch(() => undefined);
   if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
   if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
@@ -96,7 +99,10 @@ async function gitSyncNote(args: {
   try {
     const { execFileSync } = await import("node:child_process");
     const n = Number(
-      execFileSync("git", ["-C", cwd, "rev-list", "--count", "HEAD"], { encoding: "utf8" }).trim()
+      execFileSync("git", ["-C", cwd, "rev-list", "--count", "HEAD"], {
+        encoding: "utf8",
+        windowsHide: true,
+      }).trim()
     );
     if (n > 0) target = Math.min(DEEPEN_DIFF_TARGET, n);
   } catch {
@@ -131,13 +137,16 @@ export interface SessionStartHookSpec {
  */
 export async function buildSessionStartContext(args: {
   cwd: string;
+  /** Where the session started — see `sessionRootDir`. Same as `cwd` on a fresh session; they
+   *  differ on a resume, where the bank was resolved from the ORIGINAL root. */
+  sessionRoot?: string;
   bankId: string;
   cfg: Config;
   client: SeedContextClient;
   harness?: string;
   stateDir?: string;
   hasGit?: (dir: string) => boolean;
-  startSeed?: (repoDir: string, opts?: { limit?: number }) => void;
+  startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void;
   startSurvey?: (
     repoDir: string,
     opts?: { harness?: SurveyHarness; model?: string; budgetUsd?: number }
@@ -155,6 +164,9 @@ export async function buildSessionStartContext(args: {
   const startSurvey = args.startSurvey ?? startCodebaseSurvey;
   const resolveHeadSha = args.headSha ?? gitHeadSha;
   const countCommitsSince = args.commitsSince ?? commitsSince;
+  // sessionRoot as well as cwd, so a stamped {gitProject} names the project the bank id does.
+  const retainStamp = () =>
+    buildRetainStamp(cfg, { directory: cwd, sessionRoot: args.sessionRoot, harness, bankId });
 
   // Codebase-survey baseline (Option A): the bank is the only state, so the HEAD at the last survey
   // is recorded IN the bank as a tiny `survey-baseline:<sha>` marker doc (tag source:survey-baseline;
@@ -165,18 +177,22 @@ export async function buildSessionStartContext(args: {
   const recordSurveyBaseline = (sha: string): void => {
     if (!client.retain) return; // minimal client (some tests) — nothing to record
     try {
+      const stamp = retainStamp();
+      const content =
+        `🛰️ Hindsight is researching this codebase — survey started at commit ${sha.slice(0, 12)}. ` +
+        `(Internal marker: no memories are extracted from this document.)`;
+      const tags = [...new Set([...stamp.tags, SURVEY_BASELINE_TAG])];
       // Fire-and-forget; Promise.resolve tolerates a non-Promise return (e.g. a test spy).
-      void Promise.resolve(
-        client.retain(
-          `🛰️ Hindsight is researching this codebase — survey started at commit ${sha.slice(0, 12)}. ` +
-            `(Internal marker: no memories are extracted from this document.)`,
-          "hindsight codebase-survey baseline",
-          `${SURVEY_BASELINE_PREFIX}${sha}`,
-          [SURVEY_BASELINE_TAG],
-          "survey",
-          { async: true }
-        )
-      ).catch(() => {});
+      const retained = client.retain(
+        content,
+        "hindsight codebase-survey baseline",
+        `${SURVEY_BASELINE_PREFIX}${sha}`,
+        tags,
+        "survey",
+        // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+        { metadata: Object.keys(stamp.metadata).length ? stamp.metadata : undefined }
+      );
+      void Promise.resolve(retained).catch(() => {});
     } catch {
       /* best-effort — a failed baseline write never breaks SessionStart */
     }
@@ -195,7 +211,7 @@ export async function buildSessionStartContext(args: {
       {
         let docIds: Set<string> | undefined;
         try {
-          docIds = await client.listDocumentIds("source:git");
+          docIds = await client.listDocumentIds("source:git", "all_strict");
         } catch {
           docIds = undefined; // server unreachable: transient — do nothing, try again next session
         }
@@ -207,7 +223,10 @@ export async function buildSessionStartContext(args: {
           // idempotent (per-bank lock, dedup by document id) and each run does only the missing
           // work: cold seed, newly appeared conversations, the next per-commit diff batch. The
           // one-time extras stay cold-gated below.
-          startSeed(cwd, { limit: cfg.seedLimit });
+          // Pass the ASKING harness through: without it deepen.js falls back to the config
+          // loader's harness default and misfiles this session's survey + git history into the
+          // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
+          startSeed(cwd, { limit: cfg.seedLimit, harness });
           // Cold iff the bank has zero source:git docs (an undefined result — server error — is
           // NOT treated as cold; we never surveyed/noted on an unconfirmed-empty bank).
           if (docIds.size === 0) {
@@ -232,7 +251,7 @@ export async function buildSessionStartContext(args: {
             const sha = resolveHeadSha(cwd);
             if (sha) {
               const markers = await client
-                .listDocumentIds(SURVEY_BASELINE_TAG)
+                .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
                 .catch(() => new Set<string>());
               const counts: number[] = [];
               for (const id of markers) {
@@ -244,7 +263,7 @@ export async function buildSessionStartContext(args: {
               // A baseline without FINDINGS means the surveyed agent died before ingesting (no
               // CLI on PATH, budget kill) — the marker alone must not suppress retries forever.
               const uploads = await client
-                .listDocumentIds("source:upload")
+                .listDocumentIds("source:upload", "all_strict")
                 .catch(() => new Set<string>());
               const findingsAbsent =
                 counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
@@ -334,14 +353,35 @@ export async function runSessionStartHook(
     setLogLevel(cfg.logLevel);
     syncCompanionSkill(harness); // keep the installed skill current with the package version
     if (cfg.disabled) return;
+    // …and keep the package itself current. AFTER the disabled check, unlike the skill sync above:
+    // `disabled` means an inert plugin, and a network call plus a background npm install is not
+    // inert. It also keeps the two harness families symmetric — the plugin hosts never construct a
+    // RuntimeCore when disabled (harness/plugin-entry.ts), so they already skip this.
+    // Detached and rate-limited to once a day; the update lands for the NEXT session.
+    void maybeAutoUpdate(cfg);
 
-    const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, harness));
+    // Recorded HERE, on the session's first hook, so every later hook of this session resolves the
+    // same bank however far the agent navigates (#3563).
+    const sessionRoot = sessionRootDir(harness, sessionId, cwd);
+    const derived = deriveBankIdOrSkip(cfg, cwd, harness, sessionRoot);
+    if (derived === null) return; // repository unidentifiable: no bank, no seed, no injection
+    const resolved = applyBankConfig(cfg, derived, cwd);
     cfg = resolved.cfg;
     const bankId = resolved.bankId;
     if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
-    const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
+    // Daemon mode: warm it up now, before the user has typed anything. The start itself is
+    // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
+    // cold one keeps coming up in the background and is picked up by a later turn.
+    await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
+    const client = makeClient({
+      apiUrl: cfg.apiUrl,
+      apiToken: cfg.apiToken,
+      bank: bankId,
+      maxParallelRetains: cfg.maxParallelRetains,
+      observationScopes: cfg.observationScopes,
+    });
 
-    const out = await buildSessionStartContext({ cwd, bankId, cfg, client, harness });
+    const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
     if (out.deferInitialReflect && sessionId) {
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
     }

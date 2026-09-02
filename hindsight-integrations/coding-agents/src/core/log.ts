@@ -57,3 +57,27 @@ export const log = {
   error: (scope: string, msg: string, extra?: Record<string, unknown>) =>
     write("error", scope, msg, extra),
 };
+
+/**
+ * Render a thrown value with its `cause` chain.
+ *
+ * Node's fetch reports EVERY transport failure as the bare string "fetch failed" and hides the real
+ * reason (ECONNREFUSED, ENOTFOUND, a TLS error, a timeout) on `error.cause`. Logging only the
+ * message turned a one-line diagnosis — "nothing is listening on the configured apiUrl" — into an
+ * investigation, so every network failure we record goes through this instead.
+ */
+export function describeError(value: unknown, maxChars = 200): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = value;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const error = current as { message?: unknown; code?: unknown; cause?: unknown };
+    const text = typeof error.message === "string" ? error.message : String(current);
+    // A cause usually carries the code (ECONNREFUSED) the wrapper dropped; keep both, skip repeats.
+    const withCode = error.code ? `${text} (${String(error.code)})` : text;
+    if (withCode && parts.at(-1) !== withCode) parts.push(withCode);
+    current = error.cause;
+  }
+  return (parts.join(": ") || String(value)).slice(0, maxChars);
+}

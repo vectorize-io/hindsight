@@ -194,27 +194,99 @@ class TestPgTrgmAutoDetection:
         batches = [call.args[2] for call in conn.fetch.call_args_list]
         assert sorted(len(batch) for batch in batches) == [1, 2, 2]
         assert {entity for batch in batches for entity in batch} == {f"Entity {idx}" for idx in range(5)}
-        conn.execute.assert_any_await("SET pg_trgm.similarity_threshold = 0.15")
-        conn.execute.assert_any_await("RESET pg_trgm.similarity_threshold")
+        # The similarity threshold is applied at pool-connection setup, not per query,
+        # so the resolver must not toggle it here.
+        set_calls = [
+            c for c in conn.execute.await_args_list if c.args and "pg_trgm.similarity_threshold" in str(c.args[0])
+        ]
+        assert set_calls == []
 
     @pytest.mark.asyncio
-    async def test_trigram_resets_threshold_even_when_fetch_raises(self):
-        """If a batch fetch fails, RESET must still run so the lowered threshold doesn't leak to the pooled connection."""
-        resolver = _make_resolver(entity_lookup="trigram", entity_resolution_batch_size=2)
+    async def test_label_texts_use_exact_lookup_not_trigram(self):
+        """Label entities go through an exact-match query; only non-label texts hit the % probe."""
+        resolver = _make_resolver(entity_lookup="trigram")
         conn = _make_conn(pg_trgm_available=True)
-        conn.fetch = AsyncMock(side_effect=RuntimeError("simulated timeout"))
+
+        captured: list[tuple[str, tuple]] = []
+
+        async def _capture(sql, *args):
+            captured.append((sql, args))
+            return []
+
+        conn.fetch = AsyncMock(side_effect=_capture)
+
+        labels_cfg = MagicMock()
+        labels_cfg.attributes = []
+        taxonomy_lookup = {"use:use-001", "use:use-002"}
+        entities_data = [
+            {"text": "use:use-001"},
+            {"text": "use:use-002"},
+            {"text": "Alice"},
+        ]
 
         with (
             patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
             patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
-            pytest.raises(RuntimeError, match="simulated timeout"),
         ):
             await resolver._resolve_entities_batch_trigram(
                 conn=conn,
                 bank_id="test-bank",
-                entities_data=[{"text": "Alice"}, {"text": "Bob"}],
+                entities_data=entities_data,
                 unit_event_date=None,
+                taxonomy_lookup=taxonomy_lookup,
+                labels_cfg=labels_cfg,
             )
 
-        conn.execute.assert_any_await("SET pg_trgm.similarity_threshold = 0.15")
-        conn.execute.assert_any_await("RESET pg_trgm.similarity_threshold")
+        exact_calls = [(sql, args) for sql, args in captured if "= LOWER(q.query_text)" in sql]
+        trigram_calls = [(sql, args) for sql, args in captured if "% LOWER(q.query_text)" in sql]
+
+        # Label texts are resolved by a single exact-match query — never fuzzy-probed.
+        assert len(exact_calls) == 1
+        assert sorted(exact_calls[0][1][1]) == ["use:use-001", "use:use-002"]
+
+        # Only the non-label text reaches the trigram probe.
+        assert len(trigram_calls) == 1
+        assert trigram_calls[0][1][1] == ["Alice"]
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_probe_excludes_label_rows(self):
+        """The trigram candidate query filters label rows with the partial-index predicate.
+
+        The clause must textually match the partial index's WHERE
+        (``entity_kind != 'label'``) or the planner falls back to a seq scan;
+        the exact-match label lookup must NOT carry it (label rows are exactly
+        what it resolves).
+        """
+        resolver = _make_resolver(entity_lookup="trigram")
+        conn = _make_conn(pg_trgm_available=True)
+
+        captured: list[str] = []
+
+        async def _capture(sql, *args):
+            captured.append(sql)
+            return []
+
+        conn.fetch = AsyncMock(side_effect=_capture)
+
+        labels_cfg = MagicMock()
+        labels_cfg.attributes = []
+        taxonomy_lookup = {"use:use-001"}
+        entities_data = [{"text": "use:use-001"}, {"text": "Alice"}]
+
+        with (
+            patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
+            patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
+        ):
+            await resolver._resolve_entities_batch_trigram(
+                conn=conn,
+                bank_id="test-bank",
+                entities_data=entities_data,
+                unit_event_date=None,
+                taxonomy_lookup=taxonomy_lookup,
+                labels_cfg=labels_cfg,
+            )
+
+        fuzzy_sqls = [sql for sql in captured if "% LOWER(q.query_text)" in sql]
+        exact_sqls = [sql for sql in captured if "= LOWER(q.query_text)" in sql]
+        assert fuzzy_sqls and all("entity_kind != 'label'" in sql for sql in fuzzy_sqls)
+        assert exact_sqls and all("entity_kind" not in sql for sql in exact_sqls)

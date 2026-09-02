@@ -34,9 +34,39 @@ describe("buildKnowledgePreamble", () => {
     expect(out).toContain("hindsight_capture_initiative");
     expect(out).toContain("hindsight_ingest_document");
   });
+  it("tells the agent to recapture an initiative when the plan changes mid-work", () => {
+    // Same contract as the MCP tool description (knowledge-tools.ts) — the two must not drift.
+    for (const out of [
+      buildKnowledgePreamble([{ id: "p1", title: "Component map" }]),
+      buildRosterRefresh([]),
+    ]) {
+      expect(out).not.toMatch(/call this ONCE/i);
+      expect(out).toMatch(/call it AGAIN with relates_to_page_id/i);
+      expect(out).toMatch(/goal, scope, or rationale materially changes/i);
+    }
+  });
+
   it("has an empty-state line when there are no pages", () => {
     const out = buildKnowledgePreamble([]);
     expect(out).toMatch(/no knowledge pages yet|still learning/i);
+  });
+
+  it("checks knowledge pages before reflection in tool-only mode", () => {
+    for (const out of [
+      buildKnowledgePreamble([{ id: "p1", title: "Component map" }], {
+        reflectOnNewGoals: true,
+      }),
+      buildRosterRefresh([{ id: "p1", title: "Component map" }], {
+        reflectOnNewGoals: true,
+      }),
+    ]) {
+      expect(out).toMatch(/new task or goal.*knowledge pages FIRST/is);
+      expect(out).toMatch(/hindsight_reflect only when.*pages are too shallow/is);
+      // No `s` flag ON PURPOSE: this must stay a per-LINE guard against the old wording
+      // ("call hindsight_reflect with that goal FIRST"). With `s` it would span newlines and
+      // match the legitimate "hindsight_reflect ..." / "FIRST STOP" lines further down the guide.
+      expect(out).not.toMatch(/hindsight_reflect.*FIRST/);
+    }
   });
 });
 

@@ -268,6 +268,21 @@ def test_parse_llm_json_control_char_scrub_still_works():
     assert parse_llm_json('{"a": "line\x01break"}') == {"a": "line break"}
 
 
+def test_parse_llm_json_preserves_raw_line_breaks_in_strings():
+    """A raw newline in a string is content, not noise (#3361).
+
+    A model writing a markdown table into a JSON string often forgets to escape
+    its line breaks. Blanking them out delivers the table already welded onto
+    one line, and nothing downstream can tell that apart from prose.
+    """
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    table = "| a | b |\n| --- | --- |\n| 1 | 2 |"
+    assert parse_llm_json('{"text": "%s"}' % table.replace("\n", "\n")) == {"text": table}
+    assert parse_llm_json('{"a": "tab\there"}') == {"a": "tab\there"}
+    assert parse_llm_json('{"a": "back\\\\slash and \\" quote"}') == {"a": 'back\\slash and " quote'}
+
+
 @pytest.mark.parametrize("garbage", ["", "   ", "not json at all !!!", "```json\n```"])
 def test_parse_llm_json_unrecoverable_raises(garbage):
     """Repair that yields an empty result must not masquerade as success — the

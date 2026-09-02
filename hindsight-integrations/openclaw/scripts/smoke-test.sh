@@ -66,7 +66,7 @@ cleanup() {
   log "cleaning up"
   # Always uninstall / remove the smoke-test install first so we start from a
   # known-clean state before attempting restore.
-  yes 2>/dev/null | openclaw plugins uninstall hindsight-openclaw >/dev/null 2>&1 || true
+  openclaw plugins uninstall --force hindsight-openclaw >/dev/null 2>&1 || true
   rm -rf "$EXT_DIR"
 
   # Restore the user's openclaw.json if we backed it up.
@@ -164,7 +164,7 @@ main() {
 
   # Start from a clean slate after backups are in place.
   log "clearing any pre-existing hindsight-openclaw install"
-  yes 2>/dev/null | openclaw plugins uninstall hindsight-openclaw >/dev/null 2>&1 || true
+  openclaw plugins uninstall --force hindsight-openclaw >/dev/null 2>&1 || true
   rm -rf "$EXT_DIR"
 
   # Pack the tarball unless one was provided.
@@ -189,7 +189,7 @@ main() {
   log "installing plugin from tarball (no --dangerously-force-unsafe-install)…"
   local install_log
   install_log="$(mktemp)"
-  if ! openclaw plugins install "$TARBALL" >"$install_log" 2>&1; then
+  if ! openclaw plugins install --force --accept-capabilities "$TARBALL" >"$install_log" 2>&1; then
     cat "$install_log" >&2
     fail "openclaw plugins install failed"
   fi

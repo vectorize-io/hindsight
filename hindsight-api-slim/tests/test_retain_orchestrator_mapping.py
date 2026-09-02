@@ -130,7 +130,10 @@ class TestProcessExtractedFacts:
         assert [fact.fact_text for fact in result.extracted_facts] == ["Alice joined Acme", "Bob leads the ML team"]
         assert [fact.chunk_index for fact in result.extracted_facts] == [10, 12]
         assert [fact.fact_text for fact in result.processed_facts] == ["Alice joined Acme", "Bob leads the ML team"]
-        assert [fact.embedding for fact in result.processed_facts] == [[10.0], [12.0]]
+        # Packed on the way in (#3756), so compare against the packed form: the point of
+        # the assertion is that the SURVIVING facts keep THEIR embeddings — that the
+        # rejected fact's 11.0 did not shift the mapping by one — not the container type.
+        assert [list(fact.embedding) for fact in result.processed_facts] == [[10.0], [12.0]]
         assert result.retained_index_by_original == [0, None, 1]
 
     def test_remaps_canonical_relations_and_drops_rejected_targets(self):

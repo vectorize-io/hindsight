@@ -1,20 +1,13 @@
-import { readFileSync } from "node:fs";
 import type { TransportTurn } from "./chat";
+import { readJsonlTail } from "./jsonl";
 import { stripInjectedMemory } from "./transcript-util";
 
 /** Read Antigravity's transcript JSONL defensively. The documented hook contract guarantees only
  * the path, not the internal event schema, so support its user/assistant role and message variants. */
 export function readAntigravityTranscript(path: string | undefined): TransportTurn[] {
   if (!path) return [];
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return [];
-  }
-
   const turns: TransportTurn[] = [];
-  for (const line of raw.split("\n")) {
+  for (const line of readJsonlTail(path, { scope: "antigravity-cli" }).lines) {
     try {
       const event = JSON.parse(line) as {
         role?: string;

@@ -89,7 +89,7 @@ cd hindsight-control-plane && npm run dev
 
 ### Core Engine (hindsight-api-slim/hindsight_api/engine/)
 - `memory_engine.py`: Main orchestrator for retain/recall/reflect operations
-- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, VertexAI, Groq, MiniMax, Ollama, LM Studio, LiteLLM, Claude Code
+- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, VertexAI, Groq, MiniMax, Ollama, LM Studio, LiteLLM, Claude Code, GitHub Copilot
 - `embeddings.py`: Embedding generation (local sentence-transformers or TEI)
 - `cross_encoder.py`: Reranking (local or TEI)
 - `entity_resolver.py`: Entity extraction and normalization
@@ -300,7 +300,7 @@ The ids are defined by that integration's HookSpecs
 registered in `src/harness/registry.ts`, whose id is their
 `createPluginEntry(...)` argument — currently `antigravity-cli`, `claude-code`,
 `cline-cli`, `codex`, `copilot-cli`, `cursor-cli`, `devin-cli`, `grok-build`,
-`kilo`, `opencode`.
+`kilo`, `opencode`, `opencode2`.
 
 The control plane resolves the value in
 `hindsight-control-plane/src/lib/harness-logo.ts` (metadata wins over the tag) and
@@ -314,6 +314,22 @@ ids nothing writes — a test asserts the registry matches the emitted set, plus
 explicit list of retired ids kept so already-retained documents keep their logo.
 An unregistered harness is not an error: it renders no logo and still shows as
 ordinary metadata.
+
+### Coding-agents docs are generated from one README
+
+`hindsight-integrations/coding-agents/README.md` is the single source for that package's
+configuration. **Never edit `skill/SKILL.md` or the docs page by hand** — both are generated:
+
+```bash
+cd hindsight-integrations/coding-agents && npm run skill:build   # README -> skill/SKILL.md
+node hindsight-docs/scripts/sync-coding-agents-doc.mjs           # README -> docs page
+```
+
+The regions the skill copies are marked `<!-- skill:begin -->` / `<!-- skill:end -->` in the README;
+the agent-only half (tools, crediting, corrections) lives in `skill-src/preamble.md`.
+`src/docs-freshness.test.ts` fails on a stale skill or an undocumented `RawConfig` field. Run
+`./scripts/hooks/lint.sh` BEFORE regenerating — prettier re-pads the README's tables, and a
+generated file built from unformatted source fails the byte comparison in CI.
 
 ### Adding New Integrations
 

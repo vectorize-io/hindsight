@@ -3,6 +3,8 @@
 
 Long-term memory for [OpenHands](https://github.com/OpenHands/OpenHands) (formerly OpenDevin), powered by [Hindsight](https://vectorize.io/hindsight). One command connects OpenHands to the Hindsight MCP server and adds a recall/retain rule — so the agent recalls relevant memory at the start of a task and retains durable facts as it works.
 
+[View Changelog →](../../changelog/integrations/openhands.md)
+
 ## How It Works
 
 OpenHands has **native Streamable-HTTP MCP support**, so the Hindsight MCP endpoint connects directly (no bridge):

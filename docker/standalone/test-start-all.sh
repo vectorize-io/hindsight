@@ -73,6 +73,41 @@ assert_contains "$nonempty_output" "WARNING: pg0 data directory exists"
 echo "start-all pg0 integrity checks passed"
 
 # =============================================================================
+# resolve_api_startup_wait_seconds (#3733)
+# =============================================================================
+assert_equals() {
+    local actual="$1"
+    local expected="$2"
+
+    if [ "$actual" != "$expected" ]; then
+        echo "Expected: $expected"
+        echo "Actual:   $actual"
+        exit 1
+    fi
+}
+
+# Neither knob set: the wrapper default.
+assert_equals "$(HINDSIGHT_API_STARTUP_WAIT_SECONDS= HINDSIGHT_API_MODEL_INIT_TIMEOUT= resolve_api_startup_wait_seconds)" "300"
+
+# The documented knob raised: the wrapper waits at least that long, so raising
+# it actually takes effect instead of being cut short at the default.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=7200 resolve_api_startup_wait_seconds)" "7230"
+
+# Floats are accepted — the API parses its cap as one.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=7200.0 resolve_api_startup_wait_seconds)" "7230"
+
+# A shorter cap never shortens the wrapper wait.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=60 resolve_api_startup_wait_seconds)" "300"
+
+# Garbage falls back to the default rather than breaking startup.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=abc resolve_api_startup_wait_seconds)" "300"
+
+# An explicit wrapper setting always wins.
+assert_equals "$(HINDSIGHT_API_STARTUP_WAIT_SECONDS=45 HINDSIGHT_API_MODEL_INIT_TIMEOUT=7200 resolve_api_startup_wait_seconds)" "45"
+
+echo "start-all API startup wait checks passed"
+
+# =============================================================================
 # check_pg0_writable (#1483)
 # These rely on filesystem permissions, which root bypasses; skip under root.
 # =============================================================================

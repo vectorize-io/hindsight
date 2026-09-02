@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.config_resolver import BankConfigPersistenceConflictError
 from hindsight_api.engine.interface import BankTemplateImportWrite
 from hindsight_api.extensions import BankReadOperation, BankWriteOperation, OperationValidationError, ValidationResult
 from hindsight_api.models import RequestContext
@@ -24,6 +25,7 @@ def _make_operation_validator(
     reject_bank_write: BankWriteOperation | None = None,
     reject_bank_read: BankReadOperation | None = None,
     reject_mental_model_refresh: bool = False,
+    reject_create_bank: bool = False,
     reason: str = "operation is forbidden",
 ) -> MagicMock:
     """Build a complete async validator with one optional rejection."""
@@ -42,7 +44,9 @@ def _make_operation_validator(
         return_value=ValidationResult.reject(reason) if reject_mental_model_refresh else ValidationResult.accept()
     )
     validator.validate_mental_model_get = AsyncMock(return_value=ValidationResult.accept())
-    validator.validate_create_bank = AsyncMock(return_value=ValidationResult.accept())
+    validator.validate_create_bank = AsyncMock(
+        return_value=ValidationResult.reject(reason) if reject_create_bank else ValidationResult.accept()
+    )
     validator.on_mental_model_get_complete = AsyncMock()
     return validator
 
@@ -100,7 +104,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # ================================================================
 
     # List banks (should be empty initially or have other test banks)
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     initial_banks_data = response.json()["banks"]
     initial_banks = [a["bank_id"] for a in initial_banks_data]
@@ -210,7 +214,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     assert fresh_stats["total_nodes"] == stats["total_nodes"]
 
     # Verify bank list returns stats (fact_count, last_document_at)
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     banks_after = response.json()["banks"]
     our_bank = next(b for b in banks_after if b["bank_id"] == test_bank_id)
@@ -353,7 +357,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # 9. List All Banks (should include our test bank)
     # ================================================================
 
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     final_banks_data = response.json()["banks"]
     final_banks = [a["bank_id"] for a in final_banks_data]
@@ -551,6 +555,7 @@ async def test_document_deletion_with_slashes_in_id(api_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_delete_bank(api_client):
     """Test delete bank endpoint.
 
@@ -600,7 +605,7 @@ async def test_delete_bank(api_client):
     assert len(response.json()["items"]) > 0
 
     # Check bank is in list
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id in bank_ids
@@ -615,7 +620,7 @@ async def test_delete_bank(api_client):
 
     # 4. Verify bank and all data is deleted
     # Bank should not be in list
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id not in bank_ids
@@ -673,7 +678,7 @@ async def test_clear_memories_preserves_bank(api_client):
         assert response.status_code == 200
         assert response.json()["total_nodes"] > 0
 
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = [b["bank_id"] for b in response.json()["banks"]]
         assert test_bank_id in bank_ids
@@ -684,7 +689,7 @@ async def test_clear_memories_preserves_bank(api_client):
         assert response.json()["success"] is True
 
         # 3. Bank should still exist in the list
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = [b["bank_id"] for b in response.json()["banks"]]
         assert test_bank_id in bank_ids, "Bank should still exist after clearing memories"
@@ -1421,6 +1426,28 @@ async def test_patch_config_rejection_does_not_create_bank(api_client):
 
 
 @pytest.mark.asyncio
+async def test_patch_config_rejects_wrong_value_type(api_client):
+    """A JSON object in a string-typed field must 400, not be stored (#3218).
+
+    Storing it succeeded before, and the bank then failed every consolidation
+    with ``expected string or bytes-like object, got 'dict'`` from inside prompt
+    assembly — deterministically, so the bank never recovered.
+    """
+    test_bank_id = f"patch_bad_type_{datetime.now().timestamp()}"
+
+    response = await api_client.patch(
+        f"/v1/default/banks/{test_bank_id}/config",
+        json={"updates": {"observations_mission": {"rules": ["only preferences"], "budget": 3}}},
+    )
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert "observations_mission" in detail
+    assert "must be a string" in detail
+
+    await _assert_bank_missing(api_client, test_bank_id)
+
+
+@pytest.mark.asyncio
 async def test_patch_config_does_not_apply_client_field_permissions_to_projected_defaults(
     api_client,
     memory,
@@ -1705,7 +1732,7 @@ async def test_patch_returns_404_when_bank_disappears_before_config_write(api_cl
     monkeypatch.setattr(
         memory._config_resolver,
         "_persist_bank_config",
-        AsyncMock(side_effect=ValueError(f"Cannot update config for bank '{bank_id}': the bank does not exist")),
+        AsyncMock(side_effect=BankConfigPersistenceConflictError(bank_id)),
     )
 
     response = await api_client.patch(
@@ -1807,6 +1834,46 @@ async def test_config_only_import_ensures_bank_once(api_client, memory, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_config_only_import_returns_409_when_bank_is_deleted_before_config_write(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """A bank deleted after import authorization is a retryable state conflict."""
+    bank_id = f"import_concurrent_delete_config_{datetime.now().timestamp()}"
+    persist_started = asyncio.Event()
+    allow_persist = asyncio.Event()
+    persist_bank_config = memory._config_resolver._persist_bank_config
+
+    async def persist_after_delete(persisted_bank_id: str, updates: dict[str, object]) -> None:
+        if persisted_bank_id == bank_id:
+            persist_started.set()
+            await allow_persist.wait()
+        await persist_bank_config(persisted_bank_id, updates)
+
+    monkeypatch.setattr(memory._config_resolver, "_persist_bank_config", persist_after_delete)
+    import_task = asyncio.create_task(
+        api_client.post(
+            f"/v1/default/banks/{bank_id}/import",
+            json={"version": "1", "bank": {"reflect_mission": "Conflict"}},
+        )
+    )
+
+    await persist_started.wait()
+    try:
+        await memory.delete_bank(bank_id, request_context=RequestContext())
+    finally:
+        allow_persist.set()
+    response = await import_task
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == (
+        f"Bank '{bank_id}' changed or was deleted during template import; retry the import."
+    )
+    await _assert_bank_missing(api_client, bank_id)
+
+
+@pytest.mark.asyncio
 async def test_import_reuses_each_preauthorization_once(api_client, memory, monkeypatch):
     """Import validators run once even though engine methods enforce them normally."""
     bank_id = f"import_single_authorization_{datetime.now().timestamp()}"
@@ -1836,6 +1903,94 @@ async def test_import_reuses_each_preauthorization_once(api_client, memory, monk
     validator.validate_mental_model_refresh.assert_awaited_once()
     validator.validate_mental_model_get.assert_awaited_once()
     validator.validate_create_bank.assert_awaited_once()
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_import_updating_existing_resources_asks_only_for_update(api_client, memory, monkeypatch):
+    """An import that only updates never spends a create decision."""
+    bank_id = f"import_update_only_authorization_{datetime.now().timestamp()}"
+    await memory.create_mental_model(
+        bank_id=bank_id,
+        mental_model_id="import-model",
+        name="Import",
+        source_query="test",
+        content="content",
+        request_context=RequestContext(),
+    )
+    await memory.create_directive(
+        bank_id=bank_id,
+        name="Be concise",
+        content="Prefer short answers.",
+        request_context=RequestContext(),
+    )
+    # A validator that meters creations must not be charged for creates this
+    # import does not perform.
+    validator = _make_operation_validator(reject_bank_write=BankWriteOperation.CREATE_MENTAL_MODEL)
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(
+        memory,
+        "_submit_async_operation",
+        AsyncMock(return_value={"operation_id": "import-refresh"}),
+    )
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/import",
+        json={
+            "version": "1",
+            "mental_models": [{"id": "import-model", "name": "Import", "source_query": "test"}],
+            "directives": [{"name": "Be concise", "content": "Prefer short answers."}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [
+        BankWriteOperation.UPDATE_MENTAL_MODEL,
+        BankWriteOperation.UPDATE_DIRECTIVE,
+    ]
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_import_validates_the_operation_a_concurrent_write_flipped_it_to(api_client, memory, monkeypatch):
+    """A create that a concurrent write turns into an update is decided as an update."""
+    bank_id = f"import_flipped_authorization_{datetime.now().timestamp()}"
+    validator = _make_operation_validator(
+        reject_bank_write=BankWriteOperation.UPDATE_MENTAL_MODEL,
+        reason="updates are forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    ensure_bank_exists = memory._ensure_bank_exists
+
+    async def create_the_model_first(*args, **kwargs):
+        # Restore first: creating a mental model lazily ensures the bank itself.
+        monkeypatch.setattr(memory, "_ensure_bank_exists", ensure_bank_exists)
+        result = await ensure_bank_exists(*args, **kwargs)
+        await memory.create_mental_model(
+            bank_id=bank_id,
+            mental_model_id="import-model",
+            name="Import",
+            source_query="test",
+            content="content",
+            request_context=RequestContext(),
+        )
+        return result
+
+    monkeypatch.setattr(memory, "_ensure_bank_exists", create_the_model_first)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/import",
+        json={
+            "version": "1",
+            "mental_models": [{"id": "import-model", "name": "Import", "source_query": "test"}],
+        },
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "updates are forbidden"
+    operations = [call.args[0].operation for call in validator.validate_bank_write.await_args_list]
+    # Preauthorized as a create, then re-decided as the update the fresh state calls
+    # for. (The injected create validates itself in between.)
+    assert operations[0] is BankWriteOperation.CREATE_MENTAL_MODEL
+    assert operations[-1] is BankWriteOperation.UPDATE_MENTAL_MODEL
     await memory.delete_bank(bank_id, request_context=RequestContext())
 
 
@@ -2043,7 +2198,7 @@ async def test_patch_bank_does_not_create_missing_bank(api_client, memory, monke
     profile = await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
     assert profile.status_code == 404, profile.text
 
-    banks = await api_client.get("/v1/default/banks")
+    banks = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert banks.status_code == 200, banks.text
     assert test_bank_id not in {bank["bank_id"] for bank in banks.json()["banks"]}
 
@@ -2204,3 +2359,127 @@ async def test_reflect_structured_output_llm_quality(api_client_real_llm):
 
     # Cleanup
     await api_client_real_llm.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+async def test_put_bank_profile_denied_read_does_not_mutate_or_create_bank(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """PUT /profile when GET_BANK_PROFILE is denied must return 403 and leave no bank behind."""
+    from hindsight_api.engine.retain import bank_utils
+
+    bank_id = f"put_profile_denied_read_{datetime.now().timestamp()}"
+    validator = _make_operation_validator(reject_bank_read=BankReadOperation.GET_BANK_PROFILE)
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+
+    response = await api_client.put(
+        f"/v1/default/banks/{bank_id}/profile",
+        json={"disposition": {"skepticism": 5, "literalism": 5, "empathy": 5}},
+    )
+    assert response.status_code == 403, response.text
+
+    # Verify no bank row was created in the database
+    backend = await memory._get_backend()
+    exists = await bank_utils.bank_exists(backend, bank_id)
+    assert not exists, f"Bank '{bank_id}' should not exist after denied read authorization"
+
+
+@pytest.mark.asyncio
+async def test_merge_bank_mission_denied_read_does_not_call_llm_or_create_bank(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """POST /background when GET_BANK_PROFILE is denied must return 403, not call LLM, and leave no bank behind."""
+    from hindsight_api.engine.retain import bank_utils
+
+    bank_id = f"merge_mission_denied_read_{datetime.now().timestamp()}"
+    validator = _make_operation_validator(reject_bank_read=BankReadOperation.GET_BANK_PROFILE)
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+
+    mock_llm_merge = AsyncMock(return_value={"mission": "Merged mission"})
+    monkeypatch.setattr(bank_utils, "_llm_merge_mission", mock_llm_merge)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/background",
+        json={"content": "New background info"},
+    )
+    assert response.status_code == 403, response.text
+    mock_llm_merge.assert_not_called()
+
+    backend = await memory._get_backend()
+    exists = await bank_utils.bank_exists(backend, bank_id)
+    assert not exists, f"Bank '{bank_id}' should not exist after denied read authorization"
+
+
+@pytest.mark.asyncio
+async def test_legacy_bank_writes_respect_validate_create_bank(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """Legacy write operations respect validate_create_bank rejection on new banks."""
+    from hindsight_api.engine.retain import bank_utils
+
+    validator = _make_operation_validator(reject_create_bank=True)
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+
+    # 1. PUT /profile
+    bank_id_1 = f"legacy_create_denied_profile_{datetime.now().timestamp()}"
+    response = await api_client.put(
+        f"/v1/default/banks/{bank_id_1}/profile",
+        json={"disposition": {"skepticism": 4, "literalism": 4, "empathy": 4}},
+    )
+    assert response.status_code == 403, response.text
+
+    # 2. POST /background
+    bank_id_2 = f"legacy_create_denied_background_{datetime.now().timestamp()}"
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id_2}/background",
+        json={"content": "Some mission"},
+    )
+    assert response.status_code == 403, response.text
+
+    # 3. set_bank_mission directly on engine
+    bank_id_3 = f"legacy_create_denied_set_mission_{datetime.now().timestamp()}"
+    with pytest.raises(OperationValidationError) as exc_info:
+        await memory.set_bank_mission(bank_id_3, "Mission text", request_context=RequestContext())
+    assert exc_info.value.status_code == 403
+
+    backend = await memory._get_backend()
+    for b in (bank_id_1, bank_id_2, bank_id_3):
+        exists = await bank_utils.bank_exists(backend, b)
+        assert not exists, f"Bank '{b}' should not exist after denied create authorization"
+
+
+@pytest.mark.asyncio
+async def test_legacy_bank_writes_apply_default_bank_template(
+    memory,
+    monkeypatch,
+):
+    """Legacy write operations on a new bank apply the default bank template."""
+    from hindsight_api.config import _get_raw_config
+
+    default_template = {
+        "version": "1",
+        "directives": [{"name": "Legacy default directive", "content": "Always be polite."}],
+    }
+    monkeypatch.setattr(_get_raw_config(), "default_bank_template", default_template)
+
+    bank_id = f"legacy_template_application_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+
+    await memory.update_bank_disposition(
+        bank_id,
+        {"skepticism": 4, "literalism": 4, "empathy": 4},
+        request_context=request_context,
+    )
+
+    page = await memory.list_directives(bank_id, request_context=request_context)
+    directive_names = [d["name"] for d in page.items]
+    assert "Legacy default directive" in directive_names
+
+    # Cleanup
+    await memory.delete_bank(bank_id, request_context=request_context)

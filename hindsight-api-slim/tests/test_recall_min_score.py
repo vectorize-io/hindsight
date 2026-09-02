@@ -4,7 +4,8 @@ Inserts memory_units with known content + real embeddings directly via SQL, then
 verifies that recall_async:
   - returns a `scores` object (final/reranker/semantic/keyword) on every result,
   - applies the post-query floors (`reranker`, `final`) to the scored results,
-  - applies the retrieval-level floors (`semantic`, `keyword`) inside the SQL arms,
+  - applies the retrieval-level `semantic` floor inside the SQL arm,
+  - keeps the retrieval floors per-arm rather than per-result,
   - is unchanged by the default (`min_scores=None`).
 
 Filtering is deterministic post/﻿pre-processing, so these assertions are direct —
@@ -23,6 +24,7 @@ from hindsight_api.engine.retain import embedding_utils
 # Shared hardcoded UUIDs (memory_units.id is a global PK) → serialize xdist workers
 # onto one group to avoid pk conflicts, same as test_recall_time_range.py.
 pytestmark = pytest.mark.xdist_group("recall_min_score")
+
 
 ID_A = "00000000-0000-0000-0000-0000000000a1"
 ID_B = "00000000-0000-0000-0000-0000000000a2"
@@ -94,6 +96,7 @@ async def _recall(engine, bank_id, *, query="animals and nature", **kwargs):
 
 
 class TestRecallScores:
+    @pytest.mark.memory_backend_incompatible
     async def test_every_result_has_scores(self, seeded_memory):
         engine, bank_id = seeded_memory
         result = await _recall(engine, bank_id)
@@ -119,6 +122,7 @@ class TestPostQueryFilters:
         explicit = await _recall(engine, bank_id, min_scores=None)
         assert _ids(baseline) == _ids(explicit)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_final_floor_filters_and_is_a_subset(self, seeded_memory):
         engine, bank_id = seeded_memory
         baseline = await _recall(engine, bank_id)
@@ -132,6 +136,7 @@ class TestPostQueryFilters:
         for r in filtered.results:
             assert r.scores.final >= threshold
 
+    @pytest.mark.memory_backend_incompatible
     async def test_final_floor_above_all_returns_empty(self, seeded_memory):
         engine, bank_id = seeded_memory
         baseline = await _recall(engine, bank_id)
@@ -153,6 +158,7 @@ class TestPostQueryFilters:
 
 
 class TestRetrievalLevelFilters:
+    @pytest.mark.memory_backend_incompatible
     async def test_semantic_floor_prunes_in_retrieval(self, seeded_memory):
         """min_scores.semantic is a SQL-arm cutoff: every returned result has a
         semantic score >= the floor, and a high floor returns nothing."""
@@ -171,6 +177,36 @@ class TestRetrievalLevelFilters:
         engine, bank_id = seeded_memory
         filtered = await _recall(engine, bank_id, min_scores=MinScores(semantic=1.1))
         assert filtered.results == []
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_retrieval_floors_are_per_arm_not_per_result(self, seeded_memory):
+        """The retrieval floors constrain the arm they name, not the fused result.
+
+        Recall returns a memory that *any* arm surfaced, so with both floors set a
+        result may still report `null` for the stage that did not surface it. This
+        is the documented contract (see MinScores) — an intersection would discard
+        the strong single-arm matches hybrid retrieval exists to find. Callers who
+        want abstention use the post-query `reranker`/`final` floors instead.
+        """
+        engine, bank_id = seeded_memory
+        both = await _recall(
+            engine,
+            bank_id,
+            query="animals",
+            min_scores=MinScores(semantic=0.1, keyword=0.0001),
+        )
+        assert both.results, "floors this low should not empty the response"
+        # Whatever survives, each arm's own floor held for the scores it produced.
+        for r in both.results:
+            assert r.scores.semantic is None or r.scores.semantic >= 0.1
+            assert r.scores.keyword is None or r.scores.keyword >= 0.0001
+        # The union behaviour itself: setting both floors does not narrow the
+        # response to results that cleared both arms. Every result here is
+        # surfaced by the semantic arm alone and reports `keyword: null`, which a
+        # strict post-fusion intersection would have dropped to zero results.
+        assert not all(r.scores.semantic is not None and r.scores.keyword is not None for r in both.results), (
+            "expected at least one result missing a score for a floored arm"
+        )
 
 
 class TestRecallRequestDefault:

@@ -3,7 +3,7 @@ title: "Structuring Chat Logs for Agent Memory"
 authors: [dcbouius]
 slug: "2026/06/23/structuring-chat-logs"
 date: 2026-06-23T12:00
-tags: [hindsight, memory, retain, conversations, chat, best-practices]
+tags: [hindsight, memory, retain, conversations, chat, best-practices, tutorial]
 description: "The shape of your chat logs decides your agent's memory quality. Retain whole conversations, label who is speaking, set context, and anchor in time."
 image: /img/blog/structuring-chat-logs.png
 hide_table_of_contents: true

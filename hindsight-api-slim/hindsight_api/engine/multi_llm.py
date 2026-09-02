@@ -15,9 +15,12 @@ Strategies:
 - ``round-robin``: rotate the starting member per request (optionally weighted),
   then fall through the remaining members on error.
 
-Batch retain and any direct ``_provider_impl`` access operate on the **primary
-member only** (via attribute passthrough) — failover/round-robin apply to the
-interactive ``call`` / ``call_with_tools`` paths.
+Batch retain runs on the **first batch-capable member** in declared order (see
+``batch_provider_impl``), which need not be the primary; once selected, the whole
+batch lifecycle stays on that member and does not fail over. Every other direct
+``_provider_impl`` access still resolves to the primary via attribute passthrough
+— failover/round-robin apply to the interactive ``call`` / ``call_with_tools``
+paths.
 """
 
 import logging
@@ -29,6 +32,7 @@ from ..config import LLM_STRATEGY_FAILOVER, LLMStrategyConfig
 from .llm_wrapper import LLMProvider, OutputTooLongError
 
 if TYPE_CHECKING:
+    from .llm_interface import LLMInterface
     from .llm_wrapper import ConfiguredLLMProvider, LLMToolCallResult
 
 logger = logging.getLogger(__name__)
@@ -162,6 +166,41 @@ class MultiLLMProvider:
                     e,
                 )
 
+    # ── batch routing ───────────────────────────────────────────────────────────
+
+    async def supports_batch_api(self) -> bool:
+        """Whether ANY member supports the batch API.
+
+        The single-provider path delegates to the primary, but in a multi-LLM
+        chain batch capacity may live on a secondary member (e.g. an ``openai`` /
+        ``groq`` fallback behind a non-batch primary). Mirroring the failover
+        semantics, the batch path can proceed as long as one member can serve it.
+        """
+        return (await self.batch_provider_impl()) is not None
+
+    async def batch_provider_impl(self, account_key: str | None = None) -> "LLMInterface | None":
+        """The implementation serving batch, or ``None`` when no member can.
+
+        Selection is deterministic by declared member order (primary first), so a
+        fresh batch goes to the first batch-capable member — the whole batch
+        lifecycle (submit → poll → retrieve) must target a single provider
+        account, and it does not fail over: a batch already submitted to one
+        account cannot be polled from another.
+
+        Declared order is *not* enough to resume one, though. The chain can be
+        reordered or extended across a restart, and two members of the same
+        provider on different accounts look identical by provider name, so
+        "first capable member" can resolve to an account that never saw the
+        batch (#3671). A resume therefore passes the ``account_key`` recorded at
+        submit time and gets back the member that owns the batch, or ``None`` —
+        never a lookalike.
+        """
+        for member in self._members:
+            impl = await member.batch_provider_impl(account_key)
+            if impl is not None:
+                return impl
+        return None
+
     async def cleanup(self) -> None:
         for member in self._members:
             await member.cleanup()
@@ -199,6 +238,7 @@ class MultiLLMProvider:
 
     def __getattr__(self, name: str) -> Any:
         # Anything not defined here (provider, model, api_key, base_url,
-        # _provider_impl, mock helpers, batch helpers, ...) delegates to the
-        # primary member so existing call sites keep working unchanged.
+        # _provider_impl, mock helpers, ...) delegates to the primary member so
+        # existing call sites keep working unchanged. The batch helpers above are
+        # defined precisely because the primary is the wrong answer for them.
         return getattr(object.__getattribute__(self, "_members")[0], name)

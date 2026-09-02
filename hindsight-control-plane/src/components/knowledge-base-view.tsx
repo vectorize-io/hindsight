@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { client, type KnowledgeNode } from "@/lib/api";
+import { client, type KnowledgeNode, type MentalModel } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,13 +44,17 @@ import {
   Info,
   Pencil,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
+import { StalenessBadge } from "./staleness-badge";
+import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import { UpdateMentalModelDialog } from "./mental-models-view";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
 
@@ -75,8 +79,20 @@ export function KnowledgeBaseView() {
   const searchParams = useSearchParams();
   const pageParam = searchParams.get("page");
 
-  const [roots, setRoots] = useState<KnowledgeNode[]>([]);
+  // The tree is stamped with the bank it was fetched for, and read back through
+  // `roots` below, so a bank change invalidates it *during the same render* that
+  // sees the new bank. State cleared from an effect would come too late: other
+  // effects in that same commit would still run against the old bank's tree and
+  // request its page / mental model ids under the new bank (#3807).
+  const [tree, setTree] = useState<{ bank: string; roots: KnowledgeNode[] } | null>(null);
   const [loading, setLoading] = useState(false);
+  // Only the tree fetched for the bank on screen counts; while a switch is in
+  // flight there is no tree, which parks the selection effects below.
+  const treeLoaded = tree !== null && tree.bank === currentBank;
+  const roots = useMemo(() => (treeLoaded ? tree.roots : []), [treeLoaded, tree]);
+  // The bank of the newest tree request, so a slow response for a bank we have
+  // since left can't overwrite the current one.
+  const treeRequestBankRef = useRef<string | null>(null);
   // Root folder starts expanded so its contents are visible by default.
   const [expanded, setExpanded] = useState<Set<string>>(new Set([ROOT_ID]));
 
@@ -98,6 +114,12 @@ export function KnowledgeBaseView() {
   const [selectedMmId, setSelectedMmId] = useState<string | null>(null);
   // Non-null while the provenance dialog (the backing model's based_on) is open.
   const [provenanceMmId, setProvenanceMmId] = useState<string | null>(null);
+  // Non-null while the page's backing model is open on its configuration, and
+  // then while its options are being edited. Kept in this view rather than
+  // linking across to the Mental Models tab: changing a page's scope is part of
+  // working on the page, and navigating away loses the page you were reading.
+  const [optionsMmId, setOptionsMmId] = useState<string | null>(null);
+  const [optionsModel, setOptionsModel] = useState<MentalModel | null>(null);
   // Mirror of open tabs for the auto-refresh interval / openPage without re-arming.
   const tabsRef = useRef<PageDetail[]>([]);
   useEffect(() => {
@@ -108,14 +130,15 @@ export function KnowledgeBaseView() {
   const autoSelectedRef = useRef(false);
 
   const [createKind, setCreateKind] = useState<"folder" | "page" | null>(null);
-  const [form, setForm] = useState({ name: "", sourceQuery: "", parentId: "", tags: "" });
+  const [form, setForm] = useState({ name: "", sourceQuery: "", parentId: "" });
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeNode | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Editing the open page's options (name / source query / tags).
+  // Editing the open page's options (name / source query). Tags and the rest of
+  // the retrieval scope live on the backing mental model — see optionsMmId.
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: "", sourceQuery: "", tags: "" });
+  const [editForm, setEditForm] = useState({ name: "", sourceQuery: "" });
   const [savingEdit, setSavingEdit] = useState(false);
 
   // `silent` skips the loading spinner so the background auto-refresh poll
@@ -123,15 +146,22 @@ export function KnowledgeBaseView() {
   const loadTree = useCallback(
     async (opts?: { silent?: boolean }) => {
       if (!currentBank) return;
+      const bank = currentBank;
+      treeRequestBankRef.current = bank;
       if (!opts?.silent) setLoading(true);
+      let nextRoots: KnowledgeNode[] = [];
       try {
-        const result = await client.getKnowledgeTree(currentBank);
-        setRoots(result.roots || []);
+        const result = await client.getKnowledgeTree(bank);
+        nextRoots = result.roots || [];
       } catch {
         // toast handled by interceptor
       } finally {
         if (!opts?.silent) setLoading(false);
       }
+      if (treeRequestBankRef.current !== bank) return;
+      // Stamped even when the fetch failed (empty tree), so the selection effects
+      // don't stay parked forever waiting for a tree that isn't coming.
+      setTree({ bank, roots: nextRoots });
     },
     [currentBank]
   );
@@ -205,6 +235,7 @@ export function KnowledgeBaseView() {
       tags: [],
       timestamp: null,
       is_stale: null,
+      trigger: null,
       children: roots,
     }),
     [currentBank, roots]
@@ -215,6 +246,14 @@ export function KnowledgeBaseView() {
   // doesn't carry it); updates as the auto-refresh poll refreshes the tree.
   const selectedStale = useMemo(
     () => (selected ? (allNodes.find((n) => n.id === selected.id)?.is_stale ?? null) : null),
+    [selected, allNodes]
+  );
+
+  // The trigger comes from the same tree node, for the same reason: the page
+  // detail response carries neither, and the badge needs it to tell a page that
+  // will refresh itself from one that is waiting on a person.
+  const selectedTrigger = useMemo(
+    () => (selected ? (allNodes.find((n) => n.id === selected.id)?.trigger ?? null) : null),
     [selected, allNodes]
   );
 
@@ -283,10 +322,21 @@ export function KnowledgeBaseView() {
     setActiveId((a) => (a === id ? (next[idx]?.id ?? next[idx - 1]?.id ?? null) : a));
   }, []);
 
+  // The ?page= id, but only once this bank's tree confirms it owns it. An id from
+  // another bank (a stale deep link) resolves to null instead of being requested,
+  // and auto-selection below takes over. Deliberately the id string and not the
+  // node, so the auto-refresh poll's new node objects don't re-run the effect and
+  // yank focus back to the deep-linked tab.
+  const deepLinkPageId = useMemo(
+    () =>
+      pageParam && allNodes.some((n) => n.id === pageParam && n.kind === "page") ? pageParam : null,
+    [pageParam, allNodes]
+  );
+
   // Deep-link: open the page named in ?page= (e.g. navigated from the Home card).
   useEffect(() => {
-    if (pageParam && currentBank) openPage(pageParam);
-  }, [pageParam, currentBank, openPage]);
+    if (treeLoaded && deepLinkPageId) openPage(deepLinkPageId);
+  }, [treeLoaded, deepLinkPageId, openPage]);
 
   // Reset the once-per-bank auto-select guard when switching banks.
   useEffect(() => {
@@ -295,15 +345,17 @@ export function KnowledgeBaseView() {
 
   // Open the first page on entry so the content pane isn't empty — unless a page
   // is deep-linked or already open. Fires once per bank (guarded), so closing a
-  // page doesn't snap it back open.
+  // page doesn't snap it back open. A ?page= id this bank doesn't own falls
+  // through to here rather than leaving the pane empty.
   useEffect(() => {
-    if (autoSelectedRef.current || pageParam || selected || !allNodes.length) return;
+    if (autoSelectedRef.current || !treeLoaded || deepLinkPageId || selected || !allNodes.length)
+      return;
     const firstPage = allNodes.find((n) => n.kind === "page");
     if (firstPage) {
       autoSelectedRef.current = true;
       openPage(firstPage.id);
     }
-  }, [allNodes, pageParam, selected, openPage]);
+  }, [allNodes, treeLoaded, deepLinkPageId, selected, openPage]);
 
   const toggleFolder = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -315,7 +367,7 @@ export function KnowledgeBaseView() {
   }, []);
 
   const openCreate = (kind: "folder" | "page", parentId = "") => {
-    setForm({ name: "", sourceQuery: "", parentId, tags: "" });
+    setForm({ name: "", sourceQuery: "", parentId });
     setCreateKind(kind);
   };
 
@@ -331,15 +383,17 @@ export function KnowledgeBaseView() {
           parent_id,
         });
       } else {
-        const tags = form.tags
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
+        // No tags: a page is created reading the whole bank. Tags SCOPE a page
+        // rather than labelling it, and a tagged page defaults to `all_strict`
+        // (every tag required, untagged memories excluded), so tags typed here to
+        // describe a topic silently matched nothing and the page generated as
+        // "I don't have information about this" (#3687). Scoping is a deliberate
+        // choice made afterwards, on the backing mental model, next to the
+        // tags_match and tag_groups that govern how it is applied.
         await client.createKnowledgePage(currentBank, {
           name: form.name.trim(),
           source_query: form.sourceQuery.trim(),
           parent_id,
-          tags: tags.length ? tags : undefined,
         });
       }
       if (parent_id) setExpanded((prev) => new Set(prev).add(parent_id));
@@ -354,15 +408,10 @@ export function KnowledgeBaseView() {
 
   const openEdit = () => {
     if (!selected) return;
-    // Pre-fill tags from the tree node's RAW tags (which keep the `type:` tag),
-    // not selected.tags — the page projection strips `type:` for display, and
-    // editing from that would silently drop it on save.
-    const rawTags = allNodes.find((n) => n.id === selected.id)?.tags ?? selected.tags ?? [];
     setEditForm({
       name: selected.name,
       // `description` carries the page's source query (the question that rebuilds it).
       sourceQuery: selected.description ?? "",
-      tags: rawTags.join(", "),
     });
     setEditing(true);
   };
@@ -371,14 +420,13 @@ export function KnowledgeBaseView() {
     if (!currentBank || !selected || !editForm.name.trim()) return;
     setSavingEdit(true);
     try {
-      const tags = editForm.tags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      // `tags` is deliberately absent: the PATCH applies only the keys present,
+      // so omitting it preserves whatever scope the page has. Sending the field
+      // from a dialog that no longer shows it would clear every page's scope on
+      // an unrelated rename.
       await client.updateKnowledgeNode(currentBank, selected.id, {
         name: editForm.name.trim(),
         source_query: editForm.sourceQuery.trim(),
-        tags,
       });
       setEditing(false);
       await loadTree();
@@ -545,39 +593,51 @@ export function KnowledgeBaseView() {
                 </Button>
               </div>
 
-              {/* Provenance: this wiki isn't written, it's grounded. Links back
-                  into the memory substrate the page was synthesized from. */}
-              {supportingCount > 0 && selectedMmId && (
-                <button
-                  onClick={() => setProvenanceMmId(selectedMmId)}
-                  className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
-                >
-                  {t("backedBy", { count: supportingCount })}
-                </button>
-              )}
+              <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                {/* Provenance: this wiki isn't written, it's grounded. Links back
+                    into the memory substrate the page was synthesized from. */}
+                {supportingCount > 0 && selectedMmId && (
+                  <button
+                    onClick={() => setProvenanceMmId(selectedMmId)}
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                  >
+                    {t("backedBy", { count: supportingCount })}
+                  </button>
+                )}
+                {/* A page IS a mental model with a place in the tree, and the model
+                    is where its retrieval scope lives — tags, tags_match, tag_groups,
+                    fact types. Rather than reproduce a partial copy of that form here
+                    (the tags input used to sit in the page dialogs, with no way to see
+                    or change the match mode that decides what they actually select),
+                    the page links to the one editor that owns the whole scope. */}
+                {selectedMmId && (
+                  <button
+                    onClick={() => setOptionsMmId(selectedMmId)}
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    <SlidersHorizontal className="w-3 h-3" />
+                    {t("mentalModelOptions")}
+                  </button>
+                )}
+              </div>
 
               {/* Freshness + tags. The generation prompt (machinery) is tucked
                   behind the expander so the page opens with the knowledge. */}
+              {/* The same freshness line the mental-model detail shows — a page is a
+                  mental model with a place in the tree, so the two headers read
+                  identically rather than one saying "Updated 5 hours ago [IN SYNC]"
+                  and the other a sentence. */}
+              {selected.timestamp ? (
+                <FreshnessLine
+                  className="mt-2"
+                  isStale={selectedStale}
+                  trigger={selectedTrigger}
+                  lastRefreshedAt={selected.timestamp}
+                />
+              ) : (
+                <div className="text-xs text-muted-foreground mt-2">{t("generating")}</div>
+              )}
               <div className="flex items-center gap-2 flex-wrap text-xs mt-2">
-                {selected.timestamp ? (
-                  <span
-                    className="text-muted-foreground"
-                    title={formatAbsoluteDateTime(selected.timestamp)}
-                  >
-                    {t("updatedLabel")} {formatRelativeTime(selected.timestamp)}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground">{t("generating")}</span>
-                )}
-                {selectedStale === false ? (
-                  <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    {t("inSync")}
-                  </span>
-                ) : selectedStale === true ? (
-                  <span className="px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                    {t("needsRefresh")}
-                  </span>
-                ) : null}
                 {selected.tags.map((tag) => (
                   <span
                     key={tag}
@@ -651,15 +711,6 @@ export function KnowledgeBaseView() {
                     className="min-h-[100px]"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">{t("fieldTags")}</label>
-                  <Input
-                    value={form.tags}
-                    onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                    placeholder={t("fieldTagsPlaceholder")}
-                  />
-                  <p className="text-xs text-muted-foreground">{t("fieldTagsHint")}</p>
-                </div>
               </>
             )}
             <div className="space-y-2">
@@ -723,15 +774,6 @@ export function KnowledgeBaseView() {
               />
               <p className="text-xs text-muted-foreground">{t("editSourceQueryHint")}</p>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">{t("fieldTags")}</label>
-              <Input
-                value={editForm.tags}
-                onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
-                placeholder={t("fieldTagsPlaceholder")}
-              />
-              <p className="text-xs text-muted-foreground">{t("fieldTagsHint")}</p>
-            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(false)} disabled={savingEdit}>
@@ -774,6 +816,38 @@ export function KnowledgeBaseView() {
         <MentalModelDetailModal
           mentalModelId={provenanceMmId}
           onClose={() => setProvenanceMmId(null)}
+        />
+      )}
+
+      {/* The page's backing model, opened on its configuration. `onEdit` hands off
+          to the very same dialog the Mental Models tab uses, so the scope controls
+          (tags + tags_match + tag_groups, fact types, schedule) have one
+          implementation rather than a partial copy living on the page (#3687). */}
+      {optionsMmId && (
+        <MentalModelDetailModal
+          mentalModelId={optionsMmId}
+          initialTab="configuration"
+          onClose={() => setOptionsMmId(null)}
+          onEdit={(m) => setOptionsModel(m)}
+        />
+      )}
+
+      {optionsModel && (
+        <UpdateMentalModelDialog
+          open
+          mentalModel={optionsModel}
+          onClose={() => setOptionsModel(null)}
+          onUpdated={async () => {
+            setOptionsModel(null);
+            setOptionsMmId(null);
+            // Tags and trigger drive the tree's chips and freshness line, so pull
+            // the page back in rather than leaving the reader looking at stale scope.
+            await loadTree();
+            if (selected && currentBank) {
+              const p = await client.getKnowledgePage(currentBank, selected.id);
+              setTabs((prev) => prev.map((x) => (x.id === p.id ? p : x)));
+            }
+          }}
         />
       )}
     </div>
@@ -852,17 +926,11 @@ export function TreeRow({
                 title={t("autoBadge")}
               />
             )}
-            {!isFolder && node.is_stale === false && (
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0"
-                title={t("inSync")}
-              />
-            )}
-            {!isFolder && node.is_stale === true && (
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0"
-                title={t("needsRefresh")}
-              />
+            {/* The dot variant of the shared badge: the tree is dense and the name
+                needs the width, but the meaning, colours and tooltips are the same
+                ones the page header and the mental-model list show. */}
+            {!isFolder && (
+              <StalenessBadge isStale={node.is_stale} trigger={node.trigger} variant="dot" />
             )}
           </div>
           {!isFolder && (

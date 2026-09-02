@@ -84,7 +84,7 @@ async def list_memory_units(
     ops,
     fq_table,
     bank_id: str,
-    fact_type: str | None = None,
+    fact_type: str | list[str] | None = None,
     search_query: str | None = None,
     consolidation_state: str | None = None,
     state: str | None = None,
@@ -104,7 +104,8 @@ async def list_memory_units(
         ops: Dialect ops. Unused by this query; part of the interface signature.
         fq_table: Table-name resolver.
         bank_id: Filter by bank ID
-        fact_type: Filter by fact type (world, experience)
+        fact_type: Filter by fact type (world, experience). A list matches any of
+            them; an empty list is treated as no filter.
         search_query: Full-text search query (searches text and context fields)
         document_id: Optional filter to a single source document.
         tags: Optional list of tag names to filter by. When omitted, no tag
@@ -154,8 +155,14 @@ async def list_memory_units(
 
     if fact_type:
         param_count += 1
-        query_conditions.append(f"fact_type = ${param_count}")
-        query_params.append(fact_type)
+        if isinstance(fact_type, str):
+            query_conditions.append(f"fact_type = ${param_count}")
+            query_params.append(fact_type)
+        else:
+            # A list is "any of these" — one array parameter rather than an IN list
+            # whose placeholder count varies with the caller's argument.
+            query_conditions.append(f"fact_type = ANY(${param_count}::text[])")
+            query_params.append(list(fact_type))
 
     if document_id:
         param_count += 1
@@ -240,7 +247,8 @@ async def list_memory_units(
         f"""
         SELECT id, text, event_date, context, fact_type, document_id,
                mentioned_at, occurred_start, occurred_end, chunk_id, proof_count,
-               tags, metadata, consolidated_at, consolidation_failed_at, edited_at, {curation_cols}
+               tags, metadata, consolidated_at, consolidation_failed_at, edited_at,
+               updated_at, source_memory_ids, {curation_cols}
         FROM {source_table}
         {where_clause}
         ORDER BY mentioned_at DESC NULLS LAST, created_at DESC
@@ -304,6 +312,12 @@ async def list_memory_units(
                 "invalidation_reason": row["invalidation_reason"],
                 "invalidated_at": row["invalidated_at"].isoformat() if row["invalidated_at"] else None,
                 "edited_at": row["edited_at"].isoformat() if row["edited_at"] else None,
+                # Both come off the row already selected above, so neither adds a
+                # query: updated_at is the write watermark curation and freshness
+                # checks compare against, and source_memory_ids is an observation's
+                # lineage (empty for a source fact).
+                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                "source_memory_ids": [str(sid) for sid in row["source_memory_ids"] or []],
             }
         )
 
@@ -463,7 +477,7 @@ async def list_entities(
     # Get paginated entities
     rows = await conn.fetch(
         f"""
-        SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
+        SELECT id, canonical_name, entity_kind, mention_count, first_seen, last_seen, metadata
         FROM {fq_table("entities")}
         WHERE {where_clause}
         ORDER BY mention_count DESC, last_seen DESC, id ASC
@@ -490,6 +504,9 @@ async def list_entities(
             {
                 "id": str(row["id"]),
                 "canonical_name": row["canonical_name"],
+                # How the entity was classified (label vs free-form, etc.); same row,
+                # so listing it costs nothing extra.
+                "entity_kind": row["entity_kind"],
                 "mention_count": row["mention_count"],
                 "first_seen": row["first_seen"].isoformat() if row["first_seen"] else None,
                 "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,

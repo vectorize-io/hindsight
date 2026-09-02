@@ -304,6 +304,7 @@ class TestReflectUsesReflectLLMConfig:
         from unittest.mock import AsyncMock
 
         from hindsight_api import MemoryEngine
+        from hindsight_api.engine.memory_engine import DirectivePage
         from hindsight_api.engine.reflect.models import ReflectAgentResult
         from hindsight_api.models import RequestContext
 
@@ -320,7 +321,9 @@ class TestReflectUsesReflectLLMConfig:
         engine.get_bank_stats = AsyncMock(
             return_value=SimpleNamespace(last_consolidated_at=None, pending_consolidation=0)
         )  # type: ignore[method-assign]
-        engine.list_directives = AsyncMock(return_value=[])  # type: ignore[method-assign]
+        engine.list_directives = AsyncMock(  # type: ignore[method-assign]
+            return_value=DirectivePage(items=[], total=0)
+        )
         engine._get_pool = AsyncMock(return_value=SimpleNamespace())  # type: ignore[method-assign]
         engine._config_resolver = SimpleNamespace(
             resolve_full_config=AsyncMock(return_value=SimpleNamespace(llm_gemini_safety_settings=None)),

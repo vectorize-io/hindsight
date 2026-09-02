@@ -1,9 +1,11 @@
 {
   "version": "1",
   "bank": {
-    "retain_mission": "Extract technical decisions and their rationale, architectural choices, coding patterns and conventions, project structure facts, library/tool preferences, and recurring issues. Ignore transient debugging output and boilerplate.",
+    "retain_mission": "Extract technical decisions and their rationale, architectural choices, coding patterns and conventions, project structure facts, library/tool preferences, recurring issues, and the developer's code-review preferences (what they flag, what they wave through). Ignore transient debugging output and boilerplate.",
     "enable_observations": true,
-    "observations_mission": "Track stable project facts: tech stack, team conventions, architecture patterns, and how the codebase evolves over time."
+    "observations_mission": "Track stable project facts: tech stack, team conventions, architecture patterns, review standards, and how the codebase evolves over time.",
+    "disposition_literalism": 5,
+    "disposition_skepticism": 3
   },
   "mental_models": [
     {
@@ -19,6 +21,15 @@
       "id": "developer-preferences",
       "name": "Developer Preferences",
       "source_query": "What are the developer's preferences for tools, libraries, coding style, and workflow? How do they like code to be written and reviewed?",
+      "max_tokens": 1024,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "review-patterns",
+      "name": "Review Patterns",
+      "source_query": "In code review, what does this developer consistently flag or care about (bugs, style, security, tests), and what do they consider acceptable? What categories of feedback recur?",
       "max_tokens": 1024,
       "trigger": {
         "refresh_after_consolidation": true

@@ -43,6 +43,7 @@ async def _seed_bank_and_document(conn, bank_id: str, document_id: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
     """
     Regression for #977.

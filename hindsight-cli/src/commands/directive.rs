@@ -50,7 +50,11 @@ pub fn list(
 
                         // Show content preview
                         let preview: String = directive.content.chars().take(80).collect();
-                        let ellipsis = if directive.content.len() > 80 { "..." } else { "" };
+                        let ellipsis = if directive.content.len() > 80 {
+                            "..."
+                        } else {
+                            ""
+                        };
                         println!("    {}{}", ui::dim(&preview), ellipsis);
 
                         println!();
@@ -132,7 +136,10 @@ pub fn create(
     match response {
         Ok(directive) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Directive '{}' created successfully", directive.id));
+                ui::print_success(&format!(
+                    "Directive '{}' created successfully",
+                    directive.id
+                ));
                 println!();
                 print_directive_detail(&directive);
             } else {
@@ -186,7 +193,10 @@ pub fn update(
     match response {
         Ok(directive) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Directive '{}' updated successfully", directive_id));
+                ui::print_success(&format!(
+                    "Directive '{}' updated successfully",
+                    directive_id
+                ));
                 println!();
                 print_directive_detail(&directive);
             } else {
@@ -237,7 +247,10 @@ pub fn delete(
     match response {
         Ok(_) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Directive '{}' deleted successfully", directive_id));
+                ui::print_success(&format!(
+                    "Directive '{}' deleted successfully",
+                    directive_id
+                ));
             } else {
                 println!("{{\"success\": true}}");
             }

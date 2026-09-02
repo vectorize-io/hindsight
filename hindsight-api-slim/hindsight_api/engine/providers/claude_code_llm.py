@@ -11,14 +11,23 @@ import json
 import logging
 import tempfile
 import time
-from typing import Any
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Any, Callable
 
 from pydantic import ValidationError
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+    ProviderContentPolicyError,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +72,27 @@ def _result_error_detail(message: Any) -> str:
     return f"Claude Code reported an error: {detail}"
 
 
+#: The link a content-policy (AUP) refusal always carries, e.g. "API Error:
+#: Sonnet 4.5 can't help with this. Start a new session to continue.\n\nLearn
+#: more: https://www.anthropic.com/legal/aup". Matching the link rather than the
+#: apologetic prose keeps the test narrow: a false positive would turn an
+#: ordinary transient error into a permanent one (issue #3690).
+_POLICY_REFUSAL_MARKER = "anthropic.com/legal/aup"
+
+
+def _result_error(message: Any) -> Exception:
+    """Build the exception for an ``is_error`` ResultMessage.
+
+    A content-policy refusal is permanent, so it gets its own type: the retry
+    loops below re-raise it untouched instead of replaying the same prompt, and
+    the worker fails the task rather than rescheduling it.
+    """
+    text = _result_error_detail(message)
+    if _POLICY_REFUSAL_MARKER in text.lower():
+        return ProviderContentPolicyError(text)
+    return RuntimeError(text)
+
+
 class ClaudeCodeLLM(LLMInterface):
     """
     LLM provider using Claude Code authentication.
@@ -77,11 +107,12 @@ class ClaudeCodeLLM(LLMInterface):
         api_key: str,  # Will be ignored, uses CLI auth
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         **kwargs: Any,
     ):
         """Initialize Claude Code LLM provider."""
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
+        self._warn_reasoning_effort_unsupported()
 
         # Verify Claude Agent SDK is available
         try:
@@ -162,6 +193,7 @@ class ClaudeCodeLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -216,7 +248,7 @@ class ClaudeCodeLLM(LLMInterface):
 
         # Add JSON schema instruction if response_format is provided
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = response_format.model_json_schema()
+            schema = provider_json_schema(response_format)
             schema_instruction = (
                 f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}\n\n"
                 "Respond with ONLY the JSON, no markdown formatting."
@@ -255,16 +287,18 @@ class ClaudeCodeLLM(LLMInterface):
                 # Collect streaming response
                 full_text = ""
 
-                async for message in query(prompt=user_content, options=options):
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                full_text += block.text
-                    elif isinstance(message, ResultMessage) and message.is_error:
-                        # Surface the CLI's actual error text (e.g. quota
-                        # exhaustion) instead of the SDK's subtype-based
-                        # fallback exception (issue #2702).
-                        raise RuntimeError(_result_error_detail(message))
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.claude_code.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    async for message in query(prompt=user_content, options=options):
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    full_text += block.text
+                        elif isinstance(message, ResultMessage) and message.is_error:
+                            # Surface the CLI's actual error text (e.g. quota
+                            # exhaustion) instead of the SDK's subtype-based
+                            # fallback exception (issue #2702).
+                            raise _result_error(message)
 
                 # The Claude Agent SDK doesn't report exact counts; stash the same
                 # char/4 estimate the success path traces so a later parse/validate
@@ -366,6 +400,12 @@ class ClaudeCodeLLM(LLMInterface):
                 # instead of burning quota on identical calls (#1412).
                 raise
 
+            except ProviderContentPolicyError:
+                # Content-policy refusal: the model declined this exact content,
+                # so every replay earns the same refusal. Raise immediately
+                # instead of spending the full retry budget on it (#3690).
+                raise
+
             except Exception as e:
                 last_exception = e
 
@@ -402,6 +442,7 @@ class ClaudeCodeLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support using Claude Agent SDK.
@@ -578,47 +619,49 @@ class ClaudeCodeLLM(LLMInterface):
                 full_text = ""
                 tool_calls: list[LLMToolCall] = []
 
-                # Use ClaudeSDKClient for tool calling support
-                # Note: query() does NOT support custom tools, only ClaudeSDKClient does
-                async with ClaudeSDKClient(options=options) as client:
-                    # Send the query
-                    await client.query(user_content)
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.claude_code.tools.attempt={attempt + 1}/{max_retries + 1}")
+                    # Use ClaudeSDKClient for tool calling support
+                    # Note: query() does NOT support custom tools, only ClaudeSDKClient does
+                    async with ClaudeSDKClient(options=options) as client:
+                        # Send the query
+                        await client.query(user_content)
 
-                    # Receive response
-                    async for message in client.receive_response():
-                        if isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
-                                    full_text += block.text
-                                elif isinstance(block, ToolUseBlock):
-                                    # SDK returns tool names with MCP prefix (mcp__hindsight_tools__{name})
-                                    # Strip the prefix to return original tool name expected by caller
-                                    tool_name = block.name
-                                    if tool_name.startswith("mcp__hindsight_tools__"):
-                                        tool_name = tool_name.replace("mcp__hindsight_tools__", "", 1)
+                        # Receive response
+                        async for message in client.receive_response():
+                            if isinstance(message, AssistantMessage):
+                                for block in message.content:
+                                    if isinstance(block, TextBlock):
+                                        full_text += block.text
+                                    elif isinstance(block, ToolUseBlock):
+                                        # SDK returns tool names with MCP prefix (mcp__hindsight_tools__{name})
+                                        # Strip the prefix to return original tool name expected by caller
+                                        tool_name = block.name
+                                        if tool_name.startswith("mcp__hindsight_tools__"):
+                                            tool_name = tool_name.replace("mcp__hindsight_tools__", "", 1)
 
-                                    tool_calls.append(
-                                        LLMToolCall(
-                                            id=block.id,
-                                            name=tool_name,
-                                            arguments=block.input,
+                                        tool_calls.append(
+                                            LLMToolCall(
+                                                id=block.id,
+                                                name=tool_name,
+                                                arguments=block.input,
+                                            )
                                         )
-                                    )
-                            if tool_calls:
-                                # This round proposed tool call(s). Stop consuming the
-                                # stream so the SDK does not run another turn against our
-                                # placeholder handlers (issue #2966) — the caller executes
-                                # the real tools and calls us again with the results.
-                                break
-                        elif isinstance(message, ResultMessage) and message.is_error:
-                            # With max_turns=1 the CLI reports error_max_turns whenever
-                            # the model spent its single turn issuing a tool call (there
-                            # was no follow-up turn to emit final text). That is expected
-                            # here and not a failure: we already captured the tool call
-                            # above and break before reaching this branch. Only a genuine
-                            # error with nothing to return should surface (issue #2702).
-                            if not tool_calls:
-                                raise RuntimeError(_result_error_detail(message))
+                                if tool_calls:
+                                    # This round proposed tool call(s). Stop consuming the
+                                    # stream so the SDK does not run another turn against our
+                                    # placeholder handlers (issue #2966) — the caller executes
+                                    # the real tools and calls us again with the results.
+                                    break
+                            elif isinstance(message, ResultMessage) and message.is_error:
+                                # With max_turns=1 the CLI reports error_max_turns whenever
+                                # the model spent its single turn issuing a tool call (there
+                                # was no follow-up turn to emit final text). That is expected
+                                # here and not a failure: we already captured the tool call
+                                # above and break before reaching this branch. Only a genuine
+                                # error with nothing to return should surface (issue #2702).
+                                if not tool_calls:
+                                    raise _result_error(message)
 
                 # Record metrics
                 duration = time.time() - start_time
@@ -652,6 +695,10 @@ class ClaudeCodeLLM(LLMInterface):
                     output_tokens=estimated_output,
                 )
 
+            except ProviderContentPolicyError:
+                # Permanent refusal — see the same guard in call() (#3690).
+                raise
+
             except Exception as e:
                 last_exception = e
 
@@ -680,3 +727,6 @@ class ClaudeCodeLLM(LLMInterface):
     async def cleanup(self) -> None:
         """Clean up resources (no HTTP client to close for Claude Agent SDK)."""
         pass
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

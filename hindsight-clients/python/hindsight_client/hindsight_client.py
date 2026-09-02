@@ -24,6 +24,7 @@ DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
 from hindsight_client_api.api import (
     banks_api,
     directives_api,
+    document_transfer_api,
     documents_api,
     entities_api,
     files_api,
@@ -40,16 +41,15 @@ from hindsight_client_api.models import (
     reflect_request,
     retain_request,
 )
-from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
-from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
+from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.version_response import VersionResponse
-
 
 # Sentinel for "argument not provided", where None is itself a meaningful value
 # the server distinguishes from absence (e.g. parent_id=None means "the root").
@@ -79,6 +79,35 @@ def _warn_if_operation_id_dropped(retain_async: bool, operation_id: str | None) 
             "operation_id is ignored for synchronous retain; pass retain_async=True to enable idempotent retries.",
             stacklevel=3,
         )
+
+
+def _trigger_input(trigger: dict[str, Any]) -> Any:
+    """Build a MentalModelTriggerInput carrying ONLY the settings the caller named.
+
+    The routes that take a trigger patch it over what is already there — the
+    page defaults on page creation, the stored trigger on either update — and
+    they read "named" from the fields the request actually carried
+    (``model_dump(exclude_unset=True)``, #3506/#3549). The generated model
+    defeats that on its own: ``to_dict`` drops ``None`` but keeps defaults, so a
+    caller asking for one setting also shipped ``mode="full"``,
+    ``refresh_after_consolidation=False``, ``exclude_mental_models=False`` and
+    ``keep_trace=False`` — quietly rebuilding a delta page from scratch, over
+    its sibling pages, which is the very bug #3506 fixed one layer up.
+
+    Passing ``None`` for the defaulted fields the caller left out makes
+    ``to_dict`` drop them. Only fields whose default is non-None need this: a
+    nullable field left unset is already omitted, while explicitly passing it as
+    ``None`` would serialize a null and clear the stored value.
+    """
+    from hindsight_client_api.models import mental_model_trigger_input
+
+    model = mental_model_trigger_input.MentalModelTriggerInput
+    unnamed_defaults = {
+        name: None
+        for name, field in model.model_fields.items()
+        if name not in trigger and field.default is not None
+    }
+    return model(**unnamed_defaults, **trigger)
 
 
 class Hindsight:
@@ -187,6 +216,7 @@ class Hindsight:
         self._operations_api = operations_api.OperationsApi(self._api_client)
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
+        self._document_transfer_api = document_transfer_api.DocumentTransferApi(self._api_client)
 
     # -- Low-level API accessors ------------------------------------------------
     # These expose the full, auto-generated API surface for operations not
@@ -307,6 +337,7 @@ class Hindsight:
         document_id: str | None = None,
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
+        resolve_entities: bool | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
         retain_async: bool = False,
@@ -323,6 +354,8 @@ class Hindsight:
             document_id: Optional document ID for grouping
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
+            resolve_entities: Whether the supplied entities are resolved against the bank's
+                existing entities (default True). False stores them exactly as written.
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
@@ -339,6 +372,8 @@ class Hindsight:
             "entities": entities,
             "tags": tags,
         }
+        if resolve_entities is not None:
+            item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
         batch_kwargs: dict[str, Any] = {
@@ -367,7 +402,8 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             items: List of memory items, each a dict with 'content' (required) and optional keys:
-                'timestamp', 'context', 'metadata', 'document_id', 'entities', 'tags',
+                'timestamp', 'context', 'metadata', 'document_id', 'entities',
+                'resolve_entities' (bool, default True), 'tags',
                 'observation_scopes' (str or list[list[str]]), 'strategy'.
             document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             document_tags: Optional list of tags applied to all items in this batch (merged with per-item tags)
@@ -448,6 +484,7 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool = False,
         min_scores: dict[str, float] | None = None,
+        temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (sync wrapper — prefer :meth:`arecall` in async code).
@@ -480,6 +517,11 @@ class Hindsight:
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
                 Unknown keys raise ``ValueError`` (rather than silently applying no floor).
+            temporal_window: Window for the temporal retrieval arm as ``{"start": ..., "end": ...}``
+                (ISO strings or datetimes), used instead of extracting dates from ``query``. It ranks
+                memories dated inside the window higher; it does **not** drop memories dated outside
+                it, so it is not a way to restrict results to a period. Ignored when the bank has
+                temporal retrieval disabled.
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -504,6 +546,7 @@ class Hindsight:
                 tag_groups=tag_groups,
                 prefer_observations=prefer_observations,
                 min_scores=min_scores,
+                temporal_window=temporal_window,
             )
         )
 
@@ -521,6 +564,7 @@ class Hindsight:
         include_tool_calls: bool = False,
         include_tool_call_output: bool = True,
         tag_groups: list[dict[str, Any]] | None = None,
+        apply_all_directives: bool = False,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
         exclude_mental_model_ids: list[str] | None = None,
@@ -550,6 +594,9 @@ class Hindsight:
                 outputs are included in the trace. Set to False for a smaller payload (inputs only).
                 Ignored when ``include_tool_calls`` is False (default: True).
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
+            apply_all_directives: Apply every active directive regardless of tags. By default
+                directives are tag-scoped like memories: untagged ones always apply, tagged ones
+                only when the request's tags match (default: False).
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
@@ -573,6 +620,7 @@ class Hindsight:
                 include_tool_calls=include_tool_calls,
                 include_tool_call_output=include_tool_call_output,
                 tag_groups=tag_groups,
+                apply_all_directives=apply_all_directives,
                 fact_types=fact_types,
                 exclude_mental_models=exclude_mental_models,
                 exclude_mental_model_ids=exclude_mental_model_ids,
@@ -621,6 +669,10 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_text_search: bool | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -642,6 +694,13 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
+                leaves pure vector search — the arm is left out of the query entirely.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -662,6 +721,10 @@ class Hindsight:
                 retain_structured_chunk_size=retain_structured_chunk_size,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,
+                enable_text_search=enable_text_search,
+                enable_temporal_retrieval=enable_temporal_retrieval,
+                enable_graph_retrieval=enable_graph_retrieval,
+                enable_reranking=enable_reranking,
                 background=background,
             )
         )
@@ -683,6 +746,10 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_text_search: bool | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
         import aiohttp
@@ -723,6 +790,14 @@ class Hindsight:
             body["enable_observations"] = enable_observations
         if observations_mission is not None:
             body["observations_mission"] = observations_mission
+        if enable_text_search is not None:
+            body["enable_text_search"] = enable_text_search
+        if enable_temporal_retrieval is not None:
+            body["enable_temporal_retrieval"] = enable_temporal_retrieval
+        if enable_graph_retrieval is not None:
+            body["enable_graph_retrieval"] = enable_graph_retrieval
+        if enable_reranking is not None:
+            body["enable_reranking"] = enable_reranking
 
         url = f"{self._base_url}/v1/default/banks/{bank_id}"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -760,6 +835,10 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_text_search: bool | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -781,6 +860,13 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
+                leaves pure vector search — the arm is left out of the query entirely.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -800,6 +886,10 @@ class Hindsight:
             retain_structured_chunk_size=retain_structured_chunk_size,
             enable_observations=enable_observations,
             observations_mission=observations_mission,
+            enable_text_search=enable_text_search,
+            enable_temporal_retrieval=enable_temporal_retrieval,
+            enable_graph_retrieval=enable_graph_retrieval,
+            enable_reranking=enable_reranking,
             background=background,
         )
 
@@ -826,7 +916,8 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             items: List of memory items, each a dict with 'content' (required) and optional keys:
-                'timestamp', 'context', 'metadata', 'document_id', 'entities', 'tags',
+                'timestamp', 'context', 'metadata', 'document_id', 'entities',
+                'resolve_entities' (bool, default True), 'tags',
                 'observation_scopes' (str or list[list[str]]), 'strategy'.
             document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             document_tags: Optional list of tags applied to all items in this batch (merged with per-item tags)
@@ -859,6 +950,7 @@ class Hindsight:
                     # Use item's document_id if provided, otherwise fall back to batch-level document_id
                     document_id=item.get("document_id") or document_id,
                     entities=entities,
+                    resolve_entities=item.get("resolve_entities", True),
                     tags=item.get("tags"),
                     observation_scopes=obs_scopes,
                     strategy=item.get("strategy"),
@@ -887,6 +979,7 @@ class Hindsight:
         document_id: str | None = None,
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
+        resolve_entities: bool | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
         retain_async: bool = False,
@@ -903,6 +996,8 @@ class Hindsight:
             document_id: Optional document ID for grouping
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
+            resolve_entities: Whether the supplied entities are resolved against the bank's
+                existing entities (default True). False stores them exactly as written.
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
@@ -919,6 +1014,8 @@ class Hindsight:
             "entities": entities,
             "tags": tags,
         }
+        if resolve_entities is not None:
+            item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
         batch_kwargs: dict[str, Any] = {
@@ -952,6 +1049,7 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool = False,
         min_scores: dict[str, float] | None = None,
+        temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (async — preferred over :meth:`recall`).
@@ -989,6 +1087,11 @@ class Hindsight:
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
                 Unknown keys raise ``ValueError`` (rather than silently applying no floor).
+            temporal_window: Window for the temporal retrieval arm as ``{"start": ..., "end": ...}``
+                (ISO strings or datetimes), used instead of extracting dates from ``query``. It ranks
+                memories dated inside the window higher; it does **not** drop memories dated outside
+                it, so it is not a way to restrict results to a period. Ignored when the bank has
+                temporal retrieval disabled.
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -1031,6 +1134,12 @@ class Hindsight:
                 )
             min_scores_obj = MinScores.from_dict(min_scores)
 
+        temporal_window_obj = None
+        if temporal_window is not None:
+            from hindsight_client_api.models.temporal_window import TemporalWindow
+
+            temporal_window_obj = TemporalWindow.from_dict(temporal_window)
+
         request_obj = recall_request.RecallRequest(
             query=query,
             types=types,
@@ -1044,6 +1153,7 @@ class Hindsight:
             tags_match=tags_match,
             tag_groups=tag_groups_objs,
             min_scores=min_scores_obj,
+            temporal_window=temporal_window_obj,
         )
 
         return await self._memory_api.recall_memories(bank_id, request_obj, _request_timeout=self._timeout)
@@ -1062,6 +1172,7 @@ class Hindsight:
         include_tool_calls: bool = False,
         include_tool_call_output: bool = True,
         tag_groups: list[dict[str, Any]] | None = None,
+        apply_all_directives: bool = False,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
         exclude_mental_model_ids: list[str] | None = None,
@@ -1091,6 +1202,9 @@ class Hindsight:
                 outputs are included in the trace. Set to False for a smaller payload (inputs only).
                 Ignored when ``include_tool_calls`` is False (default: True).
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
+            apply_all_directives: Apply every active directive regardless of tags. By default
+                directives are tag-scoped like memories: untagged ones always apply, tagged ones
+                only when the request's tags match (default: False).
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
@@ -1123,6 +1237,7 @@ class Hindsight:
             tags_match=tags_match,
             include=include,
             tag_groups=tag_groups_objs,
+            apply_all_directives=apply_all_directives or None,
             fact_types=fact_types,
             exclude_mental_models=exclude_mental_models or None,
             exclude_mental_model_ids=exclude_mental_model_ids,
@@ -1157,11 +1272,9 @@ class Hindsight:
         Returns:
             CreateMentalModelResponse with operation_id
         """
-        from hindsight_client_api.models import create_mental_model_request, mental_model_trigger_input
+        from hindsight_client_api.models import create_mental_model_request
 
-        trigger_obj = None
-        if trigger:
-            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+        trigger_obj = _trigger_input(trigger) if trigger else None
 
         request_obj = create_mental_model_request.CreateMentalModelRequest(
             id=id,
@@ -1319,11 +1432,9 @@ class Hindsight:
         Returns:
             MentalModelResponse
         """
-        from hindsight_client_api.models import mental_model_trigger_input, update_mental_model_request
+        from hindsight_client_api.models import update_mental_model_request
 
-        trigger_obj = None
-        if trigger:
-            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+        trigger_obj = _trigger_input(trigger) if trigger else None
 
         request_obj = update_mental_model_request.UpdateMentalModelRequest(
             name=name,
@@ -1426,21 +1537,25 @@ class Hindsight:
             name: Page name (must be unique within its folder)
             source_query: The question the page answers, re-asked on every refresh
             parent_id: Optional parent folder ID (None creates it at the root)
-            tags: Optional tags scoping which memories the page is built from. A
-                ``type:<x>`` tag also sets the page's rendered type.
+            tags: Optional tags scoping which memories the page is built from —
+                a filter, not labels, and a ``type:<x>`` tag sets the page's
+                rendered type while still filtering. A tagged page defaults to
+                ``all_strict``: a memory must carry EVERY tag and untagged
+                memories are excluded, so tags the bank's memories don't carry
+                build an empty page. Pass ``trigger={"tags_match": "all"}`` to
+                keep the tags but include untagged memories.
             max_tokens: Optional content budget (defaults to 4096 server-side)
             trigger: Optional trigger settings. Omit to use the page defaults
                 (observation-only, delta mode, refresh after consolidation); a
-                supplied trigger replaces those defaults rather than merging.
+                supplied trigger is applied as a patch over them, so the fields
+                you leave out keep their defaults.
 
         Returns:
             CreateKnowledgePageResponse with page_id, mental_model_id and operation_id
         """
-        from hindsight_client_api.models import create_page_request, mental_model_trigger_input
+        from hindsight_client_api.models import create_page_request
 
-        trigger_obj = None
-        if trigger:
-            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+        trigger_obj = _trigger_input(trigger) if trigger else None
 
         request_obj = create_page_request.CreatePageRequest(
             name=name,
@@ -1497,6 +1612,7 @@ class Hindsight:
         source_query: str | None = None,
         tags: list[str] | None = None,
         max_tokens: int | None = None,
+        trigger: dict[str, Any] | None = None,
     ):
         """
         Rename/move a knowledge node and/or update a page's options (sync wrapper —
@@ -1513,6 +1629,8 @@ class Hindsight:
             source_query: Pages only — new question. Changing it rebuilds the page.
             tags: Pages only — replaces the page's tags (pass [] to clear)
             max_tokens: Pages only — new content budget
+            trigger: Pages only — refresh settings to change, applied as a patch: the
+                keys you pass are updated and the rest keep the page's current values
 
         Returns:
             KnowledgeNode
@@ -1534,6 +1652,11 @@ class Hindsight:
             fields["tags"] = tags
         if max_tokens is not None:
             fields["max_tokens"] = max_tokens
+        if trigger is not None:
+            # Built through the helper rather than handed over as a dict: pydantic
+            # would fill the unnamed fields with the model's defaults and the page
+            # would lose the settings this patch never mentioned.
+            fields["trigger"] = _trigger_input(trigger)
 
         request_obj = update_node_request.UpdateNodeRequest(**fields)
 
@@ -1568,6 +1691,110 @@ class Hindsight:
             KnowledgePageBundleResponse with files (index.md, one file per page, history logs)
         """
         return _run_async(self._knowledge_base_api.export_knowledge_base(bank_id, _request_timeout=self._timeout))
+
+    # Document transfer (export / import between banks — no LLM re-extraction)
+
+    @property
+    def document_transfer(self) -> document_transfer_api.DocumentTransferApi:
+        """Low-level Document Transfer API — submit an async export, download an archive, import."""
+        return self._document_transfer_api
+
+    def export_documents(
+        self,
+        bank_id: str,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+        include_knowledge_base: bool = False,
+        *,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """
+        Export a bank's documents as a transfer ZIP archive (blocking convenience).
+
+        Export runs as a background operation server-side (a whole-bank export can be
+        large). This helper submits it, polls the operation to completion, downloads
+        the archive, and returns its bytes — so callers get a single synchronous call.
+        For the raw async flow use ``client.document_transfer`` and ``client.operations``.
+
+        Args:
+            bank_id: Source bank.
+            document_ids: Specific document ids to export; omit for the whole bank.
+            include_observations: Also export consolidated observations (whole-bank only).
+            include_knowledge_base: Also export Mental Models and Knowledge Pages (whole-bank only).
+            poll_interval: Seconds between operation-status polls.
+            timeout: Maximum seconds to wait for the export to finish.
+
+        Returns:
+            The transfer ZIP archive as bytes (import it via ``client.document_transfer.import_documents``).
+
+        Raises:
+            TimeoutError: if the export does not finish within ``timeout``.
+            RuntimeError: if the export operation fails or completes without an archive.
+        """
+        return _run_async(
+            self.aexport_documents(
+                bank_id,
+                document_ids,
+                include_observations,
+                include_knowledge_base,
+                poll_interval=poll_interval,
+                timeout=timeout,
+            )
+        )
+
+    async def aexport_documents(
+        self,
+        bank_id: str,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+        include_knowledge_base: bool = False,
+        *,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """Async variant of :meth:`export_documents` — submit, poll, download, return bytes."""
+        submission = await self._document_transfer_api.export_documents(
+            bank_id,
+            document_id=document_ids,
+            include_observations=include_observations,
+            include_knowledge_base=include_knowledge_base,
+            _request_timeout=self._timeout,
+        )
+        operation_id = submission.operation_id
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            status = await self._operations_api.get_operation_status(
+                bank_id, operation_id, _request_timeout=self._timeout
+            )
+            if status.status == "completed":
+                break
+            if status.status in ("failed", "cancelled"):
+                raise RuntimeError(f"Export operation {operation_id} {status.status}: {status.error_message}")
+            if loop.time() >= deadline:
+                raise TimeoutError(f"Export operation {operation_id} did not complete within {timeout}s")
+            await asyncio.sleep(poll_interval)
+
+        meta = status.result_metadata or {}
+        download_url = meta.get("download_url")
+        if not download_url:
+            raise RuntimeError(f"Export operation {operation_id} completed without a download_url")
+        # Fetch the server-provided download_url directly (it carries the raw,
+        # slash-bearing storage key). Going through the generated download_file
+        # would percent-encode the slashes to %2F, which fronting proxies often
+        # reject. param_serialize applies the client's auth headers; call_api
+        # returns the raw response whose bytes we read (the typed return is
+        # `object`, which can't model an application/zip body).
+        request = self._api_client.param_serialize(
+            method="GET",
+            resource_path=download_url,
+            header_params={"Accept": "application/zip"},
+            auth_settings=[],
+        )
+        response = await self._api_client.call_api(*request, _request_timeout=self._timeout)
+        return bytes(await response.read())
 
     # Directives methods
 
@@ -1606,18 +1833,34 @@ class Hindsight:
 
         return _run_async(self._directives_api.create_directive(bank_id, request_obj, _request_timeout=self._timeout))
 
-    def list_directives(self, bank_id: str, tags: list[str] | None = None):
+    def list_directives(
+        self,
+        bank_id: str,
+        tags: list[str] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ):
         """
         List all directives in a bank (sync wrapper — use ``await client.directives.list_directives(...)`` in async code).
 
         Args:
             bank_id: The memory bank ID
             tags: Optional tags to filter by
+            limit: Maximum number of directives to return
+            offset: Number of directives to skip (for pagination)
 
         Returns:
-            ListDirectivesResponse with items
+            ListDirectivesResponse with items and the total matching the filter
         """
-        return _run_async(self._directives_api.list_directives(bank_id, tags=tags, _request_timeout=self._timeout))
+        return _run_async(
+            self._directives_api.list_directives(
+                bank_id,
+                tags=tags,
+                limit=limit,
+                offset=offset,
+                _request_timeout=self._timeout,
+            )
+        )
 
     def get_directive(self, bank_id: str, directive_id: str):
         """
@@ -1720,15 +1963,40 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         retain_default_strategy: str | None = None,
         retain_strategies: dict[str, Any] | None = None,
+        retain_chunk_batch_size: int | None = None,
+        store_document_text: bool | None = None,
         # Entity settings
-        entity_labels: list[str] | None = None,
+        entity_labels: list[dict[str, Any]] | None = None,
         entities_allow_free_form: bool | None = None,
         # Observation / consolidation settings
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        max_observations_per_scope: int | None = None,
+        observation_scope_limits: list[dict[str, Any]] | None = None,
+        enable_auto_consolidation: bool | None = None,
+        consolidation_llm_parallelism: int | None = None,
+        consolidation_max_memories_per_round: int | None = None,
+        mental_model_min_refresh_interval_seconds: int | None = None,
+        enable_text_search: bool | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         consolidation_llm_batch_size: int | None = None,
         consolidation_source_facts_max_tokens: int | None = None,
         consolidation_source_facts_max_tokens_per_observation: int | None = None,
+        # Recall settings
+        recall_max_tokens: int | None = None,
+        recall_include_chunks: bool | None = None,
+        recall_chunks_max_tokens: int | None = None,
+        recall_budget_function: str | None = None,
+        recall_budget_fixed_low: int | None = None,
+        recall_budget_fixed_mid: int | None = None,
+        recall_budget_fixed_high: int | None = None,
+        recall_budget_adaptive_low: float | None = None,
+        recall_budget_adaptive_mid: float | None = None,
+        recall_budget_adaptive_high: float | None = None,
+        recall_budget_min: int | None = None,
+        recall_budget_max: int | None = None,
         # Disposition settings
         disposition_skepticism: int | None = None,
         disposition_literalism: int | None = None,
@@ -1736,7 +2004,10 @@ class Hindsight:
         # MCP settings
         mcp_enabled_tools: list[str] | None = None,
         # Gemini safety settings
-        llm_gemini_safety_settings: dict[str, str] | None = None,
+        llm_gemini_safety_settings: list[dict[str, str]] | None = None,
+        # Security / audit
+        memory_defense: dict[str, Any] | None = None,
+        audit_log_enabled: bool | None = None,
     ) -> dict[str, Any]:
         """
         Update configuration overrides for a bank (sync wrapper — use ``await client.banks.update_bank_config(...)`` in async code).
@@ -1756,21 +2027,53 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             retain_default_strategy: Default retain strategy name.
             retain_strategies: Named strategy definitions (dict of strategy name to config).
-            entity_labels: Controlled vocabulary for entity type classification.
-                When set, extracted entities are classified into these labels.
+            retain_chunk_batch_size: Number of chunks per sub-batch in chunks extraction mode.
+            store_document_text: Persist the original document text alongside extracted facts.
+            entity_labels: Controlled vocabulary for entity labels — a list of label-group
+                dicts, each with a ``key`` and a ``type``: ``"value"``/``"multi-values"`` pick
+                from the group's declared ``values``, while ``"text"``/``"multi-text"`` are
+                open-vocabulary (one string / any number of strings). With ``tag: True`` the
+                extracted ``key:value`` labels are also written as tags, so they are
+                filterable via ``tags``/``tags_match`` at recall.
             entities_allow_free_form: Whether to allow entity types outside entity_labels (default: True).
+            max_observations_per_scope: Cap on observations retained per scope (-1 for unlimited).
+            observation_scope_limits: Per-scope observation caps, overriding max_observations_per_scope.
+            enable_auto_consolidation: Consolidate automatically after retain() rather than on demand.
+            consolidation_llm_parallelism: Concurrent LLM calls during consolidation.
+            consolidation_max_memories_per_round: Memories consolidated per round.
+            mental_model_min_refresh_interval_seconds: Debounce between mental-model refreshes.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations.
+            enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
+                leaves pure vector search.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder.
             consolidation_llm_batch_size: Number of LLM calls to batch during consolidation.
             consolidation_source_facts_max_tokens: Max tokens for source facts across all observations
                 in a consolidation pass.
             consolidation_source_facts_max_tokens_per_observation: Max tokens of source facts per
                 individual observation in the consolidation prompt.
+            recall_max_tokens: Token budget for facts returned by recall.
+            recall_include_chunks: Include source chunks in recall results.
+            recall_chunks_max_tokens: Token budget for those chunks.
+            recall_budget_function: How the per-query result budget is derived: 'fixed' or 'adaptive'.
+            recall_budget_fixed_low: Fixed budget for low-breadth queries.
+            recall_budget_fixed_mid: Fixed budget for medium-breadth queries.
+            recall_budget_fixed_high: Fixed budget for high-breadth queries.
+            recall_budget_adaptive_low: Adaptive budget fraction for low-breadth queries.
+            recall_budget_adaptive_mid: Adaptive budget fraction for medium-breadth queries.
+            recall_budget_adaptive_high: Adaptive budget fraction for high-breadth queries.
+            recall_budget_min: Lower clamp on the resolved budget.
+            recall_budget_max: Upper clamp on the resolved budget.
             disposition_skepticism: How skeptical vs trusting (1=trusting, 5=skeptical).
             disposition_literalism: How literally to interpret information (1=flexible, 5=literal).
             disposition_empathy: How much to consider emotional context (1=detached, 5=empathetic).
             mcp_enabled_tools: List of MCP tool names to enable for this bank.
-            llm_gemini_safety_settings: Gemini/VertexAI safety setting overrides (category → threshold).
+            llm_gemini_safety_settings: Gemini/VertexAI safety overrides, as a list of
+                ``{"category": ..., "threshold": ...}`` dicts (the shape the provider takes).
+            memory_defense: Memory-defense (prompt-injection / secret redaction) settings.
+            audit_log_enabled: Write an audit log entry for each operation on this bank.
 
         Returns:
             dict with ``bank_id``, ``config`` (fully resolved), and ``overrides`` (bank-level only)
@@ -1787,18 +2090,44 @@ class Hindsight:
                 "retain_structured_chunk_size": retain_structured_chunk_size,
                 "retain_default_strategy": retain_default_strategy,
                 "retain_strategies": retain_strategies,
+                "retain_chunk_batch_size": retain_chunk_batch_size,
+                "store_document_text": store_document_text,
                 "entity_labels": entity_labels,
                 "entities_allow_free_form": entities_allow_free_form,
                 "enable_observations": enable_observations,
                 "observations_mission": observations_mission,
+                "max_observations_per_scope": max_observations_per_scope,
+                "observation_scope_limits": observation_scope_limits,
+                "enable_auto_consolidation": enable_auto_consolidation,
+                "consolidation_llm_parallelism": consolidation_llm_parallelism,
+                "consolidation_max_memories_per_round": consolidation_max_memories_per_round,
+                "mental_model_min_refresh_interval_seconds": mental_model_min_refresh_interval_seconds,
+                "enable_text_search": enable_text_search,
+                "enable_temporal_retrieval": enable_temporal_retrieval,
+                "enable_graph_retrieval": enable_graph_retrieval,
+                "enable_reranking": enable_reranking,
                 "consolidation_llm_batch_size": consolidation_llm_batch_size,
                 "consolidation_source_facts_max_tokens": consolidation_source_facts_max_tokens,
                 "consolidation_source_facts_max_tokens_per_observation": consolidation_source_facts_max_tokens_per_observation,
+                "recall_max_tokens": recall_max_tokens,
+                "recall_include_chunks": recall_include_chunks,
+                "recall_chunks_max_tokens": recall_chunks_max_tokens,
+                "recall_budget_function": recall_budget_function,
+                "recall_budget_fixed_low": recall_budget_fixed_low,
+                "recall_budget_fixed_mid": recall_budget_fixed_mid,
+                "recall_budget_fixed_high": recall_budget_fixed_high,
+                "recall_budget_adaptive_low": recall_budget_adaptive_low,
+                "recall_budget_adaptive_mid": recall_budget_adaptive_mid,
+                "recall_budget_adaptive_high": recall_budget_adaptive_high,
+                "recall_budget_min": recall_budget_min,
+                "recall_budget_max": recall_budget_max,
                 "disposition_skepticism": disposition_skepticism,
                 "disposition_literalism": disposition_literalism,
                 "disposition_empathy": disposition_empathy,
                 "mcp_enabled_tools": mcp_enabled_tools,
                 "llm_gemini_safety_settings": llm_gemini_safety_settings,
+                "memory_defense": memory_defense,
+                "audit_log_enabled": audit_log_enabled,
             }.items()
             if v is not None
         }

@@ -6,6 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+# The mental-model tool cases assert the SQL predicate the tool builds
+# (`(tags IS NULL OR tags = '{}')`) off a mocked connection. A store that owns those rows is never
+# handed that connection and builds no such query, so the assertion has no subject.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 from hindsight_api.engine.reflect.agent import _execute_tool, _summarize_input
 from hindsight_api.engine.reflect.tools import (
     _document_metadata_from_retain_params,
@@ -107,7 +112,9 @@ async def test_tool_search_mental_models_exact_empty_scope_selects_global_models
     conn.fetch = AsyncMock(return_value=[])
 
     result = await tool_search_mental_models(
-        memory_engine=MagicMock(),
+        # AsyncMock, not MagicMock: the tool awaits the engine's batched staleness
+        # check for whatever rows come back, including none.
+        memory_engine=AsyncMock(),
         conn=conn,
         bank_id="test-global-mental-model-scope",
         query="global summary",
@@ -125,6 +132,10 @@ async def test_tool_search_mental_models_exact_empty_scope_selects_global_models
 
 
 @pytest.mark.asyncio
+# Seeds memories through a mocked connection, which a store-owned bank never reads — the
+# memories read routes to the store and finds nothing. The store-backed equivalent is
+# tests/test_reflect_expand_store_reads.py, which goes through a real retain.
+@pytest.mark.memory_backend_incompatible
 async def test_tool_expand_pairs_each_memory_id_with_its_own_memory() -> None:
     """An invalid memory_id must not shift the memories returned for the ids after it."""
     first = uuid.uuid4()
@@ -173,6 +184,10 @@ async def test_tool_expand_reports_a_trailing_invalid_memory_id() -> None:
 
 
 @pytest.mark.asyncio
+# Seeds memories through a mocked connection, which a store-owned bank never reads — the
+# memories read routes to the store and finds nothing. The store-backed equivalent is
+# tests/test_reflect_expand_store_reads.py, which goes through a real retain.
+@pytest.mark.memory_backend_incompatible
 async def test_tool_expand_document_depth_reads_metadata_from_retain_params() -> None:
     """Document expansion must work after documents.metadata has been dropped."""
     bank_id = "test-reflect-expand-retain-params-metadata"
@@ -195,6 +210,10 @@ async def test_tool_expand_document_depth_reads_metadata_from_retain_params() ->
 
 
 @pytest.mark.asyncio
+# Seeds memories through a mocked connection, which a store-owned bank never reads — the
+# memories read routes to the store and finds nothing. The store-backed equivalent is
+# tests/test_reflect_expand_store_reads.py, which goes through a real retain.
+@pytest.mark.memory_backend_incompatible
 async def test_tool_expand_document_depth_without_chunk_reads_metadata_from_retain_params() -> None:
     """Direct document expansion follows the same metadata source contract."""
     bank_id = "test-reflect-expand-direct-retain-params-metadata"

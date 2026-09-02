@@ -165,6 +165,38 @@ def test_load_config_file_uses_correct_profile(temp_home, monkeypatch):
     assert os.environ.get("HINDSIGHT_API_LLM_MODEL") == "llama-3.1-70b", "Should load from named profile, not default"
 
 
+def test_load_config_file_reads_utf8_profile(temp_home, monkeypatch):
+    """Profile templates should load independently of the process locale."""
+    import builtins
+    import os
+
+    from hindsight_embed.cli import load_config_file, set_cli_profile_override
+
+    set_cli_profile_override(None)
+    monkeypatch.delenv("HINDSIGHT_EMBED_PROFILE", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_LLM_PROVIDER", raising=False)
+
+    config_path = temp_home / ".hindsight" / "embed"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "# memory — retained\nHINDSIGHT_API_LLM_PROVIDER=openai\n",
+        encoding="utf-8",
+    )
+
+    original_open = builtins.open
+
+    def locale_open(file, mode="r", *args, **kwargs):
+        if file == config_path and "b" not in mode and "encoding" not in kwargs:
+            kwargs["encoding"] = "ascii"
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", locale_open)
+
+    load_config_file()
+
+    assert os.environ["HINDSIGHT_API_LLM_PROVIDER"] == "openai"
+
+
 def test_get_config_respects_profile(temp_home, monkeypatch):
     """Test that get_config() returns profile-specific values."""
     import os
@@ -594,7 +626,7 @@ def test_configure_from_env_accepts_providers_outside_interactive_menu(temp_home
     """Regression test for issue #1360.
 
     `_do_configure_from_env` previously rejected any provider not in the small
-    interactive-menu set (`PROVIDER_API_KEYS` — 5 entries) with "Unknown
+    interactive-menu set (`PROVIDER_API_KEYS`) with "Unknown
     provider". hindsight-api supports ~18 providers (anthropic, claude-code,
     bedrock, openrouter, ...), so the gate blocked valid CI configurations.
     Validation belongs in the daemon, not in the CLI's UX-only menu list.
@@ -614,6 +646,29 @@ def test_configure_from_env_accepts_providers_outside_interactive_menu(temp_home
 
     contents = (config_dir / "embed").read_text()
     assert "HINDSIGHT_API_LLM_PROVIDER=anthropic" in contents
+
+
+def test_configure_from_env_accepts_github_copilot_without_api_key(temp_home, monkeypatch):
+    """GitHub Copilot authenticates through Copilot CLI rather than an LLM API key."""
+    from hindsight_embed import cli
+
+    config_dir = temp_home / ".hindsight"
+    monkeypatch.setattr(cli, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "CONFIG_FILE", config_dir / "embed")
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "github-copilot")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_MODEL", "gpt-5.6-terra")
+    monkeypatch.delenv("HINDSIGHT_API_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-key")
+
+    assert cli._has_non_interactive_env() is True
+    assert cli._do_configure_from_env() == 0
+
+    contents = (config_dir / "embed").read_text()
+    assert "HINDSIGHT_API_LLM_PROVIDER=github-copilot" in contents
+    assert "HINDSIGHT_API_LLM_MODEL=gpt-5.6-terra" in contents
+    active_lines = [line for line in contents.splitlines() if line and not line.startswith("#")]
+    assert not any(line.startswith("HINDSIGHT_API_LLM_API_KEY=") for line in active_lines)
 
 
 def _windows_scripts_dir(tmp_path: Path, *, with_pythonw: bool) -> Path:

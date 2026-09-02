@@ -36,7 +36,8 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -51,6 +52,7 @@ from hindsight_api.engine.llm_interface import (
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 
 # Provider-agnostic pure helpers (text cleanup, quota-defer parsing, json-mode
@@ -62,7 +64,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     _strip_reasoning_tags,
 )
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
-from hindsight_api.engine.structured_output import strict_json_schema
+from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -175,7 +177,7 @@ class OpenAIResponsesLLM(LLMInterface):
         api_key: str,
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        reasoning_effort: str | None = None,
         timeout: float | None = None,
         extra_body: dict[str, Any] | None = None,
         default_headers: dict[str, str] | None = None,
@@ -224,7 +226,8 @@ class OpenAIResponsesLLM(LLMInterface):
             else:
                 client_kwargs["base_url"] = self.base_url
         if self.timeout:
-            client_kwargs["timeout"] = self.timeout
+            # Per-phase so the connect leg is capped independently (issue #3881).
+            client_kwargs["timeout"] = build_sdk_timeout(self.timeout)
 
         self._client = AsyncOpenAI(**client_kwargs)
         logger.info(
@@ -341,6 +344,7 @@ class OpenAIResponsesLLM(LLMInterface):
         max_retries: int,
         initial_backoff: float,
         max_backoff: float,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Call ``responses.create`` with retries and hand the response to ``parse``.
 
@@ -352,9 +356,10 @@ class OpenAIResponsesLLM(LLMInterface):
         """
         last_exception: Exception | None = None
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._client.responses.create(**params)
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await self._client.responses.create(**params)
                 usage = self._extract_usage(response)
                 stash_response_usage(
                     LLMResponseUsage(
@@ -384,7 +389,7 @@ class OpenAIResponsesLLM(LLMInterface):
                 )
                 logger.warning(
                     f"APIConnectionError ({self.provider}/{self.model}, scope={scope}, HTTP {status_code}, "
-                    f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]}"
+                    f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]} [{describe_transport_error(e)}]"
                 )
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
@@ -435,6 +440,7 @@ class OpenAIResponsesLLM(LLMInterface):
         strict_schema: bool = False,
         return_usage: bool = False,
         cached_prefix: str | None = None,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Make a Responses API call with retry logic (see ``LLMInterface.call``)."""
         start_time = time.time()
@@ -451,7 +457,9 @@ class OpenAIResponsesLLM(LLMInterface):
             params["max_output_tokens"] = max_completion_tokens
         if temperature is not None and not is_reasoning_model:
             params["temperature"] = temperature
-        if is_reasoning_model:
+        # Only when the operator configured a level: unset means the model runs at the
+        # Responses API's own default effort rather than one Hindsight picked.
+        if is_reasoning_model and self.reasoning_effort is not None:
             params["reasoning"] = {"effort": self.reasoning_effort}
         if self.openai_service_tier:
             params["service_tier"] = self.openai_service_tier
@@ -471,7 +479,7 @@ class OpenAIResponsesLLM(LLMInterface):
                     }
                 }
             else:
-                schema = response_format.model_json_schema()
+                schema = provider_json_schema(response_format)
                 params["input"] = _ensure_json_word_in_user_message(_inject_schema_into_input(input_items, schema))
                 params["text"] = {"format": {"type": "json_object"}}
 
@@ -511,6 +519,7 @@ class OpenAIResponsesLLM(LLMInterface):
             max_retries=max_retries,
             initial_backoff=initial_backoff,
             max_backoff=max_backoff,
+            attempt_context=attempt_context,
         )
 
     async def call_with_tools(
@@ -526,6 +535,7 @@ class OpenAIResponsesLLM(LLMInterface):
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
         cached_prefix_message_count: int = 0,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """Make a Responses API call with tools (see ``LLMInterface.call_with_tools``).
 
@@ -565,7 +575,9 @@ class OpenAIResponsesLLM(LLMInterface):
             params["max_output_tokens"] = max_completion_tokens
         if temperature is not None and not is_reasoning_model:
             params["temperature"] = temperature
-        if is_reasoning_model:
+        # Only when the operator configured a level: unset means the model runs at the
+        # Responses API's own default effort rather than one Hindsight picked.
+        if is_reasoning_model and self.reasoning_effort is not None:
             params["reasoning"] = {"effort": self.reasoning_effort}
         if self.openai_service_tier:
             params["service_tier"] = self.openai_service_tier
@@ -626,4 +638,8 @@ class OpenAIResponsesLLM(LLMInterface):
             max_retries=max_retries,
             initial_backoff=initial_backoff,
             max_backoff=max_backoff,
+            attempt_context=attempt_context,
         )
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

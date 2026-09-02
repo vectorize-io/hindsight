@@ -174,8 +174,43 @@ rm -f schema.json
 
 ### tags
 
-Filters which memories the agent can access during reflection. Works identically to [recall tags](./recall#tags) — only memories matching the specified tags are considered. The `tags_match` parameter controls the matching logic (`any`, `all`, `any_strict`, `all_strict`, `exact`) with the same semantics as recall.
+Defines the visibility scope used throughout the reflect agent. It filters raw
+facts, observations, and mental models that the agent can retrieve. The same
+`tags` and `tags_match` values also select which tagged directives are injected
+into the reflect prompt.
 
+`tags` defaults to `null`, `tags_match` defaults to `any`, and `tag_groups`
+defaults to `null`. For non-empty tags, raw facts, observations, and mental
+models use the same matching modes as [recall tags](./recall#tags). Directives
+have one additional rule: untagged directives are global and remain eligible
+whenever a tag scope is supplied, including with a strict or exact match.
+
+| Reflect configuration | Raw facts and observations | Mental models | Active directives |
+|-----------------------|----------------------------|---------------|-------------------|
+| Omit `tags`, `tags_match`, and `tag_groups` | All tagged and untagged data | All tagged and untagged models | Untagged/global directives only |
+| `tags: []`, default `tags_match: "any"` | All tagged and untagged data | All tagged and untagged models | Untagged/global directives only |
+| No tags, `tags_match: "exact"` | Untagged/global data only | Untagged/global models only | Untagged/global directives only |
+| Non-empty `tags`, `any` or `all` | Matching tagged data plus untagged/global data | Matching models plus untagged/global models | Matching tagged directives plus untagged/global directives |
+| Non-empty `tags`, `any_strict` or `all_strict` | Matching tagged data only | Matching tagged models only | Matching tagged directives plus untagged/global directives |
+| Non-empty `tags`, `exact` | Data with exactly the requested tag set | Models with exactly the requested tag set | Exactly matching tagged directives plus untagged/global directives |
+| Non-empty `tag_groups`, default top-level `tags_match` | Data matching the compound expression | Models matching the compound expression | Matching tagged directives plus untagged/global directives |
+
+The first row is intentionally asymmetric: an unscoped reflect can search all
+memories, but it does not load tagged directives. To create a directive that
+applies to every reflect call, leave its `tags` empty. To create a scoped
+directive, assign tags and pass a matching scope to `reflect`.
+
+> **📝 `isolation_mode`**
+>
+`isolation_mode` is an internal `list_directives` option, not a public reflect
+request parameter. Reflect always enables it. When neither `tags` nor
+`tag_groups` is supplied, it limits directive loading to untagged directives.
+There is currently no per-request switch to disable it.
+> **📝 MCP omitted tags**
+>
+The MCP `reflect` tool forwards `tags_match` only when `tags` is present. To
+request the empty exact scope through MCP, pass `tags: []` together with
+`tags_match: "exact"`.
 ### Python
 
 ```python
@@ -210,6 +245,51 @@ hindsight memory reflect my-bank "What feedback did the user give?" \
 ```go
 # Section 'reflect-with-tags' not found in api/reflect.go
 ```
+
+#### Common scope examples
+
+Unscoped reflect searches all memories but applies only global directives:
+
+```json
+{
+  "query": "Summarize the current project status"
+}
+```
+
+A project scope includes global data and directives alongside matching
+`project:a` data and directives:
+
+```json
+{
+  "query": "Summarize the current project status",
+  "tags": ["project:a"]
+}
+```
+
+A strict project scope excludes untagged memories, observations, and mental
+models. Global directives still apply:
+
+```json
+{
+  "query": "Summarize the current project status",
+  "tags": ["project:a"],
+  "tags_match": "all_strict"
+}
+```
+
+### tag_groups
+
+Provides compound tag filtering with recursive `and`, `or`, and `not`
+expressions. It affects the same reflect data sources and directive selection as
+flat `tags`. `tag_groups` and `tags` are mutually exclusive in the public REST
+request. Each leaf supplies its own matching mode and defaults to
+`any_strict`; the top-level groups are AND-ed. Normally leave the top-level
+`tags_match` at its default, `any`. Setting it to `exact` while using
+`tag_groups` additionally constrains facts, observations, and mental models to
+the global flat scope before applying the compound expression.
+
+The MCP `reflect` tool currently exposes flat `tags` and `tags_match`, but not
+`tag_groups`.
 
 ### include
 
@@ -295,3 +375,16 @@ The full execution log of the agentic loop. Only present when `include.tool_call
 
 - `tool_calls` — each tool invocation with `tool` name (`lookup`, `recall`, `learn`, `expand`), `input`, `output` (if `output: true`), `duration_ms`, and `iteration` number.
 - `llm_calls` — each LLM call with `scope` (e.g., `"agent_1"`, `"final"`) and `duration_ms`.
+
+## When Reflect Fails
+
+Reflect answers from evidence it gathered, so a run that could not gather it does not answer at all — it fails with a **500**, rather than returning a confident reply built on nothing:
+
+- **A retrieval tool raised.** The database, the embedder or the reranker was unavailable. One failure in a batch fails the run: an answer written around a tool that never returned is indistinguishable from one over a bank that genuinely holds nothing on the topic, and callers store it as a real answer.
+- **The model produced no answer.** The `done` call arrived empty, or the final synthesis returned nothing.
+- **The model or transport cannot drive tool calls.** Reflect is driven entirely by structured tool calls; a transport that silently drops the tool definitions fails loudly so you can switch to a tool-calling-capable model.
+- **The provider kept failing.** A non-context-overflow LLM error is retried once inside the loop and then given up on.
+
+A **successful retrieval that returns nothing is not a failure**: the bank genuinely has nothing on the topic, and reflect says so in its answer.
+
+Two cases are deliberately not failures. A run whose *context window* overflows synthesizes from the evidence it has — the prompt was too big for the model, which is a budgeting problem, not a broken dependency. And a tool call the model got *wrong* — a missing argument, a tool that does not exist — is returned to it as an error to fix, not raised.

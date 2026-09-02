@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from hindsight_api import _vector_index
 from hindsight_api._vector_index import (
     SCANN_MIN_ROWS_FOR_AUTO_INDEX,
     ann_search_tuning_settings,
@@ -97,8 +98,12 @@ def test_scann_index_creation_defers_until_table_is_large_enough():
 
 
 def test_ann_search_tuning_settings_pgvector_dispatches_hnsw_ef_search():
-    assert ann_search_tuning_settings("pgvector", kind="low_latency") == (("hnsw.ef_search", "60"),)
-    assert ann_search_tuning_settings("pgvector", kind="high_recall") == (("hnsw.ef_search", "200"),)
+    # Looked up rather than compared as a whole tuple: the profiles also carry the
+    # iterative-scan settings, which test_ann_iterative_scan.py covers. Pinning the
+    # exact tuple here would make every future addition to a profile fail this test
+    # for a reason it is not about.
+    assert dict(ann_search_tuning_settings("pgvector", kind="low_latency"))["hnsw.ef_search"] == "60"
+    assert dict(ann_search_tuning_settings("pgvector", kind="high_recall"))["hnsw.ef_search"] == "200"
 
 
 def test_ann_search_tuning_settings_vchord_leaves_probes_to_index_defaults():
@@ -161,22 +166,75 @@ def test_alembic_vector_migrations_freeze_vector_sql_locally():
         assert "hindsight_api._vector_index" not in text
 
 
-class RecordingOps:
-    def __init__(self):
-        self.called = False
-
-    async def create_bank_vector_indexes(self, *args, **kwargs):
-        self.called = True
-
-
 class ScannConfig:
     vector_extension = "scann"
 
 
-async def test_create_bank_vector_indexes_skips_scann(monkeypatch):
+def test_vector_index_clause_is_none_for_scann(monkeypatch):
+    """ScaNN has no per-bank index layout, so callers get no USING clause to build with."""
     monkeypatch.setattr(bank_utils, "get_config", lambda: ScannConfig())
-    ops = RecordingOps()
 
-    await bank_utils.create_bank_vector_indexes(None, "bank", "00000000-0000-0000-0000-000000000000", ops=ops)
+    assert bank_utils._vector_index_clause() is None
 
-    assert not ops.called
+
+class _ThresholdConfig:
+    def __init__(self, min_rows: int):
+        self.vector_index_min_rows = min_rows
+
+
+def _with_threshold(monkeypatch, min_rows: int) -> None:
+    monkeypatch.setattr(_vector_index, "get_config", lambda: _ThresholdConfig(min_rows), raising=False)
+    monkeypatch.setattr("hindsight_api.config.get_config", lambda: _ThresholdConfig(min_rows))
+
+
+def test_build_bound_is_the_threshold_itself(monkeypatch):
+    """The build side is a floor, inclusive: exactly the threshold earns an index."""
+    _with_threshold(monkeypatch, 10_000)
+
+    assert _vector_index.per_bank_index_build_bound() == 10_000
+
+
+def test_zero_threshold_is_eager_not_a_zero_minimum(monkeypatch):
+    """0 turns the threshold off rather than setting it to nothing.
+
+    The distinction is the whole point of the default. Read as "no minimum", 0
+    still routed every bank through the lazy path: an index earned on first write
+    via a visible async operation, and every later write paying a coverage check
+    to rediscover there was nothing to do. Read as "off", the bank gets its
+    indexes when it is created and nothing looks at row counts ever again — which
+    is what the deployment had before the threshold existed.
+    """
+    _with_threshold(monkeypatch, 0)
+    assert _vector_index.per_bank_indexes_are_eager()
+
+    _with_threshold(monkeypatch, 10_000)
+    assert not _vector_index.per_bank_indexes_are_eager()
+
+
+def test_an_emptied_partition_loses_its_index_at_every_threshold(monkeypatch):
+    """The keep bound never falls to zero, whatever the ratio works out to.
+
+    Without a floor of 1 a partition emptied of rows still clears the bound, so a
+    bank written to once and then cleared would hold three ANN indexes over
+    nothing — forever, because nothing writes to an emptied bank. That is the
+    accumulation the threshold exists to prevent.
+    """
+    for threshold in (1, 10_000):
+        _with_threshold(monkeypatch, threshold)
+        assert _vector_index.per_bank_index_keep_bound() >= 1
+
+
+def test_the_hysteresis_band_is_non_empty(monkeypatch):
+    """Keeping has to start strictly below building, with room in between.
+
+    With a single boundary a bank hovering at the threshold rebuilds and drops
+    the same ANN index on alternating writes. The band is what the planner leaves
+    alone: a partition inside it neither earns an index nor loses the one it has.
+    """
+    _with_threshold(monkeypatch, 10_000)
+
+    keep = _vector_index.per_bank_index_keep_bound()
+    build = _vector_index.per_bank_index_build_bound()
+
+    assert keep < build
+    assert build - keep > 1, "no row count sits strictly inside the band"

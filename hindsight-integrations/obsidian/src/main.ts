@@ -2,6 +2,7 @@ import { type Debouncer, Notice, Plugin, TFile, addIcon, debounce, setIcon } fro
 import { HINDSIGHT_ICON_ID, HINDSIGHT_ICON_SVG, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { ChatView, VIEW_TYPE_CHAT } from "./chat-view";
 import { HindsightClient } from "./client";
+import { obsidianTransport } from "./obsidian-transport";
 import { DEFAULT_SETTINGS, type HindsightSettings, HindsightSettingTab } from "./settings";
 import { SyncEngine, type SyncConfig, type SyncIndex, type SyncVault } from "./sync";
 import { type SyncStatus, renderSyncStatus } from "./status-bar";
@@ -266,7 +267,7 @@ export default class HindsightPlugin extends Plugin {
   private rebuildClient(): void {
     try {
       this.client = this.settings.apiUrl.trim()
-        ? new HindsightClient(this.settings.apiUrl, this.settings.apiKey)
+        ? new HindsightClient(this.settings.apiUrl, this.settings.apiKey, obsidianTransport)
         : null;
     } catch {
       this.client = null;

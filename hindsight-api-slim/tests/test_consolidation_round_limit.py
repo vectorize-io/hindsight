@@ -48,15 +48,13 @@ async def test_round_limit_caps_processed_memories(memory: MemoryEngine, request
             )
 
     # Verify we have unconsolidated memories
-    async with memory._pool.acquire() as conn:
-        unconsolidated = await conn.fetchval(
-            """
-            SELECT COUNT(*) FROM memory_units
-            WHERE bank_id = $1 AND consolidated_at IS NULL
-              AND consolidation_failed_at IS NULL AND fact_type IN ('experience', 'world')
-            """,
-            bank_id,
+    # consolidation_state='pending' is the read API's name for exactly this predicate:
+    # not consolidated, not failed, and a source fact type.
+    unconsolidated = (
+        await memory.list_memory_units(
+            bank_id=bank_id, consolidation_state="pending", limit=1, request_context=request_context
         )
+    )["total"]
     assert unconsolidated >= 6, f"Expected at least 6 unconsolidated memories, got {unconsolidated}"
 
     # Run consolidation with a round limit of 3
@@ -77,21 +75,25 @@ async def test_round_limit_caps_processed_memories(memory: MemoryEngine, request
     assert result["memories_processed"] <= round_limit
 
     # Must have re-queued consolidation for remaining work
-    mock_requeue.assert_called_once_with(bank_id=bank_id, request_context=request_context, observation_scopes=None)
+    # This bank's memories are untagged, so the accumulated refresh-tag union is empty
+    # and the re-queue carries pending_refresh_tags=None (#3411).
+    mock_requeue.assert_called_once_with(
+        bank_id=bank_id,
+        request_context=request_context,
+        observation_scopes=None,
+        pending_refresh_tags=None,
+    )
 
-    # Mental model refresh should be skipped on intermediate round
+    # This bank has no mental models, so nothing is refreshed on any round.
+    # (Refresh now runs every round, not just the final one — see #3411.)
     assert result.get("mental_models_refreshed", 0) == 0
 
     # Verify some memories are still unconsolidated
-    async with memory._pool.acquire() as conn:
-        still_unconsolidated = await conn.fetchval(
-            """
-            SELECT COUNT(*) FROM memory_units
-            WHERE bank_id = $1 AND consolidated_at IS NULL
-              AND consolidation_failed_at IS NULL AND fact_type IN ('experience', 'world')
-            """,
-            bank_id,
+    still_unconsolidated = (
+        await memory.list_memory_units(
+            bank_id=bank_id, consolidation_state="pending", limit=1, request_context=request_context
         )
+    )["total"]
     assert still_unconsolidated > 0, "Some memories should still be unconsolidated after hitting round limit"
 
     await memory.delete_bank(bank_id, request_context=request_context)
@@ -132,15 +134,11 @@ async def test_unlimited_round_processes_all(memory: MemoryEngine, request_conte
     mock_requeue.assert_not_called()
 
     # All memories should be consolidated
-    async with memory._pool.acquire() as conn:
-        still_unconsolidated = await conn.fetchval(
-            """
-            SELECT COUNT(*) FROM memory_units
-            WHERE bank_id = $1 AND consolidated_at IS NULL
-              AND consolidation_failed_at IS NULL AND fact_type IN ('experience', 'world')
-            """,
-            bank_id,
+    still_unconsolidated = (
+        await memory.list_memory_units(
+            bank_id=bank_id, consolidation_state="pending", limit=1, request_context=request_context
         )
+    )["total"]
     assert still_unconsolidated == 0
 
     await memory.delete_bank(bank_id, request_context=request_context)

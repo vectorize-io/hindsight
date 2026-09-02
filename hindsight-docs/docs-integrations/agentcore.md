@@ -10,6 +10,8 @@ Persistent memory for [Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon
 
 AgentCore Runtime sessions are explicitly ephemeral — they terminate on inactivity and reprovision fresh environments. `hindsight-agentcore` adds durable cross-session memory so agents remember users, decisions, and learned patterns across any number of Runtime sessions.
 
+[View Changelog →](/changelog/integrations/agentcore)
+
 ## How It Works
 
 ```

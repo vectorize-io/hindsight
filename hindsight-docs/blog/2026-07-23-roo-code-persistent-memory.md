@@ -3,7 +3,7 @@ title: "Give Roo Code a Memory So Every Task Builds on the Last"
 authors: [benfrank241]
 slug: "2026/07/23/roo-code-persistent-memory"
 date: 2026-07-23T12:00
-tags: [hindsight, roo-code, agent-memory, persistent-memory, coding-agent, mcp]
+tags: [hindsight, roo-code, agent-memory, persistent-memory, coding-agent, mcp, tutorial]
 description: "Roo Code runs autonomous coding tasks but starts each one from zero. Add Hindsight agent memory: recall context before every task, retain a summary after."
 image: /img/blog/roo-code-persistent-memory.png
 hide_table_of_contents: true

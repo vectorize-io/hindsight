@@ -247,6 +247,8 @@ class TestGoogleCrossEncoderFactory:
                 defaults[f.name] = False
             elif f.type == "list | None":
                 defaults[f.name] = None
+            elif str(f.type).startswith("list["):
+                defaults[f.name] = []
             else:
                 defaults[f.name] = None
 

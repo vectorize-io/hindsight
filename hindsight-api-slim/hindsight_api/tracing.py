@@ -12,8 +12,9 @@ to Langfuse (or any OTLP-compatible backend) via OTLP HTTP protocol.
 
 import json
 import logging
+import os
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -21,6 +22,11 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Status, StatusCode
+
+if TYPE_CHECKING:
+    from opentelemetry.context import Context
+
+    from .config import HindsightConfig, StaticConfigProxy
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,10 @@ class NoOpSpan:
 # Global tracer instance
 _tracer: trace.Tracer | NoOpTracer = NoOpTracer()
 _tracing_enabled: bool = False
+# The SDK provider created by initialize_tracing(). Kept so shutdown_tracing()
+# can flush the BatchSpanProcessor directly instead of going through the global
+# provider, which may be a proxy that never exposes shutdown().
+_provider: TracerProvider | None = None
 
 
 # GenAI semantic convention attribute names (based on v1.37 spec)
@@ -133,6 +143,7 @@ PROVIDER_NAME_MAPPING = {
     "lmstudio": "lmstudio",
     "openai-codex": "openai",
     "claude-code": "anthropic",
+    "github-copilot": "github",
     "mock": "mock",
 }
 
@@ -152,13 +163,17 @@ def initialize_tracing(
         headers: Optional headers in format "key1=value1,key2=value2"
         deployment_environment: Deployment environment (e.g., development, staging, production)
     """
-    global _tracer, _tracing_enabled
+    global _tracer, _tracing_enabled, _provider
+
+    # Imported lazily: __version__ is defined at the end of hindsight_api/__init__.py,
+    # after the imports that pull in this module.
+    from hindsight_api import __version__
 
     # Create resource with service information
     resource = Resource.create(
         {
             "service.name": service_name,
-            "service.version": "0.4.8",  # Could import from __version__
+            "service.version": __version__,
             "deployment.environment.name": deployment_environment,
         }
     )
@@ -189,8 +204,91 @@ def initialize_tracing(
     # Get tracer for this application
     _tracer = trace.get_tracer(__name__)
     _tracing_enabled = True
+    _provider = provider
 
     logger.info(f"Tracing initialized: endpoint={otlp_endpoint}, service={service_name}")
+
+
+def initialize_tracing_from_config(
+    config: "HindsightConfig | StaticConfigProxy",
+    *,
+    default_service_name: str | None = None,
+) -> bool:
+    """
+    Bootstrap tracing from a HindsightConfig, for any process entrypoint.
+
+    Both the API (FastAPI lifespan) and the standalone worker call this, so a
+    deployment that sets HINDSIGHT_API_OTEL_* gets traces from every process
+    that does work rather than only from the one serving HTTP (issue #3614).
+
+    Failures are logged and swallowed: tracing must never keep a process from
+    starting.
+
+    Args:
+        config: Resolved Hindsight configuration (raw dataclass or the static proxy).
+        default_service_name: Service name to use when HINDSIGHT_API_OTEL_SERVICE_NAME
+            is not set in the environment. Lets the worker report itself as
+            "hindsight-worker" — matching the name it already reports for metrics —
+            without overriding an operator's explicit choice.
+
+    Returns:
+        True when tracing was initialized, False otherwise.
+    """
+    from .config import ENV_OTEL_SERVICE_NAME
+
+    if not config.otel_traces_enabled:
+        return False
+
+    if not config.otel_exporter_otlp_endpoint:
+        logger.warning("OTEL tracing enabled but no endpoint configured. Tracing disabled.")
+        return False
+
+    # config.otel_service_name has already had the API default applied, so an
+    # unset env var is indistinguishable from one set to that default. Read the
+    # environment directly to tell them apart.
+    service_name = os.getenv(ENV_OTEL_SERVICE_NAME) or default_service_name or config.otel_service_name
+
+    try:
+        initialize_tracing(
+            service_name=service_name,
+            endpoint=config.otel_exporter_otlp_endpoint,
+            headers=config.otel_exporter_otlp_headers,
+            deployment_environment=config.otel_deployment_environment,
+        )
+        create_span_recorder()
+        logger.info("OpenTelemetry tracing enabled and configured")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize tracing: {e}")
+        logger.warning("Continuing without tracing")
+        return False
+
+
+def shutdown_tracing() -> None:
+    """
+    Flush and shut down the tracing pipeline. No-op when tracing was never initialized.
+
+    Spans are batched, so without this a process exiting on SIGTERM drops
+    everything still in the BatchSpanProcessor's queue. That matters most for
+    the worker, where a single consolidation span can be minutes long.
+    """
+    global _tracer, _tracing_enabled, _provider, _span_recorder
+
+    provider = _provider
+    if provider is None:
+        return
+
+    try:
+        provider.shutdown()  # force-flushes the BatchSpanProcessor
+    except Exception as e:
+        logger.warning(f"Failed to shut down tracing cleanly: {e}")
+    finally:
+        _provider = None
+        _tracing_enabled = False
+        _tracer = NoOpTracer()
+        if _span_recorder is not None:
+            unregister_span_recorder(_span_recorder)
+            _span_recorder = None
 
 
 def get_tracer() -> trace.Tracer | NoOpTracer:
@@ -239,6 +337,58 @@ def create_operation_span(operation: str, bank_id: str | None = None):
 def is_tracing_enabled() -> bool:
     """Check if tracing is enabled."""
     return _tracing_enabled
+
+
+# Key under which the W3C trace context travels inside a task payload. Named
+# like the other worker-only payload passengers (_tenant_id, _api_key_id).
+TASK_TRACE_CONTEXT_KEY = "_traceparent"
+
+
+def inject_task_trace_context(payload: dict[str, Any]) -> None:
+    """
+    Stamp the current trace context onto a task payload, in place.
+
+    Queued work runs in the worker process, which has no way to know which
+    request enqueued it: without this, the API's span for (say) an async retain
+    and the worker's ``hindsight.retain`` span are two unrelated traces, and the
+    API half contains nothing but the enqueue. Carrying the W3C traceparent in
+    the payload lets the worker continue the caller's trace instead.
+
+    No-op when tracing is disabled, so a payload never grows a null key.
+    """
+    if not _tracing_enabled:
+        return
+    try:
+        from opentelemetry.propagate import inject
+
+        carrier: dict[str, str] = {}
+        inject(carrier)
+        if carrier:
+            payload[TASK_TRACE_CONTEXT_KEY] = carrier
+    except Exception as e:  # tracing must never break enqueueing
+        logger.debug(f"Failed to inject trace context into task payload: {e}", exc_info=True)
+
+
+def extract_task_trace_context(payload: dict[str, Any]) -> "Context | None":
+    """
+    Rebuild the enqueueing request's trace context from a task payload.
+
+    Returns an OpenTelemetry ``Context`` to attach around task execution, or
+    None when the payload carries no trace context (an internally scheduled
+    task, or a payload queued while tracing was off).
+    """
+    if not _tracing_enabled:
+        return None
+    carrier = payload.get(TASK_TRACE_CONTEXT_KEY)
+    if not isinstance(carrier, dict):
+        return None
+    try:
+        from opentelemetry.propagate import extract
+
+        return extract(carrier)
+    except Exception as e:
+        logger.debug(f"Failed to extract trace context from task payload: {e}", exc_info=True)
+        return None
 
 
 # Maximum content length before truncation (to stay within span size limits)

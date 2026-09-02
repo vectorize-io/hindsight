@@ -72,13 +72,14 @@ Triggered either manually via `POST /v1/default/banks/{bank_id}/mental-models/{i
 
 ### `graph_maintenance`
 
-Reconciles derived state that goes stale after a delete. Every invocation runs three passes:
+Reconciles derived state that goes stale after a delete. Every invocation drains two queues, both filled by the delete itself, so a run only ever looks at what that delete touched:
 
-1. **Link top-up.** Drains the `graph_maintenance_queue` (units whose outgoing temporal/semantic links lost a neighbour). For each, if the unit is under its cap (20 temporal, 50 semantic), Hindsight re-runs the same probes retain uses and inserts the missing links. Without this, the retain pipeline's top-K capping would leave surviving units permanently under-capped after every delete — degrading graph-expansion recall.
-2. **Orphan entity prune.** Deletes entities in the bank with no remaining `unit_entities` references. FK `ON DELETE CASCADE` on `entity_cooccurrences` then removes any cooccurrence row pointing at a pruned entity.
-3. **Stale cooccurrence prune.** Cleans up `entity_cooccurrences` rows where both endpoints still exist but no current memory_unit references both of them — the cooccurrence was real when it was recorded, but every unit that witnessed it has since been deleted.
+1. **Link top-up.** Drains the units whose outgoing temporal/semantic links lost a neighbour. For each, if the unit is under its cap (20 temporal, 50 semantic), Hindsight re-runs the same probes retain uses and inserts the missing links. Without this, the retain pipeline's top-K capping would leave surviving units permanently under-capped after every delete — degrading graph-expansion recall.
+2. **Entity prune.** Drains the entities the delete may have stranded. Those with no remaining `unit_entities` reference are deleted (FK `ON DELETE CASCADE` removes their `entity_cooccurrences` rows with them); for the survivors, cooccurrence rows where both endpoints still exist but no current memory_unit references both are cleaned up — the cooccurrence was real when recorded, but every unit that witnessed it has since been deleted.
 
 Bank-deduped at submit time, so concurrent triggers against the same bank coalesce into one drain.
+
+Each run works in committed batches under a wall-clock budget. A backlog too large for one run — a bulk delete, say — is not an error: the run reports what it finished and the next one resumes where it stopped.
 
 **Triggers:** any delete that removes memory_units — `DELETE /documents/{id}`, `DELETE /memories/{id}`, and re-retaining an existing `document_id` (the upsert path). A full bank wipe (`delete_bank`) is a no-op: there's nothing left in the bank to maintain.
 
@@ -345,6 +346,8 @@ done
 Each worker has a single concurrency budget (`HINDSIGHT_API_WORKER_MAX_SLOTS`, default 10) shared across all operation types. Per-type slot reservations (`HINDSIGHT_API_WORKER_<TYPE>_MAX_SLOTS`) carve out guaranteed capacity within that budget; remaining slots form a shared pool any type can use. See [Configuration → Worker Configuration](../configuration#distributed-workers) for the full table.
 
 For most deployments the defaults are fine. Reserve slots for an operation type if you've seen it starved by a flood of another type (e.g., a long file_convert_retain blocking graph_maintenance on a deletion-heavy workload).
+
+Slots are also rotated across banks. Each claim serves the next bank in turn — one operation — then fills the rest of the pool oldest-first from anywhere. So a bank ingesting in bulk cannot own the whole pool while another bank's single write waits behind its backlog, and it is not throttled either: when no one else is waiting it still takes every slot.
 
 ## Next Steps
 

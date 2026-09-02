@@ -3,7 +3,7 @@ title: "How to Move Your Agent's Memory Off a Vector Database"
 authors: [benfrank241]
 slug: "2026/07/28/migrate-agent-memory-off-vector-database"
 date: 2026-07-28T12:00
-tags: [hindsight, agent-memory, vector-database, migration, pinecone, chroma]
+tags: [hindsight, agent-memory, vector-database, migration, pinecone, chroma, tutorial]
 description: "A practical guide to migrating agent memory off a vector database like Pinecone or Chroma to Hindsight: what to export, how to map it, and what you gain."
 image: /img/blog/migrate-agent-memory-vector-database.png
 hide_table_of_contents: true

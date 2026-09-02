@@ -68,20 +68,32 @@ Marcus felt anxious about the upcoming interview.
         )
 
         assert len(facts) > 0, "Should extract at least one fact"
-        all_facts_text = " ".join(f.fact for f in facts)
+        # The fact SENTENCE only, one per line — not the whole `| When: ... | Involving: ...`
+        # rendering. Each fact's trailing dimension is a bare restatement of the event
+        # ("Received positive feedback on presentation."), and a judge given the full
+        # rendering reads that restatement as proof the feeling was stripped: it failed a
+        # run whose facts were "TestUser was thrilled about...", "Sarah seemed
+        # disappointed...", "Marcus felt anxious..." — every emotion intact — reasoning that
+        # thrilled and disappointed "were stripped down to the bare events". The emotional
+        # dimension lives in the sentence, so the sentence is what gets judged.
+        fact_sentences = "\n".join(f.fact.split(" | ")[0] for f in facts)
 
         await assert_meets_criteria(
-            response=all_facts_text,
+            response=fact_sentences,
+            # The threshold leads and the three states are a checklist under it. Stated the
+            # other way round — the three first, "at least two" trailing — judges anchored on
+            # whichever one was missing and voted not-met against the criteria's own rule.
             criteria=(
-                "The extracted facts preserve emotional states from the input: the speaker's "
-                "excitement/thrill about positive feedback, Sarah's disappointment about the delay, "
-                "and Marcus's anxiety about the interview. At least two of these emotional dimensions "
-                "should be present (exact wording doesn't matter — 'elated' for 'thrilled' is fine)."
+                "PASS if AT LEAST TWO of these three emotional states appear anywhere in the "
+                "lines; missing one of the three is still a PASS. (1) The speaker being "
+                "thrilled/excited about the positive feedback. (2) Sarah being disappointed "
+                "about the delay. (3) Marcus being anxious about the interview. Any wording "
+                "counts, including a hedge — 'elated', 'seemed disappointed' and 'felt "
+                "anxious' all count as present."
             ),
-            context=(
-                "Input mentioned: being thrilled about positive feedback on a presentation, "
-                "Sarah seeming disappointed about a delay, and Marcus feeling anxious about an interview."
-            ),
+            # No context block: it restated the same three emotions, so the judge held them
+            # twice over — once as background and once as the thing to look for, which is the
+            # shape build_judge_messages already documents as blurring the two.
             msg=f"Emotional dimension should be preserved. Facts: {[f.fact for f in facts]}",
         )
 

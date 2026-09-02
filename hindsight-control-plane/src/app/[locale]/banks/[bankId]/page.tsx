@@ -718,7 +718,11 @@ export default function BankPage() {
                     </div>
                   </div>
 
-                  {knowledgeTab === "pages" && <KnowledgeBaseView />}
+                  {/* Keyed by bank so switching banks remounts the view: every
+                      bank-scoped piece of state (tree, open tabs, selected page and
+                      its backing mental model) is dropped in one go, instead of
+                      effects re-running against a half-cleared previous bank. */}
+                  {knowledgeTab === "pages" && <KnowledgeBaseView key={bankId ?? "no-bank"} />}
                   {knowledgeTab === "models" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">

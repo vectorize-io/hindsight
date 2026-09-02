@@ -47,6 +47,57 @@ Hindsight exposes Prometheus metrics at `/metrics`:
 curl http://localhost:8888/metrics
 ```
 
+## Health Endpoints
+
+The API server (port 8888) and every worker (port 8889) expose the same three
+endpoints. They answer two different questions, and pointing a probe at the wrong
+one is the difference between riding out a database blip and turning it into an
+outage:
+
+| Endpoint | Checks the database? | Use for |
+|----------|----------------------|---------|
+| `/health/live` | No | Liveness probes |
+| `/health/ready` | Yes | Readiness probes |
+| `/health` | Yes | Readiness — alias of `/health/ready`, kept for compatibility |
+
+**`/health/live`** returns 200 whenever the process can serve a request, and does
+no I/O to get there:
+
+```json
+{ "status": "alive", "version": "0.4.0", "uptime_seconds": 812.4 }
+```
+
+Answering at all is the check. Hindsight runs request handlers and task work on a
+single event loop, so a loop wedged by a blocking call cannot respond inside the
+probe timeout — which is exactly the failure a restart fixes. The worker's payload
+adds `worker_id`, `is_shutdown`, and `seconds_since_last_poll` (the age of its last
+completed claim cycle, `null` before the first one). That last field is there to
+alert on: it never changes the status code, because a poller stalled behind a
+saturated database is the case where restarting makes things worse.
+
+**`/health` and `/health/ready`** acquire a pooled connection and run `SELECT 1`,
+returning 200 when the database is reachable and 503 when it is not. The payload
+separates the two ways that can go wrong — `db_acquire_ms` and `db_pool_waiting`
+point at pool exhaustion, a slow query at the database itself:
+
+```json
+{ "status": "healthy", "database": "connected", "db_acquire_ms": 0.4, "db_pool_waiting": 0 }
+```
+
+:::warning Never point a liveness probe at a dependency check
+A liveness failure means "restart this process." If your liveness probe checks the
+database, then a slow database restarts every pod at once: in-flight requests are
+dropped, claimed async operations are requeued with `retry_count` incremented
+toward the permanent-failure cliff, and each restarted pod reconnects to re-warm
+its pool against a database that is already struggling. Readiness failing is the
+correct response — it takes the pod out of the Service and puts it back when the
+database recovers.
+
+The bundled Helm chart is wired this way already (`livenessProbe` → `/health/live`,
+`readinessProbe` → `/health`). If you wrote your own manifests against an older
+version, move the liveness path over.
+:::
+
 ## Available Metrics
 
 ### Operation Metrics
@@ -293,3 +344,19 @@ Supports any OTLP-compatible backend (Grafana LGTM, Langfuse, OpenLIT, DataDog, 
 
 **Events:**
 - `gen_ai.client.inference.operation.details` - Full prompts and completions
+
+### Trace Context Propagation
+
+Hindsight participates in your existing traces rather than starting parallel ones. When a caller sends W3C trace context (the standard `traceparent` header, which most OpenTelemetry HTTP client instrumentations add automatically), Hindsight continues that trace: the API request appears as a server span under the caller, and every memory operation and LLM call it triggers nests beneath it.
+
+Requests that arrive without trace context still start their own trace, so nothing changes for un-instrumented callers.
+
+Health and metrics endpoints are excluded from tracing so probe traffic doesn't drown out real work. Set `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` to a comma-separated list of URL patterns to override this.
+
+### Worker Processes
+
+Standalone worker processes honour the same `HINDSIGHT_API_OTEL_*` variables as the API and export their own spans. This matters for deployments that run dedicated workers, since consolidation, background retain and mental model refresh — most of the long-running work and token spend — happen there.
+
+Give the worker its own `HINDSIGHT_API_OTEL_SERVICE_NAME` to separate it from the API in your tracing backend. When left unset, workers report themselves as `hindsight-worker`.
+
+Worker spans are currently their own traces: a background operation is not linked to the request that queued it, because it runs long after that request has returned.

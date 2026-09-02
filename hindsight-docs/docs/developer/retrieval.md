@@ -267,7 +267,7 @@ The first memory ranks higher because it has **consensus** across strategies.
 
 RRF gives a good initial ranking, but it's based on positions, not on deep query-document understanding. The cross-encoder evaluates each candidate against the query as a pair, producing a relevance score.
 
-**Pre-filtering:** Before reranking, candidates are trimmed to the top **300** (by RRF score) to limit computational cost. This is configurable via `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`. If [`HINDSIGHT_API_RECALL_STRATEGY_BOOSTS`](./configuration) is set, the boost is applied to the RRF scores before this cut, so candidates from a favoured source are more likely to survive it.
+**Pre-filtering:** Before reranking, candidates are trimmed to the top **300** (by RRF score) to limit computational cost. This is configurable via `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`. If [`HINDSIGHT_API_RECALL_STRATEGY_BOOSTS`](./configuration) is set, the boost is applied before this cut, so candidates from a favoured source are more likely to survive it. The boost promotes the favoured arm in *rank* space (its rank is divided by the level's divisor before the RRF contribution is computed) rather than scaling its score, so it reaches deeper into that arm without evicting the top-ranked hits of the others — including on banks whose merged pool is many times the cap. When `trace: true` is requested, the `rerank_prefilter` phase reports how many candidates were kept and dropped, the cap in force, the active boosts, and the per-arm composition of the survivors.
 
 **Why rerank after RRF?** RRF is position-based — it knows a memory ranked well across strategies, but it never actually reads the query and the memory together. The cross-encoder does: it takes the query and each candidate as a pair and produces a relevance score based on their full interaction. This catches nuances that position-based fusion misses, like a memory that ranked #1 in keyword search because it matched a common term but is actually irrelevant to the query's intent.
 
@@ -356,7 +356,7 @@ The boosts are intentionally conservative — they nudge the ranking without ove
 
 ### Stage 4: Token Truncation
 
-After scoring, results are sorted by `final_score` and selected top-down until the `max_tokens` budget is exhausted. Only the memory text counts toward the budget — metadata is free.
+After scoring, results are sorted by `final_score` and selected top-down until the `max_tokens` budget is exhausted. Only the memory text counts toward the budget — metadata is free. A result too long for what is left of the budget is skipped and the packing continues with the next one, so a single long fact does not cost you the shorter ones ranked behind it. If nothing fits at all, the top-ranked result is still returned whole, so a query that matched something is never answered with an empty list.
 
 ---
 
@@ -374,7 +374,7 @@ This recall budget flows through the pipeline as follows:
 
 | Pipeline stage | How the recall budget is used |
 |----------------|-------------------------------|
-| **Semantic search** | Over-fetches max(recall_budget × 5, 100) from HNSW, trims to recall_budget |
+| **Semantic search** | `LIMIT recall_budget` in SQL, with the ANN candidate list sized to match for the query (on pgvector, `hnsw.ef_search`, capped at that setting's maximum of 1000) |
 | **BM25 search** | `LIMIT recall_budget` in SQL |
 | **Graph traversal** | Explores up to recall_budget nodes |
 | **Temporal spreading** | Activates up to recall_budget nodes via links |

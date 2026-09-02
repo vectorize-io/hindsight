@@ -5,7 +5,142 @@ vector distance (pgvector), full-text search (VectorChord BM25 / tsvector),
 and other non-portable patterns.
 """
 
-from .base import SQLDialect
+from dataclasses import dataclass
+
+from ..._text_search import mental_models_text_document
+from .base import SQLDialect, bm25_score_gate
+
+
+@dataclass(frozen=True)
+class KnowledgeBm25Arm:
+    """Backend-specific BM25 clauses for the knowledge-page full-text arm.
+
+    ``score_expr`` is a relevance score where higher = more relevant (used in the
+    SELECT list of the BM25-only fallback). ``order_by`` is the arm's ranking
+    expression (kept separate so distance-based backends can order by the raw,
+    index-friendly ``ASC`` distance). ``match_filter`` is a WHERE predicate that
+    keeps only genuine term matches, already prefixed with ``AND `` — empty when
+    the backend ranks every row and needs no gate.
+    """
+
+    score_expr: str
+    order_by: str
+    match_filter: str
+
+
+def knowledge_bm25_arm(
+    text_search_extension: str,
+    *,
+    table_alias: str,
+    text_param: str,
+    pg_search_function_schema: str = "paradedb",
+) -> KnowledgeBm25Arm:
+    """BM25 clauses for ``search_knowledge_pages`` on a given text-search backend.
+
+    Mirrors :meth:`PostgreSQLDialect.build_bm25_arm` (the memory-recall BM25 arm)
+    but targets the ``mental_models`` BM25 index (``idx_mental_models_text_search``
+    over the page ``name`` + ``content``) that backs knowledge pages. Without this
+    dispatch the native tsvector SQL (``ts_rank_cd`` / ``@@``) is sent to every
+    backend and 500s wherever ``mental_models.search_vector`` is not a tsvector
+    (see issue #3268).
+
+    ``table_alias`` is the alias the ``mental_models`` row carries in the query
+    (``mm``); ``text_param`` is the bind placeholder holding the query text.
+
+    For the ``native`` backend, ``text_param`` must be bound to the output of
+    :meth:`prepare_bm25_text` (disjunctive ``" | "`` tokens). ``websearch_to_tsquery``
+    was originally used here as an error-free parser for raw strings (#2455), but
+    its default conjunctive AND (``&``) across space-separated words caused
+    multi-word natural-language queries to return 0 BM25 candidates.
+
+    ``pgroonga`` queries the multilingual expression index over ``name +
+    content``; ``ensure_text_search_extension`` reconciles ``mental_models`` to
+    that shape (dummy TEXT ``search_vector``) like every other pgroonga table.
+    """
+    a = table_alias
+    p = text_param
+
+    if text_search_extension == "vchord":
+        # VectorChord BM25 over the bm25vector search_vector column, identical to
+        # build_bm25_arm's vchord form. This only returns rows because the
+        # mental_models write path now tokenizes search_vector for vchord
+        # (pg_search_vector_expr, native_inline=False) the same way memory_units
+        # does — the column is plain, not generated, so it must be filled on write.
+        # <&> is the NEGATIVE score (lower = more relevant); negate it.
+        expr = f"-({a}.search_vector <&> to_bm25query('idx_mental_models_text_search', tokenize({p}, 'llmlingua2')))"
+        return KnowledgeBm25Arm(
+            score_expr=expr,
+            order_by=f"{expr} DESC",
+            # Gate on a positive score: the operator ranks every row, so a bare
+            # LIMIT would pad the arm with zero-score non-matches.
+            match_filter=f"AND {expr} > 0",
+        )
+
+    if text_search_extension == "pg_search":
+        # ParadeDB pg_search: BM25 index over (id, name, content), key_field='id'.
+        # Fan the query across both indexed text fields with paradedb.boolean.
+        score = f"{pg_search_function_schema}.score({a}.id)"
+        return KnowledgeBm25Arm(
+            score_expr=score,
+            order_by=f"{score} DESC",
+            match_filter=(
+                f"AND {a}.id @@@ {pg_search_function_schema}.boolean(should => ARRAY["
+                f"{pg_search_function_schema}.match('name', {p}), {pg_search_function_schema}.match('content', {p})])"
+            ),
+        )
+
+    if text_search_extension == "pg_textsearch":
+        # Timescale pg_textsearch: BM25 index over the `content` column. `<@>` is a
+        # distance (lower = closer), so negate it for a higher-is-better score and
+        # order by the raw ASC distance so the index drives the ordering.
+        distance = f"{a}.content <@> to_bm25query({p}, 'idx_mental_models_text_search')"
+        return KnowledgeBm25Arm(
+            score_expr=f"-({distance})",
+            order_by=f"{distance} ASC",
+            match_filter="",
+        )
+
+    if text_search_extension == "pgroonga":
+        # Same operator/score pair as build_bm25_arm's pgroonga form. The filter
+        # repeats idx_mental_models_text_search's indexed expression verbatim (via
+        # the shared helper) so the planner can select that expression index —
+        # pgroonga_score() only returns a real score off a pgroonga index scan and
+        # silently reads 0 for every row otherwise, so the id tiebreak keeps the
+        # arm's ordering deterministic if the planner ever picks another plan.
+        # Tokenize with pgroonga_tokenize (TokenBigram + NormalizerNFKC150) and join
+        # with disjunctive OR. Joining with OR aligns candidate recall with native
+        # tsvector's '|' recall strategy; precision is restored downstream via BM25
+        # ranking, RRF fusion, and Cross-Encoder reranking.
+        score = f"pgroonga_score({a}.tableoid, {a}.ctid)"
+        document = mental_models_text_document(a)
+        query_expr = (
+            f"(SELECT string_agg(pgroonga_query_escape(elem->>'value'), ' OR ') "
+            f"FROM unnest(pgroonga_tokenize({p}, 'tokenizer', 'TokenBigram', 'normalizer', 'NormalizerNFKC150')) AS elem)"
+        )
+        return KnowledgeBm25Arm(
+            score_expr=score,
+            order_by=f"{score} DESC, {a}.id",
+            match_filter=f"AND {document} &@~ {query_expr}",
+        )
+
+    # native: generated tsvector over name + content.
+    # The generating expression hard-codes the 'english' config (see the
+    # learnings/pinned_reflections migration), so query with 'english' regardless
+    # of the configured native language.
+    #
+    # to_tsquery over disjunctive OR tokens prepared via prepare_bm25_text.
+    # websearch_to_tsquery was originally used here as an error-free parser for
+    # raw strings (#2455), but its default conjunctive AND (&) across words caused
+    # multi-word queries to return 0 hits. Joining tokens with OR aligns candidate
+    # generation with memory recall (build_bm25_arm); ranking is then ts_rank_cd,
+    # fused with the vector arm when the search has an embedding to fuse with
+    # (search_knowledge_pages runs no reranker either way).
+    score = f"ts_rank_cd({a}.search_vector, to_tsquery('english', {p}))"
+    return KnowledgeBm25Arm(
+        score_expr=score,
+        order_by=f"{score} DESC",
+        match_filter=f"AND {a}.search_vector @@ to_tsquery('english', {p})",
+    )
 
 
 class PostgreSQLDialect(SQLDialect):
@@ -182,8 +317,15 @@ class PostgreSQLDialect(SQLDialect):
         text_search_extension: str = "native",
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
+        pg_search_function_schema: str = "paradedb",
         extra_where: str = "",
     ) -> str:
+        # Whether the branch's own WHERE enforces ``bm25_min_score``. Branches that
+        # cannot (their score is only valid in the target list, or re-evaluating it
+        # in WHERE would cost a second computation) get the floor applied by the
+        # outer wrapper below instead.
+        floor_in_where = False
+
         if text_search_extension == "vchord":
             # <&> returns the NEGATIVE BM25 score (lower = more relevant), negate
             # for a positive score where higher = more relevant.
@@ -193,33 +335,45 @@ class PostgreSQLDialect(SQLDialect):
             # VectorChord operator ranks *every* document, so a bare ORDER BY ...
             # LIMIT pads the result with zero-score, non-matching rows. Gate on the
             # score so only genuine term matches survive into fusion/reranking.
-            bm25_where_filter = f"AND -(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2'))) > {bm25_min_score:g}"
+            # With no caller floor that gate is `> 0` (structural: keep genuine
+            # matches only); with one it becomes the caller's inclusive floor,
+            # which subsumes it.
+            bm25_where_filter = f"AND {bm25_score_expr} {bm25_score_gate(bm25_min_score)}"
+            floor_in_where = True
         elif text_search_extension == "pg_textsearch":
-            bm25_score_expr = f"-({text_param} <@> to_bm25query({text_param}, 'idx_memory_units_text_search'))"
+            bm25_score_expr = f"-(text <@> to_bm25query({text_param}, 'idx_memory_units_text_search'))"
             bm25_order_by = f"text <@> to_bm25query({text_param}, 'idx_memory_units_text_search') ASC"
             bm25_where_filter = ""
         elif text_search_extension == "pgroonga":
-            # &@~ accepts pgroonga's query syntax. Escape the bind parameter so
-            # literal memory text containing operators like ">" or "(" is not
-            # parsed as a malformed query expression.
+            # &@~ accepts pgroonga's query syntax. Tokenize the raw query with
+            # pgroonga_tokenize using TokenBigram + NormalizerNFKC150 (the same
+            # configuration as the index DDL) and aggregate tokens with disjunctive OR.
+            # Joining with OR aligns PGroonga with native tsvector's '|' candidate
+            # generation strategy (broadening recall across all scripts); precision
+            # is restored downstream via BM25 score ranking, multi-arm RRF fusion,
+            # and Cross-Encoder reranking.
             bm25_score_expr = "pgroonga_score(tableoid, ctid)"
             bm25_order_by = f"{bm25_score_expr} DESC"
+            query_expr = (
+                f"(SELECT string_agg(pgroonga_query_escape(elem->>'value'), ' OR ') "
+                f"FROM unnest(pgroonga_tokenize({text_param}, 'tokenizer', 'TokenBigram', 'normalizer', 'NormalizerNFKC150')) AS elem)"
+            )
             bm25_where_filter = (
                 f"AND (COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, '')) "
-                f"&@~ pgroonga_query_escape({text_param})"
+                f"&@~ {query_expr}"
             )
         elif text_search_extension == "pg_search":
             # ParadeDB pg_search: BM25 index over (id, text, context, text_signals)
             # with key_field='id'. The @@@ operator on the key_field requires a
             # field-qualified query (`text:foo`); to keep the bind-parameter form,
             # we fan the query out across all indexed text fields with paradedb.boolean.
-            bm25_score_expr = "paradedb.score(id)"
-            bm25_order_by = "paradedb.score(id) DESC"
+            bm25_score_expr = f"{pg_search_function_schema}.score(id)"
+            bm25_order_by = f"{pg_search_function_schema}.score(id) DESC"
             bm25_where_filter = (
-                f"AND id @@@ paradedb.boolean(should => ARRAY["
-                f"paradedb.match('text', {text_param}), "
-                f"paradedb.match('context', {text_param}), "
-                f"paradedb.match('text_signals', {text_param})"
+                f"AND id @@@ {pg_search_function_schema}.boolean(should => ARRAY["
+                f"{pg_search_function_schema}.match('text', {text_param}), "
+                f"{pg_search_function_schema}.match('context', {text_param}), "
+                f"{pg_search_function_schema}.match('text_signals', {text_param})"
                 f"])"
             )
         else:  # native tsvector
@@ -229,7 +383,7 @@ class PostgreSQLDialect(SQLDialect):
             bm25_order_by = f"{bm25_score_expr} DESC"
             bm25_where_filter = f"AND search_vector @@ to_tsquery('{bm25_language}', {text_param})"
 
-        return (
+        arm = (
             f"(SELECT {cols},"
             f"        NULL::float AS similarity,"
             f"        {bm25_score_expr} AS bm25_score,"
@@ -245,6 +399,22 @@ class PostgreSQLDialect(SQLDialect):
             f" LIMIT {limit_param})"
         )
 
+        if floor_in_where or bm25_min_score <= 0:
+            # Either the branch already gated on the floor, or there is no caller
+            # floor to apply and the branch's own boolean match gate (`@@`, `&@~`,
+            # `@@@`) is the only filter — the default, and unchanged by this path.
+            return arm
+
+        # Apply the caller's floor from the outside. pgroonga's `pgroonga_score()`
+        # and pg_search's `<schema>.score()` are only valid in the target list, and
+        # re-evaluating native's `ts_rank_cd` or pg_textsearch's `<@>` in WHERE
+        # would compute the score twice per row (and, for `<@>`, forfeit the index
+        # scan the ORDER BY relies on). Every arm orders by score DESC, so filtering
+        # the ordered LIMIT slice keeps exactly the rows an inner predicate would:
+        # when at least `limit` rows clear the floor the slice is entirely above it,
+        # and otherwise both forms return precisely the rows that clear it.
+        return f"(SELECT * FROM {arm} AS bm25_arm_{arm_index} WHERE bm25_score {bm25_score_gate(bm25_min_score)})"
+
     def prepare_bm25_text(
         self,
         tokens: list[str],
@@ -253,7 +423,7 @@ class PostgreSQLDialect(SQLDialect):
         text_search_extension: str = "native",
         max_query_terms: int | None = None,
     ) -> str:
-        if text_search_extension in ("vchord", "pg_textsearch", "pgroonga", "pg_search"):
+        if text_search_extension in ("vchord", "pg_textsearch", "pg_search", "pgroonga"):
             return query_text
         if max_query_terms is not None and max_query_terms > 0:
             tokens = tokens[:max_query_terms]

@@ -1,6 +1,34 @@
 
 # Claude Code
 
+> **⚠️ Superseded by the Coding Agents plugin**
+>
+**The Claude Code plugin** is superseded by the [Coding Agents plugin](coding-agents.md) — one
+package covering Claude Code, Codex, opencode, Kilo, Cursor, Copilot, Grok, Antigravity, Devin and Cline and other CLI agents, with a per-repo memory bank they all share instead
+of one bank per agent.
+
+This page and the published package still work; they are no longer developed. To switch:
+
+```bash
+cd /path/to/your/repo
+npx @vectorize-io/hindsight-coding-agents install claude-code --import-conversations
+```
+
+Two things move, and nothing else does.
+
+**Your server moves automatically.** `install` reads `~/.hindsight/claude-code.json` and keeps the same
+`apiUrl` and token — an empty URL still means the local daemon — so you are not silently switched
+to Hindsight Cloud. Pass `--server` to change it.
+
+**Your conversations are re-imported from local transcripts** by `--import-conversations`, as new
+documents. They are not copied from the old bank: that bank's default was a single static bank
+shared by every project, and its documents record only a session id, so working out which ones
+belong to this repo means reading the local transcripts anyway.
+
+**Nothing else carries over.** The old `recall*` and `retain*` settings, missions and bank-naming
+options describe a pipeline this package replaced. Bank naming changes too — one bank per repo,
+shared by every agent. See
+[Migrating from the per-agent plugins](coding-agents.md#migrating-from-the-per-agent-plugins).
 Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations, recalls relevant context, and exposes knowledge tools and a subagent-creation skill so Claude can read and write its own memory.
 
 [View Changelog →](../../changelog/integrations/claude-code.md)
@@ -113,7 +141,6 @@ These settings control how the plugin connects to the Hindsight API.
 | `hindsightApiUrl` | `HINDSIGHT_API_URL` | `""` (empty) | URL of an external Hindsight API server. When empty, the plugin uses a local daemon instead. |
 | `hindsightApiToken` | `HINDSIGHT_API_TOKEN` | `null` | Authentication token for the external API. Only needed when `hindsightApiUrl` is set. |
 | `apiPort` | `HINDSIGHT_API_PORT` | `9077` | Port used by the local `hindsight-embed` daemon. Change this if you run multiple instances or have a port conflict. |
-| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | `0` | Seconds of inactivity before the local daemon shuts itself down. `0` means the daemon stays running until the session ends. |
 | `embedVersion` | `HINDSIGHT_EMBED_VERSION` | `"latest"` | Which version of `hindsight-embed` to install via `uvx`. Pin to a specific version (e.g. `"0.5.2"`) for reproducibility. |
 | `embedPackagePath` | `HINDSIGHT_EMBED_PACKAGE_PATH` | `null` | Local filesystem path to a `hindsight-embed` checkout. When set, the plugin runs from this path instead of installing via `uvx`. Useful for development. |
 | `requestTimeoutSeconds` | `HINDSIGHT_REQUEST_TIMEOUT_SECONDS` | `null` | Overrides the per-call request timeout for recall (default `10s`), retain (default `15s`) and knowledge tool calls (`10–15s`). When unset, the per-call defaults are preserved. Bump this when self-hosted Hindsight legitimately takes longer than 10s under contention (e.g. parallel recalls), to avoid client-side `read operation timed out` errors on requests the server completes successfully. Does not affect the health check, which intentionally stays fast (5s). |

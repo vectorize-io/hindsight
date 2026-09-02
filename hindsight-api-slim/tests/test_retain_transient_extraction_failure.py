@@ -45,12 +45,9 @@ class GeminiLikeAPIError(Exception):
     """
 
 
-async def _count_memory_units(memory, bank_id: str) -> int:
-    pool = await memory._get_pool()
-    return await pool.fetchval(
-        "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1",
-        bank_id,
-    )
+async def _count_memory_units(memory, bank_id: str, request_context) -> int:
+    listing = await memory.list_memory_units(bank_id, limit=1000, request_context=request_context)
+    return listing["total"]
 
 
 async def _run_retain_through_worker(memory, extraction_error: Exception, *, retry_count: int = 0):
@@ -134,7 +131,7 @@ async def _run_retain_through_worker(memory, extraction_error: Exception, *, ret
     ids=["rate_limit", "non_openai_provider_5xx", "value_error"],
 )
 @pytest.mark.asyncio
-async def test_extraction_failure_is_retried_never_silently_completed(memory, extraction_error):
+async def test_extraction_failure_is_retried_never_silently_completed(memory, extraction_error, request_context):
     """An extraction-LLM failure must NEVER complete the op with 0 facts.
 
     Regardless of the failure type or provider, the error propagates into the
@@ -143,7 +140,7 @@ async def test_extraction_failure_is_retried_never_silently_completed(memory, ex
     memory_units and ``retry_count`` 0, silently losing the document's memory.
     """
     final, bank_id = await _run_retain_through_worker(memory, extraction_error)
-    unit_count = await _count_memory_units(memory, bank_id)
+    unit_count = await _count_memory_units(memory, bank_id, request_context)
 
     assert final["status"] != "completed", (
         "BUG (#1833): extraction failure was swallowed — operation marked 'completed' with "
@@ -155,7 +152,7 @@ async def test_extraction_failure_is_retried_never_silently_completed(memory, ex
 
 
 @pytest.mark.asyncio
-async def test_extraction_failure_at_retry_cap_fails_terminally(memory):
+async def test_extraction_failure_at_retry_cap_fails_terminally(memory, request_context):
     """Once the worker retry cap is reached, extraction failures must fail terminally.
 
     This guards the recovered-worker path seen in vectorize-io/hindsight#2413:
@@ -168,7 +165,7 @@ async def test_extraction_failure_at_retry_cap_fails_terminally(memory):
         RuntimeError("structured JSON parse failed after all retain_extract_facts attempts"),
         retry_count=3,
     )
-    unit_count = await _count_memory_units(memory, bank_id)
+    unit_count = await _count_memory_units(memory, bank_id, request_context)
 
     assert final["status"] == "failed", f"expected retry-capped task to fail, got {final['status']!r}"
     assert final["retry_count"] == 3
