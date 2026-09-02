@@ -59,12 +59,18 @@ def _report(artifact: BenchmarkArtifact) -> None:
 
     refused = [arm for run in artifact.runs for arm in run.arms if arm.retain_error]
     if refused:
-        console.print(
-            f"\n[yellow]{len(refused)} retain(s) were refused by the server.[/yellow] "
-            "If these are the multimodal arm, the configured retain LLM is not vision-capable — "
-            "set a vision model, or HINDSIGHT_API_LLM_VISION=true for a gateway."
-        )
-        console.print(f"  [dim]{refused[0].retain_error}[/dim]")
+        # Only a 422 means "this LLM cannot read images". Anything else is an
+        # ordinary server error and saying otherwise sends the reader to the wrong
+        # place — a 500 from a schema mismatch once printed as a vision problem.
+        vision = [arm for arm in refused if arm.retain_error.startswith("422")]
+        console.print(f"\n[yellow]{len(refused)} retain(s) failed on the server.[/yellow]")
+        if vision:
+            console.print(
+                "  Refused with 422: the configured retain LLM is not vision-capable — "
+                "set a vision model, or HINDSIGHT_API_LLM_VISION=true for a gateway."
+            )
+        for arm in refused[:2]:
+            console.print(f"  [dim]{arm.retain_error}[/dim]")
 
     table = Table(title="Answers to questions only the images can answer", show_lines=False)
     table.add_column("Arm")
