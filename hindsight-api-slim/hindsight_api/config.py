@@ -739,8 +739,8 @@ ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
 ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
 # Whether migrations run in a subprocess instead of in the calling process.
 # "auto" (default) isolates only on a free-threaded interpreter, where alembic's
-# psycopg2 would otherwise re-enable the GIL for the life of the process; "always"
-# and "never" force it either way. See migrations._should_isolate_migrations.
+# psycopg2 would otherwise re-enable the GIL for the life of the process; "true"
+# and "false" force it either way. See migrations._should_isolate_migrations.
 ENV_MIGRATION_ISOLATION = "HINDSIGHT_API_MIGRATION_ISOLATION"
 ENV_MIGRATION_CONCURRENCY = "HINDSIGHT_API_MIGRATION_CONCURRENCY"
 
@@ -1454,9 +1454,12 @@ DEFAULT_OBSERVATION_SCOPE_LIMITS: list | None = None
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
-# "auto" | "always" | "never" — see ENV_MIGRATION_ISOLATION.
+# "auto" | "true" | "false" — see ENV_MIGRATION_ISOLATION. Spelled as a tri-state
+# boolean rather than always/never so it reads like every other on/off flag here:
+# the question the value answers is "isolate the migration?", and "auto" is the
+# third answer, "let the interpreter decide".
 DEFAULT_MIGRATION_ISOLATION = "auto"
-MIGRATION_ISOLATION_CHOICES = ("auto", "always", "never")
+MIGRATION_ISOLATION_CHOICES = ("auto", "true", "false")
 # Number of tenant schemas to migrate concurrently. Each schema runs in its own
 # process (Alembic's command.upgrade() is not thread-safe); within a schema the
 # work is always sequential. 1 = fully sequential (the safe default).

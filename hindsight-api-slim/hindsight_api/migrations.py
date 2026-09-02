@@ -253,9 +253,9 @@ def _should_isolate_migrations() -> bool:
     Controlled by ``HINDSIGHT_API_MIGRATION_ISOLATION``:
 
         auto    (default) isolate only on a free-threaded interpreter
-        always  isolate everywhere — useful to keep alembic's import graph and its
+        true    isolate everywhere — useful to keep alembic's import graph and its
                 sync engine out of a long-lived server process regardless
-        never   never isolate; the historical behaviour
+        false   never isolate; the historical behaviour
 
     "auto" exists because of psycopg2. Alembic drives PostgreSQL through SQLAlchemy's
     sync engine, and psycopg2 has no free-threaded build: importing it on a
@@ -268,9 +268,9 @@ def _should_isolate_migrations() -> bool:
     if os.environ.get(_CHILD_MARKER):
         return False
     mode = get_config().migration_isolation
-    if mode == "always":
+    if mode == "true":
         return True
-    if mode == "never":
+    if mode == "false":
         return False
     return bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
 
@@ -291,22 +291,27 @@ def _run_in_migration_child(target: str, kwargs: dict) -> None:
 
     The migration itself is short, rare and not on any hot path, so paying a process
     spawn for it is free.
+
+    The payload goes over stdin, not argv: ``run_migrations_for_schemas`` is called
+    with every tenant schema at once, and at the scale that entrypoint is documented
+    for (20k schemas) the JSON is hundreds of KB — past ``ARG_MAX`` on macOS and close
+    to it on Linux, which would fail as ``E2BIG`` only on the largest deployments.
+
+    The child inherits stdout/stderr instead of having them captured. A full sweep can
+    run for the best part of an hour; capturing would hold every line until it finished
+    and show an operator nothing while it ran.
     """
     payload = json.dumps({"target": target, "kwargs": kwargs})
-    env = {**os.environ, ENV_MIGRATION_ISOLATION: "never", _CHILD_MARKER: "1"}
-    logger.info("Running migrations in a subprocess (free-threaded build; psycopg2 needs the GIL)")
+    env = {**os.environ, ENV_MIGRATION_ISOLATION: "false", _CHILD_MARKER: "1"}
+    logger.info("Running migrations in a subprocess (psycopg2 needs the GIL; see %s)", ENV_MIGRATION_ISOLATION)
     result = subprocess.run(
-        [sys.executable, "-m", "hindsight_api.migrations", payload],
+        [sys.executable, "-m", "hindsight_api.migrations"],
+        input=payload,
         env=env,
-        capture_output=True,
         text=True,
     )
-    if result.stdout.strip():
-        logger.info("migration child stdout:\n%s", result.stdout.strip())
     if result.returncode != 0:
-        raise RuntimeError(f"Migration subprocess failed (exit {result.returncode}).\n{result.stderr.strip()}")
-    if result.stderr.strip():
-        logger.debug("migration child stderr:\n%s", result.stderr.strip())
+        raise RuntimeError(f"Migration subprocess failed (exit {result.returncode}); see the child's output above.")
 
 
 def run_migrations(
@@ -1416,21 +1421,15 @@ def run_migrations_for_schemas(
 
 
 def _main() -> None:
-    """Entry point for the migration subprocess (see ``_run_migrations_in_child``).
+    """Entry point for the migration subprocess (see ``_run_in_migration_child``).
 
-    Invoked as ``python -m hindsight_api.migrations '<json>'``. Kept deliberately thin:
-    it exists only so the psycopg2 import happens in a process that is allowed to have
-    the GIL, and it re-enters ``run_migrations`` with ``_CHILD_MARKER`` set so the
-    subprocess branch is skipped.
+    Invoked as ``python -m hindsight_api.migrations`` with the JSON payload on stdin.
+    Kept deliberately thin: it exists only so the psycopg2 import happens in a process
+    that is allowed to have the GIL, and it re-enters ``run_migrations`` with
+    ``_CHILD_MARKER`` set so the subprocess branch is skipped.
     """
-    import argparse
-
-    parser = argparse.ArgumentParser(prog="python -m hindsight_api.migrations")
-    parser.add_argument("payload", help="JSON object of run_migrations() arguments")
-    args = parser.parse_args()
-
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    payload = json.loads(args.payload)
+    payload = json.loads(sys.stdin.read())
     os.environ[_CHILD_MARKER] = "1"
     targets = {
         "run_migrations": run_migrations,
@@ -1438,7 +1437,7 @@ def _main() -> None:
     }
     target = payload["target"]
     if target not in targets:
-        parser.error(f"unknown migration target {target!r}; expected one of {sorted(targets)}")
+        raise SystemExit(f"unknown migration target {target!r}; expected one of {sorted(targets)}")
     targets[target](**payload["kwargs"])
 
 

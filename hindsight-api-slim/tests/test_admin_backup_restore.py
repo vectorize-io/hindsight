@@ -810,7 +810,7 @@ async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(m
     # Patches migrations.run_migrations and asserts on the calls, so the work must
     # stay in-process; an isolated migration would never see the patch.
     # See migrations._should_isolate_migrations.
-    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "never")
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "false")
     calls: dict[str, list] = {
         "run_migrations": [],
         "ensure_vector_extension": [],
@@ -881,7 +881,7 @@ async def test_run_migration_without_schema_runs_optional_post_migration_hooks(m
     # Patches migrations.run_migrations and asserts on the calls, so the work must
     # stay in-process; an isolated migration would never see the patch.
     # See migrations._should_isolate_migrations.
-    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "never")
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "false")
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     calls: dict[str, list] = {
         "run_migrations": [],
@@ -966,7 +966,7 @@ async def test_run_migration_with_schema_only_runs_requested_schema(monkeypatch)
     # Patches migrations.run_migrations and asserts on the calls, so the work must
     # stay in-process; an isolated migration would never see the patch.
     # See migrations._should_isolate_migrations.
-    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "never")
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "false")
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     calls: dict[str, list] = {
         "run_migrations": [],

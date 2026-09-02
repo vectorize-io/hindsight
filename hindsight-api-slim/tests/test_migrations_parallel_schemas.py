@@ -20,7 +20,7 @@ def record_steps(monkeypatch):
     # These tests patch the per-schema steps and assert on the call sequence, so the
     # work has to happen in this process; a subprocess would never see the patches.
     # What is under test here is the fan-out logic, not the transport that carries it.
-    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "never")
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "false")
     calls: list[tuple[str, str]] = []
     lock = threading.Lock()
 
@@ -78,7 +78,7 @@ def test_parallel_fans_out_across_schemas(monkeypatch):
     """concurrency>1 runs distinct schemas at the same time (not serialized)."""
     # Same reason as the record_steps fixture: this test patches the migration step
     # and asserts on concurrency, so the fan-out has to happen in this process.
-    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "never")
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "false")
     max_active = 0
     active = 0
     lock = threading.Lock()
@@ -115,7 +115,7 @@ def test_parallel_aggregates_per_schema_failures(monkeypatch):
     """One failing schema does not hide the others, and all are still attempted."""
     # Same reason as the record_steps fixture: this test patches the migration step
     # and asserts on concurrency, so the fan-out has to happen in this process.
-    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "never")
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "false")
     attempted: list[str] = []
     lock = threading.Lock()
 

@@ -4,9 +4,12 @@ Alembic drives PostgreSQL through SQLAlchemy's sync engine, i.e. psycopg2, which
 no free-threaded build: importing it on a free-threaded interpreter re-enables the GIL
 for the life of the process. A server that migrates on startup would spend the rest of
 its life single-threaded, having done the damage before serving a request. "auto"
-therefore isolates exactly there, and the explicit values let a deployment decide.
+therefore isolates exactly there, and "true"/"false" let a deployment decide.
 """
 
+import io
+import json
+import os
 import sysconfig
 from unittest.mock import patch
 
@@ -25,12 +28,12 @@ def _isolates(mode: str, monkeypatch) -> bool:
         return migrations._should_isolate_migrations()
 
 
-def test_always_isolates(monkeypatch):
-    assert _isolates("always", monkeypatch) is True
+def test_true_isolates(monkeypatch):
+    assert _isolates("true", monkeypatch) is True
 
 
-def test_never_isolates(monkeypatch):
-    assert _isolates("never", monkeypatch) is False
+def test_false_does_not_isolate(monkeypatch):
+    assert _isolates("false", monkeypatch) is False
 
 
 def test_auto_follows_the_interpreter(monkeypatch):
@@ -43,16 +46,18 @@ def test_child_never_recurses(monkeypatch):
     """The subprocess must run the migration, not spawn another one."""
     monkeypatch.setenv(migrations._CHILD_MARKER, "1")
     with patch.object(migrations, "get_config") as get_config:
-        get_config.return_value.migration_isolation = "always"
+        get_config.return_value.migration_isolation = "true"
         assert migrations._should_isolate_migrations() is False
 
 
-@pytest.mark.parametrize("bad", ["", "yes", "subprocess", "Auto ", "1"])
+@pytest.mark.parametrize("bad", ["", "yes", "no", "1", "0", "always", "never", "subprocess"])
 def test_rejects_unknown_values(monkeypatch, bad):
-    """Silently defaulting would run migrations in the wrong process, invisibly."""
+    """Silently defaulting would run migrations in the wrong process, invisibly.
+
+    "1"/"0"/"yes"/"no" are rejected on purpose: the flag is not a general bool parser,
+    and the three spellings it does take are the ones documented.
+    """
     monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", bad)
-    if bad.strip().lower() in ("auto", "always", "never"):
-        pytest.skip("valid after normalisation")
     with pytest.raises(ValueError, match="HINDSIGHT_API_MIGRATION_ISOLATION"):
         _parse_migration_isolation()
 
@@ -63,5 +68,48 @@ def test_defaults_to_auto(monkeypatch):
 
 
 def test_case_and_whitespace_are_tolerated(monkeypatch):
-    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "  ALWAYS  ")
-    assert _parse_migration_isolation() == "always"
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_ISOLATION", "  TRUE  ")
+    assert _parse_migration_isolation() == "true"
+
+
+def test_payload_travels_on_stdin_not_argv():
+    """A whole-fleet sweep names every tenant schema; argv would hit ARG_MAX.
+
+    ``run_migrations_for_schemas`` is called with all schemas at once, and the
+    entrypoint is documented at 20k of them — hundreds of KB of JSON, past ARG_MAX on
+    macOS. It also must not be captured: an hour-long sweep would show nothing until
+    it finished.
+    """
+    schemas = [f"tenant_{i:05d}" for i in range(20_000)]
+    with patch.object(migrations.subprocess, "run") as run:
+        run.return_value.returncode = 0
+        migrations._run_in_migration_child("run_migrations_for_schemas", {"schemas": schemas})
+
+    (argv,), kwargs = run.call_args
+    assert argv[1:] == ["-m", "hindsight_api.migrations"], "the payload must not be an argument"
+    assert json.loads(kwargs["input"])["kwargs"]["schemas"] == schemas
+    assert "capture_output" not in kwargs and "stdout" not in kwargs, "child output must stream"
+    assert kwargs["env"][migrations._CHILD_MARKER] == "1"
+
+
+def test_child_failure_is_raised(monkeypatch):
+    with patch.object(migrations.subprocess, "run") as run:
+        run.return_value.returncode = 3
+        with pytest.raises(RuntimeError, match="exit 3"):
+            migrations._run_in_migration_child("run_migrations", {"database_url": "postgresql://x"})
+
+
+def test_main_reads_stdin_and_dispatches(monkeypatch):
+    """The child entrypoint reconstructs the exact call the parent asked for."""
+    kwargs = {"database_url": "postgresql://x", "schema": "tenant_a"}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"target": "run_migrations", "kwargs": kwargs})))
+    with patch.object(migrations, "run_migrations") as run_migrations_:
+        migrations._main()
+    run_migrations_.assert_called_once_with(**kwargs)
+    assert os.environ[migrations._CHILD_MARKER] == "1"
+
+
+def test_main_rejects_an_unknown_target(monkeypatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"target": "drop_everything", "kwargs": {}})))
+    with pytest.raises(SystemExit, match="drop_everything"):
+        migrations._main()
