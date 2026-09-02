@@ -1832,6 +1832,10 @@ jobs:
     name: test-api (free-threaded 3.14)
     env:
       HINDSIGHT_API_LLM_PROVIDER: mock
+      # Not a repository secret — Actions provides it to every run, forks included —
+      # so this keeps the job runnable on fork PRs. The github-copilot provider reads
+      # it to avoid looking for CLI account metadata that no runner has.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # strict is the default on a free-threaded build; set explicitly so the intent
       # of this job is visible in the workflow rather than only in the code.
       HINDSIGHT_API_FREE_THREADING: strict
