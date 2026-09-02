@@ -81,7 +81,7 @@ import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { HarnessLogo } from "@/components/ui/harness-logo";
-import { InlineImageText } from "@/components/ui/inline-attachment-text";
+import { InlineAttachmentText } from "@/components/ui/inline-attachment-text";
 import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 
 const ITEMS_PER_PAGE = 50;
@@ -692,9 +692,10 @@ function ChunkRow({ chunk, bankId }: { chunk: any; bankId: string }) {
           /* Split view: left text, right compact memories */
           <div className="grid grid-cols-2 divide-x divide-border" style={{ height: "350px" }}>
             <div className="overflow-y-auto">
-              <InlineImageText
+              <InlineAttachmentText
                 text={text}
                 bankId={bankId}
+                attachments={chunk.attachments}
                 className="px-4 py-3 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono"
               />
             </div>
@@ -2104,6 +2105,19 @@ export function DocumentsView() {
                             autoFocus
                           />
                           <p className="text-xs text-muted-foreground">{t("saveHint")}</p>
+                          {/* Attachments appear in the raw text as ⟦hs-att:…⟧
+                              tokens. Keeping a token keeps the attachment where
+                              it is; deleting one removes it from the document.
+                              Say so, rather than letting an editor delete a
+                              screenshot by tidying up something that looks like
+                              noise. */}
+                          {(selectedDocument.attachments?.length ?? 0) > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {t("attachmentEditHint", {
+                                count: selectedDocument.attachments.length,
+                              })}
+                            </p>
+                          )}
                         </div>
                       ) : (
                         <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
@@ -2127,9 +2141,10 @@ export function DocumentsView() {
                               {t("editButton")}
                             </Button>
                           </div>
-                          <InlineImageText
+                          <InlineAttachmentText
                             text={selectedDocument.original_text}
                             bankId={currentBank ?? ""}
+                            attachments={selectedDocument.attachments}
                             className="p-4 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono"
                           />
                         </div>

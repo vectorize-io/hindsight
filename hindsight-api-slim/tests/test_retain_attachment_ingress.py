@@ -324,3 +324,39 @@ async def test_plain_string_content_cannot_summon_an_image(api_client, memory):
 
     assert response.status_code == 200, response.text
     assert await _document_text(memory, bank_id, "thief") == "see  here"
+
+
+@pytest.mark.asyncio
+async def test_editing_a_documents_text_keeps_its_own_attachments(api_client, memory):
+    """Re-sending a document's own body is an edit, not an attempt to steal.
+
+    The control plane's content editor loads `original_text` — placeholders and
+    all — into a textarea and retains it back as a plain string. Scrubbing those
+    placeholders silently deleted every screenshot in the article.
+    """
+    bank_id = f"img-{uuid.uuid4().hex[:8]}"
+    await _retain(api_client, bank_id, [_text_block("before:"), _image_block()], document_id="article")
+    stored = await _document_text(memory, bank_id, "article")
+    assert list(iter_placeholder_ids(stored))
+
+    edited = stored.replace("before:", "after the rewrite:")
+    response = await _retain(api_client, bank_id, edited, document_id="article")
+
+    assert response.status_code == 200, response.text
+    text = await _document_text(memory, bank_id, "article")
+    assert "after the rewrite:" in text
+    assert list(iter_placeholder_ids(text)) == list(iter_placeholder_ids(stored))
+
+
+@pytest.mark.asyncio
+async def test_the_exemption_is_scoped_to_the_document_that_owns_it(api_client, memory):
+    """Document A's attachment must not be summonable from document B's text."""
+    bank_id = f"img-{uuid.uuid4().hex[:8]}"
+    await _retain(api_client, bank_id, [_text_block("owner"), _image_block()], document_id="owner")
+    owner_text = await _document_text(memory, bank_id, "owner")
+    stolen = f"see {owner_text.split(chr(10))[2]} here"
+
+    response = await _retain(api_client, bank_id, stolen, document_id="thief")
+
+    assert response.status_code == 200, response.text
+    assert not list(iter_placeholder_ids(await _document_text(memory, bank_id, "thief")))

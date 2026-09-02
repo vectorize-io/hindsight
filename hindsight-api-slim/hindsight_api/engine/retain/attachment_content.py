@@ -29,7 +29,7 @@ same body, or the ``content_hash`` gate would re-extract an unchanged document.
 import base64
 import hashlib
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 # Delimiters chosen from the Unicode mathematical-brackets block: they survive
@@ -95,15 +95,38 @@ def compute_attachment_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def neutralize_placeholders(text: str) -> str:
+def contains_placeholder_like(text: str) -> bool:
+    """Whether ``text`` holds anything shaped like a placeholder, valid or not.
+
+    A cheap pre-check so the retain path only pays for resolving a document's own
+    attachments when the caller actually wrote something that looks like one.
+    """
+    return _PLACEHOLDER_LOOKALIKE_RE.search(text) is not None
+
+
+def neutralize_placeholders(text: str, allowed_ids: "Collection[str] | None" = None) -> str:
     """Strip placeholder-shaped substrings from caller-authored text.
 
     Only the canonicalizer may mint a placeholder. Without this, a caller could
-    write the token by hand in a text block and have extraction resolve it to an
-    image the document never carried -- including one stored for a different
-    document in the same bank.
+    write the token by hand and have extraction resolve it to an attachment the
+    document never carried -- anything stored in the same bank.
+
+    ``allowed_ids`` exempts attachments the document *already* has. That is not a
+    hole in the rule, it is the rule stated properly: re-sending a document's own
+    body is an ordinary edit, and the control plane does exactly that when someone
+    changes an article's wording. Without the exemption such an edit silently
+    deleted every screenshot in the article.
     """
-    return _PLACEHOLDER_LOOKALIKE_RE.sub("", text)
+    allowed = set(allowed_ids or ())
+
+    def _keep_or_drop(match: "re.Match[str]") -> str:
+        token = match.group(0)
+        well_formed = PLACEHOLDER_RE.fullmatch(token)
+        if well_formed and well_formed.group("attachment_id") in allowed:
+            return token
+        return ""
+
+    return _PLACEHOLDER_LOOKALIKE_RE.sub(_keep_or_drop, text)
 
 
 def iter_placeholder_ids(text: str) -> Iterator[str]:
@@ -276,7 +299,7 @@ def build_prompt_parts(text: str, attachments: Mapping[str, LoadedAttachment]) -
     return parts
 
 
-def canonicalize(blocks: Sequence[ContentBlock]) -> CanonicalContent:
+def canonicalize(blocks: Sequence[ContentBlock], allowed_ids: "Collection[str] | None" = None) -> CanonicalContent:
     """Flatten ordered text/attachment blocks into the canonical body plus its attachments.
 
     Image blocks must already be decoded and hashed; this decides only where each
@@ -293,7 +316,7 @@ def canonicalize(blocks: Sequence[ContentBlock]) -> CanonicalContent:
         if isinstance(block, RetainText):
             if after_attachment:
                 body = _pad_to_blank_line(body)
-            body += neutralize_placeholders(block.text)
+            body += neutralize_placeholders(block.text, allowed_ids)
             after_attachment = False
         else:
             body = _pad_to_blank_line(body) + attachment_placeholder(block.attachment_hash)

@@ -739,7 +739,8 @@
     "labelObservationScopes": "Observation scopes",
     "invalidatedFactsTitle": "Invalidated facts",
     "documentUpdating": "Updating",
-    "lastRefreshed": "Refreshed {time}"
+    "lastRefreshed": "Refreshed {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "Relations",

@@ -12,6 +12,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { InlineAttachmentText } from "@/components/ui/inline-attachment-text";
 
 interface DocumentChunkModalProps {
   type: "document" | "chunk";
@@ -129,9 +130,12 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         {t("sectionOriginalText")}
                       </div>
                       <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
-                        <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
-                          {data.original_text}
-                        </pre>
+                        <InlineAttachmentText
+                          text={data.original_text}
+                          bankId={currentBank ?? ""}
+                          attachments={data.attachments}
+                          className="text-sm whitespace-pre-wrap font-mono text-foreground"
+                        />
                       </div>
                     </div>
                   )}
@@ -191,9 +195,12 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         {t("sectionChunkText")}
                       </div>
                       <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
-                        <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
-                          {data.chunk_text}
-                        </pre>
+                        <InlineAttachmentText
+                          text={data.chunk_text}
+                          bankId={currentBank ?? ""}
+                          attachments={data.attachments}
+                          className="text-sm whitespace-pre-wrap font-mono text-foreground"
+                        />
                       </div>
                     </div>
                   )}
