@@ -17,12 +17,12 @@ first test pins.
 import pytest
 
 from hindsight_api.engine.retain.fact_extraction import chunk_text
-from hindsight_api.engine.retain.image_content import (
-    compute_image_hash,
-    contains_image,
-    image_placeholder,
+from hindsight_api.engine.retain.attachment_content import (
+    compute_attachment_hash,
+    contains_attachment,
+    attachment_placeholder,
     iter_placeholder_ids,
-    short_image_id,
+    short_attachment_id,
 )
 
 MAX_CHARS = 3000
@@ -30,11 +30,11 @@ MAX_IMAGES = 8
 
 
 def _placeholder(seed: bytes) -> str:
-    return image_placeholder(compute_image_hash(seed))
+    return attachment_placeholder(compute_attachment_hash(seed))
 
 
 def _chunk(text: str, *, max_chars: int = MAX_CHARS, max_images: int = MAX_IMAGES) -> list[str]:
-    return chunk_text(text, max_chars, max_images_per_chunk=max_images)
+    return chunk_text(text, max_chars, max_attachments_per_chunk=max_images)
 
 
 def test_text_without_images_is_chunked_exactly_as_before() -> None:
@@ -84,8 +84,8 @@ def test_images_beyond_the_hard_cap_start_a_new_chunk() -> None:
 
 def test_every_placeholder_survives_chunking_intact() -> None:
     """A placeholder split across two chunks would strand its image."""
-    ids = [short_image_id(compute_image_hash(f"img{i}".encode())) for i in range(6)]
-    text = "\n\n".join(f"{'body text ' * 100}{image_placeholder(i)}" for i in ids)
+    ids = [short_attachment_id(compute_attachment_hash(f"img{i}".encode())) for i in range(6)]
+    text = "\n\n".join(f"{'body text ' * 100}{attachment_placeholder(i)}" for i in ids)
 
     chunks = _chunk(text)
 
@@ -114,7 +114,7 @@ def test_a_run_too_long_to_share_a_chunk_is_split_by_the_ordinary_splitter() -> 
 
     chunks = _chunk(f"{image}\n\n{prose}")
 
-    assert contains_image(chunks[0])
+    assert contains_attachment(chunks[0])
     assert len(chunks) > 1
     for chunk in chunks:
         assert len(chunk) <= MAX_CHARS

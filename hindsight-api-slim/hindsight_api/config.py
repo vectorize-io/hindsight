@@ -681,9 +681,9 @@ ENV_RETAIN_MEMORY_BUDGET_MB = "HINDSIGHT_API_RETAIN_MEMORY_BUDGET_MB"
 # they bound what a single request may push through the ingress. The two chunking
 # knobs are hierarchical, because they shape extraction the way retain_chunk_size
 # does and a bank ingesting screenshot-heavy documents may want different values.
-ENV_RETAIN_IMAGE_MAX_SIZE_MB = "HINDSIGHT_API_RETAIN_IMAGE_MAX_SIZE_MB"
-ENV_RETAIN_IMAGE_MAX_COUNT = "HINDSIGHT_API_RETAIN_IMAGE_MAX_COUNT"
-ENV_RETAIN_MAX_IMAGES_PER_CHUNK = "HINDSIGHT_API_RETAIN_MAX_IMAGES_PER_CHUNK"
+ENV_RETAIN_ATTACHMENT_MAX_SIZE_MB = "HINDSIGHT_API_RETAIN_ATTACHMENT_MAX_SIZE_MB"
+ENV_RETAIN_ATTACHMENT_MAX_COUNT = "HINDSIGHT_API_RETAIN_ATTACHMENT_MAX_COUNT"
+ENV_RETAIN_MAX_ATTACHMENTS_PER_CHUNK = "HINDSIGHT_API_RETAIN_MAX_ATTACHMENTS_PER_CHUNK"
 
 # File storage configuration
 ENV_FILE_STORAGE_TYPE = "HINDSIGHT_API_FILE_STORAGE_TYPE"
@@ -1396,8 +1396,8 @@ DEFAULT_RETAIN_CHUNK_BATCH_SIZE = (
 # Inline retain images. 20MB is above every mainstream provider's own per-image
 # ceiling (Anthropic ~5MB, OpenAI ~20MB), so the provider's limit binds first for
 # a legitimate image while an obviously abusive upload is refused at the ingress.
-DEFAULT_RETAIN_IMAGE_MAX_SIZE_MB = 20  # Max decoded size of a single inline image
-DEFAULT_RETAIN_IMAGE_MAX_COUNT = 50  # Max images in one retain item
+DEFAULT_RETAIN_ATTACHMENT_MAX_SIZE_MB = 20  # Max decoded size of a single inline image
+DEFAULT_RETAIN_ATTACHMENT_MAX_COUNT = 50  # Max images in one retain item
 # What one image "costs" against retain_chunk_size. A chunk's budget is measured in
 # characters of text, but an image consumes model context too, so an image-bearing
 # chunk must carry proportionally less prose or the extraction call overflows.
@@ -1412,7 +1412,7 @@ DEFAULT_RETAIN_IMAGE_MAX_COUNT = 50  # Max images in one retain item
 DEFAULT_RETAIN_IMAGE_CHUNK_COST_CHARS = 1500
 # Hard cap regardless of the cost budget: many small images could otherwise fit one
 # chunk and still blow past a provider's per-request image limit.
-DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK = 8
+DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK = 8
 # Bytes of extracted-but-unwritten state one retain operation may hold, as a hard ceiling
 # on top of the chunk count above. The count alone is not a memory bound — a chunk carries
 # however many facts the extractor found in it — so this is what a worker can actually be
@@ -1957,9 +1957,9 @@ def validate_retain_chunking_config(
 
 
 def validate_retain_image_chunking_config(
-    retain_max_images_per_chunk: Any,
+    retain_max_attachments_per_chunk: Any,
     *,
-    retain_max_images_per_chunk_name: str = "retain_max_images_per_chunk",
+    retain_max_attachments_per_chunk_name: str = "retain_max_attachments_per_chunk",
 ) -> None:
     """Validate the hierarchical inline-image chunking field.
 
@@ -1974,7 +1974,7 @@ def validate_retain_image_chunking_config(
     the feature exists to preserve. The real constraint is how many images one
     request may carry, which is this field.
     """
-    _validate_retain_chunking_int(retain_max_images_per_chunk_name, retain_max_images_per_chunk)
+    _validate_retain_chunking_int(retain_max_attachments_per_chunk_name, retain_max_attachments_per_chunk)
 
 
 def validate_retain_completion_token_budget(
@@ -2856,9 +2856,9 @@ class HindsightConfig:
     retain_entity_resolution_max_candidates: int  # Max candidates scored per entity mention
     retain_chunk_batch_size: int  # Max chunks per streaming batch (0 = disabled)
     retain_memory_budget_mb: int  # Max MB of in-flight extraction state per retain (0 = disabled)
-    retain_image_max_size_mb: int  # Max decoded size of one inline retain image (static)
-    retain_image_max_count: int  # Max inline images in one retain item (static)
-    retain_max_images_per_chunk: int  # Hard cap on images in a single extraction chunk
+    retain_attachment_max_size_mb: int  # Max decoded size of one inline retain image (static)
+    retain_attachment_max_count: int  # Max inline images in one retain item (static)
+    retain_max_attachments_per_chunk: int  # Hard cap on images in a single extraction chunk
 
     # File storage (static - server-level only)
     file_storage_type: str  # "native" (PostgreSQL) or "s3" (S3-compatible)
@@ -3203,7 +3203,7 @@ class HindsightConfig:
         # How many images one extraction chunk may carry. Shapes extraction the
         # same way retain_chunk_size does, so a bank ingesting screenshot-heavy
         # documents can tune it.
-        "retain_max_images_per_chunk",
+        "retain_max_attachments_per_chunk",
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
         "entities_allow_free_form",
@@ -3258,9 +3258,9 @@ class HindsightConfig:
         return self.file_conversion_max_batch_size_mb * 1024 * 1024
 
     @property
-    def retain_image_max_size_bytes(self) -> int:
+    def retain_attachment_max_size_bytes(self) -> int:
         """Maximum decoded size of a single inline retain image, in bytes."""
-        return self.retain_image_max_size_mb * 1024 * 1024
+        return self.retain_attachment_max_size_mb * 1024 * 1024
 
     def reranker_chain(self) -> list[RerankerMemberConfig]:
         """The reranker failover chain: the primary (index 0) plus indexed members.
@@ -3502,13 +3502,13 @@ class HindsightConfig:
         )
 
         validate_retain_image_chunking_config(
-            self.retain_max_images_per_chunk,
-            retain_max_images_per_chunk_name=ENV_RETAIN_MAX_IMAGES_PER_CHUNK,
+            self.retain_max_attachments_per_chunk,
+            retain_max_attachments_per_chunk_name=ENV_RETAIN_MAX_ATTACHMENTS_PER_CHUNK,
         )
 
         # The two ingress size caps are static, so they are only ever env-sourced.
-        _validate_retain_chunking_int(ENV_RETAIN_IMAGE_MAX_SIZE_MB, self.retain_image_max_size_mb)
-        _validate_retain_chunking_int(ENV_RETAIN_IMAGE_MAX_COUNT, self.retain_image_max_count)
+        _validate_retain_chunking_int(ENV_RETAIN_ATTACHMENT_MAX_SIZE_MB, self.retain_attachment_max_size_mb)
+        _validate_retain_chunking_int(ENV_RETAIN_ATTACHMENT_MAX_COUNT, self.retain_attachment_max_count)
 
         validate_retain_completion_token_budget(
             llm_provider=self.llm_provider,
@@ -4223,12 +4223,14 @@ class HindsightConfig:
             ),
             retain_chunk_batch_size=int(os.getenv(ENV_RETAIN_CHUNK_BATCH_SIZE, str(DEFAULT_RETAIN_CHUNK_BATCH_SIZE))),
             retain_memory_budget_mb=int(os.getenv(ENV_RETAIN_MEMORY_BUDGET_MB, str(DEFAULT_RETAIN_MEMORY_BUDGET_MB))),
-            retain_image_max_size_mb=int(
-                os.getenv(ENV_RETAIN_IMAGE_MAX_SIZE_MB, str(DEFAULT_RETAIN_IMAGE_MAX_SIZE_MB))
+            retain_attachment_max_size_mb=int(
+                os.getenv(ENV_RETAIN_ATTACHMENT_MAX_SIZE_MB, str(DEFAULT_RETAIN_ATTACHMENT_MAX_SIZE_MB))
             ),
-            retain_image_max_count=int(os.getenv(ENV_RETAIN_IMAGE_MAX_COUNT, str(DEFAULT_RETAIN_IMAGE_MAX_COUNT))),
-            retain_max_images_per_chunk=int(
-                os.getenv(ENV_RETAIN_MAX_IMAGES_PER_CHUNK, str(DEFAULT_RETAIN_MAX_IMAGES_PER_CHUNK))
+            retain_attachment_max_count=int(
+                os.getenv(ENV_RETAIN_ATTACHMENT_MAX_COUNT, str(DEFAULT_RETAIN_ATTACHMENT_MAX_COUNT))
+            ),
+            retain_max_attachments_per_chunk=int(
+                os.getenv(ENV_RETAIN_MAX_ATTACHMENTS_PER_CHUNK, str(DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK))
             ),
             # File storage
             file_storage_type=os.getenv(ENV_FILE_STORAGE_TYPE, DEFAULT_FILE_STORAGE_TYPE),

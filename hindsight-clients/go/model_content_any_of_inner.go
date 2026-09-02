@@ -18,8 +18,16 @@ import (
 
 // ContentAnyOfInner - struct for ContentAnyOfInner
 type ContentAnyOfInner struct {
+	FileContentBlock *FileContentBlock
 	ImageContentBlock *ImageContentBlock
 	TextContentBlock *TextContentBlock
+}
+
+// FileContentBlockAsContentAnyOfInner is a convenience function that returns FileContentBlock wrapped in ContentAnyOfInner
+func FileContentBlockAsContentAnyOfInner(v *FileContentBlock) ContentAnyOfInner {
+	return ContentAnyOfInner{
+		FileContentBlock: v,
+	}
 }
 
 // ImageContentBlockAsContentAnyOfInner is a convenience function that returns ImageContentBlock wrapped in ContentAnyOfInner
@@ -41,6 +49,23 @@ func TextContentBlockAsContentAnyOfInner(v *TextContentBlock) ContentAnyOfInner 
 func (dst *ContentAnyOfInner) UnmarshalJSON(data []byte) error {
 	var err error
 	match := 0
+	// try to unmarshal data into FileContentBlock
+	err = newStrictDecoder(data).Decode(&dst.FileContentBlock)
+	if err == nil {
+		jsonFileContentBlock, _ := json.Marshal(dst.FileContentBlock)
+		if string(jsonFileContentBlock) == "{}" { // empty struct
+			dst.FileContentBlock = nil
+		} else {
+			if err = validator.Validate(dst.FileContentBlock); err != nil {
+				dst.FileContentBlock = nil
+			} else {
+				match++
+			}
+		}
+	} else {
+		dst.FileContentBlock = nil
+	}
+
 	// try to unmarshal data into ImageContentBlock
 	err = newStrictDecoder(data).Decode(&dst.ImageContentBlock)
 	if err == nil {
@@ -77,6 +102,7 @@ func (dst *ContentAnyOfInner) UnmarshalJSON(data []byte) error {
 
 	if match > 1 { // more than 1 match
 		// reset to nil
+		dst.FileContentBlock = nil
 		dst.ImageContentBlock = nil
 		dst.TextContentBlock = nil
 
@@ -90,6 +116,10 @@ func (dst *ContentAnyOfInner) UnmarshalJSON(data []byte) error {
 
 // Marshal data from the first non-nil pointers in the struct to JSON
 func (src ContentAnyOfInner) MarshalJSON() ([]byte, error) {
+	if src.FileContentBlock != nil {
+		return json.Marshal(&src.FileContentBlock)
+	}
+
 	if src.ImageContentBlock != nil {
 		return json.Marshal(&src.ImageContentBlock)
 	}
@@ -106,6 +136,10 @@ func (obj *ContentAnyOfInner) GetActualInstance() (interface{}) {
 	if obj == nil {
 		return nil
 	}
+	if obj.FileContentBlock != nil {
+		return obj.FileContentBlock
+	}
+
 	if obj.ImageContentBlock != nil {
 		return obj.ImageContentBlock
 	}

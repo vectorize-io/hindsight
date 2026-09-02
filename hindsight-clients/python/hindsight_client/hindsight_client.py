@@ -24,15 +24,17 @@ DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
 
 #: One element of a multimodal retain item's content.
 #:
-#: Retain accepts either a plain string or an ordered list of these, so an image
-#: sits inline where it actually appears and the extractor reads it alongside the
-#: prose that refers to it::
+#: Retain accepts either a plain string or an ordered list of these, so an
+#: attachment sits inline where it actually appears and the extractor reads it
+#: alongside the prose that refers to it::
 #:
-#:     [{"type": "text", "text": "click the button shown:"},
-#:      {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}]
+#:     [{"type": "text",  "text": "click the button shown:"},
+#:      {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+#:      {"type": "file",  "source": {"type": "base64", "media_type": "application/pdf", "data": "..."},
+#:       "filename": "policy.pdf"}]
 #:
 #: Requires a vision-capable retain LLM server-side; otherwise the retain is
-#: refused with 422 rather than silently dropping the images.
+#: refused with 422 rather than silently dropping the attachments.
 ContentBlock = dict[str, Any]
 from hindsight_client_api.api import (
     banks_api,

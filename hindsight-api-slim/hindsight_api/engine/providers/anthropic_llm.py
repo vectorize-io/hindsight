@@ -97,27 +97,42 @@ def _to_anthropic_content(content: Any) -> Any:
 
     blocks: list[Any] = []
     for part in content:
-        if not isinstance(part, dict) or part.get("type") != "image_url":
+        if not isinstance(part, dict):
             blocks.append(part)
             continue
-        url = (part.get("image_url") or {}).get("url", "")
-        match = _DATA_URI_RE.match(url)
-        if match is None:
-            # Anthropic can fetch a URL image itself, so a non-data URI is passed
-            # on as a url source rather than dropped.
-            blocks.append({"type": "image", "source": {"type": "url", "url": url}})
-            continue
-        blocks.append(
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": match.group("media_type"),
-                    "data": match.group("data"),
-                },
-            }
-        )
+        kind = part.get("type")
+        if kind == "image_url":
+            url = (part.get("image_url") or {}).get("url", "")
+            match = _DATA_URI_RE.match(url)
+            if match is None:
+                # Anthropic can fetch a URL image itself, so a non-data URI is
+                # passed on as a url source rather than dropped.
+                blocks.append({"type": "image", "source": {"type": "url", "url": url}})
+                continue
+            blocks.append(_anthropic_source_block("image", match))
+        elif kind == "file":
+            # Non-image attachments (PDFs) are a *document* block for Anthropic,
+            # not an image one — the API rejects a PDF sent as an image source.
+            url = (part.get("file") or {}).get("file_data", "")
+            match = _DATA_URI_RE.match(url)
+            if match is None:
+                continue
+            blocks.append(_anthropic_source_block("document", match))
+        else:
+            blocks.append(part)
     return blocks
+
+
+def _anthropic_source_block(block_type: str, match: "re.Match[str]") -> dict[str, Any]:
+    """One base64 source block — image or document — from a parsed data URI."""
+    return {
+        "type": block_type,
+        "source": {
+            "type": "base64",
+            "media_type": match.group("media_type"),
+            "data": match.group("data"),
+        },
+    }
 
 
 # Fallback per-request timeout when the caller resolved none (direct

@@ -240,6 +240,10 @@ class OpenAIResponsesLLM(LLMInterface):
         model_lower = self.model.lower()
         return any(x in model_lower for x in ["gpt-5", "o1", "o3"])
 
+    def supports_vision(self) -> bool:
+        """OpenAI's own Responses API — every model it serves reads images."""
+        return True
+
     async def verify_connection(self) -> None:
         """Verify configuration with a minimal Responses call."""
         try:

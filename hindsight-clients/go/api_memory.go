@@ -415,47 +415,47 @@ func (a *MemoryAPIService) DryRunExtractMemoriesExecute(r ApiDryRunExtractMemori
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
-type ApiGetBankImageRequest struct {
+type ApiGetBankAttachmentRequest struct {
 	ctx context.Context
 	ApiService *MemoryAPIService
 	bankId string
-	imageId string
+	attachmentId string
 	authorization *string
 }
 
-func (r ApiGetBankImageRequest) Authorization(authorization string) ApiGetBankImageRequest {
+func (r ApiGetBankAttachmentRequest) Authorization(authorization string) ApiGetBankAttachmentRequest {
 	r.authorization = &authorization
 	return r
 }
 
-func (r ApiGetBankImageRequest) Execute() (interface{}, *http.Response, error) {
-	return r.ApiService.GetBankImageExecute(r)
+func (r ApiGetBankAttachmentRequest) Execute() (interface{}, *http.Response, error) {
+	return r.ApiService.GetBankAttachmentExecute(r)
 }
 
 /*
-GetBankImage Fetch an image retained inline with a document
+GetBankAttachment Fetch an attachment retained inline with a document
 
-Serve the bytes of an image retained as inline content. The id is the one inside a chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent can show or reason over the original image behind an image-derived fact.
+Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads — so an agent can show or reason over the original behind an attachment-derived fact.
 
-Access is authorized against the bank. A missing image and an invisible bank both return 404, so the endpoint cannot be used to probe which images a bank holds.
+Bytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
- @param imageId
- @return ApiGetBankImageRequest
+ @param attachmentId
+ @return ApiGetBankAttachmentRequest
 */
-func (a *MemoryAPIService) GetBankImage(ctx context.Context, bankId string, imageId string) ApiGetBankImageRequest {
-	return ApiGetBankImageRequest{
+func (a *MemoryAPIService) GetBankAttachment(ctx context.Context, bankId string, attachmentId string) ApiGetBankAttachmentRequest {
+	return ApiGetBankAttachmentRequest{
 		ApiService: a,
 		ctx: ctx,
 		bankId: bankId,
-		imageId: imageId,
+		attachmentId: attachmentId,
 	}
 }
 
 // Execute executes the request
 //  @return interface{}
-func (a *MemoryAPIService) GetBankImageExecute(r ApiGetBankImageRequest) (interface{}, *http.Response, error) {
+func (a *MemoryAPIService) GetBankAttachmentExecute(r ApiGetBankAttachmentRequest) (interface{}, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
@@ -463,14 +463,14 @@ func (a *MemoryAPIService) GetBankImageExecute(r ApiGetBankImageRequest) (interf
 		localVarReturnValue  interface{}
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetBankImage")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetBankAttachment")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/images/{image_id}"
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/attachments/{attachment_id}"
 	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
-	localVarPath = strings.Replace(localVarPath, "{"+"image_id"+"}", url.PathEscape(parameterValueToString(r.imageId, "imageId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"attachment_id"+"}", url.PathEscape(parameterValueToString(r.attachmentId, "attachmentId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
@@ -486,7 +486,7 @@ func (a *MemoryAPIService) GetBankImageExecute(r ApiGetBankImageRequest) (interf
 	}
 
 	// to determine the Accept header
-	localVarHTTPHeaderAccepts := []string{"application/json", "image/png"}
+	localVarHTTPHeaderAccepts := []string{"application/json", "application/octet-stream"}
 
 	// set Accept header
 	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)

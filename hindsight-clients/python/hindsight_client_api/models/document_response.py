@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.chunk_attachment import ChunkAttachment
 from hindsight_client_api.models.observation_scopes import ObservationScopes
 from typing import Optional, Set
 from typing_extensions import Self
@@ -39,7 +40,8 @@ class DocumentResponse(BaseModel):
     document_metadata: Optional[Dict[str, Any]] = None
     retain_params: Optional[Dict[str, Any]] = None
     observation_scopes: Optional[ObservationScopes] = None
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "original_text", "content_hash", "created_at", "updated_at", "memory_unit_count", "nodes_by_fact_type", "tags", "document_metadata", "retain_params", "observation_scopes"]
+    attachments: Optional[List[ChunkAttachment]] = None
+    __properties: ClassVar[List[str]] = ["id", "bank_id", "original_text", "content_hash", "created_at", "updated_at", "memory_unit_count", "nodes_by_fact_type", "tags", "document_metadata", "retain_params", "observation_scopes", "attachments"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -83,6 +85,13 @@ class DocumentResponse(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of observation_scopes
         if self.observation_scopes:
             _dict['observation_scopes'] = self.observation_scopes.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of each item in attachments (list)
+        _items = []
+        if self.attachments:
+            for _item_attachments in self.attachments:
+                if _item_attachments:
+                    _items.append(_item_attachments.to_dict())
+            _dict['attachments'] = _items
         # set to None if original_text (nullable) is None
         # and model_fields_set contains the field
         if self.original_text is None and "original_text" in self.model_fields_set:
@@ -113,6 +122,11 @@ class DocumentResponse(BaseModel):
         if self.observation_scopes is None and "observation_scopes" in self.model_fields_set:
             _dict['observation_scopes'] = None
 
+        # set to None if attachments (nullable) is None
+        # and model_fields_set contains the field
+        if self.attachments is None and "attachments" in self.model_fields_set:
+            _dict['attachments'] = None
+
         return _dict
 
     @classmethod
@@ -136,7 +150,8 @@ class DocumentResponse(BaseModel):
             "tags": obj.get("tags"),
             "document_metadata": obj.get("document_metadata"),
             "retain_params": obj.get("retain_params"),
-            "observation_scopes": ObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None
+            "observation_scopes": ObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None,
+            "attachments": [ChunkAttachment.from_dict(_item) for _item in obj["attachments"]] if obj.get("attachments") is not None else None
         })
         return _obj
 

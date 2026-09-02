@@ -3,10 +3,10 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 /**
- * Serve an image retained as inline content, by bank and content hash.
+ * Serve an attachment retained as inline content, by bank and short id.
  *
- * Documents retained with inline images keep a placeholder token where each
- * image sat; the UI turns those back into pictures by pointing an <img> at this
+ * Documents retained with inline attachments keep a placeholder token where each
+ * one sat; the UI turns those back into pictures by pointing an <img> at this
  * route. The bytes are proxied with server-side auth rather than exposed
  * directly, exactly as the export-archive download is.
  */
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const path = `/v1/default/banks/${encodeURIComponent(bankId)}/images/${imageId}`;
+    const path = `/v1/default/banks/${encodeURIComponent(bankId)}/attachments/${imageId}`;
     const response = await fetch(`${DATAPLANE_URL}${path}`, { headers: getDataplaneHeaders() });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));
@@ -45,10 +45,10 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error fetching image:", error);
+    console.error("Error fetching attachment:", error);
     return NextResponse.json(
       localizeApiErrorPayload(request, {
-        error: "Failed to fetch image",
+        error: "Failed to fetch attachment",
         errorKey: "api.errors.documents.export",
       }),
       { status: 500 }

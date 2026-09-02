@@ -22,7 +22,7 @@ var _ MappedNullable = &ImageContentBlock{}
 // ImageContentBlock An image within a multimodal item, in the position the caller wrote it.
 type ImageContentBlock struct {
 	Type string `json:"type"`
-	Source Base64ImageSource `json:"source"`
+	Source Base64AttachmentSource `json:"source"`
 }
 
 type _ImageContentBlock ImageContentBlock
@@ -31,7 +31,7 @@ type _ImageContentBlock ImageContentBlock
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewImageContentBlock(type_ string, source Base64ImageSource) *ImageContentBlock {
+func NewImageContentBlock(type_ string, source Base64AttachmentSource) *ImageContentBlock {
 	this := ImageContentBlock{}
 	this.Type = type_
 	this.Source = source
@@ -71,9 +71,9 @@ func (o *ImageContentBlock) SetType(v string) {
 }
 
 // GetSource returns the Source field value
-func (o *ImageContentBlock) GetSource() Base64ImageSource {
+func (o *ImageContentBlock) GetSource() Base64AttachmentSource {
 	if o == nil {
-		var ret Base64ImageSource
+		var ret Base64AttachmentSource
 		return ret
 	}
 
@@ -82,7 +82,7 @@ func (o *ImageContentBlock) GetSource() Base64ImageSource {
 
 // GetSourceOk returns a tuple with the Source field value
 // and a boolean to check if the value has been set.
-func (o *ImageContentBlock) GetSourceOk() (*Base64ImageSource, bool) {
+func (o *ImageContentBlock) GetSourceOk() (*Base64AttachmentSource, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -90,7 +90,7 @@ func (o *ImageContentBlock) GetSourceOk() (*Base64ImageSource, bool) {
 }
 
 // SetSource sets field value
-func (o *ImageContentBlock) SetSource(v Base64ImageSource) {
+func (o *ImageContentBlock) SetSource(v Base64AttachmentSource) {
 	o.Source = v
 }
 

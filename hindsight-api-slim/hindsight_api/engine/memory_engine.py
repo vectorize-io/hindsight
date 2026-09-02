@@ -518,8 +518,8 @@ if TYPE_CHECKING:
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoryScopeWatermark
-    from .retain.image_content import LoadedImage, RetainImage
-    from .retain.image_store import StoredImage
+    from .retain.attachment_content import LoadedAttachment, RetainAttachment
+    from .retain.attachment_store import StoredAttachment
     from .transfer import BankImportResult, ImportResult
     from .vector_index_health import CoverageTrigger
 
@@ -815,7 +815,7 @@ class _RetainChunkingConfig:
 
     chunk_size: int
     structured_chunk_size: int | None
-    max_images_per_chunk: int
+    max_attachments_per_chunk: int
 
 
 def _pack_native_chunks(chunks: Iterable[str], tokens_per_batch: int) -> Iterator[list[str]]:
@@ -904,7 +904,7 @@ def _rejoin_native_chunks(
     chunk_size: int,
     structured_chunk_size: int | None,
     *,
-    max_images_per_chunk: int,
+    max_attachments_per_chunk: int,
 ) -> str | None:
     """Rebuild the sub-batch text for a run of consecutive native chunks.
 
@@ -940,7 +940,7 @@ def _rejoin_native_chunks(
             text,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            max_images_per_chunk=max_images_per_chunk,
+            max_attachments_per_chunk=max_attachments_per_chunk,
         )
         if rechunked == chunks:
             return text
@@ -1020,7 +1020,7 @@ def _iter_raw_sub_batches(
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
-    max_images_per_chunk: int,
+    max_attachments_per_chunk: int,
 ) -> Iterator[_RawSubBatch]:
     """Stream the sub-batches of ``contents`` — see ``_split_contents_into_sub_batches``.
 
@@ -1043,7 +1043,7 @@ def _iter_raw_sub_batches(
             text,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
-            max_images_per_chunk=max_images_per_chunk,
+            max_attachments_per_chunk=max_attachments_per_chunk,
         )
 
     current_batch: list[RetainContentDict] = []
@@ -1115,7 +1115,7 @@ def _iter_raw_sub_batches(
                         run,
                         chunk_size,
                         structured_chunk_size,
-                        max_images_per_chunk=max_images_per_chunk,
+                        max_attachments_per_chunk=max_attachments_per_chunk,
                     )
                 slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]
                 for slice_text, slice_chunk_count in slices:
@@ -1173,7 +1173,7 @@ def iter_sub_batches(
         tokens_per_batch,
         chunk_size=chunk_size,
         structured_chunk_size=structured_chunk_size,
-        max_images_per_chunk=config.retain_max_images_per_chunk,
+        max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
     ):
         if held is not None:
             index += 1
@@ -5503,7 +5503,7 @@ class MemoryEngine(MemoryEngineInterface):
         return _RetainChunkingConfig(
             chunk_size=config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
-            max_images_per_chunk=config.retain_max_images_per_chunk,
+            max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
         )
 
     async def _run_retain_execution(
@@ -5656,7 +5656,7 @@ class MemoryEngine(MemoryEngineInterface):
                             existing_text,
                             chunking_config.chunk_size,
                             structured_chunk_size=chunking_config.structured_chunk_size,
-                            max_images_per_chunk=chunking_config.max_images_per_chunk,
+                            max_attachments_per_chunk=chunking_config.max_attachments_per_chunk,
                         )
                     )
 
@@ -5969,7 +5969,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Apply strategy overrides: explicit strategy > bank default strategy
         from hindsight_api.config_resolver import apply_strategy
 
-        from .retain.image_store import RetainImageLoader
+        from .retain.attachment_store import RetainAttachmentLoader
 
         effective_strategy = strategy or resolved_config.retain_default_strategy
         if effective_strategy:
@@ -6009,7 +6009,7 @@ class MemoryEngine(MemoryEngineInterface):
                 audit_logger=self._audit_logger,
                 # One loader per retain, so a document that shows the same image in
                 # several sections fetches its bytes once rather than once per chunk.
-                image_loader=RetainImageLoader(self._file_storage, self._backend, bank_id),
+                attachment_loader=RetainAttachmentLoader(self._file_storage, self._backend, bank_id),
             )
             # Map the created facts onto this retain's trace so the trace view can
             # show which memories the ingestion produced. result[0] is the
@@ -6177,35 +6177,127 @@ class MemoryEngine(MemoryEngineInterface):
         except FileNotFoundError:
             return None
 
-    async def resolve_bank_images(
+    async def resolve_bank_attachments(
         self,
         bank_id: str,
-        image_ids: "Sequence[str]",
+        attachment_ids: "Sequence[str]",
         request_context: "RequestContext",
-    ) -> "dict[str, StoredImage]":
+    ) -> "dict[str, StoredAttachment]":
         """Look up the metadata for images a bank's chunks reference, by short id.
 
         Used to turn the placeholders in recalled chunk text into something a
         client can render. Ids with no row are omitted rather than raising: a
         document whose image bytes are gone should still recall its facts.
         """
-        from .retain.image_store import load_bank_images
+        from .retain.attachment_store import load_bank_attachments
 
-        if not image_ids:
+        if not attachment_ids:
             return {}
         profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         if profile is None:
             return {}
         backend = await self._get_backend()
         async with backend.acquire() as conn:
-            return await load_bank_images(conn, bank_id, image_ids)
+            return await load_bank_attachments(conn, bank_id, attachment_ids)
 
-    async def retrieve_bank_image(
+    async def attachments_for_documents(
         self,
         bank_id: str,
-        image_id: str,
+        document_ids: "Sequence[str]",
         request_context: "RequestContext",
-    ) -> "LoadedImage | None":
+    ) -> "dict[str, list[StoredAttachment]]":
+        """The attachments each document references, keyed by document_id.
+
+        Read from ``document_attachments`` rather than by re-parsing the document
+        body: that table is derived from the same text on every write, and joining
+        it avoids pulling whole documents back just to scan them for placeholders.
+        """
+        from .retain.attachment_store import StoredAttachment
+
+        if not document_ids:
+            return {}
+        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if profile is None:
+            return {}
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT da.document_id, ba.attachment_hash, ba.short_id, ba.media_type,
+                       ba.byte_size, ba.storage_key, ba.kind, ba.filename
+                FROM {fq_table("document_attachments")} da
+                JOIN {fq_table("bank_attachments")} ba
+                  ON ba.bank_id = da.bank_id AND ba.attachment_hash = da.attachment_hash
+                WHERE da.bank_id = $1 AND da.document_id = ANY($2::text[])
+                ORDER BY da.document_id, ba.created_at
+                """,
+                bank_id,
+                list(dict.fromkeys(document_ids)),
+            )
+        grouped: dict[str, list[StoredAttachment]] = {}
+        for row in rows:
+            grouped.setdefault(row["document_id"], []).append(
+                StoredAttachment(
+                    attachment_hash=row["attachment_hash"],
+                    short_id=row["short_id"],
+                    media_type=row["media_type"],
+                    byte_size=row["byte_size"],
+                    storage_key=row["storage_key"],
+                    kind=row["kind"],
+                    filename=row["filename"],
+                )
+            )
+        return grouped
+
+    async def attachments_for_chunks(
+        self,
+        bank_id: str,
+        chunk_ids: "Sequence[str]",
+        request_context: "RequestContext",
+    ) -> "dict[str, list[StoredAttachment]]":
+        """The attachments each chunk references, keyed by chunk_id.
+
+        This is also how a *memory* gets its attachments: a fact's text no longer
+        carries placeholders (they would be recalled as a content hash presented
+        as knowledge), so the chunk it was extracted from is what says which
+        attachments the model was looking at when it produced that fact.
+        """
+        from .retain.attachment_content import iter_placeholder_ids
+        from .retain.attachment_store import load_bank_attachments
+
+        if not chunk_ids:
+            return {}
+        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if profile is None:
+            return {}
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT chunk_id, chunk_text FROM {fq_table('chunks')} "
+                f"WHERE bank_id = $1 AND chunk_id = ANY($2::text[])",
+                bank_id,
+                list(dict.fromkeys(chunk_ids)),
+            )
+            ids_by_chunk = {
+                row["chunk_id"]: list(dict.fromkeys(iter_placeholder_ids(row["chunk_text"] or ""))) for row in rows
+            }
+            wanted = [i for ids in ids_by_chunk.values() for i in ids]
+            if not wanted:
+                return {}
+            records = await load_bank_attachments(conn, bank_id, wanted)
+
+        return {
+            chunk_id: [records[i] for i in ids if i in records]
+            for chunk_id, ids in ids_by_chunk.items()
+            if any(i in records for i in ids)
+        }
+
+    async def retrieve_bank_attachment(
+        self,
+        bank_id: str,
+        attachment_id: str,
+        request_context: "RequestContext",
+    ) -> "LoadedAttachment | None":
         """Fetch one image's media type and bytes, authorized against ``bank_id``.
 
         Returns ``None`` both when the bank is not visible to the caller and when
@@ -6215,19 +6307,61 @@ class MemoryEngine(MemoryEngineInterface):
         capability: it is derived from the content, so anyone holding the same
         image could otherwise read whether some bank had also retained it.
         """
-        records = await self.resolve_bank_images(bank_id, [image_id], request_context)
-        record = records.get(image_id)
+        records = await self.resolve_bank_attachments(bank_id, [attachment_id], request_context)
+        record = records.get(attachment_id)
         if record is None:
             return None
-        from .retain.image_content import LoadedImage
+        from .retain.attachment_content import LoadedAttachment
 
         try:
-            return LoadedImage(
+            return LoadedAttachment(
                 media_type=record.media_type,
                 data=await self._file_storage.retrieve(record.storage_key),
             )
         except FileNotFoundError:
             return None
+
+    async def _reclaim_orphaned_attachments(self, conn, bank_id: str, attachment_hashes: "Sequence[str]") -> None:
+        """Drop attachment rows and blobs no document in the bank references any more.
+
+        Runs after a document's ``document_attachments`` rows have cascaded away,
+        so "is anything still referencing this?" is simply whether a row survives.
+        Content-addressing is what makes the check necessary: one blob can back
+        ten documents, so a delete may reclaim nothing at all.
+
+        Best-effort on the storage side. The row is the authority — once it is
+        gone the attachment is unreachable — and a blob left behind by a failed
+        delete is wasted bytes, not a correctness problem, so a storage error must
+        not fail an otherwise good document deletion.
+        """
+        if not attachment_hashes:
+            return
+        orphans = await conn.fetch(
+            f"""
+            SELECT ba.attachment_hash, ba.storage_key
+            FROM {fq_table("bank_attachments")} ba
+            WHERE ba.bank_id = $1
+              AND ba.attachment_hash = ANY($2::text[])
+              AND NOT EXISTS (
+                  SELECT 1 FROM {fq_table("document_attachments")} da
+                  WHERE da.bank_id = ba.bank_id AND da.attachment_hash = ba.attachment_hash
+              )
+            """,
+            bank_id,
+            list(dict.fromkeys(attachment_hashes)),
+        )
+        if not orphans:
+            return
+        await conn.execute(
+            f"DELETE FROM {fq_table('bank_attachments')} WHERE bank_id = $1 AND attachment_hash = ANY($2::text[])",
+            bank_id,
+            [row["attachment_hash"] for row in orphans],
+        )
+        for row in orphans:
+            try:
+                await self._file_storage.delete(row["storage_key"])
+            except Exception:
+                logger.warning("Could not delete attachment blob %s; row is gone", row["storage_key"], exc_info=True)
 
     def _require_vision_capable_retain_llm(self) -> None:
         """Refuse an image-bearing retain the configured retain LLM cannot read.
@@ -6270,12 +6404,12 @@ class MemoryEngine(MemoryEngineInterface):
             f"as text only."
         )
 
-    async def store_retain_images(
+    async def store_retain_attachments(
         self,
         bank_id: str,
-        images: "Sequence[RetainImage]",
+        images: "Sequence[RetainAttachment]",
         request_context: "RequestContext",
-    ) -> "list[StoredImage]":
+    ) -> "list[StoredAttachment]":
         """Persist the images of a multimodal retain item, content-addressed.
 
         Called at the API ingress, before the retain itself is submitted. That
@@ -6288,10 +6422,10 @@ class MemoryEngine(MemoryEngineInterface):
         before the retain commits is safe. If the retain then fails, the blob is
         simply reused by the next retain of the same image.
 
-        The bank row is created first because ``bank_images`` references it; the
+        The bank row is created first because ``bank_attachments`` references it; the
         same thing ``import_documents_async`` does before stashing its archive.
         """
-        from .retain.image_store import store_images
+        from .retain.attachment_store import store_images
 
         if not images:
             return []
@@ -8768,6 +8902,17 @@ class MemoryEngine(MemoryEngineInterface):
                     await enqueue_relink_victims(conn, bank_id, unit_ids)
                     await enqueue_entity_prune_candidates(conn, bank_id, unit_ids)
 
+                # The attachments this document referenced, read BEFORE the delete
+                # cascades their document_attachments rows away. Whether each blob
+                # is still needed can only be answered afterwards, once those rows
+                # are gone — see _reclaim_orphaned_attachments below.
+                referenced_attachments = await conn.fetch(
+                    f"SELECT attachment_hash FROM {fq_table('document_attachments')} "
+                    f"WHERE bank_id = $1 AND document_id = $2",
+                    bank_id,
+                    document_id,
+                )
+
                 # Delete document first (cascades to memory_units and all their links).
                 # Running the stale-observation sweep AFTER the delete ensures we also
                 # catch observations inserted concurrently by consolidation — otherwise
@@ -8817,6 +8962,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # Invalidate observations referencing these (now-deleted) memories
                 if unit_ids:
                     invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
+
+                if deleted and referenced_attachments:
+                    await self._reclaim_orphaned_attachments(
+                        conn, bank_id, [row["attachment_hash"] for row in referenced_attachments]
+                    )
 
                 result = {
                     "document_deleted": 1 if deleted else 0,

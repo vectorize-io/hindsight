@@ -99,7 +99,7 @@ def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies:
                 resolved.retain_structured_chunk_size,
             )
             validate_retain_image_chunking_config(
-                resolved.retain_max_images_per_chunk,
+                resolved.retain_max_attachments_per_chunk,
             )
             validate_retain_completion_token_budget(
                 llm_provider=resolved.llm_provider,
@@ -140,7 +140,7 @@ def _validate_projected_bank_config(
         base_config.retain_structured_chunk_size,
     )
     validate_retain_image_chunking_config(
-        base_config.retain_max_images_per_chunk,
+        base_config.retain_max_attachments_per_chunk,
     )
     _validate_retain_strategy_chunking(base_config, base_config.retain_strategies)
     _validate_recall_budget_bounds(base_config.recall_budget_min, base_config.recall_budget_max)
@@ -236,7 +236,7 @@ class ConfigResolver:
             resolved_config.retain_structured_chunk_size,
         )
         validate_retain_image_chunking_config(
-            resolved_config.retain_max_images_per_chunk,
+            resolved_config.retain_max_attachments_per_chunk,
         )
         return resolved_config
 
@@ -953,7 +953,7 @@ def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConf
         resolved.retain_structured_chunk_size,
     )
     validate_retain_image_chunking_config(
-        resolved.retain_max_images_per_chunk,
+        resolved.retain_max_attachments_per_chunk,
     )
     validate_retain_completion_token_budget(
         llm_provider=resolved.llm_provider,

@@ -20,13 +20,13 @@ import pytest
 from hindsight_api import LLMConfig
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
-from hindsight_api.engine.retain.image_content import (
-    LoadedImage,
-    RetainImage,
+from hindsight_api.engine.retain.attachment_content import (
+    LoadedAttachment,
+    RetainAttachment,
     RetainText,
     canonicalize,
-    compute_image_hash,
-    short_image_id,
+    compute_attachment_hash,
+    short_attachment_id,
 )
 from tests.llm_judge import assert_meets_criteria
 
@@ -77,23 +77,25 @@ class _StubImageLoader:
     model, so it is fed directly.
     """
 
-    def __init__(self, images: dict[str, LoadedImage]) -> None:
+    def __init__(self, images: dict[str, LoadedAttachment]) -> None:
         self._images = images
 
-    async def load(self, image_ids):
-        return {i: self._images[i] for i in image_ids if i in self._images}
+    async def load(self, attachment_ids):
+        return {i: self._images[i] for i in attachment_ids if i in self._images}
 
 
 def _content_with_image(before: str, image_bytes: bytes, after: str):
     """Canonicalize prose + image + prose the way the retain ingress does."""
-    image = RetainImage(
-        image_hash=compute_image_hash(image_bytes),
+    image = RetainAttachment(
+        attachment_hash=compute_attachment_hash(image_bytes),
         media_type="image/png",
         data=image_bytes,
         block_index=1,
     )
     canonical = canonicalize([RetainText(before), image, RetainText(after)])
-    loader = _StubImageLoader({short_image_id(image.image_hash): LoadedImage(media_type="image/png", data=image_bytes)})
+    loader = _StubImageLoader(
+        {short_attachment_id(image.attachment_hash): LoadedAttachment(media_type="image/png", data=image_bytes)}
+    )
     return canonical.text, loader
 
 
@@ -106,7 +108,7 @@ async def _extract(text: str, loader, context: str):
         agent_name=None,
         config=config,
         context=context,
-        image_loader=loader,
+        attachment_loader=loader,
     )
     return "\n".join(f"- [{fact.fact_type}] {fact.fact}" for fact in facts)
 
@@ -195,4 +197,74 @@ async def test_a_diagram_only_detail_survives_extraction() -> None:
             "appears in the surrounding text."
         ),
         msg="Detail present only in the image did not reach any fact",
+    )
+
+
+def _policy_pdf() -> bytes:
+    """A one-page PDF whose facts appear nowhere in the surrounding prose."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    page = Image.new("RGB", (900, 500), (255, 255, 255))
+    draw = ImageDraw.Draw(page)
+    try:
+        font = ImageFont.load_default(size=40)
+    except TypeError:  # Pillow < 10 takes no size
+        font = ImageFont.load_default()
+    draw.text((60, 120), "Incident Policy v4", fill=(0, 0, 0), font=font)
+    draw.text((60, 220), "Severity 1 pages the Falcon squad", fill=(0, 0, 0), font=font)
+    draw.text((60, 300), "Acknowledge within 7 minutes", fill=(0, 0, 0), font=font)
+
+    buffer = io.BytesIO()
+    page.save(buffer, format="PDF")
+    return buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_attachment_is_read_the_same_way_an_image_is() -> None:
+    """`file` blocks are not a separate feature — they take the same path.
+
+    Worth its own test because the *provider* shape differs: a PDF is a document
+    block on Anthropic and inline_data on Gemini, not an image part. A conversion
+    that silently sent it as an image would still produce a valid request.
+    """
+    pdf = _policy_pdf()
+    attachment = RetainAttachment(
+        attachment_hash=compute_attachment_hash(pdf),
+        media_type="application/pdf",
+        data=pdf,
+        block_index=1,
+        kind="file",
+        filename="incident-policy.pdf",
+    )
+    canonical = canonicalize(
+        [
+            RetainText("The incident policy is attached:"),
+            attachment,
+            RetainText("Follow it exactly when paging."),
+        ]
+    )
+    loader = _StubImageLoader(
+        {
+            short_attachment_id(attachment.attachment_hash): LoadedAttachment(
+                media_type="application/pdf", data=pdf, kind="file", filename="incident-policy.pdf"
+            )
+        }
+    )
+
+    facts_summary = await _extract(canonical.text, loader, context="On-call runbook")
+
+    await assert_meets_criteria(
+        response=facts_summary,
+        criteria=(
+            "At least one fact reflects detail that appears only inside the attached PDF — that "
+            "Severity 1 pages the 'Falcon squad', that acknowledgement is within 7 minutes, or that "
+            "the policy is version 4."
+        ),
+        context=(
+            "A runbook page was retained with a PDF attached inline. The PDF reads 'Incident Policy "
+            "v4', 'Severity 1 pages the Falcon squad' and 'Acknowledge within 7 minutes'. None of "
+            "those strings appear in the surrounding text, so a text-only extractor could not "
+            "produce them."
+        ),
+        msg="Nothing from the attached PDF reached any fact",
     )

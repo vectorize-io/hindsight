@@ -17,35 +17,26 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.base64_attachment_source import Base64AttachmentSource
 from typing import Optional, Set
 from typing_extensions import Self
 
-class Base64ImageSource(BaseModel):
+class FileContentBlock(BaseModel):
     """
-    Inline image bytes, base64-encoded.  The only source type in this version. ``url`` (server-side fetch) and ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this is modelled as a discriminated union on ``type`` rather than as bare fields.
+    A non-image attachment — a PDF, a spreadsheet — in the position it was written.  Split from ``image`` rather than folded into one type because the providers split it: Anthropic has distinct image and document blocks, OpenAI has image_url and file parts. Carrying the caller's own distinction through means the per-provider conversion never has to guess from the media type alone.
     """ # noqa: E501
-    type: Optional[StrictStr] = 'base64'
-    media_type: StrictStr = Field(description="MIME type of the image. One of: image/png, image/jpeg, image/gif, image/webp.")
-    data: StrictStr = Field(description="Base64-encoded image bytes (no data: URI prefix).")
-    __properties: ClassVar[List[str]] = ["type", "media_type", "data"]
+    type: StrictStr
+    source: Base64AttachmentSource
+    filename: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["type", "source", "filename"]
 
     @field_validator('type')
     def type_validate_enum(cls, value):
         """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['base64']):
-            raise ValueError("must be one of enum values ('base64')")
-        return value
-
-    @field_validator('media_type')
-    def media_type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']):
-            raise ValueError("must be one of enum values ('image/png', 'image/jpeg', 'image/gif', 'image/webp')")
+        if value not in set(['file']):
+            raise ValueError("must be one of enum values ('file')")
         return value
 
     model_config = ConfigDict(
@@ -66,7 +57,7 @@ class Base64ImageSource(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of Base64ImageSource from a JSON string"""
+        """Create an instance of FileContentBlock from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -87,11 +78,19 @@ class Base64ImageSource(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of source
+        if self.source:
+            _dict['source'] = self.source.to_dict()
+        # set to None if filename (nullable) is None
+        # and model_fields_set contains the field
+        if self.filename is None and "filename" in self.model_fields_set:
+            _dict['filename'] = None
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of Base64ImageSource from a dict"""
+        """Create an instance of FileContentBlock from a dict"""
         if obj is None:
             return None
 
@@ -99,9 +98,9 @@ class Base64ImageSource(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "type": obj.get("type") if obj.get("type") is not None else 'base64',
-            "media_type": obj.get("media_type"),
-            "data": obj.get("data")
+            "type": obj.get("type"),
+            "source": Base64AttachmentSource.from_dict(obj["source"]) if obj.get("source") is not None else None,
+            "filename": obj.get("filename")
         })
         return _obj
 

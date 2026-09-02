@@ -17,7 +17,6 @@ from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
-from typing import Annotated, Any, Literal, TypeVar
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
@@ -197,18 +196,18 @@ from hindsight_api.engine.response_models import (
     TemporalWindow,
     TokenUsage,
 )
-from hindsight_api.engine.retain.image_content import (
+from hindsight_api.engine.retain.attachment_content import (
     CanonicalContent,
-    RetainImage,
+    RetainAttachment,
     RetainText,
     canonicalize,
-    compute_image_hash,
+    compute_attachment_hash,
     iter_placeholder_ids,
     neutralize_placeholders,
 )
-from hindsight_api.engine.retain.image_content import ContentBlock as CanonicalBlock
+from hindsight_api.engine.retain.attachment_content import ContentBlock as CanonicalBlock
+from hindsight_api.engine.retain.attachment_store import StoredAttachment
 from hindsight_api.engine.search.tag_resolution import needs_resolution
-from hindsight_api.engine.retain.image_store import StoredImage
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.structured_output import validate_response_schema
 from hindsight_api.engine.token_encoding import count_tokens
@@ -581,16 +580,16 @@ class EntityDetailResponse(BaseModel):
     observations: list[EntityObservationResponse]
 
 
-class ChunkImage(BaseModel):
-    """An image referenced by a chunk's text, and where to fetch it."""
+class ChunkAttachment(BaseModel):
+    """An attachment referenced by retained text, and where to fetch it."""
 
-    id: str = Field(description="The id inside the chunk text's placeholder; a prefix of the bytes' sha256.")
-    hash: str = Field(description="Full sha256 of the image bytes.")
-    media_type: str = Field(description="MIME type of the image.")
-    byte_size: int = Field(description="Size of the image in bytes.")
-    url: str = Field(
-        description="Bank-scoped API path serving the image bytes. Requires the same authorization as the bank."
-    )
+    id: str = Field(description="The id inside the text's placeholder; a prefix of the bytes' sha256.")
+    hash: str = Field(description="Full sha256 of the attachment bytes.")
+    kind: str = Field(description="'image' or 'file', as the caller sent it.")
+    media_type: str = Field(description="MIME type of the attachment.")
+    byte_size: int = Field(description="Size of the attachment in bytes.")
+    filename: str | None = Field(default=None, description="Original filename, when the caller supplied one.")
+    url: str = Field(description="Bank-scoped API path serving the bytes. Requires the same authorization as the bank.")
 
 
 class ChunkData(BaseModel):
@@ -600,14 +599,13 @@ class ChunkData(BaseModel):
     text: str
     chunk_index: int
     truncated: bool = Field(default=False, description="Whether the chunk text was truncated due to token limits")
-    images: list[ChunkImage] | None = Field(
+    attachments: list[ChunkAttachment] | None = Field(
         default=None,
         description=(
-            "Images this chunk's text references, in order of first appearance, when it was retained "
-            "with inline image content. The text keeps each image's placeholder token "
-            "(⟦hs-img:...⟧) where the image sat, so a multimodal agent can render or reason "
-            "over the original image at the position it occupied in the source document. Omitted for "
-            "chunks with no images."
+            "Attachments this chunk's text references, in order of first appearance, when it was "
+            "retained with inline content. The text keeps each attachment's placeholder token "
+            "(⟦hs-att:...⟧) where it sat, so a multimodal agent can render or reason over the "
+            "original at the position it occupied in the source document. Omitted when there are none."
         ),
     )
 
@@ -681,14 +679,20 @@ class EntityInput(BaseModel):
     type: str | None = Field(default=None, description="Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')")
 
 
-#: Image formats every mainstream vision model accepts. Deliberately a short
-#: allowlist rather than a blocklist: the bytes are handed to a third-party model
-#: and served back to browsers, so an unrecognised type is refused, not guessed at.
-ALLOWED_IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+#: A syntactically well-formed MIME type. Deliberately the ONLY constraint on what
+#: may be attached: vision models keep gaining formats (PDF, audio, video), and an
+#: allowlist here would refuse content the provider would happily have read. An
+#: unsupported type is rejected by the provider, and that rejection fails the
+#: retain with the provider's own message — see `_require_vision_capable_retain_llm`.
+_MEDIA_TYPE_RE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
+
+#: Image types the recall/UI path renders inline. Everything else is still stored
+#: and still sent to the model; this only decides what a browser is asked to draw.
+RENDERABLE_IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 
 
-class Base64ImageSource(BaseModel):
-    """Inline image bytes, base64-encoded.
+class Base64AttachmentSource(BaseModel):
+    """Inline attachment bytes, base64-encoded.
 
     The only source type in this version. ``url`` (server-side fetch) and
     ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
@@ -696,23 +700,34 @@ class Base64ImageSource(BaseModel):
     """
 
     type: Literal["base64"] = "base64"
-    media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"] = Field(
-        description=f"MIME type of the image. One of: {', '.join(ALLOWED_IMAGE_MEDIA_TYPES)}."
+    media_type: str = Field(
+        description=(
+            "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed "
+            "type is accepted; whether the model can read it is the model's answer to give, and a "
+            "provider that rejects it fails the retain with its own error."
+        )
     )
-    data: str = Field(description="Base64-encoded image bytes (no data: URI prefix).")
+    data: str = Field(description="Base64-encoded bytes (no data: URI prefix).")
+
+    @field_validator("media_type")
+    @classmethod
+    def validate_media_type(cls, v: str) -> str:
+        if not _MEDIA_TYPE_RE.match(v):
+            raise ValueError(f"media_type must look like 'type/subtype', got {v!r}")
+        return v
 
     def decode(self) -> bytes:
         """Decode the payload, raising ``ValueError`` on malformed base64.
 
-        Not a validator: decoding a large image is expensive enough that it should
-        happen once, at the point the bytes are actually needed, rather than on
-        every model construction. The retain handler calls this inside its
+        Not a validator: decoding a large attachment is expensive enough that it
+        should happen once, at the point the bytes are actually needed, rather
+        than on every model construction. The retain handler calls this inside its
         request-validation block so a bad payload is still a 400, not a 500.
         """
         try:
             return base64.b64decode(self.data, validate=True)
         except (binascii.Error, ValueError) as e:
-            raise ValueError(f"image source data is not valid base64: {e}") from e
+            raise ValueError(f"attachment source data is not valid base64: {e}") from e
 
 
 class TextContentBlock(BaseModel):
@@ -726,48 +741,99 @@ class ImageContentBlock(BaseModel):
     """An image within a multimodal item, in the position the caller wrote it."""
 
     type: Literal["image"]
-    source: Base64ImageSource
+    source: Base64AttachmentSource
+
+
+class FileContentBlock(BaseModel):
+    """A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+
+    Split from ``image`` rather than folded into one type because the providers
+    split it: Anthropic has distinct image and document blocks, OpenAI has
+    image_url and file parts. Carrying the caller's own distinction through means
+    the per-provider conversion never has to guess from the media type alone.
+    """
+
+    type: Literal["file"]
+    source: Base64AttachmentSource
+    filename: str | None = Field(
+        default=None,
+        description="Original filename, passed to providers that show one to the model (e.g. OpenAI).",
+    )
 
 
 #: One element of a multimodal ``content`` array. Discriminated on ``type`` so a
 #: malformed block reports which variant it failed against instead of dumping
 #: every variant's errors.
-ContentBlock = Annotated[TextContentBlock | ImageContentBlock, Field(discriminator="type")]
+ContentBlock = Annotated[TextContentBlock | ImageContentBlock | FileContentBlock, Field(discriminator="type")]
 
 
-def bank_image_url(bank_id: str, image_id: str) -> str:
-    """The API path serving one of a bank's retained images, by its short id."""
-    return f"/v1/default/banks/{quote(bank_id, safe='')}/images/{image_id}"
+def bank_attachment_url(bank_id: str, attachment_id: str) -> str:
+    """The API path serving one of a bank's retained attachments, by its short id."""
+    return f"/v1/default/banks/{quote(bank_id, safe='')}/attachments/{attachment_id}"
 
 
-def _chunk_images(
+def chunk_attachments_of(
     bank_id: str,
-    chunk_text: str,
-    records: "dict[str, StoredImage]",
-) -> list[ChunkImage] | None:
-    """The images a chunk's text references, deduplicated, in first-appearance order.
+    text: str,
+    records: "dict[str, StoredAttachment]",
+) -> list[ChunkAttachment] | None:
+    """The attachments ``text`` references, deduplicated, in first-appearance order.
 
-    Returns None rather than an empty list for a text-only chunk, so the field is
-    simply absent from the response instead of adding a null to every recall.
+    Returns None rather than an empty list when there are none, so the field is
+    simply absent from a response instead of adding a null to every read.
     """
-    seen: dict[str, ChunkImage] = {}
-    for image_id in iter_placeholder_ids(chunk_text):
-        if image_id in seen:
+    seen: dict[str, ChunkAttachment] = {}
+    for attachment_id in iter_placeholder_ids(text):
+        if attachment_id in seen:
             continue
-        record = records.get(image_id)
+        record = records.get(attachment_id)
         if record is None:
             # The bytes are gone (reclaimed, or a storage backend swapped under an
             # old document). The placeholder stays in the text, honestly saying an
-            # image was here; there is just nothing to fetch.
+            # attachment was here; there is just nothing to fetch.
             continue
-        seen[image_id] = ChunkImage(
-            id=image_id,
-            hash=record.image_hash,
+        seen[attachment_id] = ChunkAttachment(
+            id=attachment_id,
+            hash=record.attachment_hash,
+            kind=record.kind,
             media_type=record.media_type,
             byte_size=record.byte_size,
-            url=bank_image_url(bank_id, image_id),
+            filename=record.filename,
+            url=bank_attachment_url(bank_id, attachment_id),
         )
     return list(seen.values()) or None
+
+
+def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict:
+    """One attachment, in the shape every read surface returns."""
+    return ChunkAttachment(
+        id=record.short_id,
+        hash=record.attachment_hash,
+        kind=record.kind,
+        media_type=record.media_type,
+        byte_size=record.byte_size,
+        filename=record.filename,
+        url=bank_attachment_url(bank_id, record.short_id),
+    ).model_dump()
+
+
+async def _attach_to_memories(memory_app, bank_id: str, items, request_context) -> None:
+    """Add ``attachments`` to memory dicts, in place, from the chunk each came from.
+
+    A fact's own text carries no placeholder — it would surface a content hash as
+    knowledge — so the chunk it was extracted from is what says which attachments
+    the model was looking at. One lookup for the whole page, not one per memory.
+    """
+    chunk_ids = [item.get("chunk_id") for item in items if isinstance(item, dict) and item.get("chunk_id")]
+    if not chunk_ids:
+        return
+    by_chunk = await memory_app.attachments_for_chunks(bank_id, chunk_ids, request_context)
+    if not by_chunk:
+        return
+    for item in items:
+        records = by_chunk.get(item.get("chunk_id")) if isinstance(item, dict) else None
+        if records:
+            item["attachments"] = [_attachment_payload(bank_id, record) for record in records]
 
 
 def canonicalize_item_content(
@@ -780,33 +846,35 @@ def canonicalize_item_content(
 
     A plain string passes through untouched, so nothing about the text-only path
     changes. A block list becomes one body with an atomic placeholder standing in
-    for each image, plus the decoded images themselves — which the caller persists
-    content-addressed before the retain is submitted.
+    for each attachment, plus the decoded attachments themselves — which the
+    caller persists content-addressed before the retain is submitted.
 
-    Raises ``HTTPException(400)`` for anything wrong with the caller's images:
-    these are request errors, and the caller needs to know which item and which
-    block to fix.
+    Raises ``HTTPException(400)`` for anything wrong with the caller's
+    attachments: these are request errors, and the caller needs to know which item
+    and which block to fix. What the *model* can read is deliberately not checked
+    here — any well-formed media type is accepted and the provider's rejection is
+    what fails the retain.
     """
     if isinstance(content, str):
         # Scrubbed exactly like a text block. Only the canonicalizer may mint a
         # placeholder: without this, a caller could hand-write the token in plain
-        # string content and have extraction resolve it to an image the document
-        # never carried — any image already retained in the same bank.
-        return CanonicalContent(text=neutralize_placeholders(content), images=())
+        # string content and have extraction resolve it to an attachment the
+        # document never carried — anything already retained in the same bank.
+        return CanonicalContent(text=neutralize_placeholders(content), attachments=())
 
     blocks: list[CanonicalBlock] = []
-    image_count = 0
+    attachment_count = 0
     for block_index, block in enumerate(content):
         if isinstance(block, TextContentBlock):
             blocks.append(RetainText(block.text))
             continue
 
-        image_count += 1
-        if image_count > config.retain_image_max_count:
+        attachment_count += 1
+        if attachment_count > config.retain_attachment_max_count:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"items[{item_index}] carries more than {config.retain_image_max_count} images. "
+                    f"items[{item_index}] carries more than {config.retain_attachment_max_count} attachments. "
                     f"Split the content across several items."
                 ),
             )
@@ -817,23 +885,25 @@ def canonicalize_item_content(
         if not data:
             raise HTTPException(
                 status_code=400,
-                detail=f"items[{item_index}].content[{block_index}]: image source data is empty",
+                detail=f"items[{item_index}].content[{block_index}]: attachment source data is empty",
             )
-        if len(data) > config.retain_image_max_size_bytes:
+        if len(data) > config.retain_attachment_max_size_bytes:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"items[{item_index}].content[{block_index}]: image is "
+                    f"items[{item_index}].content[{block_index}]: attachment is "
                     f"{len(data) / (1024 * 1024):.1f}MB, exceeding the "
-                    f"{config.retain_image_max_size_mb}MB limit for a single image."
+                    f"{config.retain_attachment_max_size_mb}MB limit for a single attachment."
                 ),
             )
         blocks.append(
-            RetainImage(
-                image_hash=compute_image_hash(data),
+            RetainAttachment(
+                attachment_hash=compute_attachment_hash(data),
                 media_type=block.source.media_type,
                 data=data,
                 block_index=block_index,
+                kind=block.type,
+                filename=getattr(block, "filename", None),
             )
         )
 
@@ -916,8 +986,8 @@ class MemoryItem(BaseModel):
         if not v:
             raise ValueError("content cannot be empty")
         # An all-text block list must clear the same bar as the string form. A list
-        # carrying an image is never empty, whatever its text blocks say.
-        if not any(isinstance(block, ImageContentBlock) for block in v) and not any(
+        # carrying an attachment is never empty, whatever its text blocks say.
+        if not any(isinstance(block, (ImageContentBlock, FileContentBlock)) for block in v) and not any(
             block.text.strip() for block in v if isinstance(block, TextContentBlock)
         ):
             raise ValueError("content cannot be empty")
@@ -1999,6 +2069,13 @@ class DocumentResponse(BaseModel):
         "'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set "
         "(default 'combined' scoping) or for documents retained before this was captured.",
     )
+    attachments: list[ChunkAttachment] | None = Field(
+        default=None,
+        description=(
+            "Attachments referenced by this document, when it was retained with inline content. "
+            "Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
+        ),
+    )
 
 
 class UpdateDocumentRequest(BaseModel):
@@ -2157,6 +2234,13 @@ class ChunkResponse(BaseModel):
     chunk_index: int
     chunk_text: str
     created_at: str
+    attachments: list[ChunkAttachment] | None = Field(
+        default=None,
+        description=(
+            "Attachments referenced by this chunk's text, when it was retained with inline content. "
+            "Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
+        ),
+    )
 
 
 class ListChunksResponse(BaseModel):
@@ -3003,7 +3087,7 @@ class BankTemplateConfig(BaseModel):
     retain_chunk_batch_size: int | None = Field(
         default=None, description="Max chunks per streaming batch (0 disables batching)"
     )
-    retain_max_images_per_chunk: int | None = Field(
+    retain_max_attachments_per_chunk: int | None = Field(
         default=None, description="Hard cap on inline images in a single extraction chunk"
     )
     mcp_enabled_tools: list[str] | None = Field(
@@ -4856,6 +4940,7 @@ def _register_routes(app: FastAPI):
                 offset=offset,
                 request_context=request_context,
             )
+            await _attach_to_memories(app.state.memory, bank_id, data.get("items") or [], request_context)
             return data
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -4964,6 +5049,7 @@ def _register_routes(app: FastAPI):
             )
             if data is None:
                 raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            await _attach_to_memories(app.state.memory, bank_id, [data], request_context)
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -5023,6 +5109,7 @@ def _register_routes(app: FastAPI):
             )
             if data is None:
                 raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            await _attach_to_memories(app.state.memory, bank_id, [data], request_context)
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -5205,11 +5292,13 @@ def _register_routes(app: FastAPI):
                 # so one lookup for the whole response resolves them all — no
                 # per-chunk query, and no second copy of the document→image edge.
                 referenced = [
-                    image_id
+                    attachment_id
                     for chunk_info in core_result.chunks.values()
-                    for image_id in iter_placeholder_ids(chunk_info.chunk_text or "")
+                    for attachment_id in iter_placeholder_ids(chunk_info.chunk_text or "")
                 ]
-                image_records = await app.state.memory.resolve_bank_images(bank_id, referenced, request_context)
+                attachment_records = await app.state.memory.resolve_bank_attachments(
+                    bank_id, referenced, request_context
+                )
 
                 chunks_response = {}
                 for chunk_id, chunk_info in core_result.chunks.items():
@@ -5218,7 +5307,7 @@ def _register_routes(app: FastAPI):
                         text=chunk_info.chunk_text,
                         chunk_index=chunk_info.chunk_index,
                         truncated=chunk_info.truncated,
-                        images=_chunk_images(bank_id, chunk_info.chunk_text or "", image_records),
+                        attachments=chunk_attachments_of(bank_id, chunk_info.chunk_text or "", attachment_records),
                     )
 
             # Convert core EntityState objects to API EntityStateResponse objects
@@ -6799,6 +6888,14 @@ def _register_routes(app: FastAPI):
             )
             if result is None:
                 raise HTTPException(status_code=404, detail="Document not found")
+            items = result.get("items") or []
+            by_chunk = await app.state.memory.attachments_for_chunks(
+                bank_id, [c["chunk_id"] for c in items if c.get("chunk_id")], request_context
+            )
+            for chunk in items:
+                records = by_chunk.get(chunk.get("chunk_id"))
+                if records:
+                    chunk["attachments"] = [_attachment_payload(bank_id, record) for record in records]
             return result
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -6880,6 +6977,9 @@ def _register_routes(app: FastAPI):
             document = await app.state.memory.get_document(document_id, bank_id, request_context=request_context)
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
+            by_document = await app.state.memory.attachments_for_documents(bank_id, [document_id], request_context)
+            if by_document.get(document_id):
+                document["attachments"] = [_attachment_payload(bank_id, record) for record in by_document[document_id]]
             return document
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -6981,6 +7081,13 @@ def _register_routes(app: FastAPI):
             chunk = await app.state.memory.get_chunk(chunk_id, request_context=request_context)
             if not chunk:
                 raise HTTPException(status_code=404, detail="Chunk not found")
+            # This route is not bank-scoped in its path; the chunk carries the bank
+            # it belongs to, and attachments_for_chunks authorizes against it.
+            chunk_bank = chunk.get("bank_id")
+            if chunk_bank:
+                by_chunk = await app.state.memory.attachments_for_chunks(chunk_bank, [chunk_id], request_context)
+                if by_chunk.get(chunk_id):
+                    chunk["attachments"] = [_attachment_payload(chunk_bank, record) for record in by_chunk[chunk_id]]
             return chunk
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -7863,43 +7970,55 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
-        "/v1/default/banks/{bank_id}/images/{image_id}",
-        summary="Fetch an image retained inline with a document",
-        description="Serve the bytes of an image retained as inline content. The id is the one inside a "
-        "chunk's placeholder token, and is returned by recall on `chunks[].images[].url` — so an agent "
-        "can show or reason over the original image behind an image-derived fact.\n\n"
-        "Access is authorized against the bank. A missing image and an invisible bank both return 404, "
-        "so the endpoint cannot be used to probe which images a bank holds.",
-        operation_id="get_bank_image",
+        "/v1/default/banks/{bank_id}/attachments/{attachment_id}",
+        summary="Fetch an attachment retained inline with a document",
+        description="Serve the bytes of an attachment retained as inline content. The id is the one "
+        "inside a placeholder token, and is returned on `attachments[].url` by recall and by the "
+        "document/chunk/memory reads — so an agent can show or reason over the original behind an "
+        "attachment-derived fact.\n\n"
+        "Bytes are served with the Content-Type the caller declared at retain. Access is authorized "
+        "against the bank; a missing attachment and an invisible bank both return 404, so the endpoint "
+        "cannot be used to probe what a bank holds.",
+        operation_id="get_bank_attachment",
         tags=["Memory"],
-        responses={200: {"content": {"image/png": {}}, "description": "Image bytes"}},
+        responses={200: {"content": {"application/octet-stream": {}}, "description": "Attachment bytes"}},
     )
-    async def api_get_bank_image(
+    async def api_get_bank_attachment(
         bank_id: str,
-        image_id: str,
+        attachment_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Serve one of a bank's retained inline images."""
+        """Serve one of a bank's retained inline attachments."""
         from fastapi.responses import Response
 
         try:
-            image = await app.state.memory.retrieve_bank_image(bank_id, image_id, request_context)
-            if image is None:
-                raise HTTPException(status_code=404, detail="Image not found")
+            attachment = await app.state.memory.retrieve_bank_attachment(bank_id, attachment_id, request_context)
+            if attachment is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
             return Response(
-                content=image.data,
-                media_type=image.media_type,
-                # Content-addressed: the bytes at this URL can never change, so it
-                # is safe to cache indefinitely. Private, because the URL is only
-                # meaningful with the bank's credentials.
-                headers={"Cache-Control": "private, max-age=31536000, immutable"},
+                content=attachment.data,
+                media_type=attachment.media_type,
+                headers={
+                    # Content-addressed: the bytes at this URL can never change, so
+                    # it is safe to cache indefinitely. Private, because the URL is
+                    # only meaningful with the bank's credentials.
+                    "Cache-Control": "private, max-age=31536000, immutable",
+                    # Serve exactly what the caller declared, and nothing else: the
+                    # accepted-type list is deliberately open, so a browser must not
+                    # be free to sniff a stored file into some *other* type. Note
+                    # the bytes are still served inline under their own declared
+                    # type — a bank writer who stores active content (SVG, HTML) can
+                    # have it execute in this origin, which is accepted here because
+                    # bank writers are trusted.
+                    "X-Content-Type-Options": "nosniff",
+                },
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/images/{image_id}: {e}")
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/attachments/{attachment_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
@@ -8598,9 +8717,11 @@ def _register_routes(app: FastAPI):
                 canonicalize_item_content(item.content, item_index=index, config=config)
                 for index, item in enumerate(request.items)
             ]
-            retained_images = [image for canonical in canonical_contents for image in canonical.images]
-            if retained_images:
-                await app.state.memory.store_retain_images(bank_id, retained_images, request_context)
+            retained_attachments = [
+                attachment for canonical in canonical_contents for attachment in canonical.attachments
+            ]
+            if retained_attachments:
+                await app.state.memory.store_retain_attachments(bank_id, retained_attachments, request_context)
 
             # Group items by strategy
             strategy_groups: dict[str | None, list[dict]] = {}

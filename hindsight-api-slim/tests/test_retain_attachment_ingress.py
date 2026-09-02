@@ -18,13 +18,13 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.retain.image_content import (
-    compute_image_hash,
-    image_placeholder,
+from hindsight_api.engine.retain.attachment_content import (
+    compute_attachment_hash,
+    attachment_placeholder,
     iter_placeholder_ids,
-    short_image_id,
+    short_attachment_id,
 )
-from hindsight_api.engine.retain.image_store import image_storage_key
+from hindsight_api.engine.retain.attachment_store import attachment_storage_key
 
 # A one-pixel PNG. Real bytes rather than a fake string so the media type is not
 # a lie, and small enough that the size limits stay the thing under test.
@@ -75,7 +75,7 @@ async def _document_text(memory, bank_id: str, document_id: str) -> str:
         )
 
 
-async def _bank_image_rows(memory, bank_id: str) -> list[dict]:
+async def _bank_attachment_rows(memory, bank_id: str) -> list[dict]:
     """The bank's stored image rows.
 
     Direct SQL because the assertion is about storage-layer state the public API
@@ -85,7 +85,7 @@ async def _bank_image_rows(memory, bank_id: str) -> list[dict]:
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT image_hash, short_id, media_type, byte_size, storage_key FROM bank_images WHERE bank_id = $1",
+            "SELECT attachment_hash, short_id, media_type, byte_size, storage_key FROM bank_attachments WHERE bank_id = $1",
             bank_id,
         )
     return [dict(row) for row in rows]
@@ -114,9 +114,9 @@ async def test_image_block_becomes_a_placeholder_in_the_stored_document(api_clie
     assert response.status_code == 200, response.text
 
     stored = await _document_text(memory, bank_id, document_id)
-    expected_hash = compute_image_hash(PNG_BYTES)
+    expected_hash = compute_attachment_hash(PNG_BYTES)
     assert stored == (
-        f"To reset the VPN, click the button shown:\n\n{image_placeholder(expected_hash)}\n\n...then reconnect."
+        f"To reset the VPN, click the button shown:\n\n{attachment_placeholder(expected_hash)}\n\n...then reconnect."
     )
     # No base64 anywhere in what the pipeline persisted.
     assert base64.b64encode(PNG_BYTES).decode() not in stored
@@ -129,13 +129,13 @@ async def test_image_bytes_are_stored_content_addressed_and_retrievable(api_clie
     response = await _retain(api_client, bank_id, [_text_block("see:"), _image_block()], document_id="d1")
     assert response.status_code == 200, response.text
 
-    expected_hash = compute_image_hash(PNG_BYTES)
-    rows = await _bank_image_rows(memory, bank_id)
+    expected_hash = compute_attachment_hash(PNG_BYTES)
+    rows = await _bank_attachment_rows(memory, bank_id)
     assert len(rows) == 1
-    assert rows[0]["image_hash"] == expected_hash
+    assert rows[0]["attachment_hash"] == expected_hash
     assert rows[0]["media_type"] == "image/png"
     assert rows[0]["byte_size"] == len(PNG_BYTES)
-    assert rows[0]["storage_key"] == image_storage_key(bank_id, expected_hash)
+    assert rows[0]["storage_key"] == attachment_storage_key(bank_id, expected_hash)
 
     assert await memory._file_storage.retrieve(rows[0]["storage_key"]) == PNG_BYTES
 
@@ -154,13 +154,13 @@ async def test_the_same_image_across_documents_is_stored_once(api_client, memory
         )
         assert response.status_code == 200, response.text
 
-    rows = await _bank_image_rows(memory, bank_id)
+    rows = await _bank_attachment_rows(memory, bank_id)
     assert len(rows) == 1
 
     # Both documents still name it.
     for document_id in ("article-1", "article-2"):
         text = await _document_text(memory, bank_id, document_id)
-        assert list(iter_placeholder_ids(text)) == [short_image_id(compute_image_hash(PNG_BYTES))]
+        assert list(iter_placeholder_ids(text)) == [short_attachment_id(compute_attachment_hash(PNG_BYTES))]
 
 
 @pytest.mark.asyncio
@@ -175,10 +175,10 @@ async def test_distinct_images_get_distinct_blobs(api_client, memory):
     )
     assert response.status_code == 200, response.text
 
-    rows = await _bank_image_rows(memory, bank_id)
-    assert {row["image_hash"] for row in rows} == {
-        compute_image_hash(PNG_BYTES),
-        compute_image_hash(OTHER_PNG_BYTES),
+    rows = await _bank_attachment_rows(memory, bank_id)
+    assert {row["attachment_hash"] for row in rows} == {
+        compute_attachment_hash(PNG_BYTES),
+        compute_attachment_hash(OTHER_PNG_BYTES),
     }
 
 
@@ -201,7 +201,7 @@ async def test_re_retaining_identical_multimodal_content_is_idempotent(api_clien
     text_after_second = await _document_text(memory, bank_id, "stable")
 
     assert text_after_first == text_after_second
-    assert len(await _bank_image_rows(memory, bank_id)) == 1
+    assert len(await _bank_attachment_rows(memory, bank_id)) == 1
 
 
 @pytest.mark.asyncio
@@ -235,11 +235,27 @@ async def test_malformed_base64_is_a_client_error_naming_the_block(api_client):
 
 
 @pytest.mark.asyncio
-async def test_an_unsupported_media_type_is_rejected(api_client):
-    """The allowlist is deliberate: these bytes go to a third-party model."""
+async def test_any_well_formed_media_type_is_accepted(api_client, memory):
+    """There is no allowlist: what the model can read is the model's answer to give.
+
+    A type we have never heard of is stored and sent; a provider that cannot read
+    it fails the retain with its own error, which is far more informative than a
+    guess made here.
+    """
     bank_id = f"img-{uuid.uuid4().hex[:8]}"
 
-    response = await _retain(api_client, bank_id, [_image_block(media_type="image/tiff")])
+    response = await _retain(api_client, bank_id, [_image_block(media_type="image/avif")], document_id="exotic")
+
+    assert response.status_code == 200, response.text
+    assert (await _bank_attachment_rows(memory, bank_id))[0]["media_type"] == "image/avif"
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_media_type_is_still_rejected(api_client):
+    """ "png" is not a media type. That is a request error, not a model question."""
+    bank_id = f"img-{uuid.uuid4().hex[:8]}"
+
+    response = await _retain(api_client, bank_id, [_image_block(media_type="png")])
 
     assert response.status_code == 422
 
@@ -250,7 +266,7 @@ async def test_an_oversized_image_is_rejected_with_its_size(api_client, monkeypa
 
     # The size caps are static server-level fields, so the handler reads them off
     # the global config; patch the object the proxy delegates to.
-    monkeypatch.setattr(get_config()._config, "retain_image_max_size_mb", 0)
+    monkeypatch.setattr(get_config()._config, "retain_attachment_max_size_mb", 0)
     bank_id = f"img-{uuid.uuid4().hex[:8]}"
 
     response = await _retain(api_client, bank_id, [_image_block()])
@@ -263,13 +279,13 @@ async def test_an_oversized_image_is_rejected_with_its_size(api_client, monkeypa
 async def test_too_many_images_in_one_item_is_rejected(api_client, monkeypatch):
     from hindsight_api.config import get_config
 
-    monkeypatch.setattr(get_config()._config, "retain_image_max_count", 1)
+    monkeypatch.setattr(get_config()._config, "retain_attachment_max_count", 1)
     bank_id = f"img-{uuid.uuid4().hex[:8]}"
 
     response = await _retain(api_client, bank_id, [_image_block(PNG_BYTES), _image_block(OTHER_PNG_BYTES)])
 
     assert response.status_code == 400
-    assert "more than 1 images" in response.json()["detail"]
+    assert "more than 1 attachments" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -288,7 +304,7 @@ async def test_an_image_alone_is_content_even_with_no_prose(api_client, memory):
     response = await _retain(api_client, bank_id, [_image_block()], document_id="bare")
 
     assert response.status_code == 200, response.text
-    assert await _document_text(memory, bank_id, "bare") == image_placeholder(compute_image_hash(PNG_BYTES))
+    assert await _document_text(memory, bank_id, "bare") == attachment_placeholder(compute_attachment_hash(PNG_BYTES))
 
 
 @pytest.mark.asyncio
@@ -302,7 +318,7 @@ async def test_plain_string_content_cannot_summon_an_image(api_client, memory):
     bank_id = f"img-{uuid.uuid4().hex[:8]}"
     # Retain a real image, so there is something in the bank worth stealing.
     assert (await _retain(api_client, bank_id, [_image_block()], document_id="owner")).status_code == 200
-    stolen = image_placeholder(compute_image_hash(PNG_BYTES))
+    stolen = attachment_placeholder(compute_attachment_hash(PNG_BYTES))
 
     response = await _retain(api_client, bank_id, f"see {stolen} here", document_id="thief")
 

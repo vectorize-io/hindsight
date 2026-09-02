@@ -26,7 +26,7 @@ type ChunkData struct {
 	ChunkIndex int32 `json:"chunk_index"`
 	// Whether the chunk text was truncated due to token limits
 	Truncated *bool `json:"truncated,omitempty"`
-	Images []ChunkImage `json:"images,omitempty"`
+	Attachments []ChunkAttachment `json:"attachments,omitempty"`
 }
 
 type _ChunkData ChunkData
@@ -159,37 +159,37 @@ func (o *ChunkData) SetTruncated(v bool) {
 	o.Truncated = &v
 }
 
-// GetImages returns the Images field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *ChunkData) GetImages() []ChunkImage {
+// GetAttachments returns the Attachments field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ChunkData) GetAttachments() []ChunkAttachment {
 	if o == nil {
-		var ret []ChunkImage
+		var ret []ChunkAttachment
 		return ret
 	}
-	return o.Images
+	return o.Attachments
 }
 
-// GetImagesOk returns a tuple with the Images field value if set, nil otherwise
+// GetAttachmentsOk returns a tuple with the Attachments field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *ChunkData) GetImagesOk() ([]ChunkImage, bool) {
-	if o == nil || IsNil(o.Images) {
+func (o *ChunkData) GetAttachmentsOk() ([]ChunkAttachment, bool) {
+	if o == nil || IsNil(o.Attachments) {
 		return nil, false
 	}
-	return o.Images, true
+	return o.Attachments, true
 }
 
-// HasImages returns a boolean if a field has been set.
-func (o *ChunkData) HasImages() bool {
-	if o != nil && !IsNil(o.Images) {
+// HasAttachments returns a boolean if a field has been set.
+func (o *ChunkData) HasAttachments() bool {
+	if o != nil && !IsNil(o.Attachments) {
 		return true
 	}
 
 	return false
 }
 
-// SetImages gets a reference to the given []ChunkImage and assigns it to the Images field.
-func (o *ChunkData) SetImages(v []ChunkImage) {
-	o.Images = v
+// SetAttachments gets a reference to the given []ChunkAttachment and assigns it to the Attachments field.
+func (o *ChunkData) SetAttachments(v []ChunkAttachment) {
+	o.Attachments = v
 }
 
 func (o ChunkData) MarshalJSON() ([]byte, error) {
@@ -208,8 +208,8 @@ func (o ChunkData) ToMap() (map[string]interface{}, error) {
 	if !IsNil(o.Truncated) {
 		toSerialize["truncated"] = o.Truncated
 	}
-	if o.Images != nil {
-		toSerialize["images"] = o.Images
+	if o.Attachments != nil {
+		toSerialize["attachments"] = o.Attachments
 	}
 	return toSerialize, nil
 }

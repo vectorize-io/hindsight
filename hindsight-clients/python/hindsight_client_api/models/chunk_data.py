@@ -19,7 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.chunk_image import ChunkImage
+from hindsight_client_api.models.chunk_attachment import ChunkAttachment
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -31,8 +31,8 @@ class ChunkData(BaseModel):
     text: StrictStr
     chunk_index: StrictInt
     truncated: Optional[StrictBool] = Field(default=False, description="Whether the chunk text was truncated due to token limits")
-    images: Optional[List[ChunkImage]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "chunk_index", "truncated", "images"]
+    attachments: Optional[List[ChunkAttachment]] = None
+    __properties: ClassVar[List[str]] = ["id", "text", "chunk_index", "truncated", "attachments"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -73,17 +73,17 @@ class ChunkData(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in images (list)
+        # override the default output from pydantic by calling `to_dict()` of each item in attachments (list)
         _items = []
-        if self.images:
-            for _item_images in self.images:
-                if _item_images:
-                    _items.append(_item_images.to_dict())
-            _dict['images'] = _items
-        # set to None if images (nullable) is None
+        if self.attachments:
+            for _item_attachments in self.attachments:
+                if _item_attachments:
+                    _items.append(_item_attachments.to_dict())
+            _dict['attachments'] = _items
+        # set to None if attachments (nullable) is None
         # and model_fields_set contains the field
-        if self.images is None and "images" in self.model_fields_set:
-            _dict['images'] = None
+        if self.attachments is None and "attachments" in self.model_fields_set:
+            _dict['attachments'] = None
 
         return _dict
 
@@ -101,7 +101,7 @@ class ChunkData(BaseModel):
             "text": obj.get("text"),
             "chunk_index": obj.get("chunk_index"),
             "truncated": obj.get("truncated") if obj.get("truncated") is not None else False,
-            "images": [ChunkImage.from_dict(_item) for _item in obj["images"]] if obj.get("images") is not None else None
+            "attachments": [ChunkAttachment.from_dict(_item) for _item in obj["attachments"]] if obj.get("attachments") is not None else None
         })
         return _obj
 

@@ -40,12 +40,12 @@ hindsight_client_api/models/bank_template_directive.py
 hindsight_client_api/models/bank_template_import_response.py
 hindsight_client_api/models/bank_template_manifest.py
 hindsight_client_api/models/bank_template_mental_model.py
-hindsight_client_api/models/base64_image_source.py
+hindsight_client_api/models/base64_attachment_source.py
 hindsight_client_api/models/budget.py
 hindsight_client_api/models/cancel_operation_response.py
 hindsight_client_api/models/child_operation_status.py
+hindsight_client_api/models/chunk_attachment.py
 hindsight_client_api/models/chunk_data.py
-hindsight_client_api/models/chunk_image.py
 hindsight_client_api/models/chunk_include_options.py
 hindsight_client_api/models/chunk_response.py
 hindsight_client_api/models/clear_memory_observations_response.py
@@ -82,6 +82,7 @@ hindsight_client_api/models/entity_observation_response.py
 hindsight_client_api/models/entity_state_response.py
 hindsight_client_api/models/extracted_fact.py
 hindsight_client_api/models/features_info.py
+hindsight_client_api/models/file_content_block.py
 hindsight_client_api/models/file_retain_response.py
 hindsight_client_api/models/graph_data_response.py
 hindsight_client_api/models/http_validation_error.py

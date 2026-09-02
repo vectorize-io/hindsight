@@ -21,10 +21,10 @@ from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitiz
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from ..structured_output import provider_json_schema, strict_json_schema
-from . import image_content
+from . import attachment_content
 
 if TYPE_CHECKING:
-    from .image_store import RetainImageLoader
+    from .attachment_store import RetainAttachmentLoader
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -635,7 +635,7 @@ class _ChunkSegment:
 def _iter_placeholder_segments(text: str) -> Iterator[_ChunkSegment]:
     """Split ``text`` into prose / image-placeholder runs, in order."""
     cursor = 0
-    for match in image_content.PLACEHOLDER_RE.finditer(text):
+    for match in attachment_content.PLACEHOLDER_RE.finditer(text):
         if match.start() > cursor:
             yield _ChunkSegment(text=text[cursor : match.start()], is_image=False)
         yield _ChunkSegment(text=match.group(0), is_image=True)
@@ -648,7 +648,7 @@ def _iter_image_aware_chunks(
     text: str,
     max_chars: int,
     *,
-    max_images_per_chunk: int,
+    max_attachments_per_chunk: int,
 ) -> Iterator[str]:
     """Chunk text that carries image placeholders, keeping each image with its prose.
 
@@ -659,7 +659,7 @@ def _iter_image_aware_chunks(
     feature cannot afford: an article reading "here are the screenshots:"
     followed by ten images had the introduction split away from every one of
     them, and two images could not even share a chunk. The real constraint is
-    how many images one request may carry, which is ``max_images_per_chunk``.
+    how many images one request may carry, which is ``max_attachments_per_chunk``.
 
     Packing is greedy and left-to-right, and an over-long run of prose is split
     against the room that is *left* rather than the whole budget, so the images
@@ -697,7 +697,7 @@ def _iter_image_aware_chunks(
 
     for segment in _iter_placeholder_segments(text):
         if segment.is_image:
-            if buffered and (used + len(segment.text) > max_chars or images + 1 > max_images_per_chunk):
+            if buffered and (used + len(segment.text) > max_chars or images + 1 > max_attachments_per_chunk):
                 yield from _flush()
             _append(segment.text, is_image=True)
             continue
@@ -730,7 +730,7 @@ def iter_chunks(
     max_chars: int,
     structured_chunk_size: int | None = None,
     *,
-    max_images_per_chunk: int | None = None,
+    max_attachments_per_chunk: int | None = None,
 ) -> Iterator[str]:
     """Stream the chunks of ``text``, in order — the lazy form of :func:`chunk_text`.
 
@@ -746,8 +746,8 @@ def iter_chunks(
     # it takes its own path. Text with no placeholders — every document retained
     # before inline images existed, and every text-only one after — reaches the
     # code below unchanged, byte for byte.
-    if max_images_per_chunk is not None and image_content.contains_image(text):
-        yield from _iter_image_aware_chunks(text, max_chars, max_images_per_chunk=max_images_per_chunk)
+    if max_attachments_per_chunk is not None and attachment_content.contains_attachment(text):
+        yield from _iter_image_aware_chunks(text, max_chars, max_attachments_per_chunk=max_attachments_per_chunk)
         return
 
     # If text is small enough, return as-is
@@ -795,7 +795,7 @@ def chunk_text(
     max_chars: int,
     structured_chunk_size: int | None = None,
     *,
-    max_images_per_chunk: int | None = None,
+    max_attachments_per_chunk: int | None = None,
 ) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
@@ -819,7 +819,7 @@ def chunk_text(
         max_chars: Target maximum characters per chunk
         structured_chunk_size: Maximum characters for a single JSONL line or
             conversation turn to keep whole. Defaults to ``max_chars``.
-        max_images_per_chunk: Cap on images in one chunk. ``None`` (the default)
+        max_attachments_per_chunk: Cap on images in one chunk. ``None`` (the default)
             means the caller applies no image handling, and text carrying image
             placeholders is chunked as ordinary text.
 
@@ -831,7 +831,7 @@ def chunk_text(
             text,
             max_chars,
             structured_chunk_size=structured_chunk_size,
-            max_images_per_chunk=max_images_per_chunk,
+            max_attachments_per_chunk=max_attachments_per_chunk,
         )
     )
 
@@ -1702,7 +1702,7 @@ async def _extract_facts_from_chunk(
     config,
     agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
-    image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
@@ -1740,9 +1740,9 @@ async def _extract_facts_from_chunk(
     # scaffolding is byte-identical to the text-only path, and a chunk with no
     # images comes back as the same plain string it always was.
     user_content: Any = user_message
-    if image_loader is not None and image_content.contains_image(user_message):
-        loaded = await image_loader.load(list(image_content.iter_placeholder_ids(user_message)))
-        user_content = image_content.build_prompt_parts(user_message, loaded)
+    if attachment_loader is not None and attachment_content.contains_attachment(user_message):
+        loaded = await attachment_loader.load(list(attachment_content.iter_placeholder_ids(user_message)))
+        user_content = attachment_content.build_prompt_parts(user_message, loaded)
 
     # Opt into context caching when the provider supports it. The prompt and
     # response_schema are bank-agnostic (the mission lives in the user message),
@@ -2116,7 +2116,7 @@ async def _extract_facts_with_auto_split(
     config,
     agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
-    image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
@@ -2134,7 +2134,7 @@ async def _extract_facts_with_auto_split(
         config: Resolved HindsightConfig for this bank
         agent_name: Optional agent name (memory owner)
         metadata: Optional document metadata key-value pairs
-        image_loader: Resolves the chunk's image placeholders back to bytes, or None
+        attachment_loader: Resolves the chunk's image placeholders back to bytes, or None
             when the caller has no images to resolve. Carried through the split
             recursion so a half-chunk keeps the images it still references.
 
@@ -2157,7 +2157,7 @@ async def _extract_facts_with_auto_split(
             config=config,
             agent_name=agent_name,
             metadata=metadata,
-            image_loader=image_loader,
+            attachment_loader=attachment_loader,
         )
     except OutputTooLongError:
         # Output exceeded token limits - split the chunk and retry. Conversation
@@ -2193,7 +2193,7 @@ async def _extract_facts_with_auto_split(
                 config=config,
                 agent_name=agent_name,
                 metadata=metadata,
-                image_loader=image_loader,
+                attachment_loader=attachment_loader,
             ),
             _extract_facts_with_auto_split(
                 chunk=second_half,
@@ -2205,7 +2205,7 @@ async def _extract_facts_with_auto_split(
                 config=config,
                 agent_name=agent_name,
                 metadata=metadata,
-                image_loader=image_loader,
+                attachment_loader=attachment_loader,
             ),
         ]
 
@@ -2232,6 +2232,7 @@ async def extract_facts_from_text(
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
     image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -2253,6 +2254,7 @@ async def extract_facts_from_text(
             Retain never sets it — see the caller in retain/orchestrator.py — and the
             dry-run endpoint's field that does is deprecated in favour of ``context``.
         image_loader: Resolves inline image placeholders back to bytes so the model
+        attachment_loader: Resolves inline image placeholders back to bytes so the model
             sees each image in position. None means the text carries no images (or
             the caller has no store to resolve them from), and every chunk is sent
             as plain text exactly as before.
@@ -2267,7 +2269,7 @@ async def extract_facts_from_text(
         text,
         max_chars=config.retain_chunk_size,
         structured_chunk_size=config.retain_structured_chunk_size,
-        max_images_per_chunk=config.retain_max_images_per_chunk,
+        max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
     )
 
     # Log chunk count before starting LLM requests
@@ -2294,7 +2296,7 @@ async def extract_facts_from_text(
             config=config,
             agent_name=agent_name,
             metadata=metadata,
-            image_loader=image_loader,
+            attachment_loader=attachment_loader,
         )
         for i, chunk in enumerate(chunks)
     ]
@@ -2529,7 +2531,7 @@ async def extract_facts_from_contents_batch_api(
             item.content,
             max_chars=config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
-            max_images_per_chunk=config.retain_max_images_per_chunk,
+            max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
         )
 
         for chunk_index_in_content, chunk in enumerate(chunks):
@@ -2983,7 +2985,7 @@ def _extract_facts_chunks(
             content.content,
             config.retain_chunk_size,
             structured_chunk_size=config.retain_structured_chunk_size,
-            max_images_per_chunk=config.retain_max_images_per_chunk,
+            max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
         )
         for chunk in chunks:
             chunks_metadata.append(
@@ -2996,7 +2998,13 @@ def _extract_facts_chunks(
             )
             extracted_facts.append(
                 ExtractedFactType(
-                    fact_text=chunk,
+                    # The chunk text is copied verbatim into the fact, so its
+                    # attachment placeholders would otherwise be recalled as
+                    # memory text — a content hash presented to a user as
+                    # knowledge. The chunk itself keeps the placeholder (that is
+                    # what carries position), and the machine-readable handle
+                    # rides on the response's `attachments`, not in the fact.
+                    fact_text=attachment_content.describe_placeholders(chunk),
                     fact_type="world",
                     entities=[],
                     content_index=content_index,
@@ -3021,7 +3029,7 @@ async def extract_facts_from_contents(
     pool=None,
     operation_id: str | None = None,
     schema: str | None = None,
-    image_loader: "RetainImageLoader | None" = None,
+    attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
     """
     Extract facts from multiple content items in parallel.
@@ -3041,7 +3049,7 @@ async def extract_facts_from_contents(
         pool: Database connection pool (passed to batch API for state storage)
         operation_id: Async operation ID (passed to batch API for crash recovery)
         schema: Database schema (passed to batch API for multi-tenant support)
-        image_loader: Resolves inline image placeholders back to bytes for the
+        attachment_loader: Resolves inline image placeholders back to bytes for the
             extraction prompt. None when the retain carries no images.
 
     Returns:
@@ -3070,7 +3078,7 @@ async def extract_facts_from_contents(
             llm_config=llm_config,
             config=config,
             metadata=item.metadata or None,
-            image_loader=image_loader,
+            attachment_loader=attachment_loader,
         )
         fact_extraction_tasks.append(task)
 
@@ -3173,7 +3181,9 @@ def _collapse_to_verbatim(facts: list[ExtractedFactType], chunks: list[ChunkMeta
     this collapses them: keeps the first fact as representative, overrides its
     fact_text with the raw chunk text, and merges entities from any extra facts.
     """
-    chunk_text_map = {c.chunk_index: c.chunk_text for c in chunks}
+    # describe_placeholders for the same reason as chunks mode: verbatim copies the
+    # chunk into the fact, and a raw ⟦hs-att:...⟧ token is not knowledge.
+    chunk_text_map = {c.chunk_index: attachment_content.describe_placeholders(c.chunk_text) for c in chunks}
     seen: dict[int, ExtractedFactType] = {}
     result: list[ExtractedFactType] = []
 

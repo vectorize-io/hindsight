@@ -31,6 +31,7 @@ import * as sdk from "../generated/sdk.gen";
 import type {
   TextContentBlock,
   ImageContentBlock,
+  FileContentBlock,
   RetainRequest,
   RetainResponse,
   RecallRequest,
@@ -125,14 +126,15 @@ export interface EntityInput {
 /**
  * One element of a multimodal retain item's content.
  *
- * Retain accepts either a plain string or an ordered list of these, so an image
- * sits inline where it actually appears and the extractor reads it alongside the
- * prose that refers to it. Requires a vision-capable retain LLM server-side.
+ * Retain accepts either a plain string or an ordered list of these, so an
+ * attachment sits inline where it actually appears and the extractor reads it
+ * alongside the prose that refers to it. Requires a vision-capable retain LLM
+ * server-side.
  *
- * Re-exported from the generated types rather than redeclared, so the allowed
- * media types stay whatever the API actually accepts.
+ * Re-exported from the generated types rather than redeclared, so the shape
+ * stays whatever the API actually accepts.
  */
-export type ContentBlock = TextContentBlock | ImageContentBlock;
+export type ContentBlock = TextContentBlock | ImageContentBlock | FileContentBlock;
 
 export interface MemoryItemInput {
   content: string | ContentBlock[];
