@@ -42,7 +42,13 @@ class CrossLoopSemaphore:
     """
 
     def __init__(self, value: int) -> None:
+        self._capacity = value
         self._sem = threading.Semaphore(value)
+
+    @property
+    def capacity(self) -> int:
+        """The configured cap. Public so callers and tests need not read a private."""
+        return self._capacity
 
     async def acquire(self) -> None:
         # Fast path: uncontended acquire never yields, so the common case costs one
