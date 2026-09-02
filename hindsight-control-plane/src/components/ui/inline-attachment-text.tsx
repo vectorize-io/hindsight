@@ -80,12 +80,14 @@ function FileCard({ bankId, attachment }: { bankId: string; attachment: Retained
       href={attachmentUrl(bankId, attachment)}
       target="_blank"
       rel="noreferrer"
-      className="flex items-center gap-2 my-2 px-3 py-2 rounded border border-border bg-muted/40 hover:bg-muted transition-colors no-underline max-w-sm"
+      className="inline-flex items-center gap-1.5 my-1.5 px-2 py-1 rounded border border-border bg-muted/40 hover:bg-muted transition-colors no-underline max-w-[280px] align-middle"
     >
-      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0">
-        <span className="block text-xs font-medium text-foreground truncate">{name}</span>
-        {detail && <span className="block text-[10px] text-muted-foreground">{detail}</span>}
+        <span className="block text-[11px] font-medium text-foreground truncate">{name}</span>
+        {detail && (
+          <span className="block text-[10px] text-muted-foreground truncate">{detail}</span>
+        )}
       </span>
     </a>
   );
@@ -108,7 +110,10 @@ function InlineImage({ bankId, attachment }: { bankId: string; attachment: Retai
         alt={attachment.filename || "Retained inline attachment"}
         title={attachment.filename || attachment.media_type}
         onError={() => setFailed(true)}
-        className="block my-2 max-h-64 max-w-full rounded border border-border object-contain cursor-zoom-in hover:border-foreground/30 transition-colors"
+        // Small on purpose: these sit inside a document body or beside a fact,
+        // where a full-width screenshot pushes the text it belongs to off the
+        // screen. Click opens the original at full size.
+        className="block my-1.5 max-h-40 max-w-[280px] rounded border border-border object-contain cursor-zoom-in hover:border-foreground/30 transition-colors"
       />
     </a>
   );
