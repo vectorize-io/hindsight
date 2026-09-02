@@ -170,7 +170,6 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
     curl \
     procps \
-    libxml2 \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
@@ -330,7 +329,6 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
     curl \
     procps \
-    libxml2 \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
