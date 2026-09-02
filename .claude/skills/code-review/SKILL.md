@@ -12,8 +12,36 @@ Review all changed code against the project's quality standards and coding conve
 
 Read and internalize these standards before writing code. The review steps below verify compliance.
 
+### Supported interpreters
+
+Hindsight must work on **both** of these, and a change is not done until it does:
+
+- **CPython 3.11** — the baseline, what `docker/standalone/Dockerfile` ships by default
+  and what the `.python-version` pin and `uv.lock` resolve for.
+- **Free-threaded CPython 3.14** (`python3.14t`) — the `-py3.14t` image target, where
+  the process runs an event loop per thread and executes Python bytecode in parallel.
+
+Neither is a "future" target that can be deferred to a follow-up. Two consequences
+that catch people, both covered in detail under Concurrency below:
+
+- **Anything process-wide is genuinely concurrent** on 3.14t. The GIL is no longer
+  making check-then-act sequences accidentally atomic, and `asyncio` primitives shared
+  between loops break outright.
+- **Free-threading is lost silently.** Importing a C extension that has not declared
+  `Py_MOD_GIL_NOT_USED` re-enables the GIL for the whole process, with only a
+  `RuntimeWarning`. Nothing crashes; the 3.14t image simply performs like the 3.11 one.
+  So "it passed CI" is weaker evidence here than usual — that is why the free-threaded
+  job asserts the GIL is off *before* running a single test, and why the image build
+  asserts it too.
+
+Most of what breaks is not free-threading-specific: it is *multi-loop*, which
+reproduces on 3.11 as soon as two event loops exist in one process.
+`tests/test_multi_loop_conformance.py` is the cheap guard for that and runs in the
+ordinary suite, so a reviewer should expect new shared state to be covered there
+rather than only by the free-threaded job.
+
 ### Python Style
-- Python 3.11+, type hints required
+- Python 3.11+, type hints required — and see Supported interpreters above
 - Async throughout (asyncpg, async FastAPI)
 - Pydantic models for request/response
 - Ruff for linting (line-length 120)
@@ -386,6 +414,15 @@ git diff main...HEAD -- '*.py' | grep -nE "asyncio\.(Lock|Semaphore|Event|Condit
   yielding.
 - An in-flight/coalescing map holding `asyncio.Future`s keyed without the running loop.
 
+**Also check the change does not quietly drop an interpreter:**
+- A new dependency, or a version bump, that has no free-threaded (`cp3XXt`) wheel and
+  is imported on the API path — it costs the `-py3.14t` image its free-threading.
+  Check with `pip index versions` / the project's wheel list, and if there is no
+  wheel, either keep the import lazy or add it to
+  `hindsight-api-slim/overrides-freethreaded.txt` with a runtime fallback.
+- Syntax or stdlib usage newer than 3.11 (`uv run ty check` catches most of it).
+- A test that assumes one event loop per process, when what it covers is shared state.
+
 **Should fix:**
 - New process-global mutable state (dict/set/list, `lru_cache` over mutable values)
   with no lock, or iterated somewhere it can be mutated concurrently.
@@ -429,6 +466,10 @@ Present a clear summary organized by severity:
   harness, dialect, provider or language variant that skips a lifecycle step the others perform
 - An `asyncio` lock/semaphore/event created at import time or owned by a process-wide
   singleton, or a `threading.Lock` held across an `await` (see step 11d)
+- A change that only works on one of the two supported interpreters — 3.11 and
+  free-threaded 3.14 (see Supported interpreters); in particular a new C-extension
+  dependency with no `cp3XXt` wheel imported on the API path, which silently costs the
+  `-py3.14t` image its free-threading
 
 **Should fix** — issues that hurt code quality:
 - Dead code / unused imports missed by linter
