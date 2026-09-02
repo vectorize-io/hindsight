@@ -112,6 +112,20 @@ Where the variance lives:
   acknowledges "the attached policy" in its output. The bytes demonstrably reach
   the provider — verify with the loader check above before suspecting otherwise.
 
+Both of those last two eased considerably once extraction was told to transcribe
+structured attachments rather than summarize them, and to carry each value's
+colour and position (see `benchmarks/imageqa`, where that change was measured):
+
+| build | image facts recalled | correct | wrong | abstained |
+|---|---|---|---|---|
+| `attach-prompt-3` | 6/8 (75%) | 5/6 (83%) | 0 | 1 |
+| `visual-key` | 8/8 (100%) | 6/6 (100%) | 0 | 0 |
+
+The muted subtitle lines are exactly the "every other value" a summary discards,
+and the PDF is the sync-escalation article. Worth reading as corroboration rather
+than proof — six questions is far too few to call a five-point move — but it is
+the evidence that the ChartQA work did not simply over-fit to charts.
+
 ### On judging
 
 Negatives are re-asked and upheld only on a majority, mirroring
