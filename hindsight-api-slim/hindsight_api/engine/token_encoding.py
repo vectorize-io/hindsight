@@ -3,7 +3,8 @@
 Hindsight tokenizes purely to *count* and *chunk* arbitrary user content — never to
 feed a model that relies on the tokenizer's special-token vocabulary. That is what
 makes the two choices below safe, and it is why this module exposes exactly two
-operations: :func:`count_tokens` and :func:`truncate_to_tokens`. Every token budget
+operations: :func:`count_tokens` and :func:`truncate_to_tokens` (plus
+:func:`truncate_many_to_tokens`, the batched form of the latter). Every token budget
 in the engine is one or the other.
 
 **Why toktok and not tiktoken.** Counting is on the hot path of both retain and
@@ -47,6 +48,7 @@ the raising one, and #1883 is what it looks like in production. It is also why t
 tokenizer itself is not part of this module's interface.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -121,13 +123,30 @@ def truncate_to_tokens(text: str, max_tokens: int) -> TokenTruncation:
 
     ``original_tokens`` is the input's token count (so the caller can report how
     much was dropped) whether or not truncation occurred.
+
+    The cut lands on a *character* boundary. This used to be
+    ``decode(encode(text)[:n])``, which cuts on a *token* boundary — and byte-level
+    BPE splits one character across several tokens (``🧠`` is three), so a cut
+    could land mid-character and leave a U+FFFD: ``"hello 🧠"`` truncated to two
+    tokens decoded to ``"hello \ufffd"``. toktok's ``truncate`` drops the partial
+    character instead, giving ``"hello "``, so the result can be one token under
+    the budget. Every caller here is a ceiling, so that is free.
     """
-    enc = _load_encoding()
-    # Count first: the common case is "fits", and that costs no id list at all.
-    original_tokens = enc.count(text)
-    if original_tokens <= max_tokens:
-        return TokenTruncation(text=text, original_tokens=original_tokens)
-    # ``encode_ordinary``, not ``encode``: the latter rejects special-token literals
-    # (issue #1883), and it is the only spelling that agrees with what ``count()``
-    # just measured.
-    return TokenTruncation(text=enc.decode(enc.encode_ordinary(text)[:max_tokens]), original_tokens=original_tokens)
+    # Negative budgets used to slice a list and silently drop tokens off the end;
+    # toktok takes an unsigned count and would raise. Clamp, so a misconfigured cap
+    # still degrades to "empty" rather than a 500 mid-request.
+    truncated, original_tokens = toktok.truncate(text, max(max_tokens, 0), _load_encoding().name)
+    return TokenTruncation(text=truncated, original_tokens=original_tokens)
+
+
+def truncate_many_to_tokens(texts: Sequence[str], max_tokens: int) -> list[TokenTruncation]:
+    """:func:`truncate_to_tokens` over a list, in one call.
+
+    The two callers that truncate a whole list — every reranker document, every
+    embedding input — get the cut done in Rust with the GIL released instead of a
+    Python loop, and one scratch buffer per thread instead of one per text.
+    """
+    return [
+        TokenTruncation(text=truncated, original_tokens=original_tokens)
+        for truncated, original_tokens in toktok.batch_truncate(texts, max(max_tokens, 0), _load_encoding().name)
+    ]

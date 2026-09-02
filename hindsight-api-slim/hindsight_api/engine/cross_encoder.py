@@ -1086,16 +1086,16 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         return await loop.run_in_executor(FlashRankCrossEncoder._executor, self._predict_sync, pairs)
 
 
-def _truncate_to_tokens(text: str, max_tokens: int) -> str:
-    """Truncate text to at most max_tokens using the shared encoder.
+def _truncate_docs_to_tokens(texts: list[str], max_tokens: int) -> list[str]:
+    """Truncate every candidate document to at most ``max_tokens``.
 
-    Reranking truncates every candidate document, and the overwhelming majority
-    already fit — so this counts first and only builds the ids for the ones that
-    actually need cutting.
+    Batched rather than looped: reranking truncates the whole candidate list on
+    every call, and the shared tokenizer cuts a list in Rust with the GIL released.
+    The overwhelming majority already fit, and those come back untouched.
     """
-    from .token_encoding import truncate_to_tokens
+    from .token_encoding import truncate_many_to_tokens
 
-    return truncate_to_tokens(text, max_tokens).text
+    return [result.text for result in truncate_many_to_tokens(texts, max_tokens)]
 
 
 class LiteLLMCrossEncoder(CrossEncoderModel):
@@ -1189,7 +1189,7 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
         for query, indexed_texts in query_groups.items():
             texts = [text for _, text in indexed_texts]
             if self.max_tokens_per_doc is not None:
-                texts = [_truncate_to_tokens(t, self.max_tokens_per_doc) for t in texts]
+                texts = _truncate_docs_to_tokens(texts, self.max_tokens_per_doc)
             indices = [idx for idx, _ in indexed_texts]
 
             # LiteLLM /rerank follows Cohere API format
@@ -1310,7 +1310,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
         for query, indexed_texts in query_groups.items():
             texts = [text for _, text in indexed_texts]
             if self.max_tokens_per_doc is not None:
-                texts = [_truncate_to_tokens(t, self.max_tokens_per_doc) for t in texts]
+                texts = _truncate_docs_to_tokens(texts, self.max_tokens_per_doc)
             indices = [idx for idx, _ in indexed_texts]
 
             # Build kwargs for rerank call

@@ -31,7 +31,7 @@ dependencies = [
     # several times faster, a count-only API that allocates no id list, and the
     # vocabularies ship in the wheel so nothing is downloaded at runtime.
     # Contained to engine/token_encoding.py — see that module for the rationale.
-    "toktok-rs>=0.1.2",
+    "toktok-rs>=0.1.3", # 0.1.3 adds truncate()/batch_truncate()
     "httpx>=0.27.0",
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
     "python-dateutil>=2.8.0",

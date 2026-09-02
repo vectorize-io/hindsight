@@ -10,8 +10,9 @@ import pytest
 from hindsight_api.config import DEFAULT_TOKENIZER_ENCODING, ENV_TOKENIZER_ENCODING, clear_config_cache
 from hindsight_api.engine.token_encoding import (
     BUNDLED_ENCODINGS,
-    count_tokens,
     _load_encoding,
+    count_tokens,
+    truncate_many_to_tokens,
     truncate_to_tokens,
 )
 
@@ -139,3 +140,54 @@ def test_truncate_reports_the_original_size():
 def test_truncate_survives_special_token_literals():
     result = truncate_to_tokens(SPECIAL_TOKEN_TEXT * 50, 10)
     assert count_tokens(result.text) <= 10
+
+
+def test_truncate_never_cuts_a_character_in_half(encoding_env):
+    """A token boundary is not a character boundary.
+
+    Byte-level BPE splits one character across several tokens — under o200k_base
+    ``🧠`` is three — so cutting the id list at ``n`` can land mid-character.
+    ``decode(encode("hello 🧠")[:2])``, which is what this function used to do,
+    returned ``"hello \ufffd"``. The partial character must be dropped instead, at
+    every cut point, for every vocabulary.
+    """
+    for name in BUNDLED_ENCODINGS:
+        encoding_env(name)
+        for text in ("hello 🧠", "東京タワー", "مرحبا بالعالم", "🧠🧠🧠"):
+            for budget in range(0, count_tokens(text) + 1):
+                truncated = truncate_to_tokens(text, budget).text
+                assert "\ufffd" not in truncated, f"{name} {text!r}[:{budget}] -> {truncated!r}"
+                # Dropping a partial character can only shorten the result, never
+                # push it over the ceiling the caller asked for.
+                assert count_tokens(truncated) <= budget
+                assert text.startswith(truncated)
+
+
+def test_truncate_reports_the_original_size_even_when_it_fits():
+    """Callers branch on ``original_tokens`` to decide whether to warn, so it must
+    be the whole input's count on the untruncated path too."""
+    result = truncate_to_tokens("alpha beta gamma", 100)
+    assert result.original_tokens == count_tokens("alpha beta gamma")
+
+
+def test_truncate_many_matches_truncating_one_at_a_time():
+    """The batched form is what reranking and embedding truncation both use, so it
+    must not diverge from the single-text one it stands in for."""
+    texts = ["hello 🧠", "short", "alpha beta gamma delta epsilon " * 20, "", SPECIAL_TOKEN_TEXT]
+
+    batched = truncate_many_to_tokens(texts, 8)
+
+    assert batched == [truncate_to_tokens(t, 8) for t in texts]
+
+
+def test_truncate_many_of_nothing():
+    assert truncate_many_to_tokens([], 10) == []
+
+
+def test_a_negative_budget_empties_rather_than_raising():
+    """A misconfigured cap used to slice a list with a negative index and silently
+    drop tokens off the *end*; the native call takes an unsigned count and would
+    raise. Neither is acceptable mid-request, so it clamps to empty."""
+    result = truncate_to_tokens("alpha beta gamma", -5)
+    assert result.text == ""
+    assert result.original_tokens == count_tokens("alpha beta gamma")
