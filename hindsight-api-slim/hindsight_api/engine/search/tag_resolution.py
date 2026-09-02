@@ -41,11 +41,11 @@ from __future__ import annotations
 import math
 from itertools import product
 
-from ..entity_resolver import _trigram_similarity
+from ..entity_resolver import trigram_similarity
 from .tags import TagGroup, TagGroupAnd, TagGroupLeaf, TagGroupNot, TagGroupOr
 
 #: Trigram similarity at or above which a token resolves to a tag. Shares
-#: ``entity_resolver._trigram_similarity`` — verified byte-identical to Postgres
+#: ``entity_resolver.trigram_similarity`` — verified byte-identical to Postgres
 #: ``similarity()`` (#3107) — rather than growing a second notion of name similarity.
 MIN_SIMILARITY = 0.45
 
@@ -89,7 +89,7 @@ def expand_token(token: str, vocabulary: list[str]) -> list[str]:
     if exact:
         return exact
 
-    scored = [(tag, _trigram_similarity(normalized, _normalize(tag))) for tag in vocabulary]
+    scored = [(tag, trigram_similarity(normalized, _normalize(tag))) for tag in vocabulary]
     # Closest tag first; ties keep vocabulary order, which list_tags returns by usage count.
     matches = [tag for tag, score in sorted(scored, key=lambda pair: -pair[1]) if score >= MIN_SIMILARITY]
     return matches or [token]

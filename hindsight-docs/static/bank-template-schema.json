@@ -1097,6 +1097,15 @@
           ],
           "title": "Match",
           "type": "string"
+        },
+        "resolve": {
+          "default": "exact",
+          "enum": [
+            "exact",
+            "fuzzy"
+          ],
+          "title": "Resolve",
+          "type": "string"
         }
       },
       "required": [

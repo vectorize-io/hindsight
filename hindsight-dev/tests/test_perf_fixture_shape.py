@@ -38,7 +38,7 @@ def _mentions_after_resolution(corpus_size: int) -> Counter:
     describe the graph that actually lands in ``unit_entities``, not the names
     the generator emitted.
     """
-    from hindsight_api.engine.entity_resolver import _trigram_similarity
+    from hindsight_api.engine.entity_resolver import trigram_similarity
 
     configure_entity_vocabulary(corpus_size)
     raw: Counter = Counter()
@@ -49,7 +49,7 @@ def _mentions_after_resolution(corpus_size: int) -> Counter:
     canonical: dict[str, str] = {}
     for name in raw:
         for seen in canonical:
-            if _trigram_similarity(name, seen) >= _MERGE_SIMILARITY:
+            if trigram_similarity(name, seen) >= _MERGE_SIMILARITY:
                 canonical[name] = canonical[seen]
                 break
         else:
