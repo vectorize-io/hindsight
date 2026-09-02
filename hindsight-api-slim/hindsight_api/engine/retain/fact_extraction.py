@@ -1622,13 +1622,31 @@ def _build_user_message(
                 'statements to that speaker and classify them as "world", not "assistant".'
             )
 
-    return f"""{mission_preamble}Extract facts from the following text chunk.
+    # Attachments are spliced into this message in place of their placeholders
+    # (see build_prompt_parts), so by the time the model reads it the picture is
+    # simply there — with nothing telling it to look. The prompt otherwise says
+    # "text chunk" and "Text:" throughout, which reads as an instruction to
+    # extract from the prose; a screenshot whose button label appeared nowhere in
+    # that prose was routinely ignored. Naming the attachments is what puts their
+    # content in scope.
+    attachment_section = ""
+    if attachment_content.contains_attachment(sanitized_chunk or ""):
+        attachment_section = (
+            "\n\nATTACHMENTS: this chunk contains one or more attachments (images, PDFs, other "
+            "files), each shown inline at the exact position it occupies in the source. Read them. "
+            "Facts stated only in an attachment — a button's label, a value in a table, the boxes "
+            "of a diagram, text on a page — are as extractable as facts stated in the prose, and "
+            "are often the point of the document. Attribute each attachment to the sentences "
+            'around it: an image that follows "click the button shown:" is that button.'
+        )
+
+    return f"""{mission_preamble}Extract facts from the following chunk.
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_str}
-Context: {sanitized_context}{metadata_section}{narrator_section}
+Context: {sanitized_context}{metadata_section}{narrator_section}{attachment_section}
 
-Text:
+Content:
 {sanitized_chunk}"""
 
 

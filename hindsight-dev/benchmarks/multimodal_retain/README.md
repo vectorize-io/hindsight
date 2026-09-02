@@ -74,33 +74,43 @@ LLM calls without sharpening it.
 
 ## Baseline
 
-Three full runs on this branch, gemini-2.5-flash for both retain and judging:
+Three runs per build, gemini-2.5-flash for both retain and judging:
 
-| Arm | Image facts recalled | Correct | Wrong |
-|---|---|---|---|
-| multimodal | 4/8, 7/8, 4/8 (50–88%) | 4/6, 5/6, 3/6 (50–83%) | 0, 0, 0 |
-| text-only | 0/8, 0/8, 0/8 (0%) | 0/6, 0/6, 0/6 (0%) | 4, 2, 2 |
+| Build | Image facts recalled | Correct |
+|---|---|---|
+| before the attachment instruction | 50%, 88%, 50% | 67%, 83%, 50% |
+| **with it** | **88%, 100%, 75%** | **83%, 100%, 83%** |
+| text-only arm (either build) | 0%, 0%, 0% | 0%, 0%, 0% |
 
-`baseline_report.json` holds one of those runs. **Read the gap, not the
-multimodal number.** The text-only arm scored exactly zero on every run and every
-article — no picture-borne detail survives without inline images, and several
-answers are confidently wrong rather than absent. The multimodal arm's absolute
-score swings by nearly 40 points between runs of identical code.
+The instruction is one paragraph in the retain user message naming the
+attachments and putting their content in scope. Until it existed the prompt said
+"text chunk" and "Text:" throughout, so a model handed a screenshot was being
+told, in effect, to extract from the prose — and routinely did exactly that.
+Naming them moved the *floor* from 50% to 75%, which matters more than the
+ceiling: the bad runs were the ones that made the feature look unreliable.
 
-That spread is the model re-reading the same rendered image, not the pipeline:
-the interleaving was verified directly (one chunk, image part spliced between the
-two text parts, full PNG bytes in the prompt) on a run that scored 0/3 for its
-article. Do not treat a single run as a regression signal — reproduce first.
+`baseline_report.json` holds one run. **Read the gap, not the multimodal
+number.** The text-only arm scored exactly zero on every run of both builds — no
+picture-borne detail survives without inline attachments, and several answers are
+confidently wrong rather than absent.
+
+The multimodal arm still moves between runs of identical code, so do not treat a
+single run as a regression signal — reproduce first. When one looks wrong, check
+the pipeline directly before blaming it: resolve the chunk's placeholders through
+`RetainAttachmentLoader` and assert `build_prompt_parts` returns
+`['text', 'image_url', 'text']`. That check has twice shown a "bad" run to be the
+model re-reading the same image differently, not a broken path.
 
 Where the variance lives:
 
 - **Primary labels are reliable.** Button captions and diagram nodes ("Reset VPN
-  Tunnel", "Tier 3 Platform") are extracted in nearly every run.
-- **Small supporting lines are not.** The muted subtitle text (`Profile:
-  corp-eu-west`, `Period: Q3 2025`, `Rows: 18,420`) is what gets dropped, and
-  `billing-export` scores worst because two of its three claims live there. That
-  is a real property worth knowing — inline images recover what a picture *says*
-  far more reliably than its fine print.
+  Tunnel", "Tier 3 Platform") survive nearly every run.
+- **Small supporting lines are not.** Muted subtitle text (`Profile:
+  corp-eu-west`, `Rows: 18,420`) is what gets dropped.
+- **PDFs are less reliable than images.** A one-page PDF whose text is a raster
+  render is read in some runs and ignored in others, even while the model
+  acknowledges "the attached policy" in its output. The bytes demonstrably reach
+  the provider — verify with the loader check above before suspecting otherwise.
 
 ### On judging
 
