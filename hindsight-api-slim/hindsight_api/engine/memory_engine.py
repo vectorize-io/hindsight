@@ -14818,6 +14818,8 @@ class MemoryEngine(MemoryEngineInterface):
             # and a cross-process CREATE INDEX race collides in pg_class, not here.
             if getattr(exc, "table_name", None) != "mental_models":
                 raise
+            # Local, like every other OperationValidationError import in this module: the
+            # extensions package pulls in MCPExtension, which imports MemoryEngine back.
             from hindsight_api.extensions import OperationValidationError
 
             raise OperationValidationError(
