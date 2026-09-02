@@ -174,6 +174,10 @@ class Fact(BaseModel):
     # Optional structured data
     entities: list[str] | None = None
     causal_relations: list["CausalRelation"] | None = None
+    # 1-based indices into the chunk's attachments, exactly as the extractor
+    # attributed them. Only meaningful against the chunk they came from, so they
+    # are resolved to ids by _attachment_ids_for rather than stored.
+    from_attachments: list[int] | None = None
 
     @field_validator("fact")
     @classmethod
@@ -277,6 +281,15 @@ class ExtractedFact(BaseModel):
     @classmethod
     def ensure_entities_list(cls, v):
         return _coerce_entity_strings(v)
+
+    from_attachments: list[int] | None = Field(
+        default=None,
+        description=(
+            "Numbers of the attachments this fact's information came from, as listed under "
+            "ATTACHMENTS. Leave empty for facts drawn from the surrounding text. Only list an "
+            "attachment when the fact could not be stated without looking at it."
+        ),
+    )
 
 
 class FactExtractionResponse(BaseModel):
@@ -427,6 +440,15 @@ class ExtractedFactVerbose(BaseModel):
     def ensure_entities_list(cls, v):
         return _coerce_entity_strings(v)
 
+    from_attachments: list[int] | None = Field(
+        default=None,
+        description=(
+            "Numbers of the attachments this fact's information came from, as listed under "
+            "ATTACHMENTS. Leave empty for facts drawn from the surrounding text. Only list an "
+            "attachment when the fact could not be stated without looking at it."
+        ),
+    )
+
 
 class FactExtractionResponseVerbose(BaseModel):
     """Response for verbose fact extraction."""
@@ -467,6 +489,15 @@ class ExtractedFactNoCausal(BaseModel):
     @classmethod
     def ensure_entities_list(cls, v):
         return _coerce_entity_strings(v)
+
+    from_attachments: list[int] | None = Field(
+        default=None,
+        description=(
+            "Numbers of the attachments this fact's information came from, as listed under "
+            "ATTACHMENTS. Leave empty for facts drawn from the surrounding text. Only list an "
+            "attachment when the fact could not be stated without looking at it."
+        ),
+    )
 
 
 class FactExtractionResponseNoCausal(BaseModel):
@@ -1574,6 +1605,31 @@ def _retain_mission_preamble(config) -> str:
     )
 
 
+def _attachment_ids_for(fact: "Fact", chunk_text: str) -> list[str]:
+    """Resolve the extractor's attachment numbers to this chunk's attachment ids.
+
+    Attachments are numbered 1..n in the prompt in the order they appear in the
+    chunk, so the mapping is just that order. It follows *occurrences*, not
+    distinct attachments: `build_prompt_parts` emits one part per placeholder, so
+    an attachment used twice in a chunk really is two of the numbered things the
+    model was shown, and counting it once here would shift every later number.
+
+    Numbers outside the range are dropped: a hallucinated "4" for a chunk
+    carrying two attachments should attach nothing rather than guess at one. The
+    result is deduplicated, since two occurrences of one attachment are one edge.
+    """
+    numbers = fact.from_attachments or []
+    if not numbers:
+        return []
+    ordered = list(attachment_content.iter_placeholder_ids(chunk_text or ""))
+    return list(dict.fromkeys(ordered[n - 1] for n in numbers if 1 <= n <= len(ordered)))
+
+
+def _numbering_phrase(count: int) -> str:
+    """How to name the attachments in the prompt: "1" for one, "1 to N" beyond."""
+    return "1" if count <= 1 else f"1 to {count}"
+
+
 def _build_user_message(
     chunk: str,
     chunk_index: int,
@@ -1630,14 +1686,20 @@ def _build_user_message(
     # that prose was routinely ignored. Naming the attachments is what puts their
     # content in scope.
     attachment_section = ""
-    if attachment_content.contains_attachment(sanitized_chunk or ""):
+    attachment_count = sum(1 for _ in attachment_content.iter_placeholder_ids(sanitized_chunk or ""))
+    if attachment_count:
         attachment_section = (
             "\n\nATTACHMENTS: this chunk contains one or more attachments (images, PDFs, other "
             "files), each shown inline at the exact position it occupies in the source. Read them. "
             "Facts stated only in an attachment — a button's label, a value in a table, the boxes "
             "of a diagram, text on a page — are as extractable as facts stated in the prose, and "
             "are often the point of the document. Attribute each attachment to the sentences "
-            'around it: an image that follows "click the button shown:" is that button.'
+            'around it: an image that follows "click the button shown:" is that button.\n'
+            f"They are numbered {_numbering_phrase(attachment_count)} in the order they appear "
+            "above. For each fact, set 'from_attachments' to the number(s) of the attachments it "
+            "came from, and leave it empty when the fact is stated in the text. This is what lets "
+            "a reader see the picture a fact came from, so be accurate: list an attachment only "
+            "when the fact could not be stated without looking at it."
         )
 
     return f"""{mission_preamble}Extract facts from the following chunk.
@@ -2053,6 +2115,9 @@ async def _extract_facts_from_chunk(
                 # Set mentioned_at to the event_date (when the conversation/document occurred),
                 # or None when the caller opted into no timestamp.
                 fact_data["mentioned_at"] = event_date.isoformat() if event_date is not None else None
+                attributed = get_value("from_attachments")
+                if attributed:
+                    fact_data["from_attachments"] = [n for n in attributed if isinstance(n, int)]
 
                 # Build Fact model instance
                 try:
@@ -2899,6 +2964,9 @@ async def extract_facts_from_contents_batch_api(
             # Set mentioned_at to the event_date (when the conversation/document occurred),
             # or None when the caller opted into no timestamp.
             fact_data["mentioned_at"] = event_date.isoformat() if event_date is not None else None
+            attributed = get_value("from_attachments")
+            if attributed:
+                fact_data["from_attachments"] = [n for n in attributed if isinstance(n, int)]
 
             try:
                 fact = Fact(fact=combined_text, fact_type=fact_type, **fact_data)
@@ -2958,6 +3026,7 @@ async def extract_facts_from_contents_batch_api(
                 ),
                 content_index=chunk_meta.content_index,
                 chunk_index=chunk_meta.chunk_index,
+                attachment_ids=_attachment_ids_for(fact_from_llm, chunk_meta.chunk_text),
                 context=content.context,
                 mentioned_at=content.event_date,
                 metadata=content.metadata,
@@ -3025,6 +3094,9 @@ def _extract_facts_chunks(
                     entities=[],
                     content_index=content_index,
                     chunk_index=global_chunk_idx,
+                    # No extractor to attribute here: the fact is the whole
+                    # chunk, so everything the chunk carries belongs to it.
+                    attachment_ids=list(dict.fromkeys(attachment_content.iter_placeholder_ids(chunk))),
                     context=content.context,
                     mentioned_at=content.event_date,
                     metadata=content.metadata,
@@ -3164,6 +3236,7 @@ async def extract_facts_from_contents(
                     ),
                     content_index=content_index,
                     chunk_index=chunk_global_idx,
+                    attachment_ids=_attachment_ids_for(fact_from_llm, chunk_text),
                     context=content.context,
                     # mentioned_at: always the event_date (when the conversation/document occurred)
                     mentioned_at=content.event_date,
@@ -3200,12 +3273,18 @@ def _collapse_to_verbatim(facts: list[ExtractedFactType], chunks: list[ChunkMeta
     # describe_placeholders for the same reason as chunks mode: verbatim copies the
     # chunk into the fact, and a raw ⟦hs-att:...⟧ token is not knowledge.
     chunk_text_map = {c.chunk_index: attachment_content.describe_placeholders(c.chunk_text) for c in chunks}
+    # The fact becomes the entire chunk, so per-fact attribution no longer means
+    # anything here: everything the chunk carries is part of this one fact.
+    chunk_attachment_map = {
+        c.chunk_index: list(dict.fromkeys(attachment_content.iter_placeholder_ids(c.chunk_text))) for c in chunks
+    }
     seen: dict[int, ExtractedFactType] = {}
     result: list[ExtractedFactType] = []
 
     for fact in facts:
         if fact.chunk_index not in seen:
             fact.fact_text = chunk_text_map.get(fact.chunk_index, fact.fact_text)
+            fact.attachment_ids = chunk_attachment_map.get(fact.chunk_index, fact.attachment_ids)
             seen[fact.chunk_index] = fact
             result.append(fact)
         else:

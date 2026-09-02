@@ -7,8 +7,16 @@ list-memories, get-document, list-chunks, get-chunk — because the failure mode
 here is one endpoint quietly lacking what the others have.
 
 Note where a memory's attachments come from: not its own text, which carries a
-readable `[image: ...]` note rather than a placeholder, but the chunk it was
-extracted from. That is what the model was looking at when it produced the fact.
+readable `[image: ...]` note rather than a placeholder, but the per-fact edge the
+extractor recorded — which attachments it actually looked at to produce that
+fact.
+
+The bank runs in `chunks` extraction mode so that edge is deterministic here: a
+chunk-mode fact *is* its chunk, so it carries exactly the chunk's attachments,
+with no model judgement in the loop. Whether a real extractor attributes
+correctly is a question about the model, and is judged in
+`test_attachment_attribution.py`; these tests are about whether every endpoint
+hands back what was recorded.
 """
 
 import base64
@@ -29,6 +37,12 @@ DOCUMENT_ID = "vpn-article"
 async def bank_with_attachment(api_client):
     """A bank holding one document whose text carries one inline image."""
     bank_id = f"read-{uuid.uuid4().hex[:8]}"
+    assert (await api_client.put(f"/v1/default/banks/{bank_id}", json={})).status_code == 200
+    config = await api_client.patch(
+        f"/v1/default/banks/{bank_id}/config",
+        json={"updates": {"retain_extraction_mode": "chunks"}},
+    )
+    assert config.status_code == 200, config.text
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/memories",
         json={

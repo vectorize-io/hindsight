@@ -842,20 +842,24 @@ def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict:
 
 
 async def _attach_to_memories(memory_app, bank_id: str, items, request_context) -> None:
-    """Add ``attachments`` to memory dicts, in place, from the chunk each came from.
+    """Add ``attachments`` to memory dicts, in place — the ones each fact came from.
 
-    A fact's own text carries no placeholder — it would surface a content hash as
-    knowledge — so the chunk it was extracted from is what says which attachments
-    the model was looking at. One lookup for the whole page, not one per memory.
+    A fact's own text carries no placeholder (it would surface a content hash as
+    knowledge), so the edge is the one the extractor attributed at retain time.
+    It is per fact, not per chunk: a chunk carrying a screenshot also carries the
+    prose around it, and showing the screenshot against every fact from that one
+    LLM call attributes the diagram to the paragraph that never mentioned it.
+
+    One lookup for the whole page, not one per memory.
     """
-    chunk_ids = [item.get("chunk_id") for item in items if isinstance(item, dict) and item.get("chunk_id")]
-    if not chunk_ids:
+    unit_ids = [item.get("id") for item in items if isinstance(item, dict) and item.get("id")]
+    if not unit_ids:
         return
-    by_chunk = await memory_app.attachments_for_chunks(bank_id, chunk_ids, request_context)
-    if not by_chunk:
+    by_unit = await memory_app.attachments_for_memories(bank_id, unit_ids, request_context)
+    if not by_unit:
         return
     for item in items:
-        records = by_chunk.get(item.get("chunk_id")) if isinstance(item, dict) else None
+        records = by_unit.get(str(item.get("id"))) if isinstance(item, dict) else None
         if records:
             item["attachments"] = [_attachment_payload(bank_id, record) for record in records]
 
