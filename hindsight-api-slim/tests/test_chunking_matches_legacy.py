@@ -11,10 +11,12 @@ look changed on its next retain: silent re-extraction, re-embedding, and re-cons
 of history that did not change. Nothing else in the system would report a problem.
 
 So this file does not test the new chunker's behaviour in the abstract. It runs the OLD
-implementation, copied verbatim below and still calling langchain, against the new one over
-a corpus of document shapes and chunk sizes, and asserts the two agree exactly. That is the
-only property that matters, and it is the reason ``langchain-text-splitters`` is still a
-test dependency after #3756 removed it as a runtime one.
+implementation, copied verbatim below, against the new one over a corpus of document shapes
+and chunk sizes, and asserts the two agree exactly. That is the only property that matters.
+
+The splitter underneath that old implementation was langchain's; it now comes from
+``tests.chunking_reference``, which transcribes it so this oracle no longer costs a
+dependency (langchain-text-splitters -> langchain-core -> langsmith -> orjson).
 
 The corpus is deliberately awkward: the shapes retain actually receives (prose, transcripts,
 JSONL logs, JSON conversations, markdown, source code) plus the ones that break splitters
@@ -33,6 +35,7 @@ from hindsight_api.engine.retain.fact_extraction import (
     chunk_text,
     iter_chunks,
 )
+from tests.chunking_reference import recursive_split
 
 # ---------------------------------------------------------------------------
 # The implementation being replaced, verbatim from before #3756.
@@ -44,17 +47,8 @@ from hindsight_api.engine.retain.fact_extraction import (
 
 
 def _legacy_split_oversized_unit(text: str, max_chars: int) -> list[str]:
-    """Pre-#3756: the plain-text splitter, straight from langchain."""
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=max_chars,
-        chunk_overlap=0,
-        length_function=len,
-        is_separator_regex=False,
-        separators=_RECURSIVE_TEXT_SEPARATORS,
-    )
-    return splitter.split_text(text)
+    """Pre-#3756: the plain-text splitter, as langchain implemented it."""
+    return recursive_split(text, max_chars, _RECURSIVE_TEXT_SEPARATORS)
 
 
 def _legacy_chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
@@ -471,28 +465,39 @@ def test_randomised_documents_agree():
 
 
 def test_the_legacy_reference_really_is_the_old_implementation():
-    """Guard the guard: the reference must still be langchain, not a copy of the new code.
+    """Guard the guard: the reference must stay the old splitter, not a copy of the new code.
 
     If someone "simplifies" the reference into a call to the live splitter, every test in
-    this file passes vacuously forever. Asserting it produces langchain's output for an
-    input whose expected split is written out here keeps that from going unnoticed.
+    this file passes vacuously forever. The anchor used to be a live call to langchain;
+    with langchain gone it is this table, whose expected values were produced BY langchain
+    (``RecursiveCharacterTextSplitter`` 1.1.2, retain's exact configuration) and pasted in.
+    Hand-editing an entry to make a failure go away defeats the whole file.
+
+    The cases cover one separator tier each — sentence, paragraph, word, the empty-separator
+    per-character fallback, and a token too big for any tier — so a reference that silently
+    became the new implementation has to reproduce all five to slip through.
     """
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    for text, max_chars, expected in [
+        (
+            "Alpha sentence one. Beta sentence two. Gamma sentence three. Delta four.",
+            40,
+            ["Alpha sentence one. Beta sentence two", ". Gamma sentence three. Delta four."],
+        ),
+        (
+            "Alpha para one.\n\nBeta para two.\n\nGamma para three.",
+            25,
+            ["Alpha para one.", "Beta para two.", "Gamma para three."],
+        ),
+        ("alpha beta gamma delta epsilon zeta eta theta", 20, ["alpha beta gamma", "delta epsilon zeta", "eta theta"]),
+        ("xxxxxxxxxxxx", 5, ["xxxxx", "xxxxx", "xx"]),
+        ("short. yyyyyyyyyyyyyyyyyyyy. tail.", 10, ["short", ".", "yyyyyyyyy", "yyyyyyyyyy", "y", ". tail."]),
+    ]:
+        assert _legacy_chunk_text(text, max_chars) == expected, f"{text!r} at max_chars={max_chars}"
 
-    text = "Alpha sentence one. Beta sentence two. Gamma sentence three. Delta four."
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=40,
-        chunk_overlap=0,
-        length_function=len,
-        is_separator_regex=False,
-        separators=_RECURSIVE_TEXT_SEPARATORS,
-    )
-
-    assert _legacy_chunk_text(text, 40) == splitter.split_text(text)
-    # Written out because it is easy to assume wrong: the splitter runs with
+    # Spelled out because it is easy to assume wrong: the splitter runs with
     # keep_separator=True in its default "start" sense, so ". " leads the NEXT chunk rather
     # than closing the previous one.
-    assert _legacy_chunk_text(text, 40) == [
+    assert _legacy_chunk_text("Alpha sentence one. Beta sentence two. Gamma sentence three. Delta four.", 40) == [
         "Alpha sentence one. Beta sentence two",
         ". Gamma sentence three. Delta four.",
     ]
