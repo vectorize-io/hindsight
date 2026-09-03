@@ -124,6 +124,41 @@ resolve_api_startup_wait_seconds() {
     echo "$DEFAULT_API_STARTUP_WAIT_SECONDS"
 }
 
+# Use runtimes already required by each final image instead of shipping curl
+# solely for readiness checks. API images always have Python; the Alpine
+# control-plane image already has BusyBox wget. Keep the implementations
+# equivalent: follow redirects, accept only successful HTTP responses, and stop
+# a stalled request after the timeout.
+http_probe() {
+    local url="$1"
+    local timeout_seconds="${2:-5}"
+
+    if command -v python3 >/dev/null 2>&1; then
+        HTTP_PROBE_URL="$url" HTTP_PROBE_TIMEOUT_SECONDS="$timeout_seconds" python3 -c '
+import os
+import urllib.request
+
+try:
+    with urllib.request.urlopen(
+        os.environ["HTTP_PROBE_URL"],
+        timeout=float(os.environ["HTTP_PROBE_TIMEOUT_SECONDS"]),
+    ):
+        pass
+except Exception:
+    raise SystemExit(1)
+'
+        return $?
+    fi
+
+    if command -v wget >/dev/null 2>&1; then
+        wget -q -T "$timeout_seconds" -O /dev/null "$url" 2>/dev/null
+        return $?
+    fi
+
+    echo "No HTTP probe runtime is available (expected python3 or wget)." >&2
+    return 127
+}
+
 if [ "${HINDSIGHT_START_ALL_SOURCE_ONLY:-false}" = "true" ]; then
     return 0 2>/dev/null || exit 0
 fi
@@ -167,7 +202,7 @@ if [ "${HINDSIGHT_WAIT_FOR_DEPS:-false}" = "true" ]; then
     }
 
     check_llm() {
-        curl -sf "${LLM_BASE_URL}/models" --connect-timeout 5 &>/dev/null
+        http_probe "${LLM_BASE_URL}/models" 5 &>/dev/null
     }
 
     echo "⏳ Waiting for dependencies to be ready..."
@@ -279,7 +314,7 @@ if [ "$ENABLE_API" = "true" ]; then
             wait "$API_PID"
             exit $?
         fi
-        if curl -sf "$API_HEALTH_URL" &>/dev/null; then
+        if http_probe "$API_HEALTH_URL" 5 &>/dev/null; then
             api_ready=true
             break
         fi
