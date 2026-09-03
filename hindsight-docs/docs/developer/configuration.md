@@ -268,7 +268,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `meta`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot` | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -455,6 +455,15 @@ export HINDSIGHT_API_LLM_PROVIDER=opencode-go
 export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 # Default base_url: https://opencode.ai/zen/go/v1 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
+
+# Meta Model API (Muse Spark, OpenAI-compatible, https://ai.developer.meta.com)
+export HINDSIGHT_API_LLM_PROVIDER=meta
+export HINDSIGHT_API_LLM_API_KEY=your-meta-model-api-key
+export HINDSIGHT_API_LLM_MODEL=muse-spark-1.3
+# Default base_url: https://api.meta.ai/v1 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
+# Muse Spark always reasons: leave HINDSIGHT_API_LLM_REASONING_EFFORT unset or set it to
+# minimal/low/medium/high/xhigh. "none" is rejected with HTTP 400. Reasoning tokens are
+# billed against the output budget, so keep the per-operation max-token limits generous.
 
 # Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
 export HINDSIGHT_API_LLM_PROVIDER=nous

@@ -34,6 +34,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - z.ai
 - opencode-go
 - Atlas Cloud
+- Meta Model API
 - Volcano Engine
 - OpenRouter
 - Requesty
@@ -117,6 +118,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | z.ai (`zai`) | — | — |
 | opencode-go (`opencode-go`) | — | — |
 | Atlas Cloud (`atlas`) | — | — |
+| Meta Model API (`meta`) | — | — |
 | Volcano Engine (`volcano`) | — | — |
 | OpenRouter (`openrouter`) | — | — |
 | Requesty (`requesty`) | — | — |
@@ -183,6 +185,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `zai` | `glm-4.5-flash` |
 | `opencode-go` | `deepseek-v4-flash` |
 | `atlas` | `deepseek-ai/deepseek-v4-pro` |
+| `meta` | `muse-spark-1.3` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `requesty` | `openai/gpt-4o-mini` |
@@ -309,6 +312,13 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 export HINDSIGHT_API_LLM_PROVIDER=atlas
 export HINDSIGHT_API_LLM_API_KEY=your-atlascloud-api-key  # base_url defaults to https://api.atlascloud.ai/v1
 export HINDSIGHT_API_LLM_MODEL=deepseek-ai/deepseek-v4-pro  # reasoning model; also Qwen / GLM / Kimi / MiniMax, etc.
+
+# Meta Model API (OpenAI-compatible, https://ai.developer.meta.com)
+export HINDSIGHT_API_LLM_PROVIDER=meta
+export HINDSIGHT_API_LLM_API_KEY=your-meta-model-api-key  # base_url defaults to https://api.meta.ai/v1
+export HINDSIGHT_API_LLM_MODEL=muse-spark-1.3  # or muse-spark-1.2 / -contributor variants
+# Muse Spark always reasons: reasoning_effort "none" is rejected (HTTP 400), and reasoning
+# tokens come out of the output budget — keep the per-operation max-token limits generous.
 
 # Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
 export HINDSIGHT_API_LLM_PROVIDER=nous

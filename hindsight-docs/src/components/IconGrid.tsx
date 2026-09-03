@@ -7,15 +7,25 @@ export interface IconGridItem {
   href?: string;
   icon?: IconType;
   imgSrc?: string;
+  /** Brand colour for the mark. Omitted = the neutral inherited colour. */
+  color?: string;
+  /** Dark-theme override, for brand colours that are near-black. */
+  colorDark?: string;
 }
 
 export function IconGrid({items}: {items: IconGridItem[]}) {
   return (
     <div className={styles.grid}>
-      {items.map(({label, href, icon: Icon, imgSrc}) => {
+      {items.map(({label, href, icon: Icon, imgSrc, color, colorDark}) => {
         const card = (
           <div className={`${styles.card} ${href ? styles.cardLink : ''}`}>
-            <div className={styles.icon}>
+            <div
+              className={styles.icon}
+              style={{
+                ...(color ? {['--icon-color' as string]: color} : {}),
+                ...(colorDark ? {['--icon-color-dark' as string]: colorDark} : {}),
+              }}
+            >
               {Icon && <Icon size={28} />}
               {imgSrc && <img src={imgSrc} alt={label} style={{width: 28, height: 28, objectFit: 'contain'}} />}
             </div>

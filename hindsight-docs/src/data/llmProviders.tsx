@@ -1,6 +1,6 @@
 import type {IconType} from 'react-icons';
 import React from 'react';
-import {SiOpenai, SiAnthropic, SiGooglegemini, SiOllama} from 'react-icons/si';
+import {SiOpenai, SiAnthropic, SiGooglegemini, SiOllama, SiMeta} from 'react-icons/si';
 import {LuTerminal, LuZap, LuBrainCog, LuSparkles, LuGlobe, LuLayers, LuCloud} from 'react-icons/lu';
 import providersJson from './llmProviders.json';
 
@@ -20,6 +20,7 @@ const ICON_REGISTRY: Record<string, IconType> = {
   anthropic: SiAnthropic,
   gemini: SiGooglegemini,
   ollama: SiOllama,
+  meta: SiMeta,
   terminal: LuTerminal,
   zap: LuZap,
   brain: LuBrainCog,
@@ -38,6 +39,15 @@ export interface LLMProvider {
   label: string;
   /** Icon component rendered in the grid tile. */
   icon: IconType;
+  /** Brand colour for the grid tile's mark. Undefined = the neutral inherited colour.
+   *  Sourced from the Simple Icons dataset, the same project the Si* marks come
+   *  from, so a tile's colour matches the mark it is drawn from. Providers with
+   *  no entry there (Groq, Fireworks, Atlas Cloud, Requesty, opencode-go, Nous,
+   *  llama.cpp, LiteLLM) are left undefined rather than given an invented hex. */
+  color?: string;
+  /** Dark-theme override. Only set where `color` is near-black and would
+   *  disappear against the dark surface. */
+  colorDark?: string;
   /** Provider default model. Undefined = no entry in the default-models table. */
   defaultModel?: string;
   /** Optional note rendered in the default-models table. */
@@ -66,7 +76,8 @@ export interface LLMProvider {
  * provider classes, in hindsight-api-slim/hindsight_api/.
  */
 export const LLM_PROVIDERS: LLMProvider[] = (providersJson as Array<{
-  id: string; label: string; iconKey: string; defaultModel?: string; defaultModelNote?: string;
+  id: string; label: string; iconKey: string; color?: string; colorDark?: string;
+  defaultModel?: string; defaultModelNote?: string;
   batchApi?: boolean; promptCaching?: boolean;
 }>).map(({iconKey, ...rest}) => {
   const icon = ICON_REGISTRY[iconKey];

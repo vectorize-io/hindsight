@@ -778,6 +778,7 @@ def create_llm_provider(
         "zai",
         "opencode-go",
         "atlas",
+        "meta",
     ):
         return OpenAICompatibleLLM(
             provider=provider,
@@ -975,6 +976,7 @@ class LLMProvider:
             "fireworks",
             "nous",
             "xai-oauth",
+            "meta",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -1003,6 +1005,8 @@ class LLMProvider:
                 self.base_url = "https://opencode.ai/zen/go/v1"
             elif self.provider == "atlas":
                 self.base_url = "https://api.atlascloud.ai/v1"
+            elif self.provider == "meta":
+                self.base_url = "https://api.meta.ai/v1"
             elif self.provider == "nous":
                 self.base_url = "https://inference-api.nousresearch.com/v1"
 

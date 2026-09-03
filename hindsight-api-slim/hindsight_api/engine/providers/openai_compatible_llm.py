@@ -678,6 +678,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - MiniMax: MiniMax-M3 / MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
     - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via https://api.deepseek.com
     - opencode-go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
+    - Meta: Muse Spark models via Meta Model API (https://api.meta.ai/v1)
     """
 
     def __init__(
@@ -739,6 +740,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "opencode-go",
             "atlas",
             "fireworks",
+            "meta",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -767,6 +769,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://opencode.ai/zen/go/v1"
             elif self.provider == "atlas":
                 self.base_url = "https://api.atlascloud.ai/v1"
+            elif self.provider == "meta":
+                self.base_url = "https://api.meta.ai/v1"
             elif self.provider == "fireworks":
                 # OpenAI-compatible inference host (online path). The batch API
                 # lives on a separate control-plane host — see FireworksLLM.
@@ -794,6 +798,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 "zai",
                 "opencode-go",
                 "atlas",
+                "meta",
                 "ollama-cloud",
             )
             and not self.api_key

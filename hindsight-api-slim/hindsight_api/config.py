@@ -947,6 +947,7 @@ PROVIDER_DEFAULT_MODELS = {
     "zai": "glm-4.5-flash",
     "opencode-go": "deepseek-v4-flash",
     "atlas": "deepseek-ai/deepseek-v4-pro",
+    "meta": "muse-spark-1.3",
     "ollama": "gemma3:12b",
     "ollama-cloud": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
