@@ -459,6 +459,7 @@ def _normalize_scopes(value: list | str | None) -> list | str | None:
             return value
     return value
 
+
 async def insert_memory_attachments(
     conn,
     bank_id: str,
