@@ -157,8 +157,6 @@ Some requirements can't be met by any amount of application-level control, becau
 
 For those, Hindsight deploys **into your own cloud account** on AWS, GCP, or Azure.
 
-The deployment is generated for your environment rather than hand-assembled, and it comes with the infrastructure templates you apply in your own account. The permissions Hindsight ends up with are ones you granted and can read.
-
 **Private connectivity comes with it.** Traffic between your application and Hindsight stays on your cloud provider's private network instead of crossing the public internet, using whichever private-endpoint mechanism your provider offers.
 
 **On-premise deployment is also available.** If the requirement is that data never leaves your own hardware, not merely your own cloud account, that's supported as an Enterprise deployment too.
