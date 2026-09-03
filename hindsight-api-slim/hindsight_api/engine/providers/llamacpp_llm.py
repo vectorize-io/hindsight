@@ -179,6 +179,17 @@ class LlamaCppServer:
             # Prompt cache: reuse KV cache for repeated system prompts
             "--cache",
             "true",
+            # Keep the prompt cache in RAM. llama_cpp.server's other option,
+            # `disk`, is backed by diskcache, which pickles cache entries
+            # (CVE-2025-69872): anyone able to write to the cache directory
+            # gets code execution in this process when an entry is read back.
+            # diskcache has had no release since 5.6.3 in 2023 and no fixed
+            # version exists, so the exposure is permanent if the disk backend
+            # is ever selected. `ram` is already llama_cpp.server's default;
+            # stating it here means a future edit has to opt into the risk
+            # deliberately rather than inherit it by changing a default.
+            "--cache_type",
+            "ram",
         ]
         # Only pass chat_format if explicitly set (most GGUF models have it embedded)
         if self.chat_format:
