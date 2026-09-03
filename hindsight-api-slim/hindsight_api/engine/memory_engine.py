@@ -2291,7 +2291,15 @@ class MemoryEngine(MemoryEngineInterface):
                 vertexai_service_account_key=config.llm_vertexai_service_account_key,
                 **retain_call_defaults.as_kwargs(),
             )
-            self._vlm_config = _build_llm(_vlm_base_llm, config, "retain_", retain_call_defaults)
+            # Deliberately NOT run through `_build_llm`: that would make the
+            # vision model member 0 of the *retain* chain and append the retain
+            # fallbacks behind it. Those fallbacks are text models — the whole
+            # reason the operator configured a separate vision slot — so a failed
+            # vision call would quietly fail over to one, extract from the prose
+            # and drop the picture. That is the exact silent omission the 422
+            # gate exists to prevent, and it must not sneak back in as a
+            # fallback. A vision call that fails should fail.
+            self._vlm_config = _vlm_base_llm
         else:
             # Unset: attachments go to the retain LLM, exactly as before. Sharing
             # the object rather than copying it also keeps a MultiLLMProvider
