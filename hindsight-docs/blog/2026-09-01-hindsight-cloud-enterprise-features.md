@@ -4,7 +4,7 @@ authors: [benfrank241]
 slug: "2026/09/01/hindsight-cloud-enterprise-features"
 date: 2026-09-01T15:00
 tags: [hindsight-cloud, enterprise, security, sso, mfa, audit, memory-defense, agent-memory]
-description: "Every enterprise capability in Hindsight Cloud, and the failure each one prevents: single sign-on, MFA enforcement, role-based access, scoped API keys, audit logging, Memory Defense, and bring-your-own-cloud."
+description: "Every enterprise capability in Hindsight Cloud, and the failure each one prevents: single sign-on, MFA enforcement, role-based access, scoped API keys, audit logging, Memory Defense, webhooks, and bring-your-own-cloud or on-premise deployment."
 image: /img/blog/hindsight-cloud-enterprise-features.png
 hide_table_of_contents: true
 ---
@@ -23,14 +23,15 @@ So this is the list, but each entry says what it prevents. A control that can be
 |---|---|---|
 | [**Single sign-on**](#single-sign-on) | Accounts that outlive someone's employment | Enterprise |
 | [**MFA enforcement**](#multi-factor-authentication) | A password being the only thing in the way | Enterprise |
-| [**Idle session timeout**](#idle-session-timeout) | An unattended session staying open | Enterprise |
+| [**Idle session timeout**](#idle-session-timeout) | An unattended session staying open | All plans |
 | [**Role-based access**](#role-based-access) | Everyone having permission to do everything | All plans |
 | [**API key controls**](#api-key-controls) | One leaked key exposing every bank you own | All plans |
 | [**Scoped child keys**](#scoped-child-keys) | A tenant-isolation bug becoming a data leak | All plans |
 | [**Audit logging**](#audit-logging) | Not being able to answer "who read this?" | Enterprise |
 | [**Memory Defense**](#memory-defense) | Secrets being retained and indexed forever | All plans |
 | [**Memory Defense Enterprise**](#memory-defense-enterprise) | Injections and payloads that poison recall | Enterprise |
-| [**Bring your own cloud**](#bring-your-own-cloud) | Data leaving your account at all | Enterprise |
+| [**Webhooks**](#webhooks) | Finding out about an event by polling for it | Enterprise |
+| [**Bring your own cloud**](#bring-your-own-cloud) | Data leaving your account, or your hardware | Enterprise |
 
 ## Single sign-on
 
@@ -48,7 +49,7 @@ Client secrets are encrypted at rest and never returned by the API, only ever as
 
 *Enterprise.*
 
-An owner can require MFA across the organization. Supported factors are authenticator apps (TOTP), security keys and passkeys (WebAuthn), SMS, and emailed codes.
+An owner can require MFA across the organization. Two factors are supported: an **authenticator app** (TOTP, so 1Password, Authy, Google Authenticator, or anything TOTP-compatible) and an **emailed one-time code**.
 
 The distinction worth understanding: enforcement checks that **the current session was authenticated with a factor**, not merely that the account has one enrolled. Those are different guarantees. An account with a dormant TOTP secret attached satisfies the weak version and nothing else. Every request is gated on the session itself having cleared MFA.
 
@@ -58,7 +59,9 @@ MFA enforcement and SSO are alternatives rather than a stack. If sign-in routes 
 
 ## Idle session timeout
 
-*Enterprise.* Thirty minutes of inactivity ends the session and requires a fresh sign-in. Unglamorous, and the one control on this list that protects against a threat with no technical component at all: an unlocked laptop.
+*All plans.* Thirty minutes of inactivity ends the session and requires a fresh sign-in. This is now on for every organization, not just Enterprise.
+
+Unglamorous, and the one control on this list that guards against a threat with no technical component at all: an unlocked laptop.
 
 ## Role-based access
 
@@ -135,6 +138,17 @@ Entitlement is enforced **server-side**, not just rendered in the console, so a 
 
 Why these particular detectors: memory is durable and semantically indexed, and that changes what a bad write costs. An injection that reaches a chat window affects one response. An injection that reaches memory is recalled on future turns, in future sessions, for as long as it matches. A secret retained once stays retrievable after you've rotated it. An oversized payload crowds the candidate set and pushes relevant memories out of results. These aren't generic content filters; they're aimed at the three things that go wrong specifically because the system remembers.
 
+## Webhooks
+
+*Enterprise.* Push memory-bank events to your own systems the moment they happen, rather than polling for them.
+
+- **Real-time events** for completed retains and consolidations.
+- **HMAC-signed payloads**, so your endpoint can verify a delivery actually came from us.
+- **Asynchronous delivery with retries**, and a per-delivery history when you need to see what happened.
+- **Memory Defense violation alerts**, which is the one that matters most here: a blocked secret or a caught injection can raise an event straight into your SIEM or incident tooling rather than sitting in a log nobody reads.
+
+That last point is what turns Memory Defense from a filter into something your security team can actually monitor.
+
 ## Bring your own cloud
 
 *Enterprise.*
@@ -142,6 +156,8 @@ Why these particular detectors: memory is durable and semantically indexed, and 
 Some requirements can't be met by any amount of application-level control, because the constraint isn't "who can read this" but "this data does not leave our account."
 
 For those, Hindsight deploys **into your own cloud account** on AWS, GCP, or Azure. On AWS that includes an IAM role template you apply yourself, and **PrivateLink from your application VPC**, so traffic between your application and Hindsight never crosses the public internet.
+
+**On-premise deployment is also available.** If the requirement is that data never leaves your own hardware, not merely your own cloud account, that's supported as an Enterprise deployment too.
 
 ## Frequently asked
 
@@ -161,7 +177,10 @@ On retain, before content is written.
 No. Entitlement is enforced server-side on the write path.
 
 **We can't put data in a shared environment at all. Is that supported?**
-Yes, through a bring-your-own-cloud deployment into your own AWS, GCP, or Azure account, with PrivateLink available on AWS.
+Yes, either as a bring-your-own-cloud deployment into your own AWS, GCP, or Azure account, with PrivateLink available on AWS, or as an on-premise deployment if the data has to stay on your own hardware.
+
+**Can we get events pushed to us instead of polling?**
+Yes, through webhooks. Completed retains and consolidations raise events, payloads are HMAC-signed, delivery is asynchronous with retries and a per-delivery history, and Memory Defense violations can be routed to your SIEM.
 
 ## Learn more
 
