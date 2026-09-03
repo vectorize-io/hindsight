@@ -2325,7 +2325,6 @@ async def extract_facts_from_text(
     context: str = "",
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
-    image_loader: "RetainImageLoader | None" = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
@@ -2347,7 +2346,6 @@ async def extract_facts_from_text(
         agent_name: Optional narrator to prime the prompt with ("Narrator: {name}").
             Retain never sets it — see the caller in retain/orchestrator.py — and the
             dry-run endpoint's field that does is deprecated in favour of ``context``.
-        image_loader: Resolves inline image placeholders back to bytes so the model
         attachment_loader: Resolves inline image placeholders back to bytes so the model
             sees each image in position. None means the text carries no images (or
             the caller has no store to resolve them from), and every chunk is sent
