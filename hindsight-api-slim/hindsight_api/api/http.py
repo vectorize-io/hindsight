@@ -3880,6 +3880,7 @@ def create_app(
     memory: MemoryEngine,
     initialize_memory: bool = True,
     http_extension: HttpExtension | None = None,
+    run_background_tasks: bool = True,
 ) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -3890,6 +3891,10 @@ def create_app(
         initialize_memory: Whether to initialize memory system on startup (default: True)
         http_extension: Optional HTTP extension to mount custom endpoints under /extension/.
                        If None, attempts to load from HINDSIGHT_API_HTTP_EXTENSION env var.
+        run_background_tasks: Whether this app starts the worker poller (default: True).
+                       Set False for the extra event loops of the multi-loop launcher: the
+                       worker id identifies the *process*, so a second poller under the same
+                       id would claim the same tasks rather than add capacity.
 
     Returns:
         Configured FastAPI application
@@ -3962,7 +3967,7 @@ def create_app(
 
         # Start worker poller if the backend supports it.
         # All current backends (PostgreSQL, Oracle) support async worker/poller.
-        if config.worker_enabled and memory._backend.supports_worker_poller:
+        if run_background_tasks and config.worker_enabled and memory._backend.supports_worker_poller:
             from ..config import DEFAULT_DATABASE_SCHEMA
             from ..utils import warn_if_container_default_worker_id
 
@@ -3986,7 +3991,7 @@ def create_app(
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
-        elif config.worker_enabled and not memory._backend.supports_worker_poller:
+        elif run_background_tasks and config.worker_enabled and not memory._backend.supports_worker_poller:
             logging.warning(
                 "Worker poller disabled — backend does not support async operations. "
                 "Tasks (mental model refresh, consolidation) will run synchronously."

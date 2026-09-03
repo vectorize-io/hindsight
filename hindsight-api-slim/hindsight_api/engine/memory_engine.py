@@ -1941,6 +1941,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_validator: "OperationValidatorExtension | None" = None,
         tenant_extension: "TenantExtension | None" = None,
         skip_llm_verification: bool | None = None,
+        run_background_tasks: bool = True,
     ):
         """
         Initialize the temporal + semantic memory system.
@@ -1982,6 +1983,10 @@ class MemoryEngine(MemoryEngineInterface):
                              If provided, operations require a RequestContext for authentication.
             skip_llm_verification: Skip LLM connection verification during initialization.
                                   Defaults to HINDSIGHT_API_SKIP_LLM_VERIFICATION env var or False.
+            run_background_tasks: Whether this engine runs the background maintenance loop.
+                                  Set False for the extra event loops of the multi-loop launcher,
+                                  which serve HTTP only — a process needs exactly one maintenance
+                                  loop, not one per event loop.
         """
         # Load config from environment for any missing parameters
         from ..config import _get_raw_config, get_config
@@ -2320,6 +2325,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .maintenance import MaintenanceLoop
 
         self._maintenance_loop: MaintenanceLoop | None = None
+        self._run_background_tasks = run_background_tasks
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -4733,8 +4739,13 @@ class MemoryEngine(MemoryEngineInterface):
         # re-schedules banks with eligible-but-unscheduled facts.
         from .maintenance import MaintenanceLoop
 
-        self._maintenance_loop = MaintenanceLoop(self)
-        self._maintenance_loop.start()
+        if self._run_background_tasks:
+            self._maintenance_loop = MaintenanceLoop(self)
+            self._maintenance_loop.start()
+
+        # The span recorder registry is process-wide, so with more than one event loop
+        # every engine's recorder sees every loop's LLM calls. Pin ours to this loop.
+        self._llm_recorder.bind_loop(asyncio.get_running_loop())
 
         self._initialized = True
         logger.info("Memory system initialized (pool and task backend started)")
