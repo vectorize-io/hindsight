@@ -1,8 +1,8 @@
 ---
 title: "Enterprise Features in Hindsight Cloud"
 authors: [benfrank241]
-slug: "2026/09/01/hindsight-cloud-enterprise-features"
-date: 2026-09-01T15:00
+slug: "2026/09/03/hindsight-cloud-enterprise-features"
+date: 2026-09-03T20:00
 tags: [hindsight-cloud, enterprise, security, sso, mfa, audit, memory-defense, agent-memory]
 description: "Every enterprise capability in Hindsight Cloud, and the failure each one prevents: single sign-on, MFA enforcement, role-based access, scoped API keys, audit logging, Memory Defense, webhooks, and bring-your-own-cloud or on-premise deployment."
 image: /img/blog/hindsight-cloud-enterprise-features.png
