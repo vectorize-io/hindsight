@@ -8,7 +8,17 @@ source "$SCRIPT_DIR/start-all.sh"
 unset HINDSIGHT_START_ALL_SOURCE_ONLY
 
 TMP_DIR="$(mktemp -d)"
-trap 'chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true; rm -rf "$TMP_DIR"' EXIT
+HTTP_SERVER_PID=""
+
+cleanup() {
+    if [ -n "$HTTP_SERVER_PID" ]; then
+        kill "$HTTP_SERVER_PID" 2>/dev/null || true
+        wait "$HTTP_SERVER_PID" 2>/dev/null || true
+    fi
+    chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
 
 assert_contains() {
     local output="$1"
@@ -43,6 +53,78 @@ assert_empty() {
         exit 1
     fi
 }
+
+# =============================================================================
+# http_probe
+# =============================================================================
+HTTP_PORT_FILE="$TMP_DIR/http-port"
+if python3 -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then
+    TEST_PYTHON_BIN="$(command -v python3)"
+elif python -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then
+    TEST_PYTHON_BIN="$(command -v python)"
+else
+    echo "A working Python interpreter is required for HTTP probe tests"
+    exit 1
+fi
+
+"$TEST_PYTHON_BIN" - "$HTTP_PORT_FILE" <<'PY' &
+import http.server
+import pathlib
+import sys
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(204 if self.path == "/ok" else 404)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+pathlib.Path(sys.argv[1]).write_text(str(server.server_port), encoding="ascii")
+for _ in range(4):
+    server.handle_request()
+PY
+HTTP_SERVER_PID=$!
+
+for _ in $(seq 1 50); do
+    [ -s "$HTTP_PORT_FILE" ] && break
+    sleep 0.1
+done
+if [ ! -s "$HTTP_PORT_FILE" ]; then
+    echo "HTTP probe test server did not start"
+    exit 1
+fi
+
+HTTP_TEST_URL="http://127.0.0.1:$(cat "$HTTP_PORT_FILE")"
+PYTHON_BIN="$TEST_PYTHON_BIN"
+WGET_BIN="$(command -v wget)"
+
+(
+    PATH="$TMP_DIR/empty-path"
+    python3() { "$PYTHON_BIN" "$@"; }
+    http_probe "$HTTP_TEST_URL/ok" 2
+    if http_probe "$HTTP_TEST_URL/missing" 2; then
+        echo "Python HTTP probe should fail on a 404 response"
+        exit 1
+    fi
+)
+
+(
+    PATH="$TMP_DIR/empty-path"
+    wget() { "$WGET_BIN" "$@"; }
+    http_probe "$HTTP_TEST_URL/ok" 2
+    if http_probe "$HTTP_TEST_URL/missing" 2; then
+        echo "wget HTTP probe should fail on a 404 response"
+        exit 1
+    fi
+)
+
+wait "$HTTP_SERVER_PID"
+HTTP_SERVER_PID=""
+echo "start-all HTTP probe checks passed"
 
 mkdir -p "$TMP_DIR/empty"
 assert_empty "$(check_pg0_data_integrity "$TMP_DIR/empty")"

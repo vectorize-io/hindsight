@@ -168,7 +168,6 @@ WORKDIR /app
 # commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
-    curl \
     procps \
     libxml2 \
     libssl3 \
@@ -275,8 +274,10 @@ WORKDIR /app
 COPY docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
 
-# Install curl for health checks. `apk upgrade` first, for the same reason the
-# Debian stages run `apt-get upgrade` - see the comment on the api-only stage.
+# Install bash for the shared startup script. HTTP readiness probes use wget
+# from the Alpine base, so curl and its transitive dependencies do not ship.
+# `apk upgrade` runs first for the same reason the Debian stages run
+# `apt-get upgrade` - see the comment on the api-only stage.
 # npm is removed for the same reason the Debian stages remove pip's build
 # tooling: nothing invokes it at runtime - start-all.sh launches the pre-built
 # Next standalone bundle with `node server.js` - and dropping it leaves no
@@ -287,7 +288,7 @@ RUN chmod +x /app/start-all.sh
 # The `[ -e ]` guard is deliberate: a bare `rm -rf` on a path a future base
 # image no longer uses succeeds silently and npm quietly ships again. Fail the
 # build instead, so the path assumption has to be revisited on a base bump.
-RUN apk upgrade --no-cache && apk add --no-cache curl bash \
+RUN apk upgrade --no-cache && apk add --no-cache bash \
     && [ -e /usr/local/lib/node_modules/npm ] \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
     && ! command -v npm
@@ -308,19 +309,10 @@ FROM python:3.11-slim AS standalone
 
 WORKDIR /app
 
-# Install Node.js, curl, uv, and system dependencies
+# Install uv and system dependencies.
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
-# npm goes the same way: nothing invokes it at runtime - start-all.sh launches
-# the pre-built Next standalone bundle with `node server.js` - and dropping it
-# leaves no scannable vulnerable tar component in the stage. corepack is
-# deliberately kept: it has no node_modules tree and ships no tar package
-# metadata, so a scanner reports nothing for it. npm is not installed as a
-# separate apt package here - NodeSource's `nodejs` package ships it
-# (`dpkg -S /usr/bin/npm` resolves to `nodejs`), so `apt-get remove npm` is a
-# no-op and removal by path is the only option. The `[ -e ]` guard fails the
-# build if a base bump moves that path, rather than silently shipping npm.
 # `upgrade` before `install`: without it the image ships whatever package
 # snapshot the base image was cut with, so security updates published since
 # never reach the runtime layers - that is how 0.9.2 shipped openssl 3.5.6 with
@@ -328,21 +320,22 @@ WORKDIR /app
 # commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
-    curl \
     procps \
     libxml2 \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
     && (apt-get install -y libicu72 2>/dev/null || apt-get install -y libicu74 2>/dev/null || apt-get install -y libicu76 2>/dev/null || true) \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && [ -e /usr/lib/node_modules/npm ] \
-    && rm -rf /usr/lib/node_modules/npm /usr/bin/npm /usr/bin/npx \
-    && ! command -v npm \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv \
     && pip uninstall --yes setuptools wheel
+
+# The control plane is a pre-built Next standalone bundle launched with
+# `node server.js`. Reuse that builder's Node binary instead of installing the
+# NodeSource package and its build-only GnuPG, curl, and system-Python chain.
+COPY --from=cp-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=cp-builder /usr/local/LICENSE /usr/local/LICENSE
+RUN node --version && ! command -v npm && ! command -v curl
 
 RUN useradd -m -s /bin/bash hindsight
 
