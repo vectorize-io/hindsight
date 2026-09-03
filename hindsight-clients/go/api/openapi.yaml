@@ -3592,7 +3592,8 @@ paths:
         \ with. Returns every distinct scope (tag order normalized) with the number\
         \ of observations in it; the empty tag list is the global/untagged scope.\
         \ Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact)\
-        \ to filter observations to exactly that scope."
+        \ to filter observations to exactly that scope. Paged: `total` reports every\
+        \ distinct scope in the bank."
       operationId: list_observation_scopes
       parameters:
       - explode: false
@@ -3603,6 +3604,31 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: Maximum number of scopes to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of scopes to return
+          maximum: 1000
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -3881,7 +3907,8 @@ paths:
       - Banks
   /v1/default/banks/{bank_id}/webhooks:
     get:
-      description: List all webhooks registered for a bank.
+      description: "List the webhooks registered for a bank, oldest first. Paged:\
+        \ `total` reports every webhook on the bank."
       operationId: list_webhooks
       parameters:
       - explode: false
@@ -3892,6 +3919,31 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: Maximum number of webhooks to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of webhooks to return
+          maximum: 1000
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -9032,6 +9084,8 @@ components:
     ObservationScopesResponse:
       description: Response model for the observation scopes enumeration endpoint.
       example:
+        limit: 100
+        offset: 0
         scopes:
         - count: 12
           tags:
@@ -9042,14 +9096,30 @@ components:
           - project:apollo
         - count: 2
           tags: []
+        total: 3
       properties:
         scopes:
           description: "Distinct observation scopes, most populous first"
           items:
             $ref: '#/components/schemas/ObservationScope'
           type: array
+        total:
+          description: Total number of distinct scopes in the bank (ignores limit/offset)
+          title: Total
+          type: integer
+        limit:
+          description: Maximum number of scopes returned in this page
+          title: Limit
+          type: integer
+        offset:
+          description: Offset this page started at
+          title: Offset
+          type: integer
       required:
+      - limit
+      - offset
       - scopes
+      - total
       title: ObservationScopesResponse
     OperationProgress:
       description: |-
@@ -10626,6 +10696,9 @@ components:
     WebhookListResponse:
       description: Response model for listing webhooks.
       example:
+        total: 6
+        offset: 5
+        limit: 1
         items:
         - event_types:
           - event_types
@@ -10666,8 +10739,23 @@ components:
           items:
             $ref: '#/components/schemas/WebhookResponse'
           type: array
+        total:
+          description: Total number of webhooks on the bank (ignores limit/offset)
+          title: Total
+          type: integer
+        limit:
+          description: Maximum number of webhooks returned in this page
+          title: Limit
+          type: integer
+        offset:
+          description: Offset this page started at
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: WebhookListResponse
     WebhookResponse:
       description: Response model for a webhook.

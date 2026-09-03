@@ -914,17 +914,24 @@ class OracleOps(DataAccessOps):
             http_config_json,
         )
 
-    async def list_webhooks_for_bank(self, conn, table, bank_id):
+    async def list_webhooks_for_bank(self, conn, table, bank_id, limit, offset):
         return await conn.fetch(
             f"""
             SELECT id, bank_id, url, secret, event_types, enabled,
                    http_config::text, created_at::text, updated_at::text
             FROM {table}
             WHERE bank_id = $1
-            ORDER BY created_at
+            ORDER BY created_at, id
+            LIMIT $2 OFFSET $3
             """,
             bank_id,
+            limit,
+            offset,
         )
+
+    async def count_webhooks_for_bank(self, conn, table, bank_id):
+        row = await conn.fetchrow(f"SELECT COUNT(*) AS total FROM {table} WHERE bank_id = $1", bank_id)
+        return int(row["total"]) if row else 0
 
     async def get_webhooks_for_dispatch(self, conn, webhook_table, bank_id):
         return await conn.fetch(

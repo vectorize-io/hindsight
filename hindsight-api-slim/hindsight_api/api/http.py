@@ -1596,12 +1596,18 @@ class ObservationScopesResponse(BaseModel):
                     {"tags": ["user:alice"], "count": 12},
                     {"tags": ["user:alice", "project:apollo"], "count": 4},
                     {"tags": [], "count": 2},
-                ]
+                ],
+                "total": 3,
+                "limit": 100,
+                "offset": 0,
             }
         }
     )
 
     scopes: list[ObservationScope] = Field(description="Distinct observation scopes, most populous first")
+    total: int = Field(description="Total number of distinct scopes in the bank (ignores limit/offset)")
+    limit: int = Field(description="Maximum number of scopes returned in this page")
+    offset: int = Field(description="Offset this page started at")
 
 
 class ListMemoryUnitsResponse(BaseModel):
@@ -3739,6 +3745,9 @@ class WebhookListResponse(BaseModel):
     """Response model for listing webhooks."""
 
     items: list[WebhookResponse]
+    total: int = Field(description="Total number of webhooks on the bank (ignores limit/offset)")
+    limit: int = Field(description="Maximum number of webhooks returned in this page")
+    offset: int = Field(description="Offset this page started at")
 
 
 class WebhookDeliveryResponse(BaseModel):
@@ -7733,15 +7742,23 @@ def _register_routes(app: FastAPI):
             "under a scope: the exact set of tags it was consolidated with. Returns every distinct "
             "scope (tag order normalized) with the number of observations in it; the empty tag list "
             "is the global/untagged scope. Use a returned scope with the graph endpoint "
-            "(tags=<scope> & tags_match=exact) to filter observations to exactly that scope."
+            "(tags=<scope> & tags_match=exact) to filter observations to exactly that scope. "
+            "Paged: `total` reports every distinct scope in the bank."
         ),
         operation_id="list_observation_scopes",
         tags=["Memory"],
     )
-    async def api_list_observation_scopes(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+    async def api_list_observation_scopes(
+        bank_id: str,
+        limit: int = Query(default=100, ge=0, le=1000, description="Maximum number of scopes to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """List the distinct observation scopes (exact tag sets) for a bank."""
         try:
-            return await app.state.memory.list_observation_scopes(bank_id, request_context=request_context)
+            return await app.state.memory.list_observation_scopes(
+                bank_id, limit=limit, offset=offset, request_context=request_context
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -8056,18 +8073,23 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/webhooks",
         response_model=WebhookListResponse,
         summary="List webhooks",
-        description="List all webhooks registered for a bank.",
+        description="List the webhooks registered for a bank, oldest first. "
+        "Paged: `total` reports every webhook on the bank.",
         operation_id="list_webhooks",
         tags=["Webhooks"],
     )
     async def api_list_webhooks(
         bank_id: str,
+        limit: int = Query(default=100, ge=0, le=1000, description="Maximum number of webhooks to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """List webhooks for a bank."""
         try:
-            rows = await app.state.memory.list_webhooks(
+            data = await app.state.memory.list_webhooks(
                 bank_id,
+                limit=limit,
+                offset=offset,
                 request_context=request_context,
             )
 
@@ -8096,7 +8118,12 @@ def _register_routes(app: FastAPI):
                     else str(row["updated_at"]),
                 )
 
-            return WebhookListResponse(items=[_parse_webhook_row(row) for row in rows])
+            return WebhookListResponse(
+                items=[_parse_webhook_row(row) for row in data["items"]],
+                total=data["total"],
+                limit=data["limit"],
+                offset=data["offset"],
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

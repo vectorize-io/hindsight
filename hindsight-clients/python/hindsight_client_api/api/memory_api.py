@@ -2384,6 +2384,8 @@ class MemoryApi:
     async def list_observation_scopes(
         self,
         bank_id: StrictStr,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of scopes to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2400,10 +2402,14 @@ class MemoryApi:
     ) -> ObservationScopesResponse:
         """List observation scopes
 
-        Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+        Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope. Paged: `total` reports every distinct scope in the bank.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param limit: Maximum number of scopes to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2430,6 +2436,8 @@ class MemoryApi:
 
         _param = self._list_observation_scopes_serialize(
             bank_id=bank_id,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2456,6 +2464,8 @@ class MemoryApi:
     async def list_observation_scopes_with_http_info(
         self,
         bank_id: StrictStr,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of scopes to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2472,10 +2482,14 @@ class MemoryApi:
     ) -> ApiResponse[ObservationScopesResponse]:
         """List observation scopes
 
-        Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+        Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope. Paged: `total` reports every distinct scope in the bank.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param limit: Maximum number of scopes to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2502,6 +2516,8 @@ class MemoryApi:
 
         _param = self._list_observation_scopes_serialize(
             bank_id=bank_id,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2528,6 +2544,8 @@ class MemoryApi:
     async def list_observation_scopes_without_preload_content(
         self,
         bank_id: StrictStr,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of scopes to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2544,10 +2562,14 @@ class MemoryApi:
     ) -> RESTResponseType:
         """List observation scopes
 
-        Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+        Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope. Paged: `total` reports every distinct scope in the bank.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param limit: Maximum number of scopes to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2574,6 +2596,8 @@ class MemoryApi:
 
         _param = self._list_observation_scopes_serialize(
             bank_id=bank_id,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2595,6 +2619,8 @@ class MemoryApi:
     def _list_observation_scopes_serialize(
         self,
         bank_id,
+        limit,
+        offset,
         authorization,
         _request_auth,
         _content_type,
@@ -2620,6 +2646,14 @@ class MemoryApi:
         if bank_id is not None:
             _path_params['bank_id'] = bank_id
         # process the query parameters
+        if limit is not None:
+            
+            _query_params.append(('limit', limit))
+            
+        if offset is not None:
+            
+            _query_params.append(('offset', offset))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization

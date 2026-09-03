@@ -3935,6 +3935,24 @@ export type ObservationScopesResponse = {
    * Distinct observation scopes, most populous first
    */
   scopes: Array<ObservationScope>;
+  /**
+   * Total
+   *
+   * Total number of distinct scopes in the bank (ignores limit/offset)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Maximum number of scopes returned in this page
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset this page started at
+   */
+  offset: number;
 };
 
 /**
@@ -5520,6 +5538,24 @@ export type WebhookListResponse = {
    * Items
    */
   items: Array<WebhookResponse>;
+  /**
+   * Total
+   *
+   * Total number of webhooks on the bank (ignores limit/offset)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Maximum number of webhooks returned in this page
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset this page started at
+   */
+  offset: number;
 };
 
 /**
@@ -8431,7 +8467,20 @@ export type ListObservationScopesData = {
      */
     bank_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Limit
+     *
+     * Maximum number of scopes to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks/{bank_id}/observations/scopes";
 };
 
@@ -8698,7 +8747,20 @@ export type ListWebhooksData = {
      */
     bank_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Limit
+     *
+     * Maximum number of webhooks to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks/{bank_id}/webhooks";
 };
 

@@ -335,8 +335,20 @@ export function WebhooksView() {
     if (!currentBank) return;
     setLoading(true);
     try {
-      const data = await client.listWebhooks(currentBank);
-      setWebhooks(data.items || []);
+      // The endpoint pages (default 100). This view shows the bank's whole
+      // webhook list and its count, so walk every page rather than silently
+      // rendering the first one as if it were everything.
+      const pageSize = 100;
+      const all: Webhook[] = [];
+      let offset = 0;
+      let total = 0;
+      do {
+        const page = await client.listWebhooks(currentBank, { limit: pageSize, offset });
+        all.push(...(page.items || []));
+        total = page.total;
+        offset += pageSize;
+      } while (all.length < total && offset < total);
+      setWebhooks(all);
     } catch (error) {
       console.error("Error loading webhooks:", error);
     } finally {

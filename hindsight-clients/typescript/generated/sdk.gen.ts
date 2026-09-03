@@ -1367,7 +1367,7 @@ export const clearObservations = <ThrowOnError extends boolean = false>(
 /**
  * List observation scopes
  *
- * Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+ * Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope. Paged: `total` reports every distinct scope in the bank.
  */
 export const listObservationScopes = <ThrowOnError extends boolean = false>(
   options: Options<ListObservationScopesData, ThrowOnError>
@@ -1475,7 +1475,7 @@ export const triggerConsolidation = <ThrowOnError extends boolean = false>(
 /**
  * List webhooks
  *
- * List all webhooks registered for a bank.
+ * List the webhooks registered for a bank, oldest first. Paged: `total` reports every webhook on the bank.
  */
 export const listWebhooks = <ThrowOnError extends boolean = false>(
   options: Options<ListWebhooksData, ThrowOnError>

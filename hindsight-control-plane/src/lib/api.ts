@@ -1442,10 +1442,16 @@ export class ControlPlaneClient {
    * consolidated with. Returns every distinct scope (tag order normalized) with
    * the number of observations in it; the empty tag list is the global scope.
    */
-  async listObservationScopes(bankId: string) {
+  async listObservationScopes(bankId: string, params?: { limit?: number; offset?: number }) {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.append("limit", String(params.limit));
+    if (params?.offset !== undefined) query.append("offset", String(params.offset));
     return this.fetchApi<{
       scopes: Array<{ tags: string[]; count: number }>;
-    }>(bankApi(bankId, `/observations/scopes`));
+      total: number;
+      limit: number;
+      offset: number;
+    }>(bankApi(bankId, `/observations/scopes${query.toString() ? `?${query}` : ""}`));
   }
 
   // ============= TAGS =============
@@ -1958,8 +1964,16 @@ export class ControlPlaneClient {
   /**
    * List webhooks for a bank
    */
-  async listWebhooks(bankId: string): Promise<{ items: Webhook[] }> {
-    return this.fetchApi<{ items: Webhook[] }>(bankApi(bankId, "/webhooks"));
+  async listWebhooks(
+    bankId: string,
+    params?: { limit?: number; offset?: number }
+  ): Promise<{ items: Webhook[]; total: number; limit: number; offset: number }> {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.append("limit", String(params.limit));
+    if (params?.offset !== undefined) query.append("offset", String(params.offset));
+    return this.fetchApi<{ items: Webhook[]; total: number; limit: number; offset: number }>(
+      bankApi(bankId, `/webhooks${query.toString() ? `?${query}` : ""}`)
+    );
   }
 
   /**

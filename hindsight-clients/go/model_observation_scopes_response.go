@@ -23,6 +23,12 @@ var _ MappedNullable = &ObservationScopesResponse{}
 type ObservationScopesResponse struct {
 	// Distinct observation scopes, most populous first
 	Scopes []ObservationScope `json:"scopes"`
+	// Total number of distinct scopes in the bank (ignores limit/offset)
+	Total int32 `json:"total"`
+	// Maximum number of scopes returned in this page
+	Limit int32 `json:"limit"`
+	// Offset this page started at
+	Offset int32 `json:"offset"`
 }
 
 type _ObservationScopesResponse ObservationScopesResponse
@@ -31,9 +37,12 @@ type _ObservationScopesResponse ObservationScopesResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewObservationScopesResponse(scopes []ObservationScope) *ObservationScopesResponse {
+func NewObservationScopesResponse(scopes []ObservationScope, total int32, limit int32, offset int32) *ObservationScopesResponse {
 	this := ObservationScopesResponse{}
 	this.Scopes = scopes
+	this.Total = total
+	this.Limit = limit
+	this.Offset = offset
 	return &this
 }
 
@@ -69,6 +78,78 @@ func (o *ObservationScopesResponse) SetScopes(v []ObservationScope) {
 	o.Scopes = v
 }
 
+// GetTotal returns the Total field value
+func (o *ObservationScopesResponse) GetTotal() int32 {
+	if o == nil {
+		var ret int32
+		return ret
+	}
+
+	return o.Total
+}
+
+// GetTotalOk returns a tuple with the Total field value
+// and a boolean to check if the value has been set.
+func (o *ObservationScopesResponse) GetTotalOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Total, true
+}
+
+// SetTotal sets field value
+func (o *ObservationScopesResponse) SetTotal(v int32) {
+	o.Total = v
+}
+
+// GetLimit returns the Limit field value
+func (o *ObservationScopesResponse) GetLimit() int32 {
+	if o == nil {
+		var ret int32
+		return ret
+	}
+
+	return o.Limit
+}
+
+// GetLimitOk returns a tuple with the Limit field value
+// and a boolean to check if the value has been set.
+func (o *ObservationScopesResponse) GetLimitOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Limit, true
+}
+
+// SetLimit sets field value
+func (o *ObservationScopesResponse) SetLimit(v int32) {
+	o.Limit = v
+}
+
+// GetOffset returns the Offset field value
+func (o *ObservationScopesResponse) GetOffset() int32 {
+	if o == nil {
+		var ret int32
+		return ret
+	}
+
+	return o.Offset
+}
+
+// GetOffsetOk returns a tuple with the Offset field value
+// and a boolean to check if the value has been set.
+func (o *ObservationScopesResponse) GetOffsetOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Offset, true
+}
+
+// SetOffset sets field value
+func (o *ObservationScopesResponse) SetOffset(v int32) {
+	o.Offset = v
+}
+
 func (o ObservationScopesResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -80,6 +161,9 @@ func (o ObservationScopesResponse) MarshalJSON() ([]byte, error) {
 func (o ObservationScopesResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["scopes"] = o.Scopes
+	toSerialize["total"] = o.Total
+	toSerialize["limit"] = o.Limit
+	toSerialize["offset"] = o.Offset
 	return toSerialize, nil
 }
 
@@ -89,6 +173,9 @@ func (o *ObservationScopesResponse) UnmarshalJSON(data []byte) (err error) {
 	// that every required field exists as a key in the generic map.
 	requiredProperties := []string{
 		"scopes",
+		"total",
+		"limit",
+		"offset",
 	}
 
 	allProperties := make(map[string]interface{})

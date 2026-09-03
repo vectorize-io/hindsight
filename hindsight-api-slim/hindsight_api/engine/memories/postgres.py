@@ -451,8 +451,12 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_table, bank_id=bank_id, time_field=time_field, trunc=trunc, since=since
         )
 
-    async def observation_scope_counts(self, *, conn, fq_table, bank_id: str) -> list[dict[str, Any]]:
-        return await counts.observation_scope_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
+    async def observation_scope_counts(
+        self, *, conn, fq_table, bank_id: str, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
+        return await counts.observation_scope_counts(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, limit=limit, offset=offset
+        )
 
     # ------------------------------------------------------------------ observations
 

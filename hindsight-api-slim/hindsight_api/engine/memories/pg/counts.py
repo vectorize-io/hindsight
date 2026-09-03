@@ -141,22 +141,54 @@ async def memories_timeseries(
     return [{"bucket": r["bucket"], "fact_type": r["fact_type"], "count": r["count"]} for r in rows]
 
 
-async def observation_scope_counts(*, conn, fq_table: Callable[[str], str], bank_id: str) -> list[dict[str, Any]]:
-    """Observations grouped by scope (their sorted tag set), most-populous first."""
-    rows = await conn.fetch(
+async def observation_scope_counts(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """One page of the bank's observation scope histogram.
+
+    Returns ``{"scopes": [{tags, count}], "total", "limit", "offset"}``. A bank
+    can hold as many distinct scopes as it has distinct tag sets, so the
+    grouping, the ``count DESC, scope ASC`` ordering and the paging all run in
+    SQL — the whole histogram never crosses the wire.
+    """
+    scopes_select = f"""
+        SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1 AND fact_type = 'observation'
+    """
+
+    total_row = await conn.fetchrow(
         f"""
-        SELECT scope, COUNT(*) AS count
-        FROM (
-            SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope
-            FROM {fq_table("memory_units")}
-            WHERE bank_id = $1 AND fact_type = 'observation'
-        ) s
-        GROUP BY scope
-        ORDER BY count DESC, scope
+        SELECT COUNT(*) AS total
+        FROM (SELECT DISTINCT scope FROM ({scopes_select}) s) d
         """,
         bank_id,
     )
-    return [{"tags": list(r["scope"]), "count": r["count"]} for r in rows]
+    total = int(total_row["total"]) if total_row else 0
+
+    rows = await conn.fetch(
+        f"""
+        SELECT scope, COUNT(*) AS count
+        FROM ({scopes_select}) s
+        GROUP BY scope
+        ORDER BY count DESC, scope
+        LIMIT $2 OFFSET $3
+        """,
+        bank_id,
+        limit,
+        offset,
+    )
+    return {
+        "scopes": [{"tags": list(r["scope"]), "count": int(r["count"])} for r in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 __all__ = [

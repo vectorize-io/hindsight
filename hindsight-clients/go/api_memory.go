@@ -1099,7 +1099,21 @@ type ApiListObservationScopesRequest struct {
 	ctx context.Context
 	ApiService *MemoryAPIService
 	bankId string
+	limit *int32
+	offset *int32
 	authorization *string
+}
+
+// Maximum number of scopes to return
+func (r ApiListObservationScopesRequest) Limit(limit int32) ApiListObservationScopesRequest {
+	r.limit = &limit
+	return r
+}
+
+// Offset for pagination
+func (r ApiListObservationScopesRequest) Offset(offset int32) ApiListObservationScopesRequest {
+	r.offset = &offset
+	return r
 }
 
 func (r ApiListObservationScopesRequest) Authorization(authorization string) ApiListObservationScopesRequest {
@@ -1114,7 +1128,7 @@ func (r ApiListObservationScopesRequest) Execute() (*ObservationScopesResponse, 
 /*
 ListObservationScopes List observation scopes
 
-Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope. Paged: `total` reports every distinct scope in the bank.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -1150,6 +1164,18 @@ func (a *MemoryAPIService) ListObservationScopesExecute(r ApiListObservationScop
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.limit != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")
+	} else {
+		var defaultValue int32 = 100
+		r.limit = &defaultValue
+	}
+	if r.offset != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "offset", r.offset, "form", "")
+	} else {
+		var defaultValue int32 = 0
+		r.offset = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 

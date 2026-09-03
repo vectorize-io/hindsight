@@ -9669,6 +9669,8 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         *,
+        limit: int = 100,
+        offset: int = 0,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """List the distinct scopes across a bank's observations.
@@ -9679,8 +9681,15 @@ class MemoryEngine(MemoryEngineInterface):
         number of observations in it. The empty list ``[]`` is the "global" scope
         of untagged observations. Results are ordered most-populous first.
 
+        Args:
+            bank_id: Bank identifier
+            limit: Maximum number of scopes to return
+            offset: Offset for pagination
+            request_context: Request context for authentication.
+
         Returns:
-            Dict with ``scopes``: list of ``{"tags": list[str], "count": int}``.
+            Dict with ``scopes`` (list of ``{"tags": list[str], "count": int}``),
+            ``total`` (distinct scopes in the bank), ``limit`` and ``offset``.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -9694,8 +9703,9 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         async with acquire_with_retry(backend) as conn:
-            scopes = await get_memories().observation_scope_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
-        return {"scopes": scopes}
+            return await get_memories().observation_scope_counts(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, limit=limit, offset=offset
+            )
 
     async def retry_failed_consolidation(
         self,
@@ -19048,9 +19058,16 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         *,
+        limit: int = 100,
+        offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
-        """List webhooks for a bank in the bank's resolved schema."""
+    ) -> dict[str, Any]:
+        """One page of a bank's webhooks, from the bank's resolved schema.
+
+        Returns ``{"items": [row], "total", "limit", "offset"}``, ordered by
+        created_at then id. ``total`` counts every webhook on the bank, not just
+        the page.
+        """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext, BankReadOperation
@@ -19062,12 +19079,24 @@ class MemoryEngine(MemoryEngineInterface):
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            rows = await backend.ops.list_webhooks_for_bank(
+            total = await backend.ops.count_webhooks_for_bank(
                 conn,
                 fq_table("webhooks"),
                 bank_id,
             )
-        return [dict(row) for row in rows]
+            rows = await backend.ops.list_webhooks_for_bank(
+                conn,
+                fq_table("webhooks"),
+                bank_id,
+                limit,
+                offset,
+            )
+        return {
+            "items": [dict(row) for row in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
 
     async def update_webhook(
         self,

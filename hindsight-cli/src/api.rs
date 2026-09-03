@@ -1193,7 +1193,7 @@ impl ApiClient {
         _verbose: bool,
     ) -> Result<types::WebhookListResponse> {
         self.runtime.block_on(async {
-            let response = self.client.list_webhooks(bank_id, None).await?;
+            let response = self.client.list_webhooks(bank_id, None, None, None).await?;
             Ok(response.into_inner())
         })
     }

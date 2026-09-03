@@ -1613,11 +1613,18 @@ class MemoriesExtension(Extension, ABC):
         """
         raise NotImplementedError
 
-    async def observation_scope_counts(self, *, conn, fq_table, bank_id: str) -> list[dict[str, Any]]:
-        """``[{"tags": list[str], "count": int}]`` — observations grouped by scope.
+    async def observation_scope_counts(
+        self, *, conn, fq_table, bank_id: str, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
+        """One page of the observation scope histogram, paged by the store.
 
-        A scope is the sorted set of tags an observation was consolidated with;
-        ``[]`` is the global (untagged) scope. Most-populous first.
+        Returns ``{"scopes": [{"tags": list[str], "count": int}], "total",
+        "limit", "offset"}``. A scope is the sorted set of tags an observation
+        was consolidated with; ``[]`` is the global (untagged) scope.
+        Most-populous first, then scope ascending. ``total`` counts every
+        distinct scope, not just the page — a bank has as many scopes as it has
+        distinct tag sets, so the store must not ship them all for the caller
+        to trim.
         """
         raise NotImplementedError
 

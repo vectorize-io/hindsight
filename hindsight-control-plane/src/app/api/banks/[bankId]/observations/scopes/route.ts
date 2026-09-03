@@ -16,8 +16,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
       );
     }
 
+    const { searchParams } = new URL(request.url);
+    const queryParams = new URLSearchParams();
+    for (const key of ["limit", "offset"]) {
+      const value = searchParams.get(key);
+      if (value) queryParams.append(key, value);
+    }
+
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/observations/scopes`,
+      `${DATAPLANE_URL}/v1/default/banks/${bankId}/observations/scopes${queryParams.toString() ? `?${queryParams}` : ""}`,
       { headers: getDataplaneHeaders() }
     );
 

@@ -790,6 +790,49 @@ class TestWebhookHttpApi:
         await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @pytest.mark.asyncio
+    async def test_http_list_webhooks_pagination(self, api_client: httpx.AsyncClient):
+        """GET /webhooks pages: each page is capped and total counts every webhook."""
+        bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
+
+        created = []
+        for i in range(3):
+            resp = await api_client.post(
+                f"/v1/default/banks/{bank_id}/webhooks",
+                json={"url": f"https://example.com/page-{i}", "event_types": ["consolidation.completed"]},
+            )
+            assert resp.status_code == 201
+            created.append(resp.json()["id"])
+
+        try:
+            first = await api_client.get(
+                f"/v1/default/banks/{bank_id}/webhooks",
+                params={"limit": 2, "offset": 0},
+            )
+            assert first.status_code == 200
+            first_data = first.json()
+            assert first_data["total"] == 3
+            assert first_data["limit"] == 2
+            assert first_data["offset"] == 0
+            assert len(first_data["items"]) == 2
+
+            second = await api_client.get(
+                f"/v1/default/banks/{bank_id}/webhooks",
+                params={"limit": 2, "offset": 2},
+            )
+            assert second.status_code == 200
+            second_data = second.json()
+            assert second_data["total"] == 3
+            assert second_data["offset"] == 2
+            assert len(second_data["items"]) == 1
+
+            # The pages are disjoint and together cover every webhook on the bank.
+            paged_ids = [item["id"] for item in first_data["items"] + second_data["items"]]
+            assert sorted(paged_ids) == sorted(created)
+        finally:
+            for webhook_id in created:
+                await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
+
+    @pytest.mark.asyncio
     async def test_http_delete_webhook(self, api_client: httpx.AsyncClient):
         """DELETE /webhooks/{id} removes the webhook; subsequent list returns empty for that bank."""
         bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"

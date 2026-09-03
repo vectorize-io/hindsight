@@ -4,7 +4,14 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
   const { bankId } = await params;
-  const res = await fetch(dataplaneBankUrl(bankId, "/webhooks"), {
+  const { searchParams } = new URL(request.url);
+  const queryParams = new URLSearchParams();
+  for (const key of ["limit", "offset"]) {
+    const value = searchParams.get(key);
+    if (value) queryParams.append(key, value);
+  }
+  const path = `/webhooks${queryParams.toString() ? `?${queryParams}` : ""}`;
+  const res = await fetch(dataplaneBankUrl(bankId, path), {
     headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
   });
   const data = await res.json();
