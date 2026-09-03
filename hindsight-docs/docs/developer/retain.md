@@ -239,10 +239,14 @@ not all of them.
 
 ### Requirements
 
-- The bank's retain model must be able to read images. If it cannot — or if
-  Hindsight cannot tell, which is the case for gateway backends serving mixed
-  catalogues — the retain is refused with `422` rather than dropping the
-  attachment silently. See
+- A model that can read images. By default that is the bank's retain model, but
+  it does not have to be: `HINDSIGHT_API_VLM_MODEL` names a **vision slot** used
+  only for the chunks that actually carry an attachment, leaving every text-only
+  chunk on the retain LLM. So a bank whose documents are mostly prose can keep a
+  cheap text model and pay for vision only where there is something to look at.
+- If that model cannot read images — or if Hindsight cannot tell, which is the
+  case for gateway backends serving mixed catalogues — the retain is refused
+  with `422` rather than dropping the attachment silently. See
   [`HINDSIGHT_API_LLM_VISION`](/developer/configuration#llm-configuration).
 - Batch retain (`HINDSIGHT_API_RETAIN_BATCH_ENABLED`) cannot carry attachments,
   and also refuses with `422`.

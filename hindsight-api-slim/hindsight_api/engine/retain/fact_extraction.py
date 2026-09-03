@@ -1794,6 +1794,7 @@ async def _extract_facts_from_chunk(
     agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
@@ -1834,6 +1835,14 @@ async def _extract_facts_from_chunk(
     if attachment_loader is not None and attachment_content.contains_attachment(user_message):
         loaded = await attachment_loader.load(list(attachment_content.iter_placeholder_ids(user_message)))
         user_content = attachment_content.build_prompt_parts(user_message, loaded)
+        # This is the only kind of chunk that needs to *see*, so it is the only
+        # one that pays for a vision model. Every text-only chunk stays on the
+        # retain LLM — which is the point of the slot: one screenshot in a
+        # document used to force the entire bank onto a vision-capable model.
+        # `vlm_config` is None when unconfigured, and resolves to the retain LLM
+        # when it is set but not overridden, so both cases are a no-op here.
+        if vlm_config is not None:
+            llm_config = vlm_config
 
     # Opt into context caching when the provider supports it. The prompt and
     # response_schema are bank-agnostic (the mission lives in the user message),
@@ -2211,6 +2220,7 @@ async def _extract_facts_with_auto_split(
     agent_name: str | None = None,
     metadata: dict[str, str] | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
@@ -2252,6 +2262,7 @@ async def _extract_facts_with_auto_split(
             agent_name=agent_name,
             metadata=metadata,
             attachment_loader=attachment_loader,
+            vlm_config=vlm_config,
         )
     except OutputTooLongError:
         # Output exceeded token limits - split the chunk and retry. Conversation
@@ -2288,6 +2299,7 @@ async def _extract_facts_with_auto_split(
                 agent_name=agent_name,
                 metadata=metadata,
                 attachment_loader=attachment_loader,
+                vlm_config=vlm_config,
             ),
             _extract_facts_with_auto_split(
                 chunk=second_half,
@@ -2300,6 +2312,7 @@ async def _extract_facts_with_auto_split(
                 agent_name=agent_name,
                 metadata=metadata,
                 attachment_loader=attachment_loader,
+                vlm_config=vlm_config,
             ),
         ]
 
@@ -2326,6 +2339,7 @@ async def extract_facts_from_text(
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -2389,6 +2403,7 @@ async def extract_facts_from_text(
             agent_name=agent_name,
             metadata=metadata,
             attachment_loader=attachment_loader,
+            vlm_config=vlm_config,
         )
         for i, chunk in enumerate(chunks)
     ]
@@ -3129,6 +3144,7 @@ async def extract_facts_from_contents(
     operation_id: str | None = None,
     schema: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> ExtractionResult:
     """
     Extract facts from multiple content items in parallel.
@@ -3178,6 +3194,7 @@ async def extract_facts_from_contents(
             config=config,
             metadata=item.metadata or None,
             attachment_loader=attachment_loader,
+            vlm_config=vlm_config,
         )
         fact_extraction_tasks.append(task)
 
