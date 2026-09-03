@@ -14,7 +14,7 @@ from ...config import _get_raw_config
 from ..memory_engine import fq_table
 from ..metadata_utils import drop_null_values
 from .bank_utils import create_bank_row_on_conn
-from .fact_extraction import _sanitize_text
+from .fact_extraction import _sanitize_text, derive_document_content_hash
 from .types import ProcessedFact
 
 logger = logging.getLogger(__name__)
@@ -215,11 +215,10 @@ async def handle_document_tracking(
             None so older callers don't break, but the PG branch is only
             taken when ops is non-None — pass ``pool.ops`` from the caller.
     """
-    import hashlib
-
-    # Sanitize and calculate content hash
+    # The row stores the sanitized body, so it is sanitized here as well; the hash comes
+    # from the one derivation every writer of the column shares.
     combined_content = _sanitize_text(combined_content) or ""
-    content_hash = hashlib.sha256(combined_content.encode()).hexdigest()
+    content_hash = derive_document_content_hash(combined_content)
 
     # Delete old document first (cascades to units and links).
     # Only delete on the first batch to avoid deleting data we just inserted.
@@ -327,10 +326,8 @@ async def upsert_document_metadata(
     Used by delta retain: the document row is upserted but chunks and
     memory_units are managed separately at the chunk level.
     """
-    import hashlib
-
     combined_content = _sanitize_text(combined_content) or ""
-    content_hash = hashlib.sha256(combined_content.encode()).hexdigest()
+    content_hash = derive_document_content_hash(combined_content)
 
     await _upsert_document_row(
         conn,

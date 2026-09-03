@@ -365,14 +365,21 @@ async def run_benchmark(
 
     # Use remote API client if api_url is provided, otherwise use local memory
     if api_url:
-        from benchmarks.common.benchmark_runner import HindsightClientAdapter
+        # `--api-url` has never run: this imported `HindsightClientAdapter` from
+        # benchmark_runner, which has never defined it, so the branch raised ImportError
+        # the moment it was taken. Say so plainly instead — restoring the remote path
+        # means writing that adapter. The dangling import is gone so `ty` can keep
+        # `unresolved-import` on for this package, which is what would have caught it.
+        console.print(
+            "[red]--api-url is not implemented: there is no remote client adapter in "
+            "benchmarks.common.benchmark_runner. Re-run without --api-url to benchmark "
+            "the in-process engine.[/red]"
+        )
+        return
 
-        memory = HindsightClientAdapter(base_url=api_url)
-        await memory.initialize()
-    else:
-        from benchmarks.common.benchmark_runner import create_memory_engine
+    from benchmarks.common.benchmark_runner import create_memory_engine
 
-        memory = await create_memory_engine()
+    memory = await create_memory_engine()
 
     # Select answer generator based on mode
     if use_reflect:

@@ -6,7 +6,6 @@ Coordinates all retain pipeline modules to store memories efficiently.
 
 import asyncio
 import dataclasses
-import hashlib
 import json
 import logging
 import time
@@ -1955,11 +1954,10 @@ async def _store_document_bodies(
         # one absent chunk.
         chunk_texts = [t or "" for t in prior] + chunk_texts
     # The record's content_hash must equal what the SQL documents row stores, so a read is
-    # consistent whichever it comes from: sanitize + sha256 the same combined_content. The
-    # streaming path already has it (passes it in); delta computes it here.
+    # consistent whichever it comes from — hence the one shared derivation. The streaming
+    # path already has it (passes it in); delta computes it here.
     if content_hash is None:
-        _sanitized = fact_extraction._sanitize_text(combined_content) or ""
-        content_hash = hashlib.sha256(_sanitized.encode()).hexdigest()
+        content_hash = fact_extraction.derive_document_content_hash(combined_content)
     # `expect_watermark` makes this a compare-and-set (the append case: the body being written was
     # derived from the stored one). The store reports a lost race as `StoreWriteConflict`, which is
     # exactly the retain-level `ConcurrentAppendConflict` the caller already knows how to redo —
@@ -2268,10 +2266,9 @@ async def _streaming_retain_batch(
     if document_body_hash is not None:
         new_content_hash = document_body_hash
     else:
-        sanitized_content = fact_extraction._sanitize_text(combined_content) or ""
-        new_content_hash = hashlib.sha256(sanitized_content.encode()).hexdigest()
-        # Memory: sanitized_content is only needed for the hash; free it immediately.
-        sanitized_content = ""
+        # The shared derivation sanitizes a window at a time, so no full sanitized copy of
+        # the body is ever built to be freed again.
+        new_content_hash = fact_extraction.derive_document_content_hash(combined_content)
     is_recovery = False
 
     # Same reason as the stale-request check above: the recovery probe reads the SQL `documents`

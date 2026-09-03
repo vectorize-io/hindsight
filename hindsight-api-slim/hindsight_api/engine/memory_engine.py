@@ -14,7 +14,6 @@ import contextvars
 import copy
 import difflib
 import functools
-import hashlib
 import inspect
 import json
 import logging
@@ -750,7 +749,6 @@ class _SubBatch:
     origins: list[int]
     document_body: "ScreenedDocumentBody | None"
     chunk_count: int
-    index: int  # 1-based, for logging and the is-first-batch decision
     is_last: bool
 
 
@@ -940,34 +938,14 @@ def _screen_document_body(body: str, config: HindsightConfig) -> ScreenedDocumen
 
     The hash is of the REDACTED text, because that is what gets written — a hash taken
     before redaction would describe a document that was never stored, and every ownership
-    check against it would miss. Callers cache by body; this does no caching of its own.
+    check against it would miss. Callers cache the last body by identity; this does no
+    caching of its own.
     """
-    from .retain.fact_extraction import _sanitize_text
+    from .retain.fact_extraction import derive_document_content_hash
     from .retain.orchestrator import redact_document_body
 
     redacted = redact_document_body(body, config)
-    sanitized = _sanitize_text(redacted) or ""
-    return ScreenedDocumentBody(text=redacted, content_hash=_sha256_windowed(sanitized))
-
-
-# How much text is encoded to bytes at a time when hashing a document body. Slicing a str
-# by character index never splits a character, so the concatenated windows are byte-identical
-# to encoding the whole string — this only changes how much of it exists at once.
-_HASH_WINDOW_CHARS = 1024 * 1024
-
-
-def _sha256_windowed(text: str) -> str:
-    """``sha256`` of ``text``'s UTF-8 bytes, without materialising them all.
-
-    ``text.encode()`` on a document body allocates a second full copy of it purely to feed
-    the hash — 45 MB for a 45 MB document, the last allocation in the retain front half that
-    still scaled with the input (#3756). Feeding the digest a megabyte at a time gives the
-    same hex digest at a bounded cost.
-    """
-    digest = hashlib.sha256()
-    for start in range(0, len(text), _HASH_WINDOW_CHARS):
-        digest.update(text[start : start + _HASH_WINDOW_CHARS].encode())
-    return digest.hexdigest()
+    return ScreenedDocumentBody(text=redacted, content_hash=derive_document_content_hash(redacted))
 
 
 @dataclass
@@ -981,6 +959,10 @@ class _RawSubBatch:
 
     contents: list[RetainContentDict]
     origins: list[int]
+    # Every slice cut from one oversized item carries the *same* string object here, and
+    # those slices are yielded consecutively. :func:`iter_sub_batches` screens each document
+    # once by relying on both: rebuilding this string per slice would silently turn its
+    # cache into a permanent miss (a full redaction + hash per slice, #3756).
     body_override: str | None
     chunk_count: int
 
@@ -1016,10 +998,12 @@ def _iter_raw_sub_batches(
     current_batch_tokens = 0
     current_batch_chunks = 0
 
-    def _flush() -> _RawSubBatch | None:
+    def _flush() -> list[_RawSubBatch]:
+        """The in-flight sub-batch, if there is one — as a list, so the three flush
+        points can ``yield from`` it without each unwrapping an ``Optional``."""
         nonlocal current_batch, current_batch_origins, current_batch_tokens, current_batch_chunks
         if not current_batch:
-            return None
+            return []
         flushed = _RawSubBatch(
             contents=current_batch,
             origins=current_batch_origins,
@@ -1030,7 +1014,7 @@ def _iter_raw_sub_batches(
         current_batch_origins = []
         current_batch_tokens = 0
         current_batch_chunks = 0
-        return flushed
+        return [flushed]
 
     for original_idx, item in enumerate(contents):
         content_str = item.get("content", "") or ""
@@ -1046,9 +1030,7 @@ def _iter_raw_sub_batches(
             # writes the full original text to documents.original_text — not
             # just its own slice (otherwise the last slice would clobber the
             # body with a truncated payload; see issue #1838).
-            pending = _flush()
-            if pending is not None:
-                yield pending
+            yield from _flush()
             # Cursor into `content_str` for `_span_of_native_chunks`. Runs arrive in document
             # order and only ever move forward, so one cursor serves them all and the document is
             # scanned once rather than per run.
@@ -1089,17 +1071,13 @@ def _iter_raw_sub_batches(
             continue
 
         if current_batch and current_batch_tokens + item_tokens > tokens_per_batch:
-            pending = _flush()
-            if pending is not None:
-                yield pending
+            yield from _flush()
         current_batch.append(item)
         current_batch_origins.append(original_idx)
         current_batch_tokens += item_tokens
         current_batch_chunks += sum(1 for _ in _chunks_of(content_str))
 
-    pending = _flush()
-    if pending is not None:
-        yield pending
+    yield from _flush()
 
 
 def iter_sub_batches(
@@ -1113,45 +1091,52 @@ def iter_sub_batches(
     """Stream screened, hashed, last-flagged sub-batches ready for the retain loop.
 
     Wraps :func:`_iter_raw_sub_batches` with the two things the loop needs and the raw
-    splitter cannot supply: the Memory Defense screening and content hash of each distinct
-    document body (cached, so an oversized item's identical body is screened once however
-    many slices it produced — issue #3282), and ``is_last``, from a one-item lookahead.
+    splitter cannot supply: the Memory Defense screening and content hash of the document
+    body a slice carries (done once per document, however many slices it produced — issue
+    #3282), and ``is_last``, from a one-item lookahead.
     """
-    screened: dict[str, ScreenedDocumentBody] = {}
+    # A one-entry cache, not a dict keyed by body: every slice of an oversized item is
+    # yielded consecutively and carries the *same string object* (see
+    # ``_RawSubBatch.body_override``), so identity is enough to hit — and with Memory
+    # Defense redaction on, a screened body is a full second copy of the document. Keeping a
+    # dict would hold one such copy per document in the submission for the whole retain,
+    # which is the cost this streaming path exists to remove (#3756). The trade is that two
+    # separate items with equal bodies screen twice where the dict screened once; that costs
+    # one redaction, where the dict cost a retained copy of every body.
+    last_body: str | None = None
+    last_screened: ScreenedDocumentBody | None = None
 
     def _screen(body: str | None) -> ScreenedDocumentBody | None:
+        nonlocal last_body, last_screened
         if body is None:
+            # A sub-batch that is not a slice ends the run for the previous document, so
+            # drop the entry rather than pin its screened copy for the rest of the
+            # submission — up to ~45 MB held for no reason. Slices of one document are
+            # always consecutive, so this can never evict an entry a later slice would hit.
+            last_body, last_screened = None, None
             return None
-        if body not in screened:
-            screened[body] = _screen_document_body(body, config)
-        return screened[body]
+        if body is not last_body:
+            last_body, last_screened = body, _screen_document_body(body, config)
+        return last_screened
 
-    index = 0
+    def _finish(raw: _RawSubBatch, *, is_last: bool) -> _SubBatch:
+        return _SubBatch(
+            contents=raw.contents,
+            origins=raw.origins,
+            document_body=_screen(raw.body_override),
+            chunk_count=raw.chunk_count,
+            is_last=is_last,
+        )
+
     held: _RawSubBatch | None = None
     for raw in _iter_raw_sub_batches(
         contents, tokens_per_batch, chunk_size=chunk_size, structured_chunk_size=structured_chunk_size
     ):
         if held is not None:
-            index += 1
-            yield _SubBatch(
-                contents=held.contents,
-                origins=held.origins,
-                document_body=_screen(held.body_override),
-                chunk_count=held.chunk_count,
-                index=index,
-                is_last=False,
-            )
+            yield _finish(held, is_last=False)
         held = raw
     if held is not None:
-        index += 1
-        yield _SubBatch(
-            contents=held.contents,
-            origins=held.origins,
-            document_body=_screen(held.body_override),
-            chunk_count=held.chunk_count,
-            index=index,
-            is_last=True,
-        )
+        yield _finish(held, is_last=True)
 
 
 def _split_contents_into_async_children(
@@ -5548,7 +5533,7 @@ class MemoryEngine(MemoryEngineInterface):
             # them all costs a second copy of it for the whole retain (#3756). Each is
             # screened, hashed and flagged as it arrives; ``is_last`` comes from a
             # one-item lookahead inside the generator, because there is no length to
-            # compare ``i`` against any more.
+            # compare the loop counter against any more.
             sub_batch_stream = iter_sub_batches(
                 contents,
                 tokens_per_batch,
@@ -5614,6 +5599,8 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                     )
 
+            # Counts the sub-batches actually processed, for the completion log. The
+            # stream has no length, so this is the only place the total exists.
             sub_batches_run = 0
             # Chunk texts accumulated across the sub-batches of each document, written by
             # `flush_document_bodies` below. Same lifetime as `chunk_offsets`: this retain only.
@@ -5670,8 +5657,7 @@ class MemoryEngine(MemoryEngineInterface):
                 return _SubBatchOutcome(index=idx, origins=origins_, results=r, usage=u, processed=pr)
 
             try:
-                for sub in sub_batch_stream:
-                    i = sub.index
+                for i, sub in enumerate(sub_batch_stream, 1):
                     sub_batch = sub.contents
                     sub_origins = sub.origins
                     # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.

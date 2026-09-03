@@ -19,9 +19,9 @@ from typing import Any
 import pytest
 
 from hindsight_api.config import clear_config_cache
-from tests.sub_batch_helpers import collect_sub_batches
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, RetainContent
+from tests.sub_batch_helpers import collect_sub_batches
 
 
 def _ts() -> float:
@@ -185,13 +185,13 @@ async def test_append_after_zero_fact_header_slice_skips_unchanged_history(
     # Slices are cut on native chunk boundaries, so a tiny token budget yields
     # one sub-batch per chunk of the body — the header lands alone in the first
     # one, followed by the history slices this test replays.
-    split = collect_sub_batches(
+    subs = collect_sub_batches(
         [{"content": initial_body, "document_id": document_id}],
         100,
         chunk_size=3000,
     )
-    assert len(split.sub_batches) > 2
-    assert "[role:" not in split.sub_batches[0][0]["content"]
+    assert len(subs) > 2
+    assert "[role:" not in subs[0].contents[0]["content"]
 
     extracted_contents: list[str] = []
 

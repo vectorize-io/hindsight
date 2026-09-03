@@ -94,6 +94,5 @@ invalid-parameter-default = "ignore" # Optional params with None default
 possibly-missing-attribute = "ignore" # Common with Optional types
 unsupported-operator = "ignore"     # Pandas DataFrame operations
 unresolved-reference = "ignore"     # Forward references
-unresolved-import = "ignore"        # Dynamic imports
 invalid-assignment = "ignore"       # Intentional monkey-patching
 no-matching-overload = "ignore"     # Complex generic issues

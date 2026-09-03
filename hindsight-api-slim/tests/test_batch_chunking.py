@@ -30,25 +30,25 @@ def test_split_single_oversized_item_produces_multiple_sub_batches():
     big_content = "The quick brown fox jumps over the lazy dog. " * 1_000
     assert count_tokens(big_content) > tokens_per_batch
 
-    split = collect_sub_batches(
+    subs = collect_sub_batches(
         [{"content": big_content, "document_id": "doc-oversize"}],
         tokens_per_batch,
         chunk_size=3000,
     )
 
-    assert len(split.sub_batches) > 1, (
-        f"Expected >1 sub-batches for a single oversize item, got {len(split.sub_batches)}. "
+    assert len(subs) > 1, (
+        f"Expected >1 sub-batches for a single oversize item, got {len(subs)}. "
         "Splitter is regressing to the pre-#1571 'pass-through as 1/1' behavior."
     )
     # Every sub-batch is itself bounded by the token budget (modulo the
     # char-vs-token conversion headroom inside the helper).
-    for batch in split.sub_batches:
-        batch_tokens = sum(count_tokens(item.get("content", "")) for item in batch)
+    for sub in subs:
+        batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub.contents)
         assert batch_tokens <= tokens_per_batch, (
             f"Sub-batch with {batch_tokens} tokens exceeds budget {tokens_per_batch}"
         )
     # Every chunked sub-batch must trace back to the single source item.
-    assert all(origins == [0] for origins in split.origin_indices)
+    assert all(sub.origins == [0] for sub in subs)
 
 
 def test_split_oversized_item_preserves_document_id_and_metadata():
@@ -62,12 +62,12 @@ def test_split_oversized_item_preserves_document_id_and_metadata():
         "tags": ["t1", "t2"],
     }
 
-    split = collect_sub_batches([item], tokens_per_batch, chunk_size=3000)
+    subs = collect_sub_batches([item], tokens_per_batch, chunk_size=3000)
 
-    assert len(split.sub_batches) > 1
-    for batch in split.sub_batches:
-        assert len(batch) == 1
-        chunk = batch[0]
+    assert len(subs) > 1
+    for sub in subs:
+        assert len(sub.contents) == 1
+        chunk = sub.contents[0]
         assert chunk["document_id"] == "doc-42"
         assert chunk["context"] == "shared-context"
         assert chunk["tags"] == ["t1", "t2"]
@@ -88,22 +88,22 @@ def test_split_mixed_batch_chunks_only_oversized_items():
         {"content": small_b, "document_id": "doc-c"},
     ]
 
-    split = collect_sub_batches(contents, tokens_per_batch, chunk_size=3000)
+    subs = collect_sub_batches(contents, tokens_per_batch, chunk_size=3000)
 
     # We expect: [small_a packed] then N chunks of big, then [small_b packed].
     # At minimum: > 2 sub-batches (a + multiple big chunks + c).
-    assert len(split.sub_batches) > 2
+    assert len(subs) > 2
 
-    # Every original input must appear in origin_indices at least once.
-    flat_origins = [idx for origins in split.origin_indices for idx in origins]
+    # Every original input must appear in some sub-batch's origins at least once.
+    flat_origins = [idx for sub in subs for idx in sub.origins]
     assert 0 in flat_origins  # small_a
     assert 1 in flat_origins  # big (likely many times)
     assert 2 in flat_origins  # small_b
 
     # The oversized input (index 1) appears in more sub-batches than the
     # small ones — that's the chunked-fan-out signature.
-    big_origin_count = sum(1 for origins in split.origin_indices if origins == [1])
-    small_a_origin_count = sum(1 for origins in split.origin_indices if 0 in origins)
+    big_origin_count = sum(1 for sub in subs if sub.origins == [1])
+    small_a_origin_count = sum(1 for sub in subs if 0 in sub.origins)
     assert big_origin_count > small_a_origin_count
 
 
@@ -141,17 +141,17 @@ def test_split_slices_are_whole_native_chunks(body):
     native_chunks = chunk_text(body, chunk_size)
     assert len(native_chunks) > 3, "test payload must span several native chunks"
 
-    split = collect_sub_batches(
+    subs = collect_sub_batches(
         [{"content": body, "document_id": "doc-align"}],
         tokens_per_batch=1_500,
         chunk_size=chunk_size,
     )
 
-    assert len(split.sub_batches) > 1, "payload should have been sliced"
+    assert len(subs) > 1, "payload should have been sliced"
     rechunked: list[str] = []
-    for sub_batch, count in zip(split.sub_batches, split.chunk_counts):
-        slice_chunks = chunk_text(sub_batch[0]["content"], chunk_size)
-        assert len(slice_chunks) == count, "chunk_counts must match what the slice re-chunks to"
+    for sub in subs:
+        slice_chunks = chunk_text(sub.contents[0]["content"], chunk_size)
+        assert len(slice_chunks) == sub.chunk_count, "chunk_count must match what the slice re-chunks to"
         rechunked.extend(slice_chunks)
 
     assert rechunked == native_chunks, "slices did not reproduce the document's native chunks"
@@ -183,14 +183,14 @@ def test_split_falls_back_to_one_chunk_per_slice_when_no_faithful_join_exists(mo
     # `chunk_text` is `list(iter_chunks(...))`, so this covers the rejoin verification too.
     monkeypatch.setattr(fact_extraction, "iter_chunks", _fake_iter_chunks)
 
-    split = collect_sub_batches(
+    subs = collect_sub_batches(
         [{"content": body, "document_id": "doc-unjoinable"}],
         tokens_per_batch=100,
         chunk_size=3000,
     )
 
-    assert [b[0]["content"] for b in split.sub_batches] == chunks
-    assert split.chunk_counts == [1, 1, 1]
+    assert [sub.contents[0]["content"] for sub in subs] == chunks
+    assert [sub.chunk_count for sub in subs] == [1, 1, 1]
 
 
 def test_split_slice_never_cuts_a_native_chunk_under_a_tiny_budget():
@@ -203,14 +203,14 @@ def test_split_slice_never_cuts_a_native_chunk_under_a_tiny_budget():
     body = "The quick brown fox jumps over the lazy dog. " * 1_000
     native_chunks = chunk_text(body, 3000)
 
-    split = collect_sub_batches(
+    subs = collect_sub_batches(
         [{"content": body, "document_id": "doc-tiny-budget"}],
         tokens_per_batch=10,
         chunk_size=3000,
     )
 
-    assert [b[0]["content"] for b in split.sub_batches] == native_chunks
-    assert split.chunk_counts == [1] * len(native_chunks)
+    assert [sub.contents[0]["content"] for sub in subs] == native_chunks
+    assert [sub.chunk_count for sub in subs] == [1] * len(native_chunks)
 
 
 def test_split_small_batch_returns_single_sub_batch():
@@ -221,11 +221,11 @@ def test_split_small_batch_returns_single_sub_batch():
         {"content": "Bob loves Python", "document_id": "doc-2"},
     ]
 
-    split = collect_sub_batches(contents, tokens_per_batch, chunk_size=3000)
+    subs = collect_sub_batches(contents, tokens_per_batch, chunk_size=3000)
 
-    assert len(split.sub_batches) == 1
-    assert split.sub_batches[0] == contents
-    assert split.origin_indices == [[0, 1]]
+    assert len(subs) == 1
+    assert subs[0].contents == contents
+    assert subs[0].origins == [0, 1]
 
 
 # ---------------------------------------------------------------------------

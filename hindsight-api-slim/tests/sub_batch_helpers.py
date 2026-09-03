@@ -10,31 +10,14 @@ mean shipping a function nothing in production calls, and CI's dead-code check w
 right to flag it.
 """
 
-from dataclasses import dataclass, field
-
 from hindsight_api.config import HindsightConfig
 from hindsight_api.engine.memory_engine import (
     RetainContentDict,
     ScreenedDocumentBody,
     _iter_raw_sub_batches,
+    _RawSubBatch,
     iter_sub_batches,
 )
-
-
-@dataclass
-class CollectedSplit:
-    """Every sub-batch of one split, as parallel lists indexed together.
-
-    ``sub_batches[i]`` is the content items of sub-batch ``i``; ``origin_indices[i]`` the
-    indices into the submitted contents that fed it; ``document_body_overrides[i]`` the full
-    original body when ``i`` is a slice of an oversized item, else ``None``; and
-    ``chunk_counts[i]`` how many native chunks it holds.
-    """
-
-    sub_batches: list[list[RetainContentDict]] = field(default_factory=list)
-    origin_indices: list[list[int]] = field(default_factory=list)
-    document_body_overrides: list[str | None] = field(default_factory=list)
-    chunk_counts: list[int] = field(default_factory=list)
 
 
 def collect_sub_batches(
@@ -43,20 +26,16 @@ def collect_sub_batches(
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
-) -> CollectedSplit:
-    """Drain the raw splitter into a ``CollectedSplit``."""
-    collected = CollectedSplit()
-    for raw in _iter_raw_sub_batches(
-        contents,
-        tokens_per_batch,
-        chunk_size=chunk_size,
-        structured_chunk_size=structured_chunk_size,
-    ):
-        collected.sub_batches.append(raw.contents)
-        collected.origin_indices.append(raw.origins)
-        collected.document_body_overrides.append(raw.body_override)
-        collected.chunk_counts.append(raw.chunk_count)
-    return collected
+) -> list[_RawSubBatch]:
+    """Drain the raw splitter, so a test can index into the split it produced."""
+    return list(
+        _iter_raw_sub_batches(
+            contents,
+            tokens_per_batch,
+            chunk_size=chunk_size,
+            structured_chunk_size=structured_chunk_size,
+        )
+    )
 
 
 def collect_screened_bodies(

@@ -6,6 +6,7 @@ Uses the LLMConfig wrapper for all LLM calls.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -114,6 +115,36 @@ def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | N
 
 def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
+
+
+# How much of a body is sanitized and encoded to bytes at a time when hashing it. Slicing a
+# ``str`` by character index never splits a character, so the windows concatenate back to the
+# whole string exactly — this only bounds how much of it exists at once, never what is hashed.
+_HASH_WINDOW_CHARS = 1024 * 1024
+
+
+def derive_document_content_hash(text: str) -> str:
+    """The ``documents.content_hash`` of a body: ``sha256`` of its sanitized text.
+
+    One definition for every writer of that column, so a row written by the streaming path,
+    the delta path or the un-sliced path all agree. That matters because the paths compare
+    these values against *each other* as an ownership check — a second spelling of the rule
+    does not raise, it silently stops matching and re-extracts unchanged history.
+
+    Named ``derive_`` to distinguish it from ``MemoriesStore.document_content_hash``, which
+    reads the stored value; the retain orchestrator calls both.
+
+    Sanitizing rides along with the windowing rather than happening first, so a 45 MB body
+    costs a window instead of two more full copies of itself (#3756). That is exact, not an
+    approximation: ``_sanitize_text`` deletes a fixed character class with no cross-character
+    context, so sanitizing per window produces the same bytes as sanitizing the whole string.
+    If that ever stops holding the digest silently changes, which is why
+    ``test_derived_hash_equals_sanitizing_the_whole_body_first`` pins it across boundaries.
+    """
+    digest = hashlib.sha256()
+    for start in range(0, len(text), _HASH_WINDOW_CHARS):
+        digest.update((_sanitize_text(text[start : start + _HASH_WINDOW_CHARS]) or "").encode())
+    return digest.hexdigest()
 
 
 def _coerce_entity_strings(v: Any) -> Any:
