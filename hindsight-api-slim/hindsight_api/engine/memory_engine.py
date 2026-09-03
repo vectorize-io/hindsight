@@ -1942,6 +1942,25 @@ outside ``str | None`` to say the caller isn't moving anything.
 """
 
 
+def _provider_default_base_url(provider: str | None) -> str:
+    """The base URL a provider needs when the caller did not supply one.
+
+    Mirrors the inline ladder the retain slot applies a few lines below its own
+    resolution. Kept as a function because the vision slot needs the same answer
+    and silently getting it wrong means requests going to the default OpenAI
+    host with someone else's key.
+    """
+    match (provider or "").lower():
+        case "groq":
+            return "https://api.groq.com/openai/v1"
+        case "ollama":
+            return "http://localhost:11434/v1"
+        case "ollama-cloud":
+            return "https://ollama.com/v1"
+        case _:
+            return ""
+
+
 class MemoryEngine(MemoryEngineInterface):
     """
     Advanced memory system using temporal and semantic linking with PostgreSQL.
@@ -2228,6 +2247,52 @@ class MemoryEngine(MemoryEngineInterface):
             **retain_call_defaults.as_kwargs(),
         )
         self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_", retain_call_defaults)
+
+        # Vision slot. Extraction uses this only for a chunk that actually
+        # carries an attachment; every other chunk keeps using the retain LLM.
+        #
+        # Without it, one screenshot anywhere in a bank forced *every* retain
+        # call onto a vision-capable model, which is both slower and materially
+        # more expensive for the text-only chunks that are the vast majority.
+        if config.vlm_provider or config.vlm_model or config.vlm_api_key or config.vlm_base_url:
+            vlm_provider = config.vlm_provider or retain_provider
+            _vlm_base_llm = LLMConfig(
+                provider=vlm_provider,
+                api_key=config.vlm_api_key or retain_api_key,
+                # A base URL follows its own provider: naming a vlm_provider
+                # without a URL must resolve *that* provider's default, never
+                # inherit the retain provider's host — which would send the
+                # request to the wrong endpoint carrying the wrong key.
+                base_url=(
+                    config.vlm_base_url
+                    or (_provider_default_base_url(vlm_provider) if config.vlm_provider else retain_base_url)
+                ),
+                model=config.vlm_model or retain_model,
+                reasoning_effort=config.retain_llm_reasoning_effort or config.llm_reasoning_effort,
+                extra_body=config.retain_llm_extra_body or config.llm_extra_body,
+                default_headers=config.llm_default_headers,
+                cache_affinity=config.retain_llm_cache_affinity or config.llm_cache_affinity,
+                ollama_num_ctx=config.llm_ollama_num_ctx,
+                bedrock_service_tier=config.llm_bedrock_service_tier,
+                structured_output_forced_tool=config.llm_structured_output_forced_tool,
+                gemini_service_tier=config.llm_gemini_service_tier,
+                groq_service_tier=config.llm_groq_service_tier,
+                openai_service_tier=config.llm_openai_service_tier,
+                gemini_safety_settings=_llm_gemini_safety_settings,
+                prompt_cache_enabled=config.llm_prompt_cache_enabled,
+                codex_home=config.llm_codex_home,
+                vertexai_project_id=config.llm_vertexai_project_id,
+                vertexai_region=config.llm_vertexai_region,
+                vertexai_service_account_key=config.llm_vertexai_service_account_key,
+                **retain_call_defaults.as_kwargs(),
+            )
+            self._vlm_config = _build_llm(_vlm_base_llm, config, "retain_", retain_call_defaults)
+        else:
+            # Unset: attachments go to the retain LLM, exactly as before. Sharing
+            # the object rather than copying it also keeps a MultiLLMProvider
+            # retain chain intact — it is not a dataclass, so it cannot be
+            # rebuilt field-by-field the way a plain LLMConfig can.
+            self._vlm_config = self._retain_llm_config
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -5982,6 +6047,7 @@ class MemoryEngine(MemoryEngineInterface):
                 pool=self._backend,
                 embeddings_model=self.embeddings,
                 llm_config=retain_llm,
+                vlm_config=self._vlm_config,
                 entity_resolver=self.entity_resolver,
                 format_date_fn=self._format_readable_date,
                 bank_id=bank_id,
@@ -6410,7 +6476,12 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning("Could not delete attachment blob %s; row is gone", row["storage_key"], exc_info=True)
 
     def _require_vision_capable_retain_llm(self) -> None:
-        """Refuse an image-bearing retain the configured retain LLM cannot read.
+        """Refuse an image-bearing retain the configured vision LLM cannot read.
+
+        Checks the **vision slot**, which is the model that will actually be
+        handed the attachment. That is the retain LLM unless HINDSIGHT_API_VLM_*
+        names a different one — the whole point of the slot being that the retain
+        LLM is then free to be a cheap text-only model.
 
         Failing here — before a single byte is written — is deliberate. The
         alternative, extracting from the prose and quietly ignoring the images,
@@ -6432,22 +6503,23 @@ class MemoryEngine(MemoryEngineInterface):
                 "images, or send the content as text only."
             )
 
-        supported = self._retain_llm_config.supports_vision()
+        supported = self._vlm_config.supports_vision()
         if supported:
             return
 
-        model = f"{self._retain_llm_config.provider}/{self._retain_llm_config.model}"
+        model = f"{self._vlm_config.provider}/{self._vlm_config.model}"
         if supported is False:
             raise VisionNotSupportedError(
-                f"The configured retain LLM ({model}) cannot read images, but this retain "
-                f"carries inline image content. Configure a vision-capable model via "
-                f"HINDSIGHT_API_RETAIN_LLM_MODEL, or send the content as text only."
+                f"The model configured to read attachments ({model}) cannot read images, but "
+                f"this retain carries inline image content. Point HINDSIGHT_API_VLM_MODEL at a "
+                f"vision-capable model — attachment-bearing chunks alone use it, so the retain "
+                f"LLM can stay text-only — or send the content as text only."
             )
         raise VisionNotSupportedError(
-            f"Hindsight cannot tell whether the configured retain LLM ({model}) can read "
-            f"images, and this retain carries inline image content. If that model is "
-            f"vision-capable, set HINDSIGHT_API_LLM_VISION=true; otherwise send the content "
-            f"as text only."
+            f"Hindsight cannot tell whether the model configured to read attachments ({model}) "
+            f"can read images, and this retain carries inline image content. If that model is "
+            f"vision-capable, set HINDSIGHT_API_LLM_VISION=true; otherwise point "
+            f"HINDSIGHT_API_VLM_MODEL at one that is, or send the content as text only."
         )
 
     async def store_retain_attachments(
@@ -11192,6 +11264,7 @@ class MemoryEngine(MemoryEngineInterface):
             text=content,
             event_date=event_date,
             llm_config=retain_llm,
+            vlm_config=self._vlm_config,
             config=resolved_config,
             context=context,
             agent_name=agent_name,

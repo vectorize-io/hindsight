@@ -1042,6 +1042,7 @@ async def _extract_and_embed(
     operation_id: str | None = None,
     schema: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> tuple[list, list[ProcessedFact], list[ChunkMetadata], TokenUsage]:
     """
     Shared pipeline: extract facts from contents and generate embeddings.
@@ -1060,7 +1061,14 @@ async def _extract_and_embed(
     # so in the item's `context`, which extraction already reads and which the dry-run
     # `agent_name` override is deprecated in favour of.
     extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, config, pool, operation_id, schema, attachment_loader=attachment_loader
+        contents,
+        llm_config,
+        config,
+        pool,
+        operation_id,
+        schema,
+        attachment_loader=attachment_loader,
+        vlm_config=vlm_config,
     )
     log_buffer.append(
         f"  Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks "
@@ -1195,6 +1203,7 @@ async def retain_batch(
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
     audit_logger: Any = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None]:
     """
     Process a batch of content through the retain pipeline.
@@ -1717,6 +1726,7 @@ async def retain_batch(
             delta_full_body=_delta_full_body,
             append_base_hash=append_base_hash,
             attachment_loader=attachment_loader,
+            vlm_config=vlm_config,
         )
         if delta_result is not None:
             return delta_result
@@ -1801,6 +1811,7 @@ async def retain_batch(
         append_base_watermark=append_base_watermark,
         force_reextract=force_reextract,
         attachment_loader=attachment_loader,
+        vlm_config=vlm_config,
     )
 
 
@@ -2220,6 +2231,7 @@ async def _streaming_retain_batch(
     append_base_watermark: int | None = None,
     force_reextract: bool = False,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -2525,6 +2537,7 @@ async def _streaming_retain_batch(
                     operation_id,
                     schema,
                     attachment_loader=attachment_loader,
+                    vlm_config=vlm_config,
                 )
             finally:
                 reset_call_metadata(meta_token)
@@ -3442,6 +3455,7 @@ async def _try_delta_retain(
     delta_full_body: str | None = None,
     append_base_hash: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    vlm_config: "LLMConfig | None" = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None] | None:
     """
     Attempt delta retain for a document upsert. Returns result tuple if delta
@@ -3758,6 +3772,7 @@ async def _try_delta_retain(
             operation_id,
             schema,
             attachment_loader=attachment_loader,
+            vlm_config=vlm_config,
         )
     finally:
         reset_call_metadata(meta_token)

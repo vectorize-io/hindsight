@@ -354,6 +354,16 @@ ENV_RETAIN_LLM_PROVIDER = "HINDSIGHT_API_RETAIN_LLM_PROVIDER"
 ENV_RETAIN_LLM_API_KEY = "HINDSIGHT_API_RETAIN_LLM_API_KEY"
 ENV_RETAIN_LLM_MODEL = "HINDSIGHT_API_RETAIN_LLM_MODEL"
 ENV_RETAIN_LLM_BASE_URL = "HINDSIGHT_API_RETAIN_LLM_BASE_URL"
+
+# The vision slot. Extraction uses these ONLY for a chunk that actually carries
+# an attachment, falling back to the retain LLM (and then the base LLM) when
+# unset — so a bank can keep a cheap text model for the overwhelming majority of
+# chunks and pay for a vision model only where one is needed. Before this, a
+# single attachment anywhere forced the whole bank onto a vision-capable model.
+ENV_VLM_PROVIDER = "HINDSIGHT_API_VLM_PROVIDER"
+ENV_VLM_API_KEY = "HINDSIGHT_API_VLM_API_KEY"
+ENV_VLM_MODEL = "HINDSIGHT_API_VLM_MODEL"
+ENV_VLM_BASE_URL = "HINDSIGHT_API_VLM_BASE_URL"
 ENV_RETAIN_LLM_MAX_CONCURRENT = "HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT"
 ENV_RETAIN_LLM_MAX_RETRIES = "HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES"
 ENV_RETAIN_LLM_INITIAL_BACKOFF = "HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF"
@@ -2648,6 +2658,14 @@ class HindsightConfig:
     retain_llm_api_key: str | None
     retain_llm_model: str | None
     retain_llm_base_url: str | None
+
+    # Vision slot, used only for chunks carrying an attachment. Each falls back
+    # to the corresponding retain_llm_* value, so leaving these unset reproduces
+    # the previous behaviour exactly.
+    vlm_provider: str | None
+    vlm_api_key: str | None
+    vlm_model: str | None
+    vlm_base_url: str | None
     retain_llm_max_concurrent: int | None
     retain_llm_max_retries: int | None
     retain_llm_initial_backoff: float | None
@@ -3133,6 +3151,7 @@ class HindsightConfig:
         # API Keys
         "llm_api_key",
         "retain_llm_api_key",
+        "vlm_api_key",
         "reflect_llm_api_key",
         "consolidation_llm_api_key",
         # LiteLLM Router chains — entries embed api_keys and base_urls
@@ -3150,6 +3169,7 @@ class HindsightConfig:
         # Base URLs (could expose infrastructure)
         "llm_base_url",
         "retain_llm_base_url",
+        "vlm_base_url",
         "reflect_llm_base_url",
         "consolidation_llm_base_url",
         "embeddings_tei_base_url",
@@ -3713,6 +3733,11 @@ class HindsightConfig:
                 else None
             ),
             retain_llm_base_url=os.getenv(ENV_RETAIN_LLM_BASE_URL) or None,
+            vlm_provider=os.getenv(ENV_VLM_PROVIDER) or None,
+            vlm_api_key=os.getenv(ENV_VLM_API_KEY) or None,
+            vlm_model=os.getenv(ENV_VLM_MODEL)
+            or (_get_default_model_for_provider(os.getenv(ENV_VLM_PROVIDER)) if os.getenv(ENV_VLM_PROVIDER) else None),
+            vlm_base_url=os.getenv(ENV_VLM_BASE_URL) or None,
             fireworks_account_id=os.getenv(ENV_FIREWORKS_ACCOUNT_ID) or None,
             fireworks_batch_base_url=os.getenv(ENV_FIREWORKS_BATCH_BASE_URL) or DEFAULT_FIREWORKS_BATCH_BASE_URL,
             fireworks_batch_max_wait_seconds=int(
