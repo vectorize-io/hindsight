@@ -194,6 +194,7 @@ async def handle_document_tracking(
     document_tags: list[str] | None = None,
     ops=None,
     store_document_text: bool | None = None,
+    attachment_filenames: dict[str, str] | None = None,
 ) -> None:
     """
     Handle document tracking in the database (full-replace mode).
@@ -209,6 +210,10 @@ async def handle_document_tracking(
         is_first_batch: Whether this is the first batch (for chunked operations)
         retain_params: Optional parameters passed during retain (context, event_date, etc.)
         document_tags: Optional list of tags to associate with the document
+        attachment_filenames: Short id -> the name the caller gave that attachment in
+            this document. Recorded on the document edge rather than the blob, since
+            a filename describes the reference and the same bytes can carry a
+            different name in another document.
         ops: Backend-specific DataAccessOps. Required by the inner
             ``delete_stale_observations_for_memories`` call to choose the PG
             (native array) vs Oracle (junction table) read path. Defaults to
@@ -309,6 +314,7 @@ async def handle_document_tracking(
         document_tags,
         preserved_created_at=preserved_created_at,
         store_document_text=store_document_text,
+        attachment_filenames=attachment_filenames,
     )
 
 
@@ -320,6 +326,7 @@ async def upsert_document_metadata(
     retain_params: dict | None = None,
     document_tags: list[str] | None = None,
     store_document_text: bool | None = None,
+    attachment_filenames: dict[str, str] | None = None,
 ) -> None:
     """
     Update document metadata without deleting existing facts/chunks.
@@ -341,6 +348,7 @@ async def upsert_document_metadata(
         retain_params,
         document_tags,
         store_document_text=store_document_text,
+        attachment_filenames=attachment_filenames,
     )
 
 
@@ -354,6 +362,7 @@ async def _upsert_document_row(
     document_tags: list[str] | None = None,
     preserved_created_at: datetime | None = None,
     store_document_text: bool | None = None,
+    attachment_filenames: dict[str, str] | None = None,
 ) -> None:
     """Insert or update a document row.
 
@@ -398,10 +407,16 @@ async def _upsert_document_row(
         document_tags or [],
         preserved_created_at,
     )
-    await sync_document_attachments(conn, bank_id, document_id, combined_content)
+    await sync_document_attachments(conn, bank_id, document_id, combined_content, attachment_filenames)
 
 
-async def sync_document_attachments(conn, bank_id: str, document_id: str, text: str) -> None:
+async def sync_document_attachments(
+    conn,
+    bank_id: str,
+    document_id: str,
+    text: str,
+    filenames: dict[str, str] | None = None,
+) -> None:
     """Record which attachments this document references, derived from its text.
 
     Called on every document write, from the one place every write funnels
@@ -410,13 +425,41 @@ async def sync_document_attachments(conn, bank_id: str, document_id: str, text: 
     append or a delta re-extraction cannot leave this table disagreeing with it.
     That is why the retain pipeline itself knows nothing about attachments.
 
-    The rows exist for lifecycle, not for reads — a chunk's own text is what
-    recall resolves. They die with the document via the composite FK, so after a
-    delete a blob that no row in the bank still references can be reclaimed.
+    The rows exist for lifecycle and for the filename — a chunk's own text is
+    what recall resolves. They die with the document via the composite FK, so
+    after a delete a blob that no row in the bank still references can be
+    reclaimed.
+
+    ``filenames`` maps short id to the name the caller gave that attachment *in
+    this document*. It lives here rather than on the blob because a filename
+    describes the reference, not the bytes: the same PDF can be "policy-v1.pdf"
+    in one document and "escalation-runbook.pdf" in another, and the blob row is
+    written once for the first of them. Absent (an append, a delta re-extraction,
+    a reprocess replaying stored text) the existing names are carried over, so a
+    write that does not restate them does not erase them.
     """
     from .attachment_content import iter_placeholder_ids
 
     referenced = sorted(set(iter_placeholder_ids(text or "")))
+
+    # Names already recorded for this document, so a write that does not restate
+    # them (append, delta re-extraction, reprocess from stored text) keeps them
+    # rather than blanking the column on the delete below.
+    existing = {
+        row["short_id"]: row["filename"]
+        for row in await conn.fetch(
+            f"""
+            SELECT ba.short_id, da.filename
+            FROM {fq_table("document_attachments")} da
+            JOIN {fq_table("attachments")} ba
+              ON ba.bank_id = da.bank_id AND ba.attachment_hash = da.attachment_hash
+            WHERE da.bank_id = $1 AND da.document_id = $2 AND da.filename IS NOT NULL
+            """,
+            bank_id,
+            document_id,
+        )
+    }
+    resolved = {**existing, **(filenames or {})}
 
     # Delete-then-insert rather than a diff: the set is tiny, and this way a
     # document that lost an attachment on re-ingest cannot keep a stale row.
@@ -431,15 +474,18 @@ async def sync_document_attachments(conn, bank_id: str, document_id: str, text: 
     # resolve through attachments rather than storing a second key shape.
     await conn.execute(
         f"""
-        INSERT INTO {fq_table("document_attachments")} (bank_id, document_id, attachment_hash)
-        SELECT $1, $2, attachment_hash
+        INSERT INTO {fq_table("document_attachments")} (bank_id, document_id, attachment_hash, filename)
+        SELECT $1, $2, attachment_hash, names.filename
         FROM {fq_table("attachments")}
-        WHERE bank_id = $1 AND short_id = ANY($3::text[])
+        LEFT JOIN unnest($3::text[], $4::text[]) AS names(short_id, filename)
+          ON names.short_id = {fq_table("attachments")}.short_id
+        WHERE bank_id = $1 AND {fq_table("attachments")}.short_id = ANY($3::text[])
         ON CONFLICT (bank_id, document_id, attachment_hash) DO NOTHING
         """,
         bank_id,
         document_id,
         referenced,
+        [resolved.get(short_id) for short_id in referenced],
     )
 
 

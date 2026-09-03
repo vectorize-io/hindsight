@@ -157,6 +157,7 @@ async def _seed_fact_row(memory: MemoryEngine, bank_id: str, text: str) -> str:
                     occurred_start=None,
                     occurred_end=None,
                     mentioned_at=None,
+                    attachment_ids=[],
                 )
             ],
             document_id=None,

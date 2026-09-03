@@ -122,6 +122,8 @@ class RetainContentDict(TypedDict, total=False):
         resolve_entities: Whether the supplied `entities` are resolved against the bank's
             existing entities (optional, default True). False takes them literally.
         tags: Visibility scope tags for this content item (optional)
+        attachment_filenames: Short attachment id -> filename, for inline attachments
+            in this item (optional)
         observation_scopes: How to scope observations for consolidation (optional).
             "per_tag" runs one pass per individual tag; "combined" (default) runs a
             single pass with all tags; "shared" runs a single pass over one global,
@@ -180,6 +182,11 @@ class RetainContent:
     # takes them literally; extracted entities are always resolved either way (#3479).
     resolve_entities: bool = True
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
+    #: Short attachment id -> the name the caller gave it in *this* item. Carried
+    #: to `sync_document_attachments`, which records it on the document edge: a
+    #: filename describes the reference, not the bytes, so the same PDF can be
+    #: "policy-v1.pdf" here and "escalation-runbook.pdf" in another document.
+    attachment_filenames: dict[str, str] = field(default_factory=dict)
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )

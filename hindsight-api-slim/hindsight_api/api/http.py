@@ -206,6 +206,7 @@ from hindsight_api.engine.retain.attachment_content import (
     contains_placeholder_like,
     iter_placeholder_ids,
     neutralize_placeholders,
+    short_attachment_id,
 )
 from hindsight_api.engine.retain.attachment_content import ContentBlock as CanonicalBlock
 from hindsight_api.engine.retain.attachment_store import StoredAttachment
@@ -8514,6 +8515,17 @@ def _register_routes(app: FastAPI):
                 if effective not in strategy_groups:
                     strategy_groups[effective] = []
                 content_dict: dict = {"content": canonical.text}
+                # The names this item gave its attachments, recorded against the
+                # document rather than the blob — the same bytes can be attached
+                # under a different name elsewhere, and the blob row is written
+                # once, for whichever document got there first.
+                item_filenames = {
+                    short_attachment_id(attachment.attachment_hash): attachment.filename
+                    for attachment in canonical.attachments
+                    if attachment.filename
+                }
+                if item_filenames:
+                    content_dict["attachment_filenames"] = item_filenames
                 if item.timestamp == "unset":
                     content_dict["event_date"] = None
                 elif item.timestamp:

@@ -51,6 +51,10 @@ class StoredAttachment:
     storage_key: str
     #: "attachment" or "file", as the caller wrote it. Decides the prompt part shape.
     kind: str = "attachment"
+    #: The name this attachment was given *in the document being read*. Not a
+    #: property of the blob — it lives on `document_attachments` — so it is None
+    #: whenever the reader had no document in hand (the byte-serving endpoint,
+    #: the reclaim sweep).
     filename: str | None = None
 
 
@@ -101,25 +105,43 @@ async def store_images(
     return stored
 
 
-async def load_bank_attachments(conn, bank_id: str, attachment_ids: Sequence[str]) -> dict[str, StoredAttachment]:
+async def load_bank_attachments(
+    conn,
+    bank_id: str,
+    attachment_ids: Sequence[str],
+    document_id: str | None = None,
+) -> dict[str, StoredAttachment]:
     """Resolve short attachment ids — as found in a document or chunk's text — to records.
 
     Keyed by ``short_id``, which is what a placeholder carries. Ids with no row
     are simply absent from the result. That is not an error: a document retained
     before its blob was reclaimed still names the id in its text, and a caller
     rendering provenance should show the fact without the attachment rather than fail.
+
+    ``document_id`` fills in ``filename``, which lives on the document edge rather
+    than the blob — the same bytes can be attached under a different name in
+    another document. Callers with no document in hand (serving the bytes,
+    sweeping for orphans) omit it and get ``filename=None``, which neither needs.
     """
     if not attachment_ids:
         return {}
 
+    # LEFT JOIN, and on a NULL document_id it matches nothing: a caller without a
+    # document still gets every blob, just with no name for it.
     rows = await conn.fetch(
         f"""
-        SELECT attachment_hash, short_id, media_type, byte_size, storage_key, kind, filename
-        FROM {fq_table("attachments")}
-        WHERE bank_id = $1 AND short_id = ANY($2::text[])
+        SELECT ba.attachment_hash, ba.short_id, ba.media_type, ba.byte_size, ba.storage_key,
+               ba.kind, da.filename
+        FROM {fq_table("attachments")} ba
+        LEFT JOIN {fq_table("document_attachments")} da
+          ON da.bank_id = ba.bank_id
+         AND da.attachment_hash = ba.attachment_hash
+         AND da.document_id = $3
+        WHERE ba.bank_id = $1 AND ba.short_id = ANY($2::text[])
         """,
         bank_id,
         list(dict.fromkeys(attachment_ids)),
+        document_id,
     )
     return {
         row["short_id"]: StoredAttachment(
@@ -151,10 +173,24 @@ class RetainAttachmentLoader:
     fetch, while an unbounded cache costs the worker.
     """
 
-    def __init__(self, file_storage, backend, bank_id: str, *, max_cached_bytes: int = 64 * 1024 * 1024) -> None:
+    def __init__(
+        self,
+        file_storage,
+        backend,
+        bank_id: str,
+        *,
+        filenames: dict[str, str] | None = None,
+        max_cached_bytes: int = 64 * 1024 * 1024,
+    ) -> None:
         self._file_storage = file_storage
         self._backend = backend
         self._bank_id = bank_id
+        # Short id -> the name the caller gave it in this retain. The blob row no
+        # longer carries a filename (it belongs to the reference, not the bytes),
+        # and the document edge does not exist yet while extraction is running —
+        # the document row is written later in the same retain. So the names come
+        # from the request, which is where they were anyway.
+        self._filenames = filenames or {}
         self._max_cached_bytes = max_cached_bytes
         self._cache: dict[str, LoadedAttachment] = {}
         self._cached_bytes = 0
@@ -194,7 +230,10 @@ class RetainAttachmentLoader:
                 )
                 continue
             loaded = LoadedAttachment(
-                media_type=record.media_type, data=data, kind=record.kind, filename=record.filename
+                media_type=record.media_type,
+                data=data,
+                kind=record.kind,
+                filename=self._filenames.get(attachment_id) or record.filename,
             )
             resolved[attachment_id] = loaded
             async with self._lock:
@@ -230,8 +269,8 @@ async def _record_attachments(conn, bank_id: str, attachments: Sequence[StoredAt
     await conn.executemany(
         f"""
         INSERT INTO {fq_table("attachments")}
-            (bank_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, filename)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            (bank_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (bank_id, attachment_hash) DO NOTHING
         """,
         [
@@ -243,7 +282,6 @@ async def _record_attachments(conn, bank_id: str, attachments: Sequence[StoredAt
                 attachment.byte_size,
                 attachment.storage_key,
                 attachment.kind,
-                attachment.filename,
             )
             for attachment in attachments
         ],

@@ -67,6 +67,7 @@ def _fact():
         occurred_start=None,
         occurred_end=None,
         mentioned_at=None,
+        attachment_ids=[],
     )
 
 

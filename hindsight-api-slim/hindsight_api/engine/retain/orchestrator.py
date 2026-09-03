@@ -518,6 +518,20 @@ def _remap_phase1_results(
     return remapped_entity_to_unit, remapped_unit_to_entity_ids, remapped_semantic
 
 
+def _attachment_filenames_for(contents: "list[RetainContent]") -> dict[str, str]:
+    """Merge the per-item filename maps of everything going into one document.
+
+    A retain item carries the names the caller gave its own attachments; a
+    document can be assembled from several items. Later items win on a clash,
+    which only arises when one document attaches identical bytes twice under two
+    names — in which case either answer is arbitrary and the row holds one name.
+    """
+    merged: dict[str, str] = {}
+    for content in contents:
+        merged.update(content.attachment_filenames)
+    return merged
+
+
 async def _insert_facts_and_links(
     conn,
     entity_resolver,
@@ -2519,6 +2533,7 @@ async def _streaming_retain_batch(
                 entities=source.entities,
                 resolve_entities=source.resolve_entities,
                 tags=source.tags,
+                attachment_filenames=source.attachment_filenames,
                 observation_scopes=source.observation_scopes,
             )
             # Attribute this chunk's extraction LLM call to its document, so the
@@ -2799,6 +2814,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 store_document_text=config.store_document_text,
+                                attachment_filenames=_attachment_filenames_for(contents),
                             )
                         else:
                             # A 0-fact re-ingest still deletes the outgoing memories, in the same
@@ -2813,6 +2829,7 @@ async def _streaming_retain_batch(
                                 merged_tags,
                                 ops=pool.ops,
                                 store_document_text=config.store_document_text,
+                                attachment_filenames=_attachment_filenames_for(contents),
                             )
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted; release
@@ -3005,6 +3022,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 store_document_text=config.store_document_text,
+                                attachment_filenames=_attachment_filenames_for(contents),
                             )
                             log_buffer.append(
                                 f"[streaming] Document {effective_doc_id} updated "
@@ -3021,6 +3039,7 @@ async def _streaming_retain_batch(
                                 merged_tags,
                                 ops=pool.ops,
                                 store_document_text=config.store_document_text,
+                                attachment_filenames=_attachment_filenames_for(contents),
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
                         doc_tracking_done[0] = True
@@ -3263,6 +3282,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 store_document_text=config.store_document_text,
+                                attachment_filenames=_attachment_filenames_for(contents),
                             )
                         else:
                             # A no-facts re-ingest still deletes the outgoing memories, in the same
@@ -3277,6 +3297,7 @@ async def _streaming_retain_batch(
                                 merged_tags,
                                 ops=pool.ops,
                                 store_document_text=config.store_document_text,
+                                attachment_filenames=_attachment_filenames_for(contents),
                             )
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted and won't be
@@ -3884,6 +3905,7 @@ async def _try_delta_retain(
                     combined_content,
                     retain_params,
                     merged_tags,
+                    attachment_filenames=_attachment_filenames_for(contents),
                 )
                 # Re-store the document's bodies in the store's document store with the
                 # FULL new chunk set — put_document dedups by content hash, so unchanged chunks and
@@ -4134,6 +4156,7 @@ async def _delta_metadata_only(
                 combined_content,
                 retain_params,
                 merged_tags,
+                attachment_filenames=_attachment_filenames_for(contents),
             )
             await fact_storage.update_memory_units_metadata_and_tags(
                 conn,
@@ -4184,6 +4207,7 @@ def _build_contents(contents_dicts: list[RetainContentDict], document_tags: list
             entities=item.get("entities", []),
             resolve_entities=item.get("resolve_entities", True),
             tags=merged_tags,
+            attachment_filenames=item.get("attachment_filenames") or {},
             observation_scopes=item.get("observation_scopes"),
         )
         contents.append(content)

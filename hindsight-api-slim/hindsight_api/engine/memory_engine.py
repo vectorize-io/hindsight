@@ -6101,7 +6101,18 @@ class MemoryEngine(MemoryEngineInterface):
                 audit_logger=self._audit_logger,
                 # One loader per retain, so a document that shows the same image in
                 # several sections fetches its bytes once rather than once per chunk.
-                attachment_loader=RetainAttachmentLoader(self._file_storage, self._backend, bank_id),
+                attachment_loader=RetainAttachmentLoader(
+                    self._file_storage,
+                    self._backend,
+                    bank_id,
+                    # The document edge that holds the filenames is written later
+                    # in this same retain, so take them from the request.
+                    filenames={
+                        short_id: name
+                        for item in contents
+                        for short_id, name in (item.get("attachment_filenames") or {}).items()
+                    },
+                ),
             )
             # Map the created facts onto this retain's trace so the trace view can
             # show which memories the ingestion produced.
@@ -6315,7 +6326,7 @@ class MemoryEngine(MemoryEngineInterface):
             rows = await conn.fetch(
                 f"""
                 SELECT da.document_id, ba.attachment_hash, ba.short_id, ba.media_type,
-                       ba.byte_size, ba.storage_key, ba.kind, ba.filename
+                       ba.byte_size, ba.storage_key, ba.kind, da.filename
                 FROM {fq_table("document_attachments")} da
                 JOIN {fq_table("attachments")} ba
                   ON ba.bank_id = da.bank_id AND ba.attachment_hash = da.attachment_hash
@@ -6364,7 +6375,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with backend.acquire() as conn:
             rows = await conn.fetch(
-                f"SELECT chunk_id, chunk_text FROM {fq_table('chunks')} "
+                f"SELECT chunk_id, document_id, chunk_text FROM {fq_table('chunks')} "
                 f"WHERE bank_id = $1 AND chunk_id = ANY($2::text[])",
                 bank_id,
                 list(dict.fromkeys(chunk_ids)),
@@ -6372,15 +6383,27 @@ class MemoryEngine(MemoryEngineInterface):
             ids_by_chunk = {
                 row["chunk_id"]: list(dict.fromkeys(iter_placeholder_ids(row["chunk_text"] or ""))) for row in rows
             }
-            wanted = [i for ids in ids_by_chunk.values() for i in ids]
-            if not wanted:
+            document_by_chunk = {row["chunk_id"]: row["document_id"] for row in rows}
+            if not any(ids_by_chunk.values()):
                 return {}
-            records = await load_bank_attachments(conn, bank_id, wanted)
+            # Per document, because that is where the filename lives; a page of
+            # chunks is usually one document's worth.
+            by_document: dict[str | None, dict[str, StoredAttachment]] = {}
+            for chunk_id, ids in ids_by_chunk.items():
+                document_id = document_by_chunk.get(chunk_id)
+                cached = by_document.setdefault(document_id, {})
+                missing = [i for i in ids if i not in cached]
+                if missing:
+                    cached.update(await load_bank_attachments(conn, bank_id, missing, document_id=document_id))
 
         return {
-            chunk_id: [records[i] for i in ids if i in records]
+            chunk_id: [
+                by_document[document_by_chunk.get(chunk_id)][i]
+                for i in ids
+                if i in by_document[document_by_chunk.get(chunk_id)]
+            ]
             for chunk_id, ids in ids_by_chunk.items()
-            if any(i in records for i in ids)
+            if any(i in by_document[document_by_chunk.get(chunk_id)] for i in ids)
         }
 
     async def attachments_for_memories(
@@ -6413,7 +6436,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with backend.acquire() as conn:
             rows = await conn.fetch(
-                f"SELECT id::text AS id, attachment_ids FROM {fq_table('memory_units')} "
+                f"SELECT id::text AS id, document_id, attachment_ids FROM {fq_table('memory_units')} "
                 f"WHERE bank_id = $1 AND id = ANY($2::uuid[]) AND cardinality(attachment_ids) > 0",
                 bank_id,
                 wanted_units,
@@ -6421,12 +6444,29 @@ class MemoryEngine(MemoryEngineInterface):
             if not rows:
                 return {}
             ids_by_unit = {row["id"]: list(row["attachment_ids"]) for row in rows}
-            records = await load_bank_attachments(conn, bank_id, [i for ids in ids_by_unit.values() for i in ids])
+            document_by_unit = {row["id"]: row["document_id"] for row in rows}
+            # The filename lives on the document edge, so resolve per document.
+            # A page of memories usually spans very few documents, and the common
+            # case is one.
+            by_document: dict[str | None, dict[str, StoredAttachment]] = {}
+            for unit_id, ids in ids_by_unit.items():
+                document_id = document_by_unit.get(unit_id)
+                if document_id not in by_document:
+                    by_document[document_id] = {}
+                missing = [i for i in ids if i not in by_document[document_id]]
+                if missing:
+                    by_document[document_id].update(
+                        await load_bank_attachments(conn, bank_id, missing, document_id=document_id)
+                    )
 
         return {
-            unit_id: [records[i] for i in ids if i in records]
+            unit_id: [
+                by_document[document_by_unit.get(unit_id)][i]
+                for i in ids
+                if i in by_document[document_by_unit.get(unit_id)]
+            ]
             for unit_id, ids in ids_by_unit.items()
-            if any(i in records for i in ids)
+            if any(i in by_document[document_by_unit.get(unit_id)] for i in ids)
         }
 
     async def retrieve_bank_attachment(

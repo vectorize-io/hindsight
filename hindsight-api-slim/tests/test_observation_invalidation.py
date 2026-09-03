@@ -56,6 +56,7 @@ async def _insert_memory(
         occurred_start=None,
         occurred_end=None,
         mentioned_at=None,
+        attachment_ids=[],
     )
     unit_ids = await store.insert_facts(
         conn=conn, ops=memory._backend.ops, bank_id=bank_id, facts=[fact], document_id=document_id

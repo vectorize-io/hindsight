@@ -26,6 +26,14 @@ a short array read with the unit and never queried on its own. Carried on the
 memory, they also travel with a store that owns its own records, which a
 Postgres-side junction table would not.
 
+The ``filename`` sits on ``document_attachments``, not on ``attachments``. A
+filename is a property of the *reference*, not of the bytes: the same PDF can be
+attached to one document as "policy-v1.pdf" and to another as
+"escalation-runbook.pdf", and content-addressing would otherwise make the first
+name win for both (the insert is ON CONFLICT DO NOTHING on the content hash).
+``media_type``, ``byte_size`` and ``kind`` stay on the blob, because those really
+are properties of the content.
+
 ``document_attachments`` — *which documents still reference it?* Derived from the
 placeholders in the canonical text each time a document is written, so it cannot
 drift from the text that is the source of truth. It exists for lifecycle: rows
@@ -73,7 +81,6 @@ def _pg_upgrade() -> None:
             byte_size BIGINT NOT NULL,
             storage_key TEXT NOT NULL,
             kind TEXT NOT NULL DEFAULT 'image',
-            filename TEXT,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
             CONSTRAINT pk_attachments PRIMARY KEY (bank_id, attachment_hash),
             CONSTRAINT fk_attachments_bank FOREIGN KEY (bank_id)
@@ -91,6 +98,7 @@ def _pg_upgrade() -> None:
             bank_id TEXT NOT NULL,
             document_id TEXT NOT NULL,
             attachment_hash VARCHAR(64) NOT NULL,
+            filename TEXT,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
             CONSTRAINT pk_document_attachments PRIMARY KEY (bank_id, document_id, attachment_hash),
             CONSTRAINT fk_document_attachments_document FOREIGN KEY (document_id, bank_id)
@@ -110,15 +118,22 @@ def _pg_upgrade() -> None:
     # the unit and never queried on its own. Defaults to empty rather than NULL
     # so a reader never has to tell "no attachments" from "written before this
     # column existed" — both mean the fact came from text.
-    op.execute(
-        f"ALTER TABLE {schema}memory_units "
-        f"ADD COLUMN IF NOT EXISTS attachment_ids TEXT[] NOT NULL DEFAULT '{{}}'::text[]"
-    )
+    for table in ("memory_units", "invalidated_memory_units"):
+        # The curation archive is created `LIKE memory_units` and its insert
+        # derives the column list from the catalog, so a column added to one and
+        # not the other breaks every invalidate. It also must carry the ids so a
+        # revert restores the fact's provenance — like `causal_links`, they are
+        # extraction output that cannot be recomputed.
+        op.execute(
+            f"ALTER TABLE {schema}{table} "
+            f"ADD COLUMN IF NOT EXISTS attachment_ids TEXT[] NOT NULL DEFAULT '{{}}'::text[]"
+        )
 
 
 def _pg_downgrade() -> None:
     schema = _pg_schema_prefix()
-    op.execute(f"ALTER TABLE {schema}memory_units DROP COLUMN IF EXISTS attachment_ids")
+    for table in ("memory_units", "invalidated_memory_units"):
+        op.execute(f"ALTER TABLE {schema}{table} DROP COLUMN IF EXISTS attachment_ids")
     op.execute(f"DROP INDEX IF EXISTS {schema}idx_document_attachments_bank_hash")
     op.execute(f"DROP TABLE IF EXISTS {schema}document_attachments")
     op.execute(f"DROP INDEX IF EXISTS {schema}uq_attachments_short_id")
@@ -139,7 +154,6 @@ def _oracle_upgrade() -> None:
             byte_size NUMBER NOT NULL,
             storage_key VARCHAR2(1024) NOT NULL,
             kind VARCHAR2(16) DEFAULT 'image' NOT NULL,
-            filename VARCHAR2(1024),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
             CONSTRAINT pk_attachments PRIMARY KEY (bank_id, attachment_hash),
             CONSTRAINT fk_attachments_bank FOREIGN KEY (bank_id)
@@ -154,6 +168,7 @@ def _oracle_upgrade() -> None:
             bank_id VARCHAR2(256) NOT NULL,
             document_id VARCHAR2(512) NOT NULL,
             attachment_hash VARCHAR2(64) NOT NULL,
+            filename VARCHAR2(1024),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
             CONSTRAINT pk_document_attachments PRIMARY KEY (bank_id, document_id, attachment_hash),
             CONSTRAINT fk_document_attachments_document FOREIGN KEY (document_id, bank_id)
@@ -166,14 +181,16 @@ def _oracle_upgrade() -> None:
     # Oracle has no array type in this tree's dialect surface, so the ids are a
     # JSON array in a CLOB — the shape `tags` and `observation_scopes` already
     # take on this backend.
-    op.execute(
-        "ALTER TABLE memory_units ADD (attachment_ids CLOB DEFAULT '[]' NOT NULL "
-        "CONSTRAINT mu_attachment_ids_json CHECK (attachment_ids IS JSON))"
-    )
+    for table, constraint in (("memory_units", "mu"), ("invalidated_memory_units", "imu")):
+        op.execute(
+            f"ALTER TABLE {table} ADD (attachment_ids CLOB DEFAULT '[]' NOT NULL "
+            f"CONSTRAINT {constraint}_attachment_ids_json CHECK (attachment_ids IS JSON))"
+        )
 
 
 def _oracle_downgrade() -> None:
-    op.execute("ALTER TABLE memory_units DROP COLUMN attachment_ids")
+    for table in ("memory_units", "invalidated_memory_units"):
+        op.execute(f"ALTER TABLE {table} DROP COLUMN attachment_ids")
     op.execute("DROP TABLE document_attachments CASCADE CONSTRAINTS")
     op.execute("DROP TABLE attachments CASCADE CONSTRAINTS")
 
