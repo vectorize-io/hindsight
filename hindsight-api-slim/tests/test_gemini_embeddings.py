@@ -17,8 +17,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hindsight_api.config import (
-    ENV_EMBEDDINGS_GEMINI_API_KEY,
-    ENV_EMBEDDINGS_PROVIDER,
     HindsightConfig,
 )
 from hindsight_api.engine.embeddings import (
@@ -55,6 +53,8 @@ def _make_mock_google_module(mock_genai: MagicMock) -> MagicMock:
     mod.genai = mock_genai
     mod.genai.types.EmbedContentConfig = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
     mod.genai.types.HttpOptions = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+    mod.genai.types.Content = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+    mod.genai.types.Part.from_text = MagicMock(side_effect=lambda text="": MagicMock(text=text))
     return mod
 
 
@@ -244,26 +244,20 @@ class TestGeminiEmbeddings:
         emb.encode(["hello"])
         assert mock_client.models.embed_content.call_args.kwargs["config"] is emb._embed_config
 
-    def test_encode_aggregating_model_embeds_one_per_call(self):
-        """Gemini Embedding 2+ aggregates multi-input requests, so each text must
-        be embedded in its own call to keep 1:1 input→vector alignment."""
+    def test_encode_gemini_embedding_2_batches_multiple_inputs(self):
+        """Gemini Embedding 2+ wraps inputs in Content objects so batch_size=100
+        correctly batches texts into a single request with 1:1 vector alignment."""
         emb = GeminiEmbeddings(model="gemini-embedding-2-preview", api_key="test-key", batch_size=100)
         mock_client = MagicMock()
-        mock_client.models.embed_content = MagicMock(
-            side_effect=[
-                _make_mock_embed_result([[0.1]]),
-                _make_mock_embed_result([[0.2]]),
-                _make_mock_embed_result([[0.3]]),
-            ]
-        )
+        mock_client.models.embed_content = MagicMock(return_value=_make_mock_embed_result([[0.1], [0.2], [0.3]]))
         emb._client = mock_client
         emb._dimension = 1
 
         assert emb.encode(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
-        # One call per input despite batch_size=100.
-        assert mock_client.models.embed_content.call_count == 3
-        for call in mock_client.models.embed_content.call_args_list:
-            assert len(call.kwargs["contents"]) == 1
+        # 1 call for 3 inputs when batch_size=100
+        assert mock_client.models.embed_content.call_count == 1
+        call_contents = mock_client.models.embed_content.call_args.kwargs["contents"]
+        assert len(call_contents) == 3
 
     def test_encode_raises_on_misaligned_vector_count(self):
         """A backend that aggregates inputs (returns fewer vectors than texts)
@@ -414,6 +408,12 @@ class TestGeminiEmbeddingsFactory:
         with patch("hindsight_api.config.get_config", return_value=config):
             emb = create_embeddings_from_env()
         assert emb.output_dimensionality == 256
+
+    def test_create_with_batch_size(self):
+        config = self._make_config(embeddings_gemini_batch_size=50)
+        with patch("hindsight_api.config.get_config", return_value=config):
+            emb = create_embeddings_from_env()
+        assert emb.batch_size == 50
 
 
 @pytest.mark.asyncio

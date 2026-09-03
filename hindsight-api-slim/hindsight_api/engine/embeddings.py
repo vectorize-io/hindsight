@@ -1876,9 +1876,8 @@ class GeminiEmbeddings(Embeddings):
 
     Uses the embed_content API: client.models.embed_content(model, contents)
 
-    Gemini Embedding 2+ multimodal models aggregate a multi-input request into a
-    single embedding, so for those the batch size is forced to 1 (one input per
-    call) to keep one vector per input.
+    Each input text is wrapped in a distinct Content object to preserve 1:1
+    input→vector alignment across both text-only and multimodal model families.
     """
 
     def __init__(
@@ -2031,17 +2030,20 @@ class GeminiEmbeddings(Embeddings):
         if not texts:
             return []
 
+        from google.genai import types as genai_types
+
         all_embeddings = []
 
-        # Gemini Embedding 2+ multimodal models return one aggregated vector for a
-        # multi-input request, so embed one input per call to keep 1:1 alignment.
-        batch_size = 1 if _gemini_model_aggregates_inputs(self.model) else self.batch_size
-
         # Process in batches
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
 
-            embed_kwargs = {"model": self.model, "contents": batch}
+            # In the Google GenAI SDK, passing a list of raw strings `["a", "b"]` treats them
+            # as multiple Parts of a single Content (triggering multimodal aggregation into 1 vector
+            # on gemini-embedding-2). Wrapping each text into a distinct Content object preserves
+            # 1:1 input→vector alignment across all models in a single batch request.
+            contents = [genai_types.Content(parts=[genai_types.Part.from_text(text=text)]) for text in batch]
+            embed_kwargs = {"model": self.model, "contents": contents}
             if self._embed_config is not None:
                 embed_kwargs["config"] = self._embed_config
 
@@ -2264,6 +2266,7 @@ def create_embeddings_from_env() -> Embeddings:
             vertexai_region=config.embeddings_vertexai_region,
             vertexai_service_account_key=config.embeddings_vertexai_service_account_key,
             output_dimensionality=config.embeddings_gemini_output_dimensionality,
+            batch_size=config.embeddings_gemini_batch_size,
             force_ipv4=config.embeddings_gemini_force_ipv4,
         )
     else:
