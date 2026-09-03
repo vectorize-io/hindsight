@@ -54,6 +54,7 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 
 # Provider-agnostic pure helpers (text cleanup, quota-defer parsing, json-mode
 # hint). These are module-level utilities, not chat/completions behavior.
@@ -215,9 +216,11 @@ class OpenAIResponsesLLM(LLMInterface):
 
         # Manual retries (max_retries=0). Extract query params from base_url so an
         # Azure-style ``?api-version=`` is forwarded as a default query param.
-        client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
-        if self.default_headers:
-            client_kwargs["default_headers"] = self.default_headers
+        client_kwargs: dict[str, Any] = {
+            "api_key": self.api_key,
+            "max_retries": 0,
+            "default_headers": with_openai_compatible_user_agent(self.default_headers),
+        }
         if self.base_url:
             parsed = urlparse(self.base_url)
             if parsed.query:
