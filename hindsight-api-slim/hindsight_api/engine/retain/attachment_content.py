@@ -48,7 +48,7 @@ _PLACEHOLDER_BODY = "hs-att:"
 #: once an article carries ten screenshots.
 #:
 #: 48 bits needs roughly 16 million attachments in ONE bank before a 1% chance of two
-#: sharing a prefix, and a collision is not silent: ``bank_attachments`` carries a
+#: sharing a prefix, and a collision is not silent: ``attachments`` carries a
 #: unique index on (bank_id, short_id), so the second image fails its insert
 #: loudly instead of having its placeholder quietly resolve to the first one.
 SHORT_ID_LENGTH = 12

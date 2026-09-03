@@ -1,4 +1,4 @@
-"""Add bank_attachments and document_attachments (inline retain attachments).
+"""Add attachments and document_attachments (inline retain attachments).
 
 A retain item's ``content`` may be an ordered list of text, image and file
 blocks. The blocks are flattened at the API boundary into one canonical body in
@@ -10,7 +10,7 @@ re-extraction working unchanged).
 
 Two tables, because they answer two different questions:
 
-``bank_attachments`` — *what is this attachment?* Keyed by ``(bank_id,
+``attachments`` — *what is this attachment?* Keyed by ``(bank_id,
 attachment_hash)``, so one row per distinct attachment per bank however many
 documents carry it. Document text references it by ``short_id``, a prefix of the
 digest, which is all a placeholder can afford to carry; a UNIQUE index on that
@@ -56,7 +56,7 @@ def _pg_upgrade() -> None:
     schema = _pg_schema_prefix()
     op.execute(
         f"""
-        CREATE TABLE IF NOT EXISTS {schema}bank_attachments (
+        CREATE TABLE IF NOT EXISTS {schema}attachments (
             bank_id TEXT NOT NULL,
             attachment_hash VARCHAR(64) NOT NULL,
             short_id VARCHAR(12) NOT NULL,
@@ -66,18 +66,15 @@ def _pg_upgrade() -> None:
             kind TEXT NOT NULL DEFAULT 'image',
             filename TEXT,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-            CONSTRAINT pk_bank_attachments PRIMARY KEY (bank_id, attachment_hash),
-            CONSTRAINT fk_bank_attachments_bank FOREIGN KEY (bank_id)
+            CONSTRAINT pk_attachments PRIMARY KEY (bank_id, attachment_hash),
+            CONSTRAINT fk_attachments_bank FOREIGN KEY (bank_id)
                 REFERENCES {schema}banks(bank_id) ON DELETE CASCADE
         )
         """
     )
     # Document text references an attachment by `short_id`, so that is what
     # resolution looks up — and it must identify exactly one attachment.
-    op.execute(
-        f"CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_attachments_short_id "
-        f"ON {schema}bank_attachments (bank_id, short_id)"
-    )
+    op.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_attachments_short_id ON {schema}attachments (bank_id, short_id)")
 
     op.execute(
         f"""
@@ -104,8 +101,8 @@ def _pg_downgrade() -> None:
     schema = _pg_schema_prefix()
     op.execute(f"DROP INDEX IF EXISTS {schema}idx_document_attachments_bank_hash")
     op.execute(f"DROP TABLE IF EXISTS {schema}document_attachments")
-    op.execute(f"DROP INDEX IF EXISTS {schema}uq_bank_attachments_short_id")
-    op.execute(f"DROP TABLE IF EXISTS {schema}bank_attachments")
+    op.execute(f"DROP INDEX IF EXISTS {schema}uq_attachments_short_id")
+    op.execute(f"DROP TABLE IF EXISTS {schema}attachments")
 
 
 def _oracle_upgrade() -> None:
@@ -114,7 +111,7 @@ def _oracle_upgrade() -> None:
     # bank-scoped tables in this tree make.
     op.execute(
         """
-        CREATE TABLE IF NOT EXISTS bank_attachments (
+        CREATE TABLE IF NOT EXISTS attachments (
             bank_id VARCHAR2(256) NOT NULL,
             attachment_hash VARCHAR2(64) NOT NULL,
             short_id VARCHAR2(12) NOT NULL,
@@ -124,13 +121,13 @@ def _oracle_upgrade() -> None:
             kind VARCHAR2(16) DEFAULT 'image' NOT NULL,
             filename VARCHAR2(1024),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
-            CONSTRAINT pk_bank_attachments PRIMARY KEY (bank_id, attachment_hash),
-            CONSTRAINT fk_bank_attachments_bank FOREIGN KEY (bank_id)
+            CONSTRAINT pk_attachments PRIMARY KEY (bank_id, attachment_hash),
+            CONSTRAINT fk_attachments_bank FOREIGN KEY (bank_id)
                 REFERENCES banks(bank_id) ON DELETE CASCADE
         )
         """
     )
-    op.execute("CREATE UNIQUE INDEX uq_bank_attachments_short_id ON bank_attachments (bank_id, short_id)")
+    op.execute("CREATE UNIQUE INDEX uq_attachments_short_id ON attachments (bank_id, short_id)")
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS document_attachments (
@@ -149,7 +146,7 @@ def _oracle_upgrade() -> None:
 
 def _oracle_downgrade() -> None:
     op.execute("DROP TABLE document_attachments CASCADE CONSTRAINTS")
-    op.execute("DROP TABLE bank_attachments CASCADE CONSTRAINTS")
+    op.execute("DROP TABLE attachments CASCADE CONSTRAINTS")
 
 
 def upgrade() -> None:

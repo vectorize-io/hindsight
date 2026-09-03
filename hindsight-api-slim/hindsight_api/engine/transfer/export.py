@@ -97,9 +97,8 @@ _SKIP_TABLES = frozenset(
         # resolves to nothing, so an imported document keeps its facts and simply
         # cannot show the attachment. Carrying them properly means bundling their
         # bytes into the archive — a deliberate feature, not a line in this set.
-        "bank_attachments",
+        "attachments",
         "document_attachments",
-        "memory_attachments",
         # Curation archive of retired facts — local operational state, not part of
         # the live knowledge the export replays. Its rows mirror memory_units (stale
         # embedding) and snapshot source-bank entity ids that the import re-resolves

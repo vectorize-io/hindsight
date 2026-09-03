@@ -117,7 +117,7 @@ async def test_a_retain_llm_without_vision_is_refused_before_anything_is_written
     # Nothing was stored: not the blob row, not the document.
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
-        assert await conn.fetchval("SELECT count(*) FROM bank_attachments WHERE bank_id = $1", bank_id) == 0
+        assert await conn.fetchval("SELECT count(*) FROM attachments WHERE bank_id = $1", bank_id) == 0
         assert await conn.fetchval("SELECT count(*) FROM documents WHERE bank_id = $1", bank_id) == 0
 
 

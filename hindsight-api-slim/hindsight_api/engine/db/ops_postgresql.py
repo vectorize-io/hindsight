@@ -152,6 +152,7 @@ class PostgreSQLOps(DataAccessOps):
         tags_list: list[str],
         observation_scopes_list: list,
         text_signals_list: list,
+        attachment_ids_list: list,
         text_search_extension: str = "native",
     ) -> list[str]:
         from ...config import get_config
@@ -171,14 +172,15 @@ class PostgreSQLOps(DataAccessOps):
             WITH input_data AS (
                 SELECT * FROM unnest(
                     $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
-                    $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
+                    $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[],
+                    $16::jsonb[]
                 ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
                        context, fact_type, metadata, chunk_id, document_id, tags_json,
-                       observation_scopes_json, text_signals)
+                       observation_scopes_json, text_signals, attachment_ids_json)
             )
             INSERT INTO {table} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
                                  context, fact_type, metadata, chunk_id, document_id, tags,
-                                 observation_scopes, text_signals{sv_insert_col})
+                                 observation_scopes, text_signals, attachment_ids{sv_insert_col})
             SELECT
                 $1,
                 text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
@@ -188,7 +190,14 @@ class PostgreSQLOps(DataAccessOps):
                     '{{}}'::varchar[]
                 ),
                 observation_scopes_json,
-                text_signals{sv_select_val}
+                text_signals,
+                -- Same jsonb-array-to-text[] shape as `tags` just above: asyncpg
+                -- does not bind a list-of-lists to text[][], so each row's ids
+                -- travel as a JSON array and are unpacked here.
+                COALESCE(
+                    (SELECT array_agg(elem) FROM jsonb_array_elements_text(attachment_ids_json) AS elem),
+                    '{{}}'::text[]
+                ){sv_select_val}
             FROM input_data
             RETURNING id
         """
@@ -210,6 +219,7 @@ class PostgreSQLOps(DataAccessOps):
             tags_list,
             observation_scopes_list,
             text_signals_list,
+            attachment_ids_list,
         )
         return [str(row["id"]) for row in results]
 
