@@ -155,7 +155,11 @@ That last point is what turns Memory Defense from a filter into something your s
 
 Some requirements can't be met by any amount of application-level control, because the constraint isn't "who can read this" but "this data does not leave our account."
 
-For those, Hindsight deploys **into your own cloud account** on AWS, GCP, or Azure. On AWS that includes an IAM role template you apply yourself, and **PrivateLink from your application VPC**, so traffic between your application and Hindsight never crosses the public internet.
+For those, Hindsight deploys **into your own cloud account** on AWS, GCP, or Azure.
+
+The deployment is generated for your environment rather than hand-assembled, and it comes with the infrastructure templates you apply in your own account. The permissions Hindsight ends up with are ones you granted and can read.
+
+**Private connectivity comes with it.** Traffic between your application and Hindsight stays on your cloud provider's private network instead of crossing the public internet, using whichever private-endpoint mechanism your provider offers.
 
 **On-premise deployment is also available.** If the requirement is that data never leaves your own hardware, not merely your own cloud account, that's supported as an Enterprise deployment too.
 
@@ -177,7 +181,7 @@ On retain, before content is written.
 No. Entitlement is enforced server-side on the write path.
 
 **We can't put data in a shared environment at all. Is that supported?**
-Yes, either as a bring-your-own-cloud deployment into your own AWS, GCP, or Azure account, with PrivateLink available on AWS, or as an on-premise deployment if the data has to stay on your own hardware.
+Yes, either as a bring-your-own-cloud deployment into your own AWS, GCP, or Azure account, with private connectivity so traffic never crosses the public internet, or as an on-premise deployment if the data has to stay on your own hardware.
 
 **Can we get events pushed to us instead of polling?**
 Yes, through webhooks. Completed retains and consolidations raise events, payloads are HMAC-signed, delivery is asynchronous with retries and a per-delivery history, and Memory Defense violations can be routed to your SIEM.
