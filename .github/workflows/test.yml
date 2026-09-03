@@ -100,6 +100,14 @@ jobs:
             - 'scripts/**'
             - '.python-version'
             - '.env.example'
+            # The workspace lockfile and root manifest determine which versions
+            # the API actually runs against, so a change to either can break it
+            # without touching a line of source. Both are deliberately bare
+            # patterns: they match only the files at the repository root. A
+            # glob such as '**/uv.lock' would pull every integration lockfile
+            # into the core suite.
+            - 'uv.lock'
+            - 'pyproject.toml'
           clients-ts:
             - 'hindsight-clients/typescript/**'
             - 'package.json'
