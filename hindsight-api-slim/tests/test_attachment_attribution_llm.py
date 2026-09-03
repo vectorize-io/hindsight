@@ -11,10 +11,13 @@ nothing, because a screenshot shown beside a fact it does not support is a
 confident wrong citation.
 """
 
+import base64
 import io
+import uuid
 from datetime import datetime
 
 import pytest
+import pytest_asyncio
 from PIL import Image, ImageDraw
 
 from hindsight_api import LLMConfig
@@ -104,4 +107,103 @@ async def test_only_the_facts_read_off_the_image_carry_it():
             "showing 'ESCALATE TO: Tier 3 Platform' and 'RESPONSE TARGET: 15 minutes'. "
             "Each extracted fact is labelled with where the extractor said it came from."
         ),
+    )
+
+
+@pytest_asyncio.fixture
+async def real_llm_client(memory_real_llm):
+    """An HTTP client over an engine with a real, vision-capable LLM.
+
+    The shared `api_client` runs on MockLLM, which cannot attribute anything, so
+    it can never distinguish per-fact provenance from per-chunk. Attribution is
+    the one thing this test exists to check, so it needs the real extractor.
+    """
+    import httpx
+
+    from hindsight_api.api import create_app
+
+    app = create_app(memory_real_llm, initialize_memory=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=300) as client:
+        yield client
+
+
+@pytest.mark.asyncio
+async def test_the_api_returns_the_attachment_only_on_the_facts_that_used_it(real_llm_client):
+    """The narrowing, through storage and the read path — not just the resolver.
+
+    `test_attachment_attribution` covers the pure number-to-id mapping and the
+    test above covers whether the model attributes correctly, but both stop
+    before the database. Between them and a caller sit the `memory_attachments`
+    write and the unit-keyed read, and a regression in either — most obviously
+    reverting to the chunk-level join this replaced — restores exactly the bug
+    the feature removed while every other test still passes.
+
+    So this asserts the shape a caller actually sees: same document, same chunk,
+    some memories carrying the diagram and some carrying nothing.
+    """
+    data = _diagram()
+    attachment_id = short_attachment_id(compute_attachment_hash(data))
+    bank_id = f"attrib-{uuid.uuid4().hex[:8]}"
+
+    response = await real_llm_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "A sync is considered stuck if it has not advanced in thirty minutes.",
+                        },
+                        {
+                            "type": "text",
+                            "text": "Engineers must never be paged directly. The escalation path is shown below:",
+                        },
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": base64.b64encode(data).decode(),
+                            },
+                        },
+                    ],
+                    "document_id": "sync-escalation",
+                }
+            ],
+            "async": False,
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    listed = await real_llm_client.get(f"/v1/default/banks/{bank_id}/memories/list?limit=100")
+    assert listed.status_code == 200, listed.text
+    memories = listed.json()["items"]
+    assert memories, "retain produced no memories"
+
+    # Only the facts extracted from the chunk can tell the two behaviours apart.
+    # Consolidation also writes observations, which have no chunk_id and never
+    # carry an attachment under *either* behaviour — counting those as "memories
+    # without attachments" is what made an earlier version of this test pass with
+    # the per-chunk join restored, i.e. not a guard at all.
+    from_chunk = [m for m in memories if m.get("chunk_id")]
+    assert from_chunk, "no memory was linked to a chunk"
+    assert len({m["chunk_id"] for m in from_chunk}) == 1, (
+        "the document split into several chunks, so a fact without the attachment "
+        "may simply be from a chunk that had none — the comparison needs one chunk"
+    )
+
+    with_attachment = [m for m in from_chunk if m.get("attachments")]
+    without = [m for m in from_chunk if not m.get("attachments")]
+
+    assert with_attachment, "no memory carried the diagram, so nothing can show its evidence"
+    assert without, (
+        "every fact from this one chunk carried the diagram — the per-fact edge has "
+        "collapsed back to the chunk's attachments, citing the diagram for prose it "
+        "does not support"
+    )
+    # Whatever is attached must be the attachment that was actually retained.
+    assert all(a["id"] == attachment_id for m in with_attachment for a in m["attachments"]), (
+        "a memory carries an attachment this document never had"
     )

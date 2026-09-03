@@ -805,7 +805,7 @@ def chunk_attachments_of(
     return list(seen.values()) or None
 
 
-def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict:
+def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict[str, Any]:
     """One attachment, in the shape every read surface returns."""
     return ChunkAttachment(
         id=record.short_id,
@@ -818,7 +818,12 @@ def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict:
     ).model_dump()
 
 
-async def _attach_to_memories(memory_app, bank_id: str, items, request_context) -> None:
+async def _attach_to_memories(
+    memory_app: "MemoryEngine",
+    bank_id: str,
+    items: "list[dict[str, Any]]",
+    request_context: RequestContext,
+) -> None:
     """Add ``attachments`` to memory dicts, in place — the ones each fact came from.
 
     A fact's own text carries no placeholder (it would surface a content hash as
