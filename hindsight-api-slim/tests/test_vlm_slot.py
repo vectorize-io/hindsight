@@ -10,6 +10,7 @@ decision, not a model judgement, so it is asserted directly rather than judged.
 """
 
 import base64
+import inspect
 from datetime import datetime
 
 import pytest
@@ -129,3 +130,29 @@ async def test_only_a_chunk_carrying_an_attachment_reaches_the_vision_model():
         vlm_config=vision,
     )
     assert calls == ["retain-llm", "vision-llm"], "an attachment-bearing chunk must use the vision model"
+
+
+def test_a_configured_vision_slot_does_not_inherit_the_retain_fallback_chain():
+    """A vision call must not fail over to a text model.
+
+    `_build_llm` would make the vision model member 0 of the retain chain and
+    append the retain fallbacks behind it. Those fallbacks are text models —
+    that is *why* a separate vision slot was configured — so a failed vision
+    call would quietly fail over to one, extract from the prose and drop the
+    picture. That is the same silent omission the 422 gate refuses up front, and
+    it must not return as a fallback.
+
+    Asserted against the source because the hazard is a single call that is easy
+    to reintroduce while copying the retain slot's construction, and it has no
+    observable signature until a vision provider is actually down.
+    """
+    from hindsight_api.engine.memory_engine import MemoryEngine
+
+    assignments = [
+        line for line in inspect.getsource(MemoryEngine.__init__).splitlines() if "self._vlm_config =" in line
+    ]
+    assert assignments, "the vision slot is no longer assigned in __init__"
+    assert not any("_build_llm" in line for line in assignments), (
+        "the vision slot is being wrapped in a fallback chain — a failed vision call "
+        "would fail over to a text model and silently drop the attachment"
+    )
