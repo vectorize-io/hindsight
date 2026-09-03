@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import traceback
 import uuid
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager
@@ -208,6 +209,28 @@ from hindsight_api.metrics import (
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
+
+
+def _internal_error(exc: Exception, where: str) -> HTTPException:
+    """Log an unhandled handler exception with its traceback, and map it to a 500.
+
+    Every route's catch-all used to do this inline — 72 byte-identical copies of
+    the same four lines, plus seven near-copies that logged the traceback without
+    the message. The duplication is why the policy had already drifted: what gets
+    logged, and the fact that the client sees ``detail=str(exc)`` rather than a
+    traceback, was re-decided per route instead of once.
+
+    ``traceback.format_exc()`` reads the *currently handled* exception, so this
+    must be called from inside an ``except`` block — which is where every call
+    site is.
+
+    Returns the exception rather than raising it, so call sites read
+    ``raise _internal_error(e, ...)`` and keep the ``raise`` visible at the
+    handler instead of hidden behind a call.
+    """
+    logger.error(f"Error in {where}: {exc}\n\nTraceback:\n{traceback.format_exc()}")
+    return HTTPException(status_code=500, detail=str(exc))
+
 
 # 499 is the de facto reverse-proxy status for "client closed request".
 _CLIENT_CLOSED_REQUEST_STATUS_CODE = 499
@@ -4573,11 +4596,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/graph: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/graph")
 
     @app.get(
         "/v1/default/banks/{bank_id}/memories/list",
@@ -4647,11 +4666,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/list: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/list")
 
     async def _require_dry_run_enabled() -> None:
         """Feature-flag gate for dry-run extraction.
@@ -4720,11 +4735,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/dry-run-extract: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/dry-run-extract")
 
     @app.get(
         "/v1/default/banks/{bank_id}/memories/{memory_id}",
@@ -4755,11 +4766,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/{memory_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/memories/{memory_id}",
@@ -4814,11 +4821,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/memories/{memory_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/memories/{memory_id}/history",
@@ -4849,11 +4852,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}/history: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/{memory_id}/history")
 
     @app.post(
         "/v1/default/banks/{bank_id}/memories/recall",
@@ -5221,11 +5220,7 @@ def _register_routes(app: FastAPI):
                 detail=str(e) or "Reflect operation timed out. Consider reducing the budget or simplifying the query.",
             )
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/reflect: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/reflect")
 
     @app.get(
         "/v1/default/banks",
@@ -5253,11 +5248,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, "/v1/default/banks")
 
     @app.get(
         "/v1/default/banks/{bank_id}/stats",
@@ -5314,11 +5305,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/stats: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/stats")
 
     @app.post(
         "/v1/default/banks/{bank_id}/health/llm",
@@ -5353,11 +5340,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/health/llm: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/health/llm")
 
     @app.get(
         "/v1/default/banks/{bank_id}/stats/memories-timeseries",
@@ -5391,11 +5374,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/stats/memories-timeseries: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/stats/memories-timeseries")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities",
@@ -5427,11 +5406,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/entities: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities/graph",
@@ -5457,11 +5432,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/entities/graph: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities/graph")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities/{entity_id}",
@@ -5500,11 +5471,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/entities/{entity_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities/{entity_id}")
 
     @app.post(
         "/v1/default/banks/{bank_id}/entities/{entity_id}/regenerate",
@@ -5574,11 +5541,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/mental-models")
 
     @app.get(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
@@ -5616,11 +5579,7 @@ def _register_routes(app: FastAPI):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history",
@@ -5651,13 +5610,7 @@ def _register_routes(app: FastAPI):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history")
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models",
@@ -5704,11 +5657,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/mental-models: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/mental-models")
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh",
@@ -5742,13 +5691,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh")
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh",
@@ -5796,14 +5739,9 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/"
-                f"dry-run-refresh: {error_detail}"
+            raise _internal_error(
+                e, f"POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh"
             )
-            raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear",
@@ -5839,13 +5777,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
@@ -5888,11 +5820,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
@@ -5924,11 +5852,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
 
     # =========================================================================
     # KNOWLEDGE BASE ENDPOINTS (folders + pages, markdown)
@@ -5961,11 +5885,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/tree: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/tree")
 
     @app.post(
         "/v1/default/banks/{bank_id}/knowledge-base/folders",
@@ -5997,11 +5917,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/knowledge-base/folders: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/knowledge-base/folders")
 
     @app.post(
         "/v1/default/banks/{bank_id}/knowledge-base/pages",
@@ -6054,11 +5970,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/knowledge-base/pages: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/knowledge-base/pages")
 
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/export",
@@ -6100,11 +6012,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/export: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/export")
 
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/search",
@@ -6137,11 +6045,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/search: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/search")
 
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}",
@@ -6169,11 +6073,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
@@ -6242,11 +6142,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
@@ -6273,11 +6169,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}")
 
     # =========================================================================
     # DIRECTIVES ENDPOINTS
@@ -6329,11 +6221,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/directives: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/directives")
 
     @app.get(
         "/v1/default/banks/{bank_id}/directives/{directive_id}",
@@ -6363,11 +6251,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/directives/{directive_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/directives/{directive_id}")
 
     @app.post(
         "/v1/default/banks/{bank_id}/directives",
@@ -6402,11 +6286,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/directives: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/directives")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/directives/{directive_id}",
@@ -6443,11 +6323,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/directives/{directive_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/directives/{directive_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/directives/{directive_id}",
@@ -6477,11 +6353,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/directives/{directive_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/directives/{directive_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/documents",
@@ -6531,11 +6403,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents")
 
     @app.get(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}/chunks",
@@ -6577,11 +6445,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}/chunks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/chunks")
 
     @app.post(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}/reprocess",
@@ -6624,11 +6488,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}/reprocess: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/reprocess")
 
     @app.get(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}",
@@ -6658,11 +6518,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/tags",
@@ -6728,11 +6584,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/tags: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/tags")
 
     @app.get(
         "/v1/default/chunks/{chunk_id:path}",
@@ -6759,11 +6611,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/chunks/{chunk_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/chunks/{chunk_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}",
@@ -6809,11 +6657,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/documents/{document_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}",
@@ -6856,11 +6700,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/operations",
@@ -6907,11 +6747,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/operations: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/operations")
 
     @app.get(
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
@@ -6949,11 +6785,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/operations/{operation_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/operations/{operation_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
@@ -6984,11 +6816,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/operations/{operation_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/operations/{operation_id}")
 
     @app.post(
         "/v1/default/banks/{bank_id}/operations/{operation_id}/retry",
@@ -7018,11 +6846,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/operations/{operation_id}/retry: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/operations/{operation_id}/retry")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/operations/{operation_id}/delete",
@@ -7052,13 +6876,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete")
 
     @app.get(
         "/v1/default/banks/{bank_id}/profile",
@@ -7100,11 +6918,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/profile: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/profile")
 
     @app.put(
         "/v1/default/banks/{bank_id}/profile",
@@ -7145,11 +6959,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/profile: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/profile")
 
     @app.post(
         "/v1/default/banks/{bank_id}/background",
@@ -7175,11 +6985,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/background: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/background")
 
     @app.put(
         "/v1/default/banks/{bank_id}",
@@ -7224,11 +7030,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}",
@@ -7274,11 +7076,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}",
@@ -7306,11 +7104,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}")
 
     # =====================================================================
     # Bank Template Import / Export
@@ -7384,11 +7178,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/import: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/import")
 
     @app.get(
         "/v1/default/banks/{bank_id}/export",
@@ -7476,11 +7266,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/export: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/export")
 
     # =====================================================================
     # Document Transfer (Export / Import between banks — no LLM re-extraction)
@@ -7576,12 +7362,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/document-transfer/export: {traceback.format_exc()}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/document-transfer/export")
 
     @app.post(
         "/v1/default/banks/{bank_id}/document-transfer",
@@ -7629,10 +7410,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/document-transfer")
 
     @app.get(
         "/v1/default/files/download/{key:path}",
@@ -7683,10 +7461,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error in GET /v1/default/files/download/{key}: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/files/download/{key}")
 
     @app.get(
         "/v1/bank-template-schema",
@@ -7723,11 +7498,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/observations: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/observations")
 
     @app.get(
         "/v1/default/banks/{bank_id}/observations/scopes",
@@ -7752,11 +7523,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/observations/scopes: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/observations/scopes")
 
     @app.post(
         "/v1/default/banks/{bank_id}/consolidation/recover",
@@ -7781,11 +7548,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/consolidation/recover: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/consolidation/recover")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/memories/{memory_id}/observations",
@@ -7816,13 +7579,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in DELETE /v1/default/banks/{bank_id}/memories/{memory_id}/observations: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/memories/{memory_id}/observations")
 
     @app.get(
         "/v1/default/banks/{bank_id}/config",
@@ -7848,11 +7605,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/config: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/config")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/config",
@@ -7889,11 +7642,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/config: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/config")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/config",
@@ -7920,11 +7669,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/config: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/config")
 
     @app.post(
         "/v1/default/banks/{bank_id}/consolidate",
@@ -7957,11 +7702,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/consolidate: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/consolidate")
 
     # =========================================================================
     # Webhook Endpoints
@@ -8051,11 +7792,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/webhooks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/webhooks")
 
     @app.get(
         "/v1/default/banks/{bank_id}/webhooks",
@@ -8107,11 +7844,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/webhooks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/webhooks")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
@@ -8142,11 +7875,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/webhooks/{webhook_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
@@ -8229,11 +7958,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/webhooks/{webhook_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries",
@@ -8279,11 +8004,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
 
     @app.post(
         "/v1/default/banks/{bank_id}/memories",
@@ -8645,11 +8366,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/files/retain: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/files/retain")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/memories",
@@ -8677,11 +8394,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories")
 
     # ---- Audit Logs ----
     # Response models live in engine/audit.py so the MemoryEngine read methods
@@ -8730,10 +8443,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error listing audit logs: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/audit-logs")
 
     @app.get(
         "/v1/default/banks/{bank_id}/audit-logs/stats",
@@ -8765,10 +8475,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error getting audit log stats: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/audit-logs/stats")
 
     @app.get(
         "/v1/default/banks/{bank_id}/llm-requests",
@@ -8825,10 +8532,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error listing LLM requests: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/llm-requests")
 
     @app.get(
         "/v1/default/banks/{bank_id}/llm-requests/stats",
@@ -8860,7 +8564,4 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error getting LLM request stats: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/llm-requests/stats")
