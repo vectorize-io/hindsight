@@ -17,6 +17,15 @@ digest, which is all a placeholder can afford to carry; a UNIQUE index on that
 prefix turns the astronomically unlikely collision into a failed insert rather
 than a placeholder that silently resolves to somebody else's file.
 
+``memory_units.attachment_ids`` — *which attachments did this fact come from?*
+Extraction runs one call per chunk, and a chunk holding a screenshot also holds
+the prose around it, so a chunk-level edge would show the diagram against every
+fact the call produced. The extractor is asked instead, and the answer is a
+column rather than a third table because these ids behave exactly like ``tags``:
+a short array read with the unit and never queried on its own. Carried on the
+memory, they also travel with a store that owns its own records, which a
+Postgres-side junction table would not.
+
 ``document_attachments`` — *which documents still reference it?* Derived from the
 placeholders in the canonical text each time a document is written, so it cannot
 drift from the text that is the source of truth. It exists for lifecycle: rows
@@ -96,9 +105,20 @@ def _pg_upgrade() -> None:
         f"ON {schema}document_attachments (bank_id, attachment_hash)"
     )
 
+    # Which attachments a *fact* was drawn from. A column rather than a third
+    # table because these ids behave exactly like `tags`: a short array read with
+    # the unit and never queried on its own. Defaults to empty rather than NULL
+    # so a reader never has to tell "no attachments" from "written before this
+    # column existed" — both mean the fact came from text.
+    op.execute(
+        f"ALTER TABLE {schema}memory_units "
+        f"ADD COLUMN IF NOT EXISTS attachment_ids TEXT[] NOT NULL DEFAULT '{{}}'::text[]"
+    )
+
 
 def _pg_downgrade() -> None:
     schema = _pg_schema_prefix()
+    op.execute(f"ALTER TABLE {schema}memory_units DROP COLUMN IF EXISTS attachment_ids")
     op.execute(f"DROP INDEX IF EXISTS {schema}idx_document_attachments_bank_hash")
     op.execute(f"DROP TABLE IF EXISTS {schema}document_attachments")
     op.execute(f"DROP INDEX IF EXISTS {schema}uq_attachments_short_id")
@@ -143,8 +163,17 @@ def _oracle_upgrade() -> None:
     )
     op.execute("CREATE INDEX idx_document_attachments_bank_hash ON document_attachments (bank_id, attachment_hash)")
 
+    # Oracle has no array type in this tree's dialect surface, so the ids are a
+    # JSON array in a CLOB — the shape `tags` and `observation_scopes` already
+    # take on this backend.
+    op.execute(
+        "ALTER TABLE memory_units ADD (attachment_ids CLOB DEFAULT '[]' NOT NULL "
+        "CONSTRAINT mu_attachment_ids_json CHECK (attachment_ids IS JSON))"
+    )
+
 
 def _oracle_downgrade() -> None:
+    op.execute("ALTER TABLE memory_units DROP COLUMN attachment_ids")
     op.execute("DROP TABLE document_attachments CASCADE CONSTRAINTS")
     op.execute("DROP TABLE attachments CASCADE CONSTRAINTS")
 
