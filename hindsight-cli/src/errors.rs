@@ -5,6 +5,19 @@ pub fn handle_api_error(err: anyhow::Error, api_url: &str) -> ! {
     std::process::exit(1);
 }
 
+/// The server's own explanation out of an error body, i.e. FastAPI's `{"detail": "..."}`.
+///
+/// The error text these branches match on is `API request failed (<status>): <body>` (see
+/// api.rs::humanize_client_error), so the body is whatever JSON the server sent — or nothing at
+/// all, which is what a genuine unknown-route 404 looks like. Returns None unless a non-empty
+/// string `detail` is actually there, so callers can keep their generic guidance for that case.
+fn server_detail(err_str: &str) -> Option<String> {
+    let body = &err_str[err_str.find('{')?..];
+    let parsed: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
+    let detail = parsed.get("detail")?.as_str()?.trim();
+    (!detail.is_empty()).then(|| detail.to_string())
+}
+
 fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     let err_str = err.to_string();
 
@@ -94,6 +107,19 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
                     .bright_white(),
                 "Note:".bright_cyan(),
                 "This allows per-bank LLM configuration overrides via API".bright_white()
+            );
+        }
+
+        // An absent resource and an unknown route are both 404, and only the second one is about
+        // API paths and versions. The server distinguishes them for us: `document get` on a
+        // missing document answers `{"detail":"Document not found"}`, so printing the endpoint/
+        // version guidance over that body sends the operator after an API breakage that isn't
+        // there (#4049) — the same swallowed-body class #2912 fixed for 400.
+        if let Some(detail) = server_detail(&err_str) {
+            return format!(
+                "{} {}",
+                "✗".bright_red().bold(),
+                format!("Not found (404): {}", detail).bright_red().bold()
             );
         }
 
@@ -259,5 +285,44 @@ mod tests {
 
         assert!(message.contains("Batch operations will timeout in synchronous mode"));
         assert!(!message.contains("Request timed out"));
+    }
+
+    #[test]
+    fn http_404_with_a_detail_reports_the_absent_resource_not_a_missing_endpoint() {
+        // `document get` on a document that never landed: the server already says why, and
+        // operators read this as the landing witness for async retains (#4049).
+        let error = anyhow::anyhow!(
+            "API request failed (404 Not Found): {{\"detail\":\"Document not found\"}}"
+        );
+
+        let message = format_error_message(&error, "http://localhost:8888");
+
+        assert!(message.contains("Not found (404): Document not found"));
+        assert!(!message.contains("API endpoint not found"));
+        assert!(!message.contains("incompatible API version"));
+    }
+
+    #[test]
+    fn http_404_without_a_body_keeps_the_unknown_route_guidance() {
+        // A true unknown route has no detail to print — that is the case the endpoint-path and
+        // version hints were written for, so they must survive.
+        let error = anyhow::anyhow!("API request failed (404 Not Found)");
+
+        let message = format_error_message(&error, "http://localhost:8888");
+
+        assert!(message.contains("API endpoint not found (404)"));
+        assert!(message.contains("incompatible API version"));
+    }
+
+    #[test]
+    fn http_404_for_a_disabled_feature_still_explains_how_to_enable_it() {
+        let error = anyhow::anyhow!(
+            "API request failed (404 Not Found): \
+             {{\"detail\":\"Bank configuration API is disabled\"}}"
+        );
+
+        let message = format_error_message(&error, "http://localhost:8888");
+
+        assert!(message.contains("HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true"));
     }
 }
