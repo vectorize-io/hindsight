@@ -5307,9 +5307,7 @@ def _register_routes(app: FastAPI):
                     for chunk_info in core_result.chunks.values()
                     for attachment_id in iter_placeholder_ids(chunk_info.chunk_text or "")
                 ]
-                attachment_records = await app.state.memory.resolve_bank_attachments(
-                    bank_id, referenced, request_context
-                )
+                attachment_records = await app.state.memory.resolve_attachments(bank_id, referenced, request_context)
 
                 chunks_response = {}
                 for chunk_id, chunk_info in core_result.chunks.items():

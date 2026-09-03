@@ -57,7 +57,7 @@ async def _edges(memory, bank_id: str) -> set[tuple[str, str]]:
 async def _attachment_hashes(memory, bank_id: str) -> set[str]:
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
-        rows = await conn.fetch("SELECT attachment_hash FROM bank_attachments WHERE bank_id = $1", bank_id)
+        rows = await conn.fetch("SELECT attachment_hash FROM attachments WHERE bank_id = $1", bank_id)
     return {row["attachment_hash"] for row in rows}
 
 

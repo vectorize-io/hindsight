@@ -428,12 +428,12 @@ async def sync_document_attachments(conn, bank_id: str, document_id: str, text: 
     if not referenced:
         return
     # The placeholder carries the short id; the row carries the full digest, so
-    # resolve through bank_attachments rather than storing a second key shape.
+    # resolve through attachments rather than storing a second key shape.
     await conn.execute(
         f"""
         INSERT INTO {fq_table("document_attachments")} (bank_id, document_id, attachment_hash)
         SELECT $1, $2, attachment_hash
-        FROM {fq_table("bank_attachments")}
+        FROM {fq_table("attachments")}
         WHERE bank_id = $1 AND short_id = ANY($3::text[])
         ON CONFLICT (bank_id, document_id, attachment_hash) DO NOTHING
         """,
@@ -458,50 +458,6 @@ def _normalize_scopes(value: list | str | None) -> list | str | None:
         except (ValueError, TypeError):
             return value
     return value
-
-
-async def insert_memory_attachments(
-    conn,
-    bank_id: str,
-    unit_ids: list[str],
-    facts: list[ProcessedFact],
-) -> int:
-    """Record which attachments each newly inserted fact was drawn from.
-
-    ``unit_ids`` is 1:1 with ``facts`` — the same alignment every other Phase-2
-    edge writer relies on. Facts whose information came from the surrounding
-    text carry no ids and contribute no rows; that emptiness is the feature, and
-    the reason this is stored per fact rather than derived from the chunk (a
-    chunk's screenshot would otherwise be shown against every prose fact the
-    same LLM call produced).
-
-    ``short_id`` is validated against ``bank_attachments`` by the INSERT's
-    SELECT, so a hallucinated id cannot create a row pointing at nothing.
-    """
-    pairs = [
-        (unit_id, short_id)
-        for unit_id, fact in zip(unit_ids, facts, strict=True)
-        for short_id in dict.fromkeys(fact.attachment_ids)
-    ]
-    if not pairs:
-        return 0
-
-    await conn.execute(
-        f"""
-        INSERT INTO {fq_table("memory_attachments")} (bank_id, unit_id, short_id)
-        SELECT $1, u.unit_id::uuid, u.short_id
-        FROM unnest($2::text[], $3::text[]) AS u(unit_id, short_id)
-        WHERE EXISTS (
-            SELECT 1 FROM {fq_table("bank_attachments")} ba
-            WHERE ba.bank_id = $1 AND ba.short_id = u.short_id
-        )
-        ON CONFLICT (unit_id, short_id) DO NOTHING
-        """,
-        bank_id,
-        [unit_id for unit_id, _ in pairs],
-        [short_id for _, short_id in pairs],
-    )
-    return len(pairs)
 
 
 async def update_memory_units_metadata_and_tags(

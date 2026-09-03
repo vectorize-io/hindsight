@@ -104,6 +104,7 @@ class OracleOps(DataAccessOps):
         tags_list: list[str],
         observation_scopes_list: list,
         text_signals_list: list,
+        attachment_ids_list: list,
         text_search_extension: str = "native",
     ) -> list[str]:
         table = self._get_mu_table()
@@ -131,14 +132,19 @@ class OracleOps(DataAccessOps):
                     tags_value,
                     observation_scopes_list[i],
                     text_signals_list[i],
+                    # Already a JSON string from the writes layer (the same
+                    # convention `tags_list` uses), and the column's IS JSON
+                    # check wants exactly that — pass it through rather than
+                    # encoding it twice.
+                    attachment_ids_list[i] or "[]",
                 )
             )
         await conn.executemany(
             f"""
             INSERT INTO {table} (id, bank_id, text, embedding, event_date, occurred_start,
                 occurred_end, mentioned_at, context, fact_type, metadata, chunk_id, document_id,
-                tags, observation_scopes, text_signals)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                tags, observation_scopes, text_signals, attachment_ids)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             """,
             rows_data,
         )

@@ -342,6 +342,7 @@ class DataAccessOps(ABC):
         tags_list: list[str],
         observation_scopes_list: list,
         text_signals_list: list,
+        attachment_ids_list: list,
         text_search_extension: str = "native",
     ) -> list[str]:
         """Batch-insert facts, returning IDs.

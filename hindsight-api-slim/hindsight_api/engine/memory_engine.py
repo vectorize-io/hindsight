@@ -6177,7 +6177,7 @@ class MemoryEngine(MemoryEngineInterface):
         except FileNotFoundError:
             return None
 
-    async def resolve_bank_attachments(
+    async def resolve_attachments(
         self,
         bank_id: str,
         attachment_ids: "Sequence[str]",
@@ -6226,7 +6226,7 @@ class MemoryEngine(MemoryEngineInterface):
                 SELECT da.document_id, ba.attachment_hash, ba.short_id, ba.media_type,
                        ba.byte_size, ba.storage_key, ba.kind, ba.filename
                 FROM {fq_table("document_attachments")} da
-                JOIN {fq_table("bank_attachments")} ba
+                JOIN {fq_table("attachments")} ba
                   ON ba.bank_id = da.bank_id AND ba.attachment_hash = da.attachment_hash
                 WHERE da.bank_id = $1 AND da.document_id = ANY($2::text[])
                 ORDER BY da.document_id, ba.created_at
@@ -6300,11 +6300,16 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> "dict[str, list[StoredAttachment]]":
         """The attachments each memory was actually drawn from, keyed by unit id.
 
-        Recorded per fact at extraction time (``memory_attachments``) rather than
-        derived from the chunk, because a chunk holding a screenshot also holds
-        the prose around it: deriving would show the diagram against the policy
-        paragraph that never mentioned it. A fact stated in the text has no rows
-        here and correctly shows nothing.
+        Recorded per fact at extraction time rather than derived from the chunk,
+        because a chunk holding a screenshot also holds the prose around it:
+        deriving would show the diagram against the policy paragraph that never
+        mentioned it. A fact stated in the text has no ids and correctly shows
+        nothing.
+
+        The ids live on ``memory_units.attachment_ids`` — an attribute of the
+        memory, like its tags — so this reads the column and resolves the ids,
+        rather than joining a junction table that only a Postgres-backed memory
+        store would ever have written.
         """
         from .retain.attachment_store import load_bank_attachments
 
@@ -6317,16 +6322,14 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with backend.acquire() as conn:
             rows = await conn.fetch(
-                f"SELECT unit_id::text AS unit_id, short_id FROM {fq_table('memory_attachments')} "
-                f"WHERE bank_id = $1 AND unit_id = ANY($2::uuid[])",
+                f"SELECT id::text AS id, attachment_ids FROM {fq_table('memory_units')} "
+                f"WHERE bank_id = $1 AND id = ANY($2::uuid[]) AND cardinality(attachment_ids) > 0",
                 bank_id,
                 wanted_units,
             )
             if not rows:
                 return {}
-            ids_by_unit: dict[str, list[str]] = {}
-            for row in rows:
-                ids_by_unit.setdefault(row["unit_id"], []).append(row["short_id"])
+            ids_by_unit = {row["id"]: list(row["attachment_ids"]) for row in rows}
             records = await load_bank_attachments(conn, bank_id, [i for ids in ids_by_unit.values() for i in ids])
 
         return {
@@ -6350,7 +6353,7 @@ class MemoryEngine(MemoryEngineInterface):
         capability: it is derived from the content, so anyone holding the same
         image could otherwise read whether some bank had also retained it.
         """
-        records = await self.resolve_bank_attachments(bank_id, [attachment_id], request_context)
+        records = await self.resolve_attachments(bank_id, [attachment_id], request_context)
         record = records.get(attachment_id)
         if record is None:
             return None
@@ -6382,7 +6385,7 @@ class MemoryEngine(MemoryEngineInterface):
         orphans = await conn.fetch(
             f"""
             SELECT ba.attachment_hash, ba.storage_key
-            FROM {fq_table("bank_attachments")} ba
+            FROM {fq_table("attachments")} ba
             WHERE ba.bank_id = $1
               AND ba.attachment_hash = ANY($2::text[])
               AND NOT EXISTS (
@@ -6396,7 +6399,7 @@ class MemoryEngine(MemoryEngineInterface):
         if not orphans:
             return
         await conn.execute(
-            f"DELETE FROM {fq_table('bank_attachments')} WHERE bank_id = $1 AND attachment_hash = ANY($2::text[])",
+            f"DELETE FROM {fq_table('attachments')} WHERE bank_id = $1 AND attachment_hash = ANY($2::text[])",
             bank_id,
             [row["attachment_hash"] for row in orphans],
         )
@@ -6465,7 +6468,7 @@ class MemoryEngine(MemoryEngineInterface):
         before the retain commits is safe. If the retain then fails, the blob is
         simply reused by the next retain of the same image.
 
-        The bank row is created first because ``bank_attachments`` references it; the
+        The bank row is created first because ``attachments`` references it; the
         same thing ``import_documents_async`` does before stashing its archive.
         """
         from .retain.attachment_store import store_images

@@ -1558,7 +1558,9 @@ image/png]` where the attachment was, and the machine-readable handle travels
 beside it in `attachments`. A content hash is not knowledge.
 
 A **memory's** `attachments` are the ones that fact was actually drawn from, not
-every attachment in its chunk. Extraction runs one call per chunk, and a chunk
+every attachment in its chunk. They are stored on the memory itself
+(`memory_units.attachment_ids`), like its tags, so they travel with the memory
+rather than living in a separate edge table. Extraction runs one call per chunk, and a chunk
 holding a screenshot also holds the prose around it, so the chunk's attachments
 would otherwise be shown against every fact the call produced — the architecture
 diagram offered as the evidence for the paragraph about paging policy. The

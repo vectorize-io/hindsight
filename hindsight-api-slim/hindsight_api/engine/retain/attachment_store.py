@@ -3,7 +3,7 @@
 Bytes go to the existing :class:`~hindsight_api.engine.storage.base.FileStorage`
 abstraction — the same one uploaded files use — so a deployment on S3, GCS or
 Azure keeps attachment bytes out of the database without any new backend. The
-``bank_attachments`` row records what the bytes are and where they live, keyed by
+``attachments`` row records what the bytes are and where they live, keyed by
 ``(bank_id, attachment_hash)`` and resolved by the ``short_id`` prefix that document
 text carries.
 
@@ -115,7 +115,7 @@ async def load_bank_attachments(conn, bank_id: str, attachment_ids: Sequence[str
     rows = await conn.fetch(
         f"""
         SELECT attachment_hash, short_id, media_type, byte_size, storage_key, kind, filename
-        FROM {fq_table("bank_attachments")}
+        FROM {fq_table("attachments")}
         WHERE bank_id = $1 AND short_id = ANY($2::text[])
         """,
         bank_id,
@@ -180,14 +180,14 @@ class RetainAttachmentLoader:
                 # No row: the attachment was never stored for this bank, or its row was
                 # reclaimed. The placeholder degrades to a note in the prompt.
                 logger.warning(
-                    "No bank_attachments row for %s in bank %s; extracting without it", attachment_id, self._bank_id
+                    "No attachments row for %s in bank %s; extracting without it", attachment_id, self._bank_id
                 )
                 continue
             try:
                 data = await self._file_storage.retrieve(record.storage_key)
             except FileNotFoundError:
                 logger.warning(
-                    "bank_attachments row for %s in bank %s points at missing key %s; extracting without it",
+                    "attachments row for %s in bank %s points at missing key %s; extracting without it",
                     attachment_id,
                     self._bank_id,
                     record.storage_key,
@@ -207,7 +207,7 @@ class RetainAttachmentLoader:
 
 async def _existing_hashes(conn, bank_id: str, attachment_hashes: Sequence[str]) -> set[str]:
     rows = await conn.fetch(
-        f"SELECT attachment_hash FROM {fq_table('bank_attachments')} WHERE bank_id = $1 AND attachment_hash = ANY($2::text[])",
+        f"SELECT attachment_hash FROM {fq_table('attachments')} WHERE bank_id = $1 AND attachment_hash = ANY($2::text[])",
         bank_id,
         list(dict.fromkeys(attachment_hashes)),
     )
@@ -229,7 +229,7 @@ async def _record_attachments(conn, bank_id: str, attachments: Sequence[StoredAt
     # the retain fails where an operator can see it.
     await conn.executemany(
         f"""
-        INSERT INTO {fq_table("bank_attachments")}
+        INSERT INTO {fq_table("attachments")}
             (bank_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, filename)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (bank_id, attachment_hash) DO NOTHING

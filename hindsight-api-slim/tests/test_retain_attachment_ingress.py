@@ -85,7 +85,7 @@ async def _bank_attachment_rows(memory, bank_id: str) -> list[dict]:
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT attachment_hash, short_id, media_type, byte_size, storage_key FROM bank_attachments WHERE bank_id = $1",
+            "SELECT attachment_hash, short_id, media_type, byte_size, storage_key FROM attachments WHERE bank_id = $1",
             bank_id,
         )
     return [dict(row) for row in rows]
