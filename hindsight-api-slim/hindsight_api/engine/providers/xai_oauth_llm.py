@@ -55,6 +55,7 @@ from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affinity_id
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import build_sdk_timeout
 from hindsight_api.engine.providers.xai_oauth_auth import (
     DEFAULT_REFRESH_SKEW_SECONDS,
     LOGIN_COMMAND,
@@ -384,7 +385,8 @@ class XaiOAuthLLM(LLMInterface):
         self._auth = auth_manager or XaiOAuthManager()
         self._auth_lock = asyncio.Lock()
         self._client_lock = asyncio.Lock()
-        self._client = httpx.AsyncClient(timeout=self.timeout)
+        # Per-phase so the connect leg is capped independently (issue #3881).
+        self._client = httpx.AsyncClient(timeout=build_sdk_timeout(self.timeout))
         # In-flight request count per client object, and the future that fires
         # when a retired client's last request lands. Both keyed by the client
         # itself, because a recycle can leave more than one alive at a time.
@@ -465,7 +467,7 @@ class XaiOAuthLLM(LLMInterface):
 
     def _new_client(self) -> httpx.AsyncClient:
         """Build a replacement pooled client. A seam tests override directly."""
-        return httpx.AsyncClient(timeout=self.timeout)
+        return httpx.AsyncClient(timeout=build_sdk_timeout(self.timeout))
 
     async def _recycle_client(self) -> None:
         """Drop the shared client's pooled connections after a retryable >=500.
@@ -932,11 +934,27 @@ class XaiOAuthLLM(LLMInterface):
         and :meth:`_close_when_drained` closes them on the way out.
         """
         draining = list(self._draining)
+        # Captured before cancelling: _close_when_drained's `finally` pops each entry
+        # out of _drained on its way through, so after the awaits below this map is
+        # empty whether or not the close actually happened.
+        retired = list(self._drained)
         for task in draining:
             task.cancel()
         for task in draining:
             with suppress(asyncio.CancelledError):
                 await task
+
+        # A cancelled drain task cannot be relied on to have closed its client. The
+        # cancellation is delivered at that task's next await -- which is the
+        # `await stale.aclose()` in its `finally` -- so the close never runs, and
+        # CancelledError is a BaseException, so the `suppress(Exception)` there does
+        # not catch it either. The client then leaked its connections on shutdown.
+        # Closing here is where it is actually guaranteed to happen; aclose() is
+        # idempotent, so a drain that did complete on its own costs nothing.
+        for stale in retired:
+            with suppress(Exception):
+                await stale.aclose()
+
         await self._client.aclose()
         self._auth.close()
 

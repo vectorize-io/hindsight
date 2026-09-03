@@ -236,7 +236,9 @@ async def retrieve_semantic_bm25_combined_sql(
 
     # tag_groups params start immediately after the tags param slot
     tag_groups_param_start = tags_param_idx + (1 if tags else 0)
-    groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
+    built = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
+    groups_clause = built.sql
+    groups_params = built.params
 
     # --- created_after/created_before time range filter (appended after tags/groups) ---
     # The bounds are named for creation but filter `updated_at` — "memories that changed
@@ -335,7 +337,8 @@ async def retrieve_semantic_bm25_combined_sql(
             fb_tags_idx = 3
             fb_tags_clause = build_tags_where_clause_simple(tags, fb_tags_idx, match=tags_match)
             fb_groups_start = fb_tags_idx + (1 if tags else 0)
-            fb_groups_clause, _, _ = build_tag_groups_where_clause(tag_groups, fb_groups_start)
+            built = build_tag_groups_where_clause(tag_groups, fb_groups_start)
+            fb_groups_clause = built.sql
             fb_next_idx = fb_groups_start + len(groups_params)
             fb_updated_clause = ""
             if created_after is not None:
@@ -504,7 +507,9 @@ async def retrieve_temporal_combined_sql(
     # the backend on execute, but `unnest` is not). Mirrors retrieve_semantic_bm25_combined_sql.
     tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
     tag_groups_param_start = 6 + (1 if tags else 0)
-    groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
+    built = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
+    groups_clause = built.sql
+    groups_params = built.params
 
     # created_after/created_before time range filter (after tags/groups) — filters
     # `updated_at`, as above.
@@ -665,9 +670,9 @@ async def retrieve_temporal_combined_sql(
         # Build tags clause for spreading (use param 7 since 1-6 are used)
         spreading_tags_clause = build_tags_where_clause_simple(tags, 7, table_alias="mu.", match=tags_match)
         spreading_groups_param_start = 7 + (1 if tags else 0)
-        spreading_groups_clause, spreading_groups_params, _ = build_tag_groups_where_clause(
-            tag_groups, spreading_groups_param_start, table_alias="mu."
-        )
+        built = build_tag_groups_where_clause(tag_groups, spreading_groups_param_start, table_alias="mu.")
+        spreading_groups_clause = built.sql
+        spreading_groups_params = built.params
         # The window has to be repeated here, not just on the entry-point query
         # above: spreading walks temporal/causal links outward, so an in-window
         # entry point would otherwise pull out-of-window neighbours into results.

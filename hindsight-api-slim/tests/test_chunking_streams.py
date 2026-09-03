@@ -9,14 +9,14 @@ retain had been using.
 Chunk boundaries are load-bearing: they are content-hashed for delta retain, and a
 chunk's index becomes its ``chunk_id``. A re-implementation that shifted them would make
 every stored chunk of every existing document look changed, silently. So the tests here
-are mostly differential — they pin the new splitter against the langchain one it
-replaced, on inputs chosen to reach every branch of it.
+are mostly differential — they pin the new splitter against the one it replaced, on
+inputs chosen to reach every branch of it. That reference is ``tests.chunking_reference``:
+langchain's ``RecursiveCharacterTextSplitter``, transcribed so the oracle survives without
+the dependency (which pulled in langchain-core -> langsmith -> orjson).
 """
 
 import json
 import tracemalloc
-
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from hindsight_api.engine.retain.fact_extraction import (
     _RECURSIVE_TEXT_SEPARATORS,
@@ -24,22 +24,12 @@ from hindsight_api.engine.retain.fact_extraction import (
     chunk_text,
     iter_chunks,
 )
+from tests.chunking_reference import recursive_split
 
 
-def _langchain_split(text: str, max_chars: int) -> list[str]:
-    """The exact splitter call the plain-text chunking path made before #3756.
-
-    Kept as the reference implementation the streaming splitter is diffed against, which is
-    the only remaining use of langchain-text-splitters in this repo.
-    """
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=max_chars,
-        chunk_overlap=0,
-        length_function=len,
-        is_separator_regex=False,
-        separators=_RECURSIVE_TEXT_SEPARATORS,
-    )
-    return splitter.split_text(text)
+def _reference_split(text: str, max_chars: int) -> list[str]:
+    """The exact splitter call the plain-text chunking path made before #3756."""
+    return recursive_split(text, max_chars, _RECURSIVE_TEXT_SEPARATORS)
 
 
 # Inputs chosen to reach each separator in _RECURSIVE_TEXT_SEPARATORS in turn, plus the
@@ -64,15 +54,15 @@ _PLAIN_TEXT_CASES = {
 }
 
 
-def test_streaming_splitter_matches_langchain_across_separator_tiers():
-    """Every separator tier and degenerate case splits exactly as langchain did."""
+def test_streaming_splitter_matches_the_reference_across_separator_tiers():
+    """Every separator tier and degenerate case splits exactly as the old splitter did."""
     for name, text in _PLAIN_TEXT_CASES.items():
         for max_chars in (10, 17, 40, 100, 1000):
             streamed = list(_iter_recursive_splits(text, max_chars, _RECURSIVE_TEXT_SEPARATORS))
-            assert streamed == _langchain_split(text, max_chars), f"{name} at max_chars={max_chars}"
+            assert streamed == _reference_split(text, max_chars), f"{name} at max_chars={max_chars}"
 
 
-def test_streaming_splitter_matches_langchain_on_generated_prose():
+def test_streaming_splitter_matches_the_reference_on_generated_prose():
     """A larger, more varied body — the shape a real document arrives in."""
     paragraphs = []
     for index in range(60):
@@ -84,7 +74,7 @@ def test_streaming_splitter_matches_langchain_on_generated_prose():
     text = "\n\n".join(paragraphs)
 
     for max_chars in (50, 137, 500, 1500):
-        assert list(_iter_recursive_splits(text, max_chars, _RECURSIVE_TEXT_SEPARATORS)) == _langchain_split(
+        assert list(_iter_recursive_splits(text, max_chars, _RECURSIVE_TEXT_SEPARATORS)) == _reference_split(
             text, max_chars
         )
 

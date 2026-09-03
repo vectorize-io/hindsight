@@ -1737,6 +1737,44 @@ async def test_the_retrying_call_does_not_wait_for_the_sibling_to_drain(tmp_path
     await _settle()
 
 
+async def test_cleanup_closes_a_retired_client_whose_drain_task_was_cancelled(tmp_path, monkeypatch):
+    """The close must not depend on the drain task surviving its own cancellation.
+
+    cleanup() cancels each drain task so shutdown does not block on a request that may
+    never land. That cancellation is delivered at the task's next await — which is the
+    `await stale.aclose()` in its own `finally` — so the close never runs, and
+    CancelledError is a BaseException, so the `suppress(Exception)` around it does not
+    catch it either. The client then leaked its connections on every shutdown that
+    happened while a recycle was still draining.
+
+    Asserted here on the drain task specifically, rather than only through the
+    end-to-end path, so a future refactor that moves the close back inside the
+    cancelled task fails loudly. Reproduces on any interpreter from 3.12 on.
+    """
+    llm = _make_llm(tmp_path, monkeypatch)
+    gated = _GatedFakeAsyncHttp([_ok_reply("sibling")])
+    llm._client = gated  # type: ignore[assignment]
+    llm._new_client = lambda: _FakeAsyncHttp([_ok_reply("fresh")])  # type: ignore[method-assign]
+
+    sibling = asyncio.create_task(llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0))
+    await gated.entered.wait()
+    await llm._recycle_client()
+
+    # The drain task is parked on a waiter that will never resolve: the sibling is
+    # still gated, so nothing releases the client.
+    assert len(llm._draining) == 1, "expected the recycle to leave a draining task"
+    drain_task = next(iter(llm._draining))
+
+    await asyncio.wait_for(llm.cleanup(), timeout=1.0)
+
+    assert drain_task.cancelled() or drain_task.done(), "drain task should not outlive cleanup"
+    assert gated.closed, "a retired client was left open after cleanup"
+
+    gated.gate.set()
+    with suppress(Exception):
+        await sibling
+
+
 async def test_cleanup_closes_a_client_still_draining_from_a_recycle(tmp_path, monkeypatch):
     """Shutdown must neither hang on nor leak a client that never drained."""
     llm = _make_llm(tmp_path, monkeypatch)

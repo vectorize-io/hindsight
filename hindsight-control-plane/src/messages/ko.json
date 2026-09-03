@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "전략 \"{name}\"을(를) 삭제하시겠습니까?",
     "deleteStrategyDescription": "이 작업으로 전략과 모든 재정의가 제거됩니다. 이 작업은 되돌릴 수 없습니다.",
     "fieldTypeText": "텍스트",
+    "fieldTypeMultiText": "다중 텍스트",
     "fieldTypeValue": "단일 값",
     "fieldTypeMultiValues": "다중 값",
     "fieldTypeMap": "맵",

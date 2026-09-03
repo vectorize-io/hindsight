@@ -8,6 +8,8 @@ description: "Add persistent long-term memory to any Flowise chatflow or agent w
 
 Persistent memory for [Flowise](https://flowiseai.com) chatflows and agents via [Hindsight](https://hindsight.vectorize.io). Three Tool nodes — **Hindsight Retain**, **Hindsight Recall**, **Hindsight Reflect** — drop into any flow alongside your other LangChain tools.
 
+[View Changelog →](/changelog/integrations/flowise)
+
 ## Why this matters
 
 Flowise is the LangChain-derived visual builder for non-developers and developers alike. Until now, Flowise chatflows have been **stateless across sessions**. With Hindsight tool nodes you can:

@@ -158,7 +158,32 @@ ghcr.io/vectorize-io/hindsight-api:latest-slim
 
 # Control Plane only
 ghcr.io/vectorize-io/hindsight-control-plane:latest
+
+# API only, on free-threaded CPython 3.14 (see below)
+ghcr.io/vectorize-io/hindsight-api:latest-py3.14t
 ```
+
+#### The `-py3.14t` tag
+
+Built on free-threaded CPython 3.14, where the process can execute Python bytecode in
+parallel instead of serialising it on one interpreter lock. It is aimed at
+**recall-heavy** deployments; the win comes from running several event loops in one
+process rather than from the interpreter alone.
+
+It is not a drop-in replacement for the default tag:
+
+- **No local models.** Importing `sentence-transformers` re-enables the GIL, so this
+  image cannot ship it. Embeddings and reranking must be remote — set
+  `HINDSIGHT_API_EMBEDDINGS_PROVIDER` and `HINDSIGHT_API_RERANKER_PROVIDER` to a
+  remote provider (`tei`, `openai`, `cohere`, …). The image defaults both to `tei`.
+- **`linux/amd64` only**, where the other tags are also published for `arm64`.
+- Migrations run in a **subprocess** (`HINDSIGHT_API_MIGRATION_ISOLATION=auto`),
+  because alembic's psycopg2 would otherwise take the GIL for the life of the process.
+- The container **refuses to start** if free-threading has been lost
+  (`HINDSIGHT_API_FREE_THREADING=strict`). That is deliberate: the failure is
+  otherwise silent, and the only symptom would be performing like the default tag.
+
+If you use local embedding or reranking models, stay on the default tags.
 
 ### Verifying image signatures
 

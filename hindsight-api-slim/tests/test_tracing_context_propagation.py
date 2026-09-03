@@ -131,3 +131,129 @@ def test_instrumentation_failure_does_not_break_app_creation(monkeypatch):
 
     with TestClient(app) as client:
         assert client.get("/v1/probe").status_code == 200
+
+
+# --- Server-span naming (Langfuse trace titles) ------------------------------
+#
+# A trace is named after its root span, and the ASGI instrumentation's root is
+# an HTTP span named "{method} {http.route}". That titled every Hindsight trace
+# with a URL template instead of the operation it ran, so operation endpoints
+# rename their server span to "hindsight.<operation>".
+
+
+def _recording_app(config) -> tuple[FastAPI, "InMemorySpanExporter"]:
+    """An instrumented app whose finished server spans are readable in-process."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    app = FastAPI()
+
+    @app.post("/v1/default/banks/{bank_id}/memories/recall")
+    def recall(bank_id: str):
+        return {}
+
+    @app.post("/v1/default/banks/{bank_id}/memories")
+    def retain(bank_id: str):
+        return {}
+
+    @app.post("/v1/default/banks/{bank_id}/reflect")
+    def reflect(bank_id: str):
+        return {}
+
+    @app.post("/v1/default/banks/{bank_id}/memories/dry-run-extract")
+    def dry_run_extract(bank_id: str):
+        return {}
+
+    @app.post("/v1/default/banks/{bank_id}/files/retain")
+    def files_retain(bank_id: str):
+        return {}
+
+    @app.get("/v1/default/banks/{bank_id}")
+    def get_bank(bank_id: str):
+        return {}
+
+    # instrument_app resolves its tracer lazily, so passing the provider here is
+    # what makes the spans land in our exporter without touching the global one.
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    original = FastAPIInstrumentor.instrument_app
+
+    def _with_provider(app_, **kwargs):
+        return original(app_, tracer_provider=provider, **kwargs)
+
+    import opentelemetry.instrumentation.fastapi as fastapi_instrumentation
+
+    saved = fastapi_instrumentation.FastAPIInstrumentor.instrument_app
+    fastapi_instrumentation.FastAPIInstrumentor.instrument_app = staticmethod(_with_provider)
+    try:
+        _instrument_app_for_tracing(app, config)
+    finally:
+        fastapi_instrumentation.FastAPIInstrumentor.instrument_app = saved
+    return app, exporter
+
+
+def _span_name_for(exporter, path: str) -> str:
+    """Name of the single server span recorded for ``path``."""
+    spans = [s for s in exporter.get_finished_spans() if s.attributes.get("http.target", "") == path]
+    assert len(spans) == 1, [(s.name, dict(s.attributes)) for s in exporter.get_finished_spans()]
+    return spans[0].name
+
+
+def test_operation_endpoints_are_named_after_the_hindsight_operation(monkeypatch):
+    """Recall/retain/reflect traces are titled by operation, not by URL template."""
+    monkeypatch.delenv("OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", raising=False)
+    app, exporter = _recording_app(_config())
+
+    with TestClient(app) as client:
+        client.post("/v1/default/banks/bank-a/memories/recall")
+        client.post("/v1/default/banks/bank-a/memories")
+        client.post("/v1/default/banks/bank-a/reflect")
+
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a/memories/recall") == "hindsight.recall"
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a/memories") == "hindsight.retain"
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a/reflect") == "hindsight.reflect"
+
+
+def test_every_mapped_route_is_matched_by_its_pattern(monkeypatch):
+    """Guards the regex table: a typo in any entry silently falls back to the URL name."""
+    monkeypatch.delenv("OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", raising=False)
+    app, exporter = _recording_app(_config())
+
+    with TestClient(app) as client:
+        client.post("/v1/default/banks/bank-a/memories/dry-run-extract")
+        client.post("/v1/default/banks/bank-a/files/retain")
+
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a/memories/dry-run-extract") == "hindsight.dry_run_extract"
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a/files/retain") == "hindsight.file_convert_retain"
+
+
+def test_renamed_span_keeps_its_http_route_and_gains_the_bank_id(monkeypatch):
+    """Renaming must not cost the semconv attributes anything groups by."""
+    monkeypatch.delenv("OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", raising=False)
+    app, exporter = _recording_app(_config())
+
+    with TestClient(app) as client:
+        client.post("/v1/default/banks/bank-a/memories/recall")
+
+    (span,) = exporter.get_finished_spans()
+    assert span.attributes["http.route"] == "/v1/default/banks/{bank_id}/memories/recall"
+    assert span.attributes["http.method"] == "POST"
+    assert span.attributes["hindsight.operation"] == "recall"
+    # The route template carries the placeholder; the real id is on the span.
+    assert span.attributes["hindsight.bank_id"] == "bank-a"
+
+
+def test_non_operation_endpoints_keep_their_semconv_name(monkeypatch):
+    """Ordinary CRUD routes are HTTP calls, not Hindsight operations."""
+    monkeypatch.delenv("OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", raising=False)
+    app, exporter = _recording_app(_config())
+
+    with TestClient(app) as client:
+        client.get("/v1/default/banks/bank-a")
+
+    assert _span_name_for(exporter, "/v1/default/banks/bank-a") == "GET /v1/default/banks/{bank_id}"

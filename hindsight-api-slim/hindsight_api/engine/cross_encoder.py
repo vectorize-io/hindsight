@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from .._cross_loop import CrossLoopSemaphore
 from ..config import (
     DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_ALIBABA_MODEL,
@@ -38,6 +39,8 @@ from ..config import (
 )
 from .bank_attribution import reranker_bank_attribution_headers
 from .local_device import (
+    align_local_model_weights,
+    assert_finite_local_output,
     release_local_inference_memory,
     resolve_model_device_type,
     select_local_device,
@@ -230,6 +233,12 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                 # Restore original logging level
                 transformers_logger.setLevel(original_level)
 
+        # Safetensors weights are mapped zero-copy and can land on a byte offset that
+        # is not a multiple of the dtype size, which makes torch's vectorized CPU matmul
+        # return corrupt scores. See engine/local_device.py. The default reranker
+        # (ms-marco-MiniLM-L-6-v2) is one of the affected files.
+        align_local_model_weights(self._model.model, label=f"Reranker[{self.model_name}]")
+
         self._device_type = resolve_model_device_type(self._model)
 
         # FP16 inference: convert model weights to half precision.
@@ -237,6 +246,14 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         if self.fp16 and self._device_type != "cpu":
             self._model.model.half()
             logger.info("Reranker: FP16 inference enabled")
+
+        # Smoke-test the fully configured model (after any FP16 conversion). NaN logits
+        # are sanitized to 0.0 downstream, so startup is the last point at which a model
+        # that computes garbage is still observable.
+        assert_finite_local_output(
+            self._model.predict([("hindsight startup probe", "hindsight startup probe")]),
+            label=f"Reranker[{self.model_name}]",
+        )
 
         # Initialize shared executor (limited workers naturally limits concurrency)
         if LocalSTCrossEncoder._executor is None:
@@ -320,7 +337,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
     """
 
     # Global semaphore shared across all instances and calls to prevent thundering herd
-    _global_semaphore: asyncio.Semaphore | None = None
+    _global_semaphore: CrossLoopSemaphore | None = None
     _global_max_concurrent: int = DEFAULT_RERANKER_TEI_MAX_CONCURRENT
 
     def __init__(
@@ -359,7 +376,10 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
             or RemoteTEICrossEncoder._global_max_concurrent != max_concurrent
         ):
             RemoteTEICrossEncoder._global_max_concurrent = max_concurrent
-            RemoteTEICrossEncoder._global_semaphore = asyncio.Semaphore(max_concurrent)
+            # CrossLoopSemaphore, not asyncio.Semaphore: this is a CLASS attribute, so
+            # it is shared by every event loop in the process and an asyncio.Semaphore
+            # would bind to whichever loop first waits on it.
+            RemoteTEICrossEncoder._global_semaphore = CrossLoopSemaphore(max_concurrent)
 
     @property
     def provider_name(self) -> str:
@@ -1070,16 +1090,16 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         return await loop.run_in_executor(FlashRankCrossEncoder._executor, self._predict_sync, pairs)
 
 
-def _truncate_to_tokens(text: str, max_tokens: int) -> str:
-    """Truncate text to at most max_tokens using the shared encoder.
+def _truncate_docs_to_tokens(texts: list[str], max_tokens: int) -> list[str]:
+    """Truncate every candidate document to at most ``max_tokens``.
 
-    Reranking truncates every candidate document, and the overwhelming majority
-    already fit — so this counts first and only builds the ids for the ones that
-    actually need cutting.
+    Batched rather than looped: reranking truncates the whole candidate list on
+    every call, and the shared tokenizer cuts a list in Rust with the GIL released.
+    The overwhelming majority already fit, and those come back untouched.
     """
-    from .token_encoding import truncate_to_tokens
+    from .token_encoding import truncate_many_to_tokens
 
-    return truncate_to_tokens(text, max_tokens).text
+    return [result.text for result in truncate_many_to_tokens(texts, max_tokens)]
 
 
 class LiteLLMCrossEncoder(CrossEncoderModel):
@@ -1173,7 +1193,7 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
         for query, indexed_texts in query_groups.items():
             texts = [text for _, text in indexed_texts]
             if self.max_tokens_per_doc is not None:
-                texts = [_truncate_to_tokens(t, self.max_tokens_per_doc) for t in texts]
+                texts = _truncate_docs_to_tokens(texts, self.max_tokens_per_doc)
             indices = [idx for idx, _ in indexed_texts]
 
             # LiteLLM /rerank follows Cohere API format
@@ -1294,7 +1314,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
         for query, indexed_texts in query_groups.items():
             texts = [text for _, text in indexed_texts]
             if self.max_tokens_per_doc is not None:
-                texts = [_truncate_to_tokens(t, self.max_tokens_per_doc) for t in texts]
+                texts = _truncate_docs_to_tokens(texts, self.max_tokens_per_doc)
             indices = [idx for idx, _ in indexed_texts]
 
             # Build kwargs for rerank call

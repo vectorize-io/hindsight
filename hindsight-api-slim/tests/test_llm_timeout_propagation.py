@@ -106,14 +106,16 @@ def test_gemini_deadline_falls_back_when_unconfigured():
 def test_anthropic_passes_the_resolved_timeout_to_its_sdk_client():
     """Anthropic silently used its own 300 s default because none was threaded."""
     llm = LLMConfig(provider="anthropic", api_key="k", base_url="", model="claude-sonnet-4-20250514", timeout=45.0)
-    assert llm._provider_impl._client.timeout == 45.0
+    # The request budget lives on the read/write/pool phases; connect is capped
+    # separately (#3881), so the client carries an httpx.Timeout, not a float.
+    assert llm._provider_impl._client.timeout.read == 45.0
 
 
 def test_anthropic_timeout_falls_back_when_unconfigured():
     from hindsight_api.engine.providers.anthropic_llm import _DEFAULT_ANTHROPIC_TIMEOUT
 
     llm = LLMConfig(provider="anthropic", api_key="k", base_url="", model="claude-sonnet-4-20250514")
-    assert llm._provider_impl._client.timeout == _DEFAULT_ANTHROPIC_TIMEOUT
+    assert llm._provider_impl._client.timeout.read == _DEFAULT_ANTHROPIC_TIMEOUT
 
 
 def test_codex_deadline_falls_back_when_unconfigured():

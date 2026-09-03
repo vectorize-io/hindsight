@@ -18,6 +18,14 @@ For each client, the script:
      automatic snake_case ↔ camelCase conversion).
   3. Allows explicit skips via per-client ``.openapi-coverage.toml`` files.
 
+Bank config is checked separately.  ``PATCH /banks/{bank_id}/config`` takes a
+free-form ``updates: dict[str, Any]``, so the spec advertises a single ``updates``
+property and every individual setting is invisible to the request-body walk above.
+The wrappers enumerate those settings as keyword arguments, which is exactly where
+they drift, so ``check_bank_config_fields`` reads the server's ``_CONFIGURABLE_FIELDS``
+directly and asserts each one reaches both wrappers.  Skips live in the same manifest
+under ``[bank_config]``.
+
 Usage:
     cd hindsight-dev
     uv run client-coverage-check
@@ -28,6 +36,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -202,6 +211,127 @@ def check_client(
     return errors
 
 
+# ── bank config ──────────────────────────────────────────────────────────
+
+
+def load_configurable_fields(config_path: Path) -> list[str]:
+    """Return the server's per-bank overridable config field names.
+
+    Parsed out of ``config.py`` with ast rather than imported: hindsight-dev does
+    not depend on hindsight-api, and this only needs the literal set members.
+    """
+    tree = ast.parse(config_path.read_text())
+    for node in ast.walk(tree):
+        # Bind the value inside each branch: narrowing on `node` does not survive
+        # the if/elif when only `targets` is assigned in them.
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+            value: ast.expr | None = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "_CONFIGURABLE_FIELDS" for t in targets):
+            continue
+        if not isinstance(value, ast.Set | ast.List | ast.Tuple):
+            raise ValueError(f"{config_path}: _CONFIGURABLE_FIELDS is not a literal set/list/tuple")
+        return sorted(elt.value for elt in value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str))
+    raise ValueError(f"{config_path}: no _CONFIGURABLE_FIELDS assignment found")
+
+
+def load_bank_config_skips(path: Path) -> dict[str, str]:
+    """Return the ``[bank_config]`` skip table from a client's coverage manifest."""
+    if not path.exists():
+        return {}
+    data = tomllib.loads(path.read_text())
+    raw = data.get("bank_config", {}) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: [bank_config] must be a table")
+    skips: dict[str, str] = {}
+    for field, reason in raw.items():
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"{path}: bank_config.{field} must be a non-empty string reason")
+        skips[field] = reason.strip()
+    return skips
+
+
+def extract_config_method(source: str, client_name: str) -> str:
+    """Return just the wrapper's bank-config update method body.
+
+    Scoped rather than scanning the whole file: these field names also appear in
+    other methods (``recall_max_tokens`` is a recall argument, ``retain_chunk_size``
+    a retain one), so a whole-file search reports a field as reachable when the
+    config method does not actually accept it.
+    """
+    if client_name == "python":
+        start = re.search(r"^    def update_bank_config\(", source, re.M)
+        end_pat = r"^    (?:async )?def "
+    else:
+        start = re.search(r"^  async updateBankConfig\(", source, re.M)
+        end_pat = r"^  (?:async )?\w+\("
+    if start is None:
+        raise ValueError(f"{client_name}: could not locate the bank-config update method")
+    rest = source[start.end() :]
+    end = re.search(end_pat, rest, re.M)
+    return rest[: end.start()] if end else rest
+
+
+def forwarding_pattern(field: str, client_name: str) -> str:
+    """Regex proving a field is written into the PATCH body, not just accepted."""
+    if client_name == "python":
+        # "field_name": field_name,  inside the updates dict comprehension
+        return r'"' + re.escape(field) + r'"\s*:'
+    # updates.field_name = options.fieldName;
+    return r"updates\." + re.escape(field) + r"\s*="
+
+
+def check_bank_config_fields(
+    *,
+    client_name: str,
+    source_path: Path,
+    manifest_path: Path,
+    fields: list[str],
+) -> list[str]:
+    """Check that every server-configurable bank field reaches one client wrapper."""
+    source = extract_config_method(source_path.read_text(), client_name)
+    skips = load_bank_config_skips(manifest_path)
+    errors: list[str] = []
+
+    covered = skipped = 0
+    for field in fields:
+        if field in skips:
+            skipped += 1
+            continue
+        if not field_present_in_source(field, source):
+            errors.append(f"MISSING CONFIG {field}: not accepted by the wrapper's bank-config method")
+            continue
+        # Accepting the argument is not enough — both wrappers build the request
+        # body by enumerating fields, so one that is declared but never written
+        # into that map is accepted and then silently dropped.
+        if not re.search(forwarding_pattern(field, client_name), source):
+            errors.append(
+                f"UNFORWARDED CONFIG {field}: accepted by the wrapper but never "
+                f"written into the request body — it would be silently dropped"
+            )
+            continue
+        covered += 1
+
+    for field in sorted(skips):
+        if field not in fields:
+            errors.append(
+                f"STALE CONFIG  {field}: listed in [bank_config] but not in "
+                f"the server's _CONFIGURABLE_FIELDS. Remove it."
+            )
+
+    print(f"    Bank config:     {len(fields)}")
+    print(f"      covered:       {covered}")
+    print(f"      skipped:       {skipped}")
+    print(f"      missing:       {len(fields) - covered - skipped}")
+
+    return errors
+
+
 # ── TypeScript ───────────────────────────────────────────────────────────
 
 
@@ -257,6 +387,9 @@ def main() -> None:
 
     op_props = load_openapi_operations(spec_path)
 
+    config_path = root / "hindsight-api-slim" / "hindsight_api" / "config.py"
+    bank_config_fields = load_configurable_fields(config_path)
+
     clients: list[dict] = []
 
     if args.client in ("python", "all"):
@@ -282,7 +415,8 @@ def main() -> None:
     all_errors: list[str] = []
 
     print("Client SDK OpenAPI coverage check")
-    print(f"  Spec: {spec_path.relative_to(root)}")
+    print(f"  Spec:        {spec_path.relative_to(root)}")
+    print(f"  Bank config: {config_path.relative_to(root)} ({len(bank_config_fields)} fields)")
     print()
 
     for client_cfg in clients:
@@ -290,6 +424,12 @@ def main() -> None:
             print(f"  [{client_cfg['client_name']}] SKIPPED: source not found at {client_cfg['source_path']}")
             continue
         errs = check_client(op_props=op_props, **client_cfg)
+        errs += check_bank_config_fields(
+            client_name=client_cfg["client_name"],
+            source_path=client_cfg["source_path"],
+            manifest_path=client_cfg["manifest_path"],
+            fields=bank_config_fields,
+        )
         all_errors.extend(f"[{client_cfg['client_name']}] {e}" for e in errs)
         print()
 

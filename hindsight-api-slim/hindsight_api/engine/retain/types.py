@@ -5,6 +5,7 @@ These dataclasses provide type safety throughout the retain operation,
 from content input to fact storage.
 """
 
+import functools
 import logging
 from array import array
 from collections.abc import Iterable, Sequence
@@ -14,9 +15,9 @@ from typing import Literal, TypedDict
 from uuid import UUID
 
 import numpy as np
-import orjson
 
 from ..metadata_utils import drop_null_values
+from ..response_models import TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -45,40 +46,66 @@ EmbeddingLike = PackedEmbedding | Sequence[float] | str
 
 
 def _repr_literal(values: Iterable[object]) -> str:
-    """The pre-orjson formatting, kept as the fallback for non-finite and non-float inputs."""
+    """Per-element ``repr()`` formatting, kept for non-finite and non-numeric inputs."""
     return "[" + ",".join(repr(float(v)) for v in values) + "]"  # type: ignore[arg-type]
 
 
-def _dumps_or_repr_fallback(payload: np.ndarray | list | tuple) -> str:
-    """Serialize with orjson; fall back to repr() when the vector is non-finite.
+@functools.lru_cache(maxsize=64)
+def _literal_template(dim: int) -> str:
+    """``"[%.9g,%.9g,...]"`` for ``dim`` elements, built once per embedding width.
 
-    Finite-float JSON output consists only of [0-9.eE+-,[]], so the substring
-    "null" can only mean orjson encoded a NaN/Inf element as JSON null.
+    Nine significant digits is ``FLT_DECIMAL_DIG`` — the shortest fixed precision that
+    round-trips every float32 bit pattern — so a value narrowed to float32 renders and
+    parses back to exactly the bytes the ``vector`` column stores.
     """
-    try:
-        rendered = orjson.dumps(payload, option=orjson.OPT_SERIALIZE_NUMPY).decode("ascii")
-    except (orjson.JSONEncodeError, TypeError):
-        return _repr_literal(payload)
-    return _repr_literal(payload) if "null" in rendered else rendered
+    return "[" + ",".join(["%.9g"] * dim) + "]"
+
+
+def _format_literal(values: list[float]) -> str:
+    """Render float32-valued floats as a pgvector literal in one C-level format call.
+
+    Formatting the whole vector through a single ``str.__mod__`` keeps the per-element
+    work inside CPython's C formatter, rather than paying a Python-level ``repr()`` call
+    and a boxed ``PyFloat`` per dimension.
+    """
+    if not values:
+        return "[]"
+    rendered = _literal_template(len(values)) % tuple(values)
+    # Finite ``%.9g`` output is drawn only from [0-9.eE+-], so an "n" can only have come
+    # from "nan", "inf" or "-inf" — none of which pgvector accepts. Hand those to the
+    # repr formatting the link steps have always screened them out of.
+    return _repr_literal(values) if "n" in rendered else rendered
 
 
 def embedding_to_pgvector(embedding: EmbeddingLike) -> str:
     """Render an embedding as the ``'[0.1,0.2,...]'`` literal asyncpg binds to ``vector``.
 
     Handles every form a caller may hold: the packed array retain carries, a plain float
-    list (imports, re-embeds), or a literal that was already rendered. Uses orjson's SIMD
-    float serializer for fast formatting without per-element Python allocations.
+    list (imports, re-embeds), a NumPy array, or a literal that was already rendered.
 
-    Note: The formatted string uses float32 shortest representation when serialized via
-    the PackedEmbedding/NumPy fast-path (e.g. ``0.1`` vs legacy ``0.10000000149011612``).
-    When parsed back by PostgreSQL as a 32-bit float vector, the stored bytes are bit-identical.
+    Everything numeric is narrowed to float32 before formatting, because float32 is the
+    width the column stores. That narrowing has to happen exactly once: applying ``%.9g``
+    straight to a float64 rounds twice — once to nine digits, once to float32 — and the
+    two roundings disagree on ~0.8% of values, landing a neighbouring float32. Narrowing
+    first makes the single remaining rounding the same one PostgreSQL would have done.
+
+    The literal is fixed-width, not shortest-form: this used to render through orjson,
+    whose Ryu formatter emitted ``0.1`` where nine digits give ``0.100000001``. Both parse
+    to the same float32, so stored bytes are unchanged, but the text is ~12% longer and
+    query logs look different. orjson bought ~5x on this formatting and nothing else in
+    the API used it — see ``hindsight-dev/benchmarks/micro/vector_serialization.py``.
     """
     if isinstance(embedding, str):
         return embedding
     if isinstance(embedding, array) and embedding.typecode == "f":
-        return _dumps_or_repr_fallback(np.frombuffer(embedding, dtype=np.float32))
+        # Already float32, so ``tolist()`` hands over values ``%.9g`` renders exactly.
+        return _format_literal(embedding.tolist())
     if isinstance(embedding, (np.ndarray, list, tuple)):
-        return _dumps_or_repr_fallback(embedding)
+        # ``asarray`` without a dtype infers one: real numbers give a numeric kind, while
+        # objects that merely implement ``__float__`` give "O" and fall through to repr.
+        values = np.asarray(embedding)
+        if values.dtype.kind in "fiub":
+            return _format_literal(values.astype(np.float32, copy=False).tolist())
     return _repr_literal(embedding)
 
 
@@ -179,6 +206,83 @@ class ChunkMetadata:
     fact_count: int
     content_index: int  # Index of the source content
     chunk_index: int  # Global chunk index across all contents
+
+
+@dataclass(frozen=True)
+class RetainBatchResult:
+    """What one pass of the retain pipeline produced.
+
+    Every entry point into the pipeline returns this — ``retain_batch`` and the
+    three paths it delegates to (``_streaming_retain_batch``, ``_try_delta_retain``,
+    ``_delta_metadata_only``), plus the engine wrappers around them. They used to
+    return a bare 3-tuple each, and the arity had already drifted:
+    ``_streaming_retain_batch`` was annotated ``tuple[list[list[str]], TokenUsage]``
+    while returning three values, and ``retain_batch`` handed that straight back as
+    its own 3-tuple. Nothing caught it — a tuple's shape is checked nowhere, and
+    ``ty`` has ``invalid-return-type`` disabled — so the declared contract and the
+    real one simply disagreed until someone unpacked two names and got a
+    ``ValueError`` at runtime. Naming the fields is what makes that mismatch
+    impossible rather than merely unlikely.
+    """
+
+    memory_ids: list[list[str]]
+    """Created memory-unit ids, one inner list per submitted content item, in order."""
+
+    usage: TokenUsage
+    """LLM tokens consumed by this pass. Merged with ``+`` across concurrent groups."""
+
+    processed_content_tokens: int | None
+    """Content+context tokens that actually reached extraction.
+
+    ``0`` when nothing was re-extracted (a delta whose chunks all matched), and
+    ``None`` when the path does not account for it (streaming, which spans many
+    sub-batches). ``None`` and ``0`` are therefore *not* interchangeable: the
+    former means "unknown", the latter "known to be nothing".
+    """
+
+
+@dataclass(frozen=True)
+class ExtractionResult:
+    """What one fact-extraction pass produced, whatever route it took.
+
+    The three extraction entry points — the LLM fan-out
+    (``extract_facts_from_contents``), the Batch API route
+    (``extract_facts_from_contents_batch_api``), and chunks mode
+    (``_extract_facts_chunks``, no LLM at all) — are interchangeable by design:
+    ``extract_facts_from_contents`` dispatches to the other two and returns their
+    result unchanged. They therefore have to agree on their output exactly, which
+    is precisely what three separately-maintained 3-tuples could not guarantee.
+
+    ``facts`` and ``chunks`` are positionally related: each fact's
+    ``chunk_index`` indexes into ``chunks``, so the two lists must come from the
+    same pass and cannot be sourced independently.
+    """
+
+    facts: list["ExtractedFact"]
+    """Extracted facts, in chunk order, carrying their ``content_index``/``chunk_index``."""
+
+    chunks: list["ChunkMetadata"]
+    """One entry per chunk the pass saw, including chunks that yielded no facts."""
+
+    usage: TokenUsage
+    """LLM tokens consumed. Zero for chunks mode, which makes no model call."""
+
+
+def merge_processed_content_tokens(a: int | None, b: int | None) -> int | None:
+    """Combine ``RetainBatchResult.processed_content_tokens`` across sub-results.
+
+    ``None`` is contagious: it means "this part of the retain did not go through
+    chunk-level dedup", so the aggregate is unknown and callers must
+    conservatively bill the full content. Only when *both* sides are known does
+    the total mean anything, and then it is their sum.
+
+    Lives beside the field it governs because the rule is not obvious from the
+    types — ``None + int`` looks like a bug to fix rather than a semantic to
+    preserve, and it was previously re-derived inline at each merge site.
+    """
+    if a is None or b is None:
+        return None
+    return a + b
 
 
 @dataclass

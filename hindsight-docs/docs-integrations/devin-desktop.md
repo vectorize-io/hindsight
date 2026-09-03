@@ -12,6 +12,8 @@ Long-term memory for [Devin Desktop](https://devin.ai) — the editor formerly k
 Cognition rebranded Windsurf to Devin Desktop in June 2026. The MCP config still lives under `~/.codeium/windsurf/` — that's Devin Desktop's on-disk data directory and is unchanged by the rebrand. The workspace rule now lives under `.devin/rules/` (with `.windsurf/rules/` kept as a legacy fallback).
 :::
 
+[View Changelog →](/changelog/integrations/devin-desktop)
+
 ## How It Works
 
 Devin Desktop supports two things this integration uses:

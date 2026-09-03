@@ -184,155 +184,11 @@
 }
 
 /* ── Grid ────────────────────────────────────────────────────────────────── */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.25rem;
-  margin-bottom: 4rem;
-}
-
-@media (max-width: 996px) {
-  .grid { grid-template-columns: repeat(2, 1fr); }
-}
-
 @media (max-width: 640px) {
-  .grid { grid-template-columns: 1fr; }
   .heroTitle { font-size: 2.2rem; }
 }
 
 /* ── Card ────────────────────────────────────────────────────────────────── */
-.card {
-  display: flex;
-  flex-direction: column;
-  border-radius: 12px;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--ifm-background-surface-color);
-  text-decoration: none !important;
-  color: inherit;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
-  overflow: hidden;
-}
-
-[data-theme='dark'] .card {
-  background: #1c1c1e;
-  border-color: rgba(255, 255, 255, 0.07);
-}
-
-.card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(0, 116, 217, 0.12);
-  text-decoration: none !important;
-  color: inherit;
-}
-
-.cardHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.1rem 0;
-}
-
-.cardIcon {
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
-  flex-shrink: 0;
-}
-
-.typeBadge {
-  font-size: 0.63rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-}
-
-.typeBadgeOfficial {
-  background: rgba(0, 116, 217, 0.12);
-  color: #0074d9;
-}
-
-[data-theme='dark'] .typeBadgeOfficial {
-  background: rgba(0, 116, 217, 0.2);
-  color: #4da6ff;
-}
-
-.typeBadgeCommunity {
-  background: rgba(0, 146, 150, 0.12);
-  color: #009296;
-}
-
-[data-theme='dark'] .typeBadgeCommunity {
-  background: rgba(0, 146, 150, 0.2);
-  color: #00bcc0;
-}
-
-.cardBody {
-  flex: 1;
-  padding: 0.85rem 1.1rem 0.75rem;
-}
-
-.cardTitle {
-  font-size: 1rem;
-  font-weight: 700;
-  margin: 0 0 0.4rem;
-  color: var(--ifm-heading-color);
-  letter-spacing: -0.01em;
-  border-bottom: none !important;
-  border-image: none !important;
-}
-
-.cardDescription {
-  font-size: 0.82rem;
-  color: var(--ifm-color-emphasis-600);
-  line-height: 1.6;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.cardFooter {
-  display: flex;
-  align-items: center;
-  padding: 0.65rem 1.1rem 0.9rem;
-  margin-top: 0.25rem;
-  border-top: 1px solid var(--ifm-color-emphasis-100);
-}
-
-[data-theme='dark'] .cardFooter {
-  border-top-color: rgba(255, 255, 255, 0.06);
-}
-
-.byLine {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.78rem;
-  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Consolas, monospace;
-  color: var(--ifm-color-emphasis-600);
-}
-
-.authorIcon {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
-  border: 1px solid var(--ifm-color-emphasis-200);
-}
-
-[data-theme='dark'] .authorIcon {
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-.authorName {
-  font-weight: 500;
-}
-
-/* ── Empty state ─────────────────────────────────────────────────────────── */
 .empty {
   text-align: center;
   padding: 4rem 2rem;
@@ -441,17 +297,17 @@
 
 .harnessStrip {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.85rem;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
 }
 
 .harnessLogo {
-  width: 20px;
-  height: 20px;
+  width: 17px;
+  height: 17px;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: 3px;
   /* Several of these are near-black marks that vanish on a dark background; a faint plate keeps
      every logo legible in both themes without per-logo special-casing. */
   background: var(--ifm-color-emphasis-100);
@@ -476,4 +332,206 @@
   letter-spacing: 0.01em;
   margin: 0 0 1rem;
   color: var(--ifm-heading-color);
+}
+
+/* ── Compact list (the full catalogue) ───────────────────────────────────── */
+.groups {
+  margin-bottom: 4rem;
+}
+
+.group {
+  margin-bottom: 2.25rem;
+}
+
+.groupTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 0.85rem;
+}
+
+.groupCount {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  background: var(--ifm-color-emphasis-200);
+  color: var(--ifm-color-emphasis-700);
+}
+
+.compactGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+}
+
+@media (max-width: 996px) {
+  .compactGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .compactGrid { grid-template-columns: 1fr; }
+}
+
+.compactCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  /* Grid items default to min-width:auto, so the clamped text below would push
+     each track to the width of its longest description and blow the page out. */
+  min-width: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 6px;
+  background: var(--ifm-background-surface-color);
+  text-decoration: none !important;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+[data-theme='dark'] .compactCard {
+  background: #1c1c1e;
+  border-color: rgba(255, 255, 255, 0.07);
+}
+
+.compactCard:hover {
+  border-color: rgba(0, 116, 217, 0.45);
+  box-shadow: 0 4px 16px rgba(0, 116, 217, 0.08);
+}
+
+.compactCard:hover .compactName {
+  color: var(--ifm-color-primary) !important;
+}
+
+.compactIcon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.compactHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.compactName {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ifm-heading-color) !important;
+  text-decoration: none !important;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compactDescription {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--ifm-color-emphasis-600);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.compactAuthor {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--ifm-color-emphasis-200);
+}
+
+[data-theme='dark'] .compactAuthor {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ── Featured rows ───────────────────────────────────────────────────────── */
+.compactCardFeatured {
+  border-color: rgba(0, 116, 217, 0.35);
+  background: linear-gradient(
+    180deg,
+    rgba(0, 116, 217, 0.06) 0%,
+    var(--ifm-background-surface-color) 60%
+  );
+}
+
+[data-theme='dark'] .compactCardFeatured {
+  border-color: rgba(0, 116, 217, 0.4);
+  background: linear-gradient(180deg, rgba(0, 116, 217, 0.14) 0%, #1c1c1e 60%);
+}
+
+/* ── Card actions ────────────────────────────────────────────────────────── */
+.compactActions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+
+.actionPill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  padding: 0.36rem 0.6rem;
+  border-radius: 5px;
+  border: 0;
+  color: var(--ifm-color-emphasis-700) !important;
+  background: var(--ifm-color-emphasis-100);
+  text-decoration: none !important;
+  white-space: nowrap;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.actionPill:hover {
+  color: var(--ifm-color-primary) !important;
+  background: rgba(0, 116, 217, 0.1);
+  text-decoration: none !important;
+}
+
+/* The first pill is the page someone actually wants nine times out of ten; the tint marks it as
+   the default action without making the row look like two competing buttons. */
+.actionPill:first-child {
+  color: var(--ifm-color-primary) !important;
+  background: rgba(0, 116, 217, 0.09);
+}
+
+.actionPill:first-child:hover {
+  background: rgba(0, 116, 217, 0.17);
+}
+
+[data-theme='dark'] .actionPill {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+[data-theme='dark'] .actionPill:hover {
+  background: rgba(0, 116, 217, 0.28);
+  color: #7cc0ff !important;
+}
+
+[data-theme='dark'] .actionPill:first-child {
+  background: rgba(0, 116, 217, 0.22);
+  color: #7cc0ff !important;
+}
+
+[data-theme='dark'] .actionPill:first-child:hover {
+  background: rgba(0, 116, 217, 0.32);
 }

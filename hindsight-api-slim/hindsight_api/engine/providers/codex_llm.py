@@ -29,6 +29,7 @@ import httpx
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import build_sdk_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
@@ -224,7 +225,9 @@ class CodexLLM(LLMInterface):
         # socket read), so this bounds a *silent* backend only — a stream that
         # keeps delivering bytes never trips it. The total deadline in
         # ``_stream_request`` is what bounds a talkative one.
-        self._client = httpx.AsyncClient(timeout=self._request_timeout)
+        # Per-phase: the connect leg is capped independently so an unreachable backend
+        # fails in seconds instead of consuming the whole deadline (issue #3881).
+        self._client = httpx.AsyncClient(timeout=build_sdk_timeout(self._request_timeout))
 
     # ------------------------------------------------------------------
     # Properties — delegate to _auth_manager (preserves test-visible API)

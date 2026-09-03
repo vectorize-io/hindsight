@@ -23,7 +23,7 @@ from hindsight_api.engine.llm_wrapper import (
 from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.retain.fact_extraction import Fact
-from hindsight_api.engine.token_encoding import count_tokens, get_token_encoding
+from hindsight_api.engine.token_encoding import count_tokens, truncate_to_tokens
 
 # A lone high surrogate — valid in a Python str, but rejected by the Rust
 # tokenizers behind the local embedder / cross-encoder and uncodable to UTF-8.
@@ -41,10 +41,11 @@ def test_count_tokens_handles_special_token_literal():
     assert count_prompt_tokens(SPECIAL_TOKEN_TEXT) > 0
 
 
-def test_encode_decode_roundtrip_with_special_token():
-    enc = get_token_encoding()
-    tokens = enc.encode(SPECIAL_TOKEN_TEXT)
-    assert enc.decode(tokens) == SPECIAL_TOKEN_TEXT
+def test_truncation_round_trips_a_special_token_literal():
+    # The other half of #1883: truncation must treat the literal as ordinary text
+    # too. A budget this generous truncates nothing, so it must come back
+    # byte-for-byte.
+    assert truncate_to_tokens(SPECIAL_TOKEN_TEXT, 10_000).text == SPECIAL_TOKEN_TEXT
 
 
 def test_special_token_counted_as_ordinary_text():

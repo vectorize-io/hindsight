@@ -186,8 +186,10 @@ export interface OperationProgress {
 
 export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 
+export type TagResolution = "exact" | "fuzzy";
+
 export type TagGroup =
-  | { tags: string[]; match?: TagsMatch }
+  | { tags: string[]; match?: TagsMatch; resolve?: TagResolution }
   | { and: TagGroup[] }
   | { or: TagGroup[] }
   | { not: TagGroup };
@@ -491,6 +493,7 @@ export class ControlPlaneClient {
     query_timestamp?: string;
     tags?: string[];
     tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    tag_groups?: TagGroup[];
     min_scores?: {
       semantic?: number | null;
       keyword?: number | null;
@@ -518,6 +521,7 @@ export class ControlPlaneClient {
     include_tool_calls?: boolean;
     tags?: string[];
     tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    tag_groups?: TagGroup[];
     apply_all_directives?: boolean;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;

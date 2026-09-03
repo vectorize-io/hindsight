@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "Delete strategy \"{name}\"?",
     "deleteStrategyDescription": "This will remove the strategy and all its overrides. This cannot be undone.",
     "fieldTypeText": "Text",
+    "fieldTypeMultiText": "Multi-text",
     "fieldTypeValue": "Single value",
     "fieldTypeMultiValues": "Multi-values",
     "fieldTypeMap": "Map",

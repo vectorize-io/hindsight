@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "戦略「{name}」を削除しますか?",
     "deleteStrategyDescription": "この操作で戦略とそのすべての上書きが削除されます。元に戻すことはできません。",
     "fieldTypeText": "テキスト",
+    "fieldTypeMultiText": "複数テキスト",
     "fieldTypeValue": "単一値",
     "fieldTypeMultiValues": "複数値",
     "fieldTypeMap": "マップ",

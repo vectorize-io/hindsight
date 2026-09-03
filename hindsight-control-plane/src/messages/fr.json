@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "Supprimer la stratégie « {name} » ?",
     "deleteStrategyDescription": "Cela supprimera la stratégie et tous ses remplacements. Cette action est irréversible.",
     "fieldTypeText": "Texte",
+    "fieldTypeMultiText": "Textes multiples",
     "fieldTypeValue": "Valeur unique",
     "fieldTypeMultiValues": "Valeurs multiples",
     "fieldTypeMap": "Carte",

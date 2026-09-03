@@ -100,6 +100,14 @@ jobs:
             - 'scripts/**'
             - '.python-version'
             - '.env.example'
+            # The workspace lockfile and root manifest determine which versions
+            # the API actually runs against, so a change to either can break it
+            # without touching a line of source. Both are deliberately bare
+            # patterns: they match only the files at the repository root. A
+            # glob such as '**/uv.lock' would pull every integration lockfile
+            # into the core suite.
+            - 'uv.lock'
+            - 'pyproject.toml'
           clients-ts:
             - 'hindsight-clients/typescript/**'
             - 'package.json'
@@ -1817,6 +1825,128 @@ jobs:
       # pytest-split filters at collection (before xdist takes over), so it
       # composes cleanly with the `-n 8 --dist loadgroup` baked into addopts.
       run: uv run --with pytest-split pytest tests -v -m "not hs_llm_mat and not hs_llm_core" --splits 3 --group ${{ matrix.shard }}
+
+  test-api-free-threaded:
+    needs: [detect-changes]
+    # Deliberately NOT gated on `has_secrets`: this job runs the mock LLM and a
+    # deterministic embedder, so it needs no provider credentials and therefore also
+    # runs on fork PRs — which skip every secret-gated test-api job entirely.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    name: test-api (free-threaded 3.14)
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: mock
+      # Not a repository secret — Actions provides it to every run, forks included —
+      # so this keeps the job runnable on fork PRs. The github-copilot provider reads
+      # it to avoid looking for CLI account metadata that no runner has.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # strict is the default on a free-threaded build; set explicitly so the intent
+      # of this job is visible in the workflow rather than only in the code.
+      HINDSIGHT_API_FREE_THREADING: strict
+      # SQLAlchemy's Cython extensions do not declare free-threading support. They
+      # currently have no cp314t wheel so the pure-Python fallback is automatic, but
+      # pin it: the day a cp314t wheel ships, this job would otherwise start running
+      # with the GIL quietly re-enabled.
+      DISABLE_SQLALCHEMY_CEXT_RUNTIME: "1"
+
+    services:
+      # For the image smoke test at the end of the job. The pytest run above uses the
+      # embedded pg0, not this.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: hindsight
+          POSTGRES_PASSWORD: hindsight
+          POSTGRES_DB: hindsight
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hindsight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up free-threaded Python 3.14
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.14t'
+
+    - name: Create the virtualenv
+      working-directory: ./hindsight-api-slim
+      run: uv venv --python "$(which python)" .venv-ft
+
+    - name: Install dependencies
+      working-directory: ./hindsight-api-slim
+      # `uv pip install` rather than `uv sync --frozen`: uv.lock pins the resolution
+      # for the default interpreter, and this one resolves different wheels.
+      #
+      # No --override is needed any more: quicktok left in #4022 and orjson in #4040,
+      # and everything remaining publishes cp3XXt wheels.
+      #
+      # local-ml is deliberately excluded. Importing sentence_transformers re-enables
+      # the GIL, so a process that installs it cannot stay free-threaded; the tests
+      # that need local models skip themselves (see tests/conftest.py).
+      env:
+        VIRTUAL_ENV: .venv-ft
+      run: uv pip install -e ".[embedded-db]" --group dev
+
+
+    - name: Assert the interpreter is genuinely free-threaded
+      working-directory: ./hindsight-api-slim
+      # Fails the job before a single test runs if the build is not free-threaded or a
+      # dependency has already taken the GIL back, so that shows up as its own red step
+      # rather than as a confusing mass of downstream failures.
+      run: |
+        ./.venv-ft/bin/python -c "
+        import sys, sysconfig
+        assert sysconfig.get_config_var('Py_GIL_DISABLED'), 'not a free-threaded build'
+        assert not sys._is_gil_enabled(), 'the GIL is already enabled at startup'
+        import hindsight_api.api.http
+        assert not sys._is_gil_enabled(), 'importing the API re-enabled the GIL'
+        print('free-threaded:', sys.version)
+        "
+
+    - name: Run tests
+      working-directory: ./hindsight-api-slim
+      # Deliberately NOT run with the GIL warning promoted to an error. The suite
+      # imports LiteLLM on purpose to test that provider, and LiteLLM pulls in
+      # fastuuid, which has no free-threaded build — so a suite-wide filter fails
+      # ~50 tests for doing exactly what they are meant to do.
+      #
+      # What matters is that the SERVER never takes the GIL, and that is asserted
+      # where it belongs: the step above imports the whole API under the fatal
+      # filter, tests/test_free_threading.py re-checks it in a subprocess, and the
+      # image build and smoke test assert it again.
+      run: |
+        ./.venv-ft/bin/python -m pytest tests -v \
+          -m "not hs_llm_mat and not hs_llm_core"
+
+    - name: Build the free-threaded image
+      # Its own Dockerfile, not a target of the standalone one: different interpreter,
+      # different resolution, no control plane, no local ML. The build itself asserts
+      # the GIL is off after importing the whole API, so a mis-tagged image fails here.
+      run: docker build -f docker/standalone/Dockerfile.freethreaded -t hindsight-api:py3.14t .
+
+    - name: Smoke test the free-threaded image
+      # Starts the image against the Postgres service and a stub embedder, exercises
+      # retain and recall, and asserts the SERVER process still has the GIL disabled —
+      # the failure this tag exists to prevent is silent, so it has to be asserted.
+      run: ./docker/freethreaded-smoke.sh hindsight-api:py3.14t "postgresql://hindsight:hindsight@127.0.0.1:5432/hindsight"
 
   test-api-llm-core:
     needs: [detect-changes]
@@ -5327,6 +5457,47 @@ jobs:
         cd hindsight-dev
         uv run cli-coverage-check
 
+  # The wrapper clients (hindsight_client.py / src/index.ts) are hand-written
+  # convenience layers over the generated SDKs, so nothing regenerates them when
+  # the API gains a field. client-coverage-check has existed for that, but had no
+  # job: it sat red on main with reflect.apply_all_directives missing from both
+  # wrappers, and the bank-config surface had drifted to 22 settings reachable
+  # from neither. See #4029.
+  check-client-coverage:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.clients-ts == 'true' ||
+      needs.detect-changes.outputs.clients-python == 'true' ||
+      needs.detect-changes.outputs.dev == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install hindsight-dev dependencies
+      run: |
+        cd hindsight-dev && uv sync --frozen --index-strategy unsafe-best-match
+
+    - name: Check client wrappers cover every request param and bank config field
+      run: |
+        cd hindsight-dev
+        uv run client-coverage-check
+
   # hindsight-dev/tests had no job of its own, so nothing ran it: the benchmark
   # harness was only exercised by the nightly Performance Tests workflow, where a
   # plain construction bug in the answer/judge LLM config surfaced as a red
@@ -5448,6 +5619,7 @@ jobs:
       - verify-generated-files
       - check-openapi-compatibility
       - check-cli-coverage
+      - check-client-coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

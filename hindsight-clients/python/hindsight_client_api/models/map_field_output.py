@@ -39,8 +39,8 @@ class MapFieldOutput(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['text', 'value', 'multi-values', 'map']):
-            raise ValueError("must be one of enum values ('text', 'value', 'multi-values', 'map')")
+        if value not in set(['text', 'multi-text', 'value', 'multi-values', 'map']):
+            raise ValueError("must be one of enum values ('text', 'multi-text', 'value', 'multi-values', 'map')")
         return value
 
     model_config = ConfigDict(

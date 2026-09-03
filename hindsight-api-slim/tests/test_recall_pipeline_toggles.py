@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from hindsight_api.engine import memory_engine as memory_engine_module
+from hindsight_api.engine.search.types import GraphRetrieval
 from hindsight_api.engine.search import retrieval as retrieval_module
 
 _QUERY = "[0.1,0.2,0.3]"
@@ -52,7 +53,7 @@ def stub_retrieval(monkeypatch):
     class FakeGraphRetriever:
         async def retrieve(self, **kwargs):
             calls["graph"] += 1
-            return [], None
+            return GraphRetrieval([], None)
 
     fake_config = SimpleNamespace(graph_seed_min_similarity=0.3, temporal_semantic_min_similarity=0.24)
 

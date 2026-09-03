@@ -6,6 +6,9 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Changelog" subtitle="User-facing changes only. Internal maintenance and infrastructure updates are omitted." />
 
+This page covers the Hindsight core (API, CLI, control plane). Each integration is released on its own
+cadence and has its own changelog — find it on the integration's page.
+
 ## [0.9.2](https://github.com/vectorize-io/hindsight/releases/tag/v0.9.2)
 
 **Features**
@@ -1600,14 +1603,3 @@ _This release contains internal maintenance and infrastructure changes only._
 **Bug Fixes**
 
 - Fixed the standalone Docker image so it builds/runs correctly. ([`1056a20`](https://github.com/vectorize-io/hindsight/commit/1056a20))
-
-## Integration Changelogs
-
-| Integration                                        | Package                            | Description                                       |
-| -------------------------------------------------- | ---------------------------------- | ------------------------------------------------- |
-| [LiteLLM](integrations/litellm.md)         | `hindsight-litellm`                | Universal LLM memory via LiteLLM (100+ providers) |
-| [Pydantic AI](integrations/pydantic-ai.md) | `hindsight-pydantic-ai`            | Persistent memory tools for Pydantic AI agents    |
-| [CrewAI](integrations/crewai.md)           | `hindsight-crewai`                 | Persistent memory for CrewAI agents               |
-| [AI SDK](integrations/ai-sdk.md)           | `@vectorize-io/hindsight-ai-sdk`   | Memory integration for Vercel AI SDK              |
-| [Chat SDK](integrations/chat.md)           | `@vectorize-io/hindsight-chat`     | Memory integration for Vercel Chat SDK            |
-| [OpenClaw](integrations/openclaw.md)       | `@vectorize-io/hindsight-openclaw` | Hindsight memory plugin for OpenClaw              |

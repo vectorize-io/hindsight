@@ -137,6 +137,46 @@ def current_response_usage() -> LLMResponseUsage | None:
     return _response_usage_ctx.get()
 
 
+@dataclass
+class LLMQueueWait:
+    """Accumulator for time a call spent waiting on LLM concurrency permits."""
+
+    seconds: float = 0.0
+
+
+# Optional per-call sink for permit wait time, bound by a caller that wants to
+# report it. Unset by default, which makes record_queue_wait a no-op.
+_queue_wait_ctx: ContextVar[LLMQueueWait | None] = ContextVar("hindsight_llm_queue_wait_ctx", default=None)
+
+
+def set_queue_wait_sink(sink: LLMQueueWait | None) -> Token:
+    """Collect permit wait time for calls made under this context. Returns a reset token.
+
+    Without a sink, ``duration`` for an LLM call conflates two very different things:
+    time queued behind a concurrency permit and time the request was actually in
+    flight. That ambiguity sent issue #3881 chasing the provider. The worker path has
+    the ``.queued`` stage breadcrumb for this, but ``set_stage`` is a no-op outside a
+    worker task, so a synchronous HTTP request had no signal at all.
+    """
+    return _queue_wait_ctx.set(sink)
+
+
+def reset_queue_wait_sink(token: Token) -> None:
+    """Unwind a binding made by :func:`set_queue_wait_sink`."""
+    _queue_wait_ctx.reset(token)
+
+
+def record_queue_wait(seconds: float) -> None:
+    """Add permit wait time to the active sink. No-op when no caller bound one.
+
+    Accumulates rather than overwrites: a provider that owns its retry loop
+    re-acquires permits per attempt, and the caller wants the total.
+    """
+    sink = _queue_wait_ctx.get()
+    if sink is not None:
+        sink.seconds += seconds
+
+
 def set_trace_context(ctx: LLMTraceContext | None) -> Token:
     """Bind trace attribution to the current context. Returns a reset token."""
     return _trace_ctx.set(ctx)
@@ -399,6 +439,23 @@ class LLMTraceRecorder:
         # pooled connection per sub-batch. Bounded, and only ever holds ids: a trace id is ~36
         # bytes and this is capped, so it cannot grow with traffic.
         self._rows_written: OrderedDict[str, None] = OrderedDict()
+        # Event loop this recorder's pool belongs to, bound in `bind_loop()` once the
+        # engine is initialising inside its own loop. None until then (and forever in
+        # tests that never initialise), which means "no affinity, always record".
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Pin this recorder to the loop whose pool it writes through.
+
+        `register_span_recorder` puts every engine's recorder in one process-wide
+        composite, so with several event loops in one process (the multi-loop
+        launcher) an LLM call on loop A fans out to loop B's recorder too. Writing
+        through B's pool from A raises "attached to a different loop" at best, and
+        drives concurrent unsynchronised access into asyncpg's protocol objects at
+        worst. Recording the owner lets `_record_fire_and_forget` drop the calls
+        that are not its own.
+        """
+        self._owner_loop = loop
 
     def _writable(self) -> Any | None:
         """Return the pool to write through, or None if writing isn't possible.
@@ -501,6 +558,10 @@ class LLMTraceRecorder:
     def _record_fire_and_forget(self, record: LLMRequestRecord) -> None:
         """Schedule a trace write as a background task."""
         try:
+            if self._owner_loop is not None and self._owner_loop is not asyncio.get_running_loop():
+                # Another loop's engine made this call; its own recorder is in the
+                # same composite and will write the row. See `bind_loop`.
+                return
             task = asyncio.create_task(self._safe_write(record))
         except RuntimeError:
             # No running event loop (e.g. during shutdown)

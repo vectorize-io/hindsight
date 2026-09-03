@@ -193,6 +193,9 @@ const config: Config = {
   ],
 
   plugins: [
+    // Indexes src/pages/changelog/integrations/*.md at build time so the
+    // Integrations Hub knows which integrations have a changelog page.
+    './plugins/integration-changelogs',
     [
       '@docusaurus/plugin-content-docs',
       {

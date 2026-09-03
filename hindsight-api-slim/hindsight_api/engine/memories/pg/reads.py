@@ -238,7 +238,9 @@ async def scan_memories(
 
     # Compound tag groups (AND/OR/NOT trees), AND-ed on. Also owns its `AND` prefix and appends
     # one bind param per leaf; empty/absent groups yield no clause and no params.
-    groups_clause, group_params, _ = build_tag_groups_where_clause(tag_groups, param_offset=len(params) + 1)
+    built = build_tag_groups_where_clause(tag_groups, param_offset=len(params) + 1)
+    groups_clause = built.sql
+    group_params = built.params
     params.extend(group_params)
 
     offset = _decode_page_token(page_token) + max(int(skip or 0), 0)
@@ -507,12 +509,17 @@ async def any_memory_updated_since(
     params: list[Any] = [bank_id, since]
     where = ["bank_id = $1", "updated_at > $2"]
 
-    tag_clause, tag_params, next_param = build_tags_where_clause(tags, param_offset=len(params) + 1, match=tags_match)
+    built = build_tags_where_clause(tags, param_offset=len(params) + 1, match=tags_match)
+    tag_clause = built.sql
+    tag_params = built.params
+    next_param = built.next_param_offset
     if tag_clause:
         where.append(tag_clause.removeprefix("AND "))
         params.extend(tag_params)
 
-    group_clause, group_params, _ = build_tag_groups_where_clause(tag_groups, param_offset=next_param)
+    built = build_tag_groups_where_clause(tag_groups, param_offset=next_param)
+    group_clause = built.sql
+    group_params = built.params
     if group_clause:
         where.append(group_clause.removeprefix("AND "))
         params.extend(group_params)
@@ -608,9 +615,8 @@ async def any_memory_updated_since_batch(
         # in the group whatever its actual tags. The `mu.` alias is required, not
         # cosmetic: both sides of the join expose a `tags` column, and an unqualified
         # one would resolve by scoping rules rather than by intent.
-        tag_clause, _, _ = build_tags_where_clause(
-            scope.tags, table_alias="mu.", match=scope.tags_match, value_expr="s.tags"
-        )
+        built = build_tags_where_clause(scope.tags, table_alias="mu.", match=scope.tags_match, value_expr="s.tags")
+        tag_clause = built.sql
         by_clause.setdefault(tag_clause, []).append(scope)
 
     for tag_clause, group in by_clause.items():

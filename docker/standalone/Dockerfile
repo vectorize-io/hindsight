@@ -203,7 +203,7 @@ RUN chmod 755 /home/hindsight
 
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
-# No tokenizer pre-download step: quicktok ships its vocabularies inside the wheel,
+# No tokenizer pre-download step: toktok compiles its vocabularies into the wheel,
 # so token counting works offline with nothing cached at build time.
 
 # Pre-download ML models to avoid runtime download (conditional)
@@ -379,7 +379,7 @@ RUN chmod 755 /home/hindsight
 
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
-# No tokenizer pre-download step: quicktok ships its vocabularies inside the wheel,
+# No tokenizer pre-download step: toktok compiles its vocabularies into the wheel,
 # so token counting works offline with nothing cached at build time.
 
 # Pre-download ML models to avoid runtime download (conditional)

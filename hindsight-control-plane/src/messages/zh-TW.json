@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "刪除策略\"{name}\"？",
     "deleteStrategyDescription": "這將刪除該策略及其所有覆寫。此操作無法撤銷。",
     "fieldTypeText": "文字",
+    "fieldTypeMultiText": "多文字",
     "fieldTypeValue": "單值",
     "fieldTypeMultiValues": "多值",
     "fieldTypeMap": "對映",

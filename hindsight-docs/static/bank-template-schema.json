@@ -747,6 +747,7 @@
             "value",
             "multi-values",
             "text",
+            "multi-text",
             "map"
           ],
           "title": "Type",
@@ -811,6 +812,7 @@
           "default": "text",
           "enum": [
             "text",
+            "multi-text",
             "value",
             "multi-values",
             "map"
@@ -1094,6 +1096,15 @@
             "exact"
           ],
           "title": "Match",
+          "type": "string"
+        },
+        "resolve": {
+          "default": "exact",
+          "enum": [
+            "exact",
+            "fuzzy"
+          ],
+          "title": "Resolve",
           "type": "string"
         }
       },

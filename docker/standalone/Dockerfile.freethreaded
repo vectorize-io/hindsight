@@ -1,0 +1,135 @@
+# Hindsight API on free-threaded CPython 3.14 — image tag suffix `-py3.14t`.
+#
+#   docker build -f docker/standalone/Dockerfile.freethreaded -t hindsight-api:py3.14t .
+#
+# A separate file from ./Dockerfile rather than extra stages in it, because the two
+# share nothing that matters: a different interpreter (installed rather than taken
+# from the base image), a different dependency resolution, no control plane, and no
+# local ML. The only thing in common is start-all.sh. Folding it in would have meant
+# threading build args through four stages of the supported 3.11 image to no benefit.
+#
+# WHAT THIS TAG IS FOR. On a free-threaded build the process can run an event loop
+# per thread and execute Python bytecode in parallel, which is worth roughly 2x on
+# recall throughput over one loop. It is aimed at recall-heavy deployments; see the
+# caveats below before reaching for it.
+#
+# CAVEATS
+#   * No local ML. Importing sentence_transformers re-enables the GIL, so this image
+#     cannot ship it — embeddings and reranking must be remote (TEI/OpenAI/Cohere).
+#   * Free-threading is lost SILENTLY if any C extension without
+#     Py_MOD_GIL_NOT_USED is imported: the process keeps working and merely performs
+#     like the 3.11 image. The build asserts against that below, and the runtime sets
+#     HINDSIGHT_API_FREE_THREADING=strict so a container refuses to start in that
+#     state rather than being quietly slow.
+
+ARG INCLUDE_API=true
+
+# =============================================================================
+# Stage: Builder
+# =============================================================================
+FROM python:3.14-slim AS api-builder-freethreaded
+
+ARG INCLUDE_API
+RUN if [ "$INCLUDE_API" != "true" ]; then echo "Skipping API build" && exit 0; fi
+
+# libpq-dev because psycopg2-binary has no cp3XXt wheel and must build from source.
+# It is only ever imported by the migration subprocess (migrations.py runs alembic in
+# a child when HINDSIGHT_API_MIGRATION_ISOLATION resolves to isolation, precisely
+# because psycopg2 re-enables the GIL), so shipping it does not cost this image its
+# free-threading.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl ca-certificates libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust, for litellm. It publishes only abi3 wheels (cp310-abi3), and abi3 — the stable
+# ABI — does not apply to a free-threaded interpreter, so uv cannot use them here and
+# falls back to the sdist, which builds a Rust extension (litellm-rust). litellm is a
+# hard runtime dependency, so this is not optional. Confined to the builder stage: the
+# runtime image below copies only the venv and carries no toolchain.
+#
+# Drop this once litellm publishes cp3XXt wheels.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# There is no official free-threaded python image — the library/python tags ship the
+# GIL build only — so the interpreter is installed here and copied into the runtime
+# stage alongside the venv.
+ENV UV_PYTHON_INSTALL_DIR=/opt/pythons
+RUN uv python install 3.14+freethreaded
+
+WORKDIR /app
+COPY hindsight-api-slim/pyproject.toml ./api/
+COPY hindsight-api-slim/README.md ./api/
+
+# Source is needed to build the package, so this is one step rather than
+# deps-then-source; `uv pip install` has no --no-install-package.
+COPY hindsight-api-slim/hindsight_api ./api/hindsight_api
+
+# Not `uv sync --locked`: uv.lock pins the resolution for the default interpreter and
+# this one resolves different wheels. That is exactly why this ships as its own tag
+# rather than being assumed equivalent to the pinned image.
+#
+# No `uv pip check` either, unlike the 3.11 image: it compares the installed set
+# against what pyproject declares for every interpreter, which is not the question
+# here. The check that matters is the GIL assertion below, which pip check cannot make.
+RUN uv venv --python 3.14t /app/api/.venv \
+    && VIRTUAL_ENV=/app/api/.venv uv pip install "./api[embedded-db]"
+
+# Prove the image is what its tag claims. A C extension that has not declared
+# Py_MOD_GIL_NOT_USED re-enables the GIL for the whole process on import and says so
+# only with a RuntimeWarning — so an image can look free-threaded and be single
+# threaded. Promote that warning to an error and fail the build instead of shipping it.
+RUN PYTHONWARNINGS="error:The global interpreter lock:RuntimeWarning" \
+    /app/api/.venv/bin/python -c "import sys, sysconfig; \
+assert sysconfig.get_config_var('Py_GIL_DISABLED'), 'not a free-threaded interpreter'; \
+import hindsight_api.api.http; \
+assert not sys._is_gil_enabled(), 'importing the API re-enabled the GIL'; \
+print('free-threaded image verified:', sys.version)"
+
+# =============================================================================
+# Stage: Runtime (target: api-only-freethreaded)
+# =============================================================================
+FROM python:3.14-slim AS api-only-freethreaded
+
+WORKDIR /app
+
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends curl procps libxml2 libssl3 libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 hindsight
+
+# The venv's interpreter lives in /opt/pythons, so it has to come along.
+COPY --from=api-builder-freethreaded /opt/pythons /opt/pythons
+COPY --from=api-builder-freethreaded /app/api /app/api
+COPY docker/standalone/start-all.sh /app/start-all.sh
+RUN chmod +x /app/start-all.sh && chown -R hindsight:hindsight /app
+
+USER hindsight
+
+ENV PATH="/app/api/.venv/bin:${PATH}"
+ENV PYTHONUNBUFFERED=1
+ENV HINDSIGHT_API_HOST=0.0.0.0
+ENV HINDSIGHT_API_PORT=8888
+ENV HINDSIGHT_API_LOG_LEVEL=info
+ENV HINDSIGHT_ENABLE_API=true
+ENV HINDSIGHT_ENABLE_CP=false
+
+# Refuse to start single-threaded. Without this the process runs happily with the GIL
+# back on and the only symptom is that it is as slow as the 3.11 image, which is
+# exactly the failure this tag exists to avoid.
+ENV HINDSIGHT_API_FREE_THREADING=strict
+
+# SQLAlchemy's Cython extensions do not declare free-threading support. They have no
+# cp314t wheel today so the pure-Python fallback is automatic, but pin it: the day one
+# ships, this image would otherwise start running with the GIL quietly re-enabled.
+ENV DISABLE_SQLALCHEMY_CEXT_RUNTIME=1
+
+# This tag has no local ML models — embeddings and reranking must be remote.
+ENV HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei
+ENV HINDSIGHT_API_RERANKER_PROVIDER=tei
+
+EXPOSE 8888
+CMD ["/app/start-all.sh"]

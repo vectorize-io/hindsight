@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "删除策略\"{name}\"？",
     "deleteStrategyDescription": "这将删除该策略及其所有覆盖。此操作无法撤销。",
     "fieldTypeText": "文本",
+    "fieldTypeMultiText": "多文本",
     "fieldTypeValue": "单值",
     "fieldTypeMultiValues": "多值",
     "fieldTypeMap": "映射",

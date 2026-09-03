@@ -434,6 +434,7 @@
     "deleteStrategyTitle": "Strategie „{name}\" löschen?",
     "deleteStrategyDescription": "Dadurch werden die Strategie und alle ihre Überschreibungen entfernt. Diese Aktion kann nicht rückgängig gemacht werden.",
     "fieldTypeText": "Text",
+    "fieldTypeMultiText": "Mehrere Texte",
     "fieldTypeValue": "Einzelwert",
     "fieldTypeMultiValues": "Mehrere Werte",
     "fieldTypeMap": "Karte",

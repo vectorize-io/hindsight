@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -38,12 +39,26 @@ class BankStatsCache:
         self._ttl = float(ttl_seconds)
         self._max_entries = int(max_entries) if max_entries and max_entries > 0 else 0
         self._entries: OrderedDict[tuple[str, str], tuple[float, dict[str, Any]]] = OrderedDict()
-        self._in_flight: dict[tuple[str, str], asyncio.Future[dict[str, Any]]] = {}
-        self._lock = asyncio.Lock()
+        # In-flight loaders are keyed by (event loop, cache key), not by cache key
+        # alone. An asyncio.Future belongs to the loop that created it, so a caller on
+        # another loop must never await it -- with several loops in one process
+        # (free-threaded uvicorn) that raises "<Future> is bound to a different event
+        # loop" under load. Coalescing therefore happens within a loop; the cached
+        # DATA below is still shared across all of them, which is the part worth having.
+        self._in_flight: dict[tuple[object, tuple[str, str]], asyncio.Future[dict[str, Any]]] = {}
+        # A threading.Lock, not an asyncio.Lock: it is loop-agnostic, and every
+        # critical section it guards is await-free (plain dict work), so it is never
+        # held across a suspension point and cannot block a loop.
+        self._lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
         return self._ttl > 0
+
+    @staticmethod
+    def _flight_key(key: tuple[str, str]) -> tuple[object, tuple[str, str]]:
+        """Scope an in-flight slot to the running loop (see ``_in_flight``)."""
+        return (asyncio.get_running_loop(), key)
 
     def _now(self) -> float:
         return time.monotonic()
@@ -91,20 +106,21 @@ class BankStatsCache:
 
         if force_refresh:
             value = await loader()
-            async with self._lock:
+            with self._lock:
                 self._store_unlocked(key, value)
                 # Supersede any loader that was in flight for this key.
-                self._in_flight.pop(key, None)
+                self._in_flight.pop(self._flight_key(key), None)
             return value
 
-        async with self._lock:
+        with self._lock:
             cached = self._get_fresh_unlocked(key)
             if cached is not None:
                 return cached
-            in_flight = self._in_flight.get(key)
+            flight_key = self._flight_key(key)
+            in_flight = self._in_flight.get(flight_key)
             if in_flight is None:
                 in_flight = asyncio.get_running_loop().create_future()
-                self._in_flight[key] = in_flight
+                self._in_flight[flight_key] = in_flight
                 is_owner = True
             else:
                 is_owner = False
@@ -115,11 +131,11 @@ class BankStatsCache:
         try:
             value = await loader()
         except BaseException as exc:
-            async with self._lock:
+            with self._lock:
                 # Invalidation may have detached this loader and allowed a new
                 # one to claim the key. Never remove that newer loader's slot.
-                if self._in_flight.get(key) is in_flight:
-                    self._in_flight.pop(key, None)
+                if self._in_flight.get(flight_key) is in_flight:
+                    self._in_flight.pop(flight_key, None)
             if not in_flight.done():
                 in_flight.set_exception(exc)
             # Suppress "Future exception was never retrieved" when no other
@@ -128,28 +144,30 @@ class BankStatsCache:
             in_flight.exception()
             raise
 
-        async with self._lock:
+        with self._lock:
             # Only the loader that still owns the key may populate the cache.
             # An invalidated loader can finish for its original callers, but its
             # pre-invalidation result must not overwrite a newer load.
-            if self._in_flight.get(key) is in_flight:
+            if self._in_flight.get(flight_key) is in_flight:
                 self._store_unlocked(key, value)
-                self._in_flight.pop(key, None)
+                self._in_flight.pop(flight_key, None)
         if not in_flight.done():
             in_flight.set_result(value)
         return value
 
     async def invalidate(self, schema: str, bank_id: str) -> None:
         """Drop any cached stats for `(schema, bank_id)`."""
-        async with self._lock:
+        with self._lock:
             key = (schema, bank_id)
             self._entries.pop(key, None)
             # Detach rather than cancel: existing callers may finish with the
             # snapshot they requested, while post-invalidation callers reload.
-            self._in_flight.pop(key, None)
+            # Every loop's slot for this key, since in-flight is scoped per loop.
+            for flight_key in [fk for fk in self._in_flight if fk[1] == key]:
+                self._in_flight.pop(flight_key, None)
 
     async def clear(self) -> None:
-        async with self._lock:
+        with self._lock:
             self._entries.clear()
             self._in_flight.clear()
 

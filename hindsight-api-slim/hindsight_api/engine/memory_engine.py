@@ -52,7 +52,7 @@ from ..config import (
     LLMStrategyConfig,
     get_config,
 )
-from ..tracing import create_operation_span
+from ..tracing import create_operation_span, extract_task_trace_context, inject_task_trace_context
 from ..utils import mask_network_location
 from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
@@ -563,8 +563,9 @@ from .response_models import (
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.fold import FoldMemberRef
-from .retain.types import RetainContentDict
+from .retain.types import RetainBatchResult, RetainContentDict, merge_processed_content_tokens
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
+from .search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
@@ -580,7 +581,7 @@ from .task_backend import TaskBackend
 RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
 from .retain import timing as _retain_timing_mod
 from .token_encoding import count_tokens as _token_encoding_count
-from .token_encoding import get_token_encoding
+from .token_encoding import truncate_to_tokens
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
@@ -1376,16 +1377,15 @@ def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix
     if max_query_tokens <= 0 or len(query) <= max_query_tokens:
         return query
 
-    encoding = get_token_encoding()
-    query_tokens = encoding.count(query)
-    if query_tokens <= max_query_tokens:
+    truncation = truncate_to_tokens(query, max_query_tokens)
+    if truncation.original_tokens <= max_query_tokens:
         return query
 
     logger.warning(
-        f"{log_prefix}Query truncated to {max_query_tokens} tokens (was {query_tokens}); "
+        f"{log_prefix}Query truncated to {max_query_tokens} tokens (was {truncation.original_tokens}); "
         f"raise HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS to allow longer queries"
     )
-    return encoding.decode(encoding.encode(query)[:max_query_tokens])
+    return truncation.text
 
 
 @dataclass(frozen=True)
@@ -1941,6 +1941,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_validator: "OperationValidatorExtension | None" = None,
         tenant_extension: "TenantExtension | None" = None,
         skip_llm_verification: bool | None = None,
+        run_background_tasks: bool = True,
     ):
         """
         Initialize the temporal + semantic memory system.
@@ -1982,6 +1983,10 @@ class MemoryEngine(MemoryEngineInterface):
                              If provided, operations require a RequestContext for authentication.
             skip_llm_verification: Skip LLM connection verification during initialization.
                                   Defaults to HINDSIGHT_API_SKIP_LLM_VERIFICATION env var or False.
+            run_background_tasks: Whether this engine runs the background maintenance loop.
+                                  Set False for the extra event loops of the multi-loop launcher,
+                                  which serve HTTP only — a process needs exactly one maintenance
+                                  loop, not one per event loop.
         """
         # Load config from environment for any missing parameters
         from ..config import _get_raw_config, get_config
@@ -2320,6 +2325,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .maintenance import MaintenanceLoop
 
         self._maintenance_loop: MaintenanceLoop | None = None
+        self._run_background_tasks = run_background_tasks
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -2339,8 +2345,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Configurable via HINDSIGHT_API_RETAIN_STORE_MAX_CONCURRENT.
         self._store_put_semaphore = asyncio.Semaphore(get_config().retain_store_max_concurrent)
 
-        # initialize encoding eagerly to avoid delaying the first time
-        get_token_encoding()
+        # Load the vocabulary now rather than inside the first retain/recall — it
+        # parses a few megabytes, and the tokenizer is cached from here on.
+        count_tokens("")
 
         # Store operation validator extension (optional). Wrapped so every hook is timed: the
         # validator runs outside the operation's own timer, so nothing else can see what it costs.
@@ -3272,7 +3279,7 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
     @_bind_bank_id("task_dict", key="bank_id")
-    async def execute_task(self, task_dict: dict[str, Any]):
+    async def execute_task(self, task_dict: dict[str, Any]) -> None:
         """
         Execute a task by routing it to the appropriate handler.
 
@@ -3283,6 +3290,26 @@ class MemoryEngine(MemoryEngineInterface):
             task_dict: Task dictionary with 'type' key and other payload data
                       Example: {'type': 'batch_retain', 'bank_id': '...', 'contents': [...]}
         """
+        # Continue the trace of whatever enqueued this task, when the payload
+        # carries one (see inject_task_trace_context). Attached around the whole
+        # dispatch so every span the handler opens — hindsight.retain and its
+        # GenAI children — nests under the originating request rather than
+        # starting a second, unrelated trace for the same logical operation.
+        parent_context = extract_task_trace_context(task_dict)
+        if parent_context is None:
+            await self._execute_task(task_dict)
+            return
+
+        from opentelemetry import context as otel_context
+
+        token = otel_context.attach(parent_context)
+        try:
+            await self._execute_task(task_dict)
+        finally:
+            otel_context.detach(token)
+
+    async def _execute_task(self, task_dict: dict[str, Any]) -> None:
+        """Route a task to its handler. See :meth:`execute_task`."""
         task_type = task_dict.get("type")
         operation_id = task_dict.get("operation_id")
 
@@ -4712,8 +4739,13 @@ class MemoryEngine(MemoryEngineInterface):
         # re-schedules banks with eligible-but-unscheduled facts.
         from .maintenance import MaintenanceLoop
 
-        self._maintenance_loop = MaintenanceLoop(self)
-        self._maintenance_loop.start()
+        if self._run_background_tasks:
+            self._maintenance_loop = MaintenanceLoop(self)
+            self._maintenance_loop.start()
+
+        # The span recorder registry is process-wide, so with more than one event loop
+        # every engine's recorder sees every loop's LLM calls. Pin ours to this loop.
+        self._llm_recorder.bind_loop(asyncio.get_running_loop())
 
         self._initialized = True
         logger.info("Memory system initialized (pool and task backend started)")
@@ -5205,7 +5237,7 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     group_outbox_callback = outbox_callback if is_last_group else None
 
-                group_result, group_usage, group_processed = await self._retain_batch_async_internal(
+                group_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=group.contents,
                     request_context=request_context,
@@ -5218,13 +5250,12 @@ class MemoryEngine(MemoryEngineInterface):
                     outbox_callback=group_outbox_callback,
                 )
                 for local_idx, origin_idx in enumerate(group.origins):
-                    if local_idx < len(group_result):
-                        result[origin_idx] = group_result[local_idx]
-                total_usage = total_usage + group_usage
-                if total_processed_content_tokens is None or group_processed is None:
-                    total_processed_content_tokens = None
-                else:
-                    total_processed_content_tokens = total_processed_content_tokens + group_processed
+                    if local_idx < len(group_outcome.memory_ids):
+                        result[origin_idx] = group_outcome.memory_ids[local_idx]
+                total_usage = total_usage + group_outcome.usage
+                total_processed_content_tokens = merge_processed_content_tokens(
+                    total_processed_content_tokens, group_outcome.processed_content_tokens
+                )
 
         # A cancelled run (bank deleted mid-flight) skips the completion side
         # effects, mirroring the pre-grouping early return from the sub-batch loop.
@@ -5626,7 +5657,7 @@ class MemoryEngine(MemoryEngineInterface):
             collected: list[_SubBatchOutcome] = []
 
             async def _run_sub(idx: int, contents_, origins_, offset_, is_last_, body_, body_hash_):
-                r, u, pr = await self._retain_batch_async_internal(
+                sub_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=contents_,
                     request_context=request_context,
@@ -5646,7 +5677,13 @@ class MemoryEngine(MemoryEngineInterface):
                     body_accum=body_accum,
                     retain_session=retain_session,
                 )
-                return _SubBatchOutcome(index=idx, origins=origins_, results=r, usage=u, processed=pr)
+                return _SubBatchOutcome(
+                    index=idx,
+                    origins=origins_,
+                    results=sub_outcome.memory_ids,
+                    usage=sub_outcome.usage,
+                    processed=sub_outcome.processed_content_tokens,
+                )
 
             try:
                 for sub in sub_batch_stream:
@@ -5780,10 +5817,9 @@ class MemoryEngine(MemoryEngineInterface):
                     if sub_idx < len(sub_results):
                         per_input_results[origin_idx].extend(sub_results[sub_idx])
                 total_usage = total_usage + sub_usage
-                if total_processed_content_tokens is None or sub_processed is None:
-                    total_processed_content_tokens = None
-                else:
-                    total_processed_content_tokens = total_processed_content_tokens + sub_processed
+                total_processed_content_tokens = merge_processed_content_tokens(
+                    total_processed_content_tokens, sub_processed
+                )
                 # Per-sub-batch progress is intentionally not written here: the streaming
                 # retain pipeline emits finer-grained "storing N/total chunks" snapshots
                 # via progress_callback as each sub-batch's chunks commit.
@@ -5800,7 +5836,7 @@ class MemoryEngine(MemoryEngineInterface):
             # In a try/finally for the same reason the split path's commit is: a retain that fails
             # part-way must not discard what its earlier parts already produced.
             try:
-                result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
+                sub_batch_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=contents,
                     request_context=request_context,
@@ -5818,6 +5854,9 @@ class MemoryEngine(MemoryEngineInterface):
                 if retain_session is not None:
                     async with _retain_timing_mod.timed("store.commit"):
                         await retain_session.commit()
+            result = sub_batch_outcome.memory_ids
+            total_usage = sub_batch_outcome.usage
+            total_processed_content_tokens = sub_batch_outcome.processed_content_tokens
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
 
@@ -5866,7 +5905,7 @@ class MemoryEngine(MemoryEngineInterface):
         chunk_index_offset: int = 0,
         body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
         retain_session=None,
-    ) -> tuple[list[list[str]], "TokenUsage", int | None]:
+    ) -> "RetainBatchResult":
         """
         Internal method for batch processing without chunking logic.
 
@@ -5940,9 +5979,8 @@ class MemoryEngine(MemoryEngineInterface):
                 audit_logger=self._audit_logger,
             )
             # Map the created facts onto this retain's trace so the trace view can
-            # show which memories the ingestion produced. result[0] is the
-            # per-content-item list of created unit ids (see retain_batch).
-            created_ids = [uid for group in result[0] for uid in group]
+            # show which memories the ingestion produced.
+            created_ids = [uid for group in result.memory_ids for uid in group]
             # Fire-and-forget: the mapping is patched on a background task so it
             # never adds latency to the retain response.
             self._llm_recorder.attach_memory_ids(trace_context_of(retain_llm), created=created_ids)
@@ -5955,7 +5993,7 @@ class MemoryEngine(MemoryEngineInterface):
     # the operation-level retry re-runs the whole submission anyway.
     _APPEND_CONFLICT_ATTEMPTS = 3
 
-    async def _retain_batch_with_append_retry(self, **kwargs) -> tuple[list[list[str]], "TokenUsage", int | None]:
+    async def _retain_batch_with_append_retry(self, **kwargs) -> "RetainBatchResult":
         """Run ``orchestrator.retain_batch``, redoing an append that lost its race.
 
         ``update_mode="append"`` reads the stored document, concatenates onto it
@@ -6493,6 +6531,10 @@ class MemoryEngine(MemoryEngineInterface):
                 if result.tag_groups is not None:
                     tag_groups = result.tag_groups
 
+        # Resolve fuzzy tag tokens into real tags before anything builds SQL. Runs after
+        # the validator so a validator-supplied tag_groups is resolved too.
+        tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+
         # Map budget enum to thinking_budget number using bank-resolved config.
         # Function "fixed" preserves legacy {LOW: 100, MID: 300, HIGH: 1000}; function "adaptive"
         # derives from max_tokens and clamps to [recall_budget_min, recall_budget_max].
@@ -6887,7 +6929,15 @@ class MemoryEngine(MemoryEngineInterface):
                 # The store's own per-stage timings become this recall's phase breakdown.
                 # Without this the trace goes dark exactly where the work moved to, and the
                 # only thing left to compare between the two paths is a total.
-                if enable_trace and tracer:
+                #
+                # Recorded unconditionally, like `backend_acquisition` and
+                # `generate_query_embedding` above. It used to sit behind `enable_trace`, which
+                # meant a store-answered recall reported those two phases and nothing else on
+                # ordinary traffic: the phase histogram covered ~7% of the request and the rest
+                # showed up as an unattributed remainder, on the one path where the work is not
+                # in this process to begin with. `store_*` are the store's own stages, `full_recall`
+                # is the whole hop including the Python either side of it.
+                if tracer:
                     for _name, _micros in (_store_result.store_stages or {}).items():
                         tracer.add_phase_metric(f"store_{_name}", _micros / 1_000_000)
                     tracer.add_phase_metric(
@@ -6895,6 +6945,9 @@ class MemoryEngine(MemoryEngineInterface):
                         _full_elapsed,
                         {"results": len(_store_result.results)},
                     )
+                # Assembling the trace OBJECT stays behind the caller's flag: it dumps every
+                # result, which is the expensive half and the reason tracing is opt-in.
+                if enable_trace and tracer:
                     _trace = tracer.finalize([r.model_dump() for r in _store_result.results])
                     _store_result.trace = _trace.to_dict() if _trace else None
                 return _store_result
@@ -7642,7 +7695,6 @@ class MemoryEngine(MemoryEngineInterface):
 
                 if chunk_ids_ordered:
                     chunks_dict = {}
-                    encoding = get_token_encoding()
 
                     # Fetch all candidate chunks in a single query. Token-budget accounting
                     # happens in Python after the fetch — one round-trip is always faster
@@ -7751,13 +7803,13 @@ class MemoryEngine(MemoryEngineInterface):
 
                         row = chunks_lookup[chunk_id]
                         chunk_text = row["chunk_text"]
-                        chunk_tokens = encoding.count(chunk_text)
+                        chunk_tokens = count_tokens(chunk_text)
 
                         if total_chunk_tokens + chunk_tokens > max_chunk_tokens:
                             remaining_tokens = max_chunk_tokens - total_chunk_tokens
                             if remaining_tokens > 0:
                                 # Only now are the ids needed — the fits-in-budget path above never builds them.
-                                truncated_text = encoding.decode(encoding.encode(chunk_text)[:remaining_tokens])
+                                truncated_text = truncate_to_tokens(chunk_text, remaining_tokens).text
                                 chunks_dict[chunk_id] = ChunkInfo(
                                     chunk_text=truncated_text, chunk_index=row["chunk_index"], truncated=True
                                 )
@@ -7781,12 +7833,11 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 6: Token budget filtering
             step_start = time.time()
 
-            encoding = get_token_encoding()
             selection = select_facts_within_budget(
                 fact_ids_ordered=[sr.id for sr in top_scored],
                 text_by_id={sr.id: sr.retrieval.text for sr in top_scored},
                 max_tokens=max_tokens,
-                count_tokens=encoding.count,
+                count_tokens=count_tokens,
             )
             total_tokens = selection.total_tokens
             selected_ids = set(selection.ids)
@@ -8015,8 +8066,6 @@ class MemoryEngine(MemoryEngineInterface):
                                     )
                                 }
 
-                            encoding = get_token_encoding()
-
                             def _make_source_fact(sid: str, r: Any) -> MemoryFact:
                                 return MemoryFact(
                                     id=sid,
@@ -8038,7 +8087,7 @@ class MemoryEngine(MemoryEngineInterface):
                                 text_by_id={sid: r["text"] for sid, r in source_row_by_id.items()},
                                 max_total_tokens=max_source_facts_tokens,
                                 max_tokens_per_observation=max_source_facts_tokens_per_observation,
-                                count_tokens=encoding.count,
+                                count_tokens=count_tokens,
                             )
                             source_facts_truncated = selection.truncated
                             source_facts_dict = {
@@ -11011,9 +11060,10 @@ class MemoryEngine(MemoryEngineInterface):
                 query_conditions.append(f"id ILIKE ${param_count}")
                 query_params.append(f"%{search_query}%")
 
-            tags_clause, tags_params, next_param = build_tags_where_clause(
-                tags, param_offset=param_count + 1, match=tags_match
-            )
+            built = build_tags_where_clause(tags, param_offset=param_count + 1, match=tags_match)
+            tags_clause = built.sql
+            tags_params = built.params
+            next_param = built.next_param_offset
             query_params.extend(tags_params)
             param_count = next_param - 1  # next_param is next available; convert to last used
 
@@ -12990,6 +13040,11 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_reflect(ctx))
 
+        # Resolve fuzzy tag tokens once, here: every tool the agentic loop runs
+        # (recall, mental-model search, source-fact reads) filters on these same groups,
+        # and each must see the same resolved tags.
+        tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+
         reflect_start = time.time()
         reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
         tags_info = f", tags={tags} ({tags_match})" if tags else ""
@@ -13574,6 +13629,46 @@ class MemoryEngine(MemoryEngineInterface):
             "total_edges": len(edges),
             "limit": limit,
         }
+
+    async def _resolve_fuzzy_tag_groups(
+        self,
+        bank_id: str,
+        tag_groups: list[TagGroup] | None,
+    ) -> list[TagGroup] | None:
+        """Rewrite ``resolve="fuzzy"`` leaves into exact ones for this bank.
+
+        Resolution happens here, above every SQL builder, so the retrieval arms, their
+        Python mirrors on the graph path, the ``GIN(tags)`` index and the store protocol
+        only ever see exact tags (#4026).
+
+        The vocabulary comes from the store's own ``list_tags``, so Oracle and store-owned
+        backends need no separate path. A bank holding more distinct tags than
+        ``MAX_VOCABULARY`` is rejected rather than resolved against a truncated
+        vocabulary, which would change which memories match with no signal to the caller.
+        """
+        if not tag_groups or not needs_resolution(tag_groups):
+            return tag_groups
+
+        from hindsight_api.extensions.operation_validator import OperationValidationError
+
+        from .memories import get_memories
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            page = await get_memories().list_tags(conn=conn, fq_table=fq_table, bank_id=bank_id, limit=MAX_VOCABULARY)
+
+        if page["total"] > MAX_VOCABULARY:
+            raise OperationValidationError(
+                f"Bank has {page['total']} distinct tags, above the {MAX_VOCABULARY} that "
+                f"fuzzy tag matching can resolve against. Use resolve='exact'.",
+                status_code=422,
+            )
+
+        vocabulary = [item["tag"] for item in page["items"]]
+        try:
+            return resolve_tag_groups(tag_groups, vocabulary)
+        except TagResolutionError as e:
+            raise OperationValidationError(str(e), status_code=422) from e
 
     async def list_tags(
         self,
@@ -14755,29 +14850,46 @@ class MemoryEngine(MemoryEngineInterface):
         # pinned model creation must do the same. The lazy bank-create runs inside
         # the same transaction as the INSERT below, so a freshly-created bank never
         # outlives a mental-model insert that ultimately fails.
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                created = await self._ensure_bank_exists(
-                    bank_id,
-                    request_context,
-                    conn=conn,
-                )
-                row = await self._insert_pinned_mental_model(
-                    conn,
-                    mental_model_id=mental_model_id,
-                    bank_id=bank_id,
-                    name=name,
-                    source_query=source_query,
-                    content=content,
-                    embedding=embedding,
-                    tags=tags,
-                    max_tokens=max_tokens,
-                    trigger=trigger,
-                )
-            # After the transaction commits: the index is derived from a row that must already
-            # exist, and indexing inside the transaction would publish a page a rollback then
-            # un-creates.
-            await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
+        try:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    created = await self._ensure_bank_exists(
+                        bank_id,
+                        request_context,
+                        conn=conn,
+                    )
+                    row = await self._insert_pinned_mental_model(
+                        conn,
+                        mental_model_id=mental_model_id,
+                        bank_id=bank_id,
+                        name=name,
+                        source_query=source_query,
+                        content=content,
+                        embedding=embedding,
+                        tags=tags,
+                        max_tokens=max_tokens,
+                        trigger=trigger,
+                    )
+                # After the transaction commits: the index is derived from a row that must already
+                # exist, and indexing inside the transaction would publish a page a rollback then
+                # un-creates.
+                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
+        except asyncpg.UniqueViolationError as exc:
+            # mental_models_pkey is the table's only unique constraint, so a violation naming
+            # this table is the caller's id colliding with a model that already exists. Anything
+            # else is a real failure and must not be reported as a duplicate model:
+            # _ensure_bank_exists creates this bank's vector indexes in the same transaction,
+            # and a cross-process CREATE INDEX race collides in pg_class, not here.
+            if getattr(exc, "table_name", None) != "mental_models":
+                raise
+            # Local, like every other OperationValidationError import in this module: the
+            # extensions package pulls in MCPExtension, which imports MemoryEngine back.
+            from hindsight_api.extensions import OperationValidationError
+
+            raise OperationValidationError(
+                f"Mental model '{mental_model_id}' already exists in bank '{bank_id}'",
+                status_code=409,
+            ) from exc
 
         # Best-effort default-template hook runs after the bank-create commits
         # (it opens its own connections and can create pinned models).
@@ -16620,19 +16732,24 @@ class MemoryEngine(MemoryEngineInterface):
         params: list[Any] = [bank_id]
         where = ["bank_id = $1"]
 
-        tag_clause, tag_params, next_param = build_tags_where_clause(
+        built = build_tags_where_clause(
             tag_filtering.tags,
             param_offset=len(params) + 1,
             match=tag_filtering.tags_match,
         )
+        tag_clause = built.sql
+        tag_params = built.params
+        next_param = built.next_param_offset
         if tag_clause:
             where.append(tag_clause.removeprefix("AND "))
             params.extend(tag_params)
 
-        group_clause, group_params, _ = build_tag_groups_where_clause(
+        built = build_tag_groups_where_clause(
             tag_filtering.tag_groups,
             param_offset=next_param,
         )
+        group_clause = built.sql
+        group_params = built.params
         if group_clause:
             where.append(group_clause.removeprefix("AND "))
             params.extend(group_params)
@@ -17932,18 +18049,20 @@ class MemoryEngine(MemoryEngineInterface):
             # both filters apply independently — each wrapped in the untagged-OR rule —
             # so the directive set is the intersection of what either filter would admit.
             if tags:
-                tags_clause, tags_params, param_idx = build_tags_where_clause(
-                    tags=tags, param_offset=param_idx, table_alias="", match=tags_match
-                )
+                built = build_tags_where_clause(tags=tags, param_offset=param_idx, table_alias="", match=tags_match)
+                tags_clause = built.sql
+                tags_params = built.params
+                param_idx = built.next_param_offset
                 if tags_clause:
                     # Always include untagged directives; tagged ones must match the reflect tags
                     scoped_clause = tags_clause.replace("AND ", "", 1)
                     filters.append(f"((tags IS NULL OR tags = '{{}}') OR ({scoped_clause}))")
                     params.extend(tags_params)
             if tag_groups:
-                groups_clause, groups_params, param_idx = build_tag_groups_where_clause(
-                    tag_groups, param_offset=param_idx
-                )
+                built = build_tag_groups_where_clause(tag_groups, param_offset=param_idx)
+                groups_clause = built.sql
+                groups_params = built.params
+                param_idx = built.next_param_offset
                 if groups_clause:
                     # Same untagged-OR rule as the flat-tags branch above.
                     scoped_clause = groups_clause.replace("AND ", "", 1)
@@ -19595,6 +19714,10 @@ class MemoryEngine(MemoryEngineInterface):
                             task_payload["_tenant_id"] = request_context.tenant_id
                         if request_context.api_key_id:
                             task_payload["_api_key_id"] = request_context.api_key_id
+                        # Carry the enqueueing request's trace context so the
+                        # worker's hindsight.retain span continues this trace
+                        # rather than starting an unrelated one.
+                        inject_task_trace_context(task_payload)
 
                         # Per-child single-document surfacing (see parent note):
                         # in a multi-document batch, each single-document child

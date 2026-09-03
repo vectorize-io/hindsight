@@ -623,11 +623,6 @@ class InMemoryMemories(MemoriesExtension):
         doc = self.documents.get(str(document_id))
         return list(doc["chunk_texts"]) if doc else None
 
-    async def count_chunks(self, *, bank_id, document_id):
-        self.calls.append("count_chunks")
-        doc = self.documents.get(str(document_id))
-        return len(doc["chunk_texts"]) if doc else 0
-
     async def delete_document_record(self, *, bank_id, document_id):
         self.calls.append("delete_document_record")
         self.documents.pop(str(document_id), None)

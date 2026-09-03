@@ -8,6 +8,8 @@ description: "Add long-term memory to AutoGen agents with Hindsight. Provides Fu
 
 Persistent long-term memory for [AutoGen](https://microsoft.github.io/autogen/) agents via Hindsight. Provides `FunctionTool` instances that plug directly into AutoGen's `AssistantAgent`.
 
+[View Changelog →](/changelog/integrations/autogen)
+
 ## Features
 
 - **Memory Tools** — retain, recall, and reflect as AutoGen `FunctionTool` instances compatible with `AssistantAgent(tools=[...])`

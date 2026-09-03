@@ -25,8 +25,10 @@ from . import __version__
 from .banner import print_banner
 from .config import (
     DEFAULT_ACCESS_LOG,
+    DEFAULT_EVENT_LOOPS,
     DEFAULT_WORKERS,
     ENV_ACCESS_LOG,
+    ENV_EVENT_LOOPS,
     ENV_HOST,
     ENV_WORKERS,
     HindsightConfig,
@@ -174,6 +176,17 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
         type=int,
         default=int(os.getenv(ENV_WORKERS, str(DEFAULT_WORKERS))),
         help=f"Number of worker processes (env: {ENV_WORKERS}, default: {DEFAULT_WORKERS})",
+    )
+    parser.add_argument(
+        "--event-loops",
+        type=int,
+        default=int(os.getenv(ENV_EVENT_LOOPS, str(DEFAULT_EVENT_LOOPS))),
+        help=(
+            "Event loops per process, each on its own thread "
+            f"(env: {ENV_EVENT_LOOPS}, default: {DEFAULT_EVENT_LOOPS}). "
+            ">1 only helps on a free-threaded build, where loops run Python in parallel; "
+            "on a GIL build they take turns and this only adds overhead."
+        ),
     )
 
     # Access log options
@@ -423,7 +436,79 @@ def main():
             text_search_extension=config.text_search_extension,
         )
 
+    if args.event_loops > 1:
+        _serve_multi_loop(args, config, uvicorn_config, operation_validator, tenant_extension)
+        return
+
     uvicorn.run(**uvicorn_config)
+
+
+def _serve_multi_loop(args, config, uvicorn_config, operation_validator, tenant_extension) -> None:
+    """Serve from several event loops in one process. See hindsight_api/multi_loop.py.
+
+    Each loop builds its OWN engine and app: uvicorn runs a lifespan per server, and an
+    asyncpg pool belongs to the loop that created it, so nothing here can be shared.
+    """
+    import logging
+
+    from . import multi_loop
+
+    _this = sys.modules[__name__]
+    MemoryEngine = _this.MemoryEngine
+    create_app = _this.create_app
+    DefaultExtensionContext = _this.DefaultExtensionContext
+
+    if args.event_loops > 1 and not multi_loop.is_free_threaded():
+        logging.warning(
+            "--event-loops=%d on a GIL build: the loops will take turns rather than run in "
+            "parallel, so this adds thread and connection overhead for no throughput. It is "
+            "only a win on a free-threaded interpreter (the -py3.14t image).",
+            args.event_loops,
+        )
+
+    # The configured pool size describes a PROCESS, so it is divided rather than
+    # multiplied — N loops each opening the full pool exhausts max_connections.
+    pool_max = multi_loop.divide_pool_budget(config.db_pool_max_size, args.event_loops)
+    pool_min = max(1, config.db_pool_min_size // args.event_loops)
+    logging.info(
+        "Event loops: %d; per-loop DB pool min=%d max=%d (process total ~%d)",
+        args.event_loops,
+        pool_min,
+        pool_max,
+        pool_max * args.event_loops,
+    )
+
+    def build_app(*, primary: bool):
+        memory = MemoryEngine(
+            operation_validator=operation_validator,
+            tenant_extension=tenant_extension,
+            run_migrations=primary and config.run_migrations_on_startup,
+            pool_min_size=pool_min,
+            pool_max_size=pool_max,
+            run_background_tasks=primary,
+        )
+        if tenant_extension:
+            tenant_extension.set_context(
+                DefaultExtensionContext(database_url=config.database_url, memory_engine=memory)
+            )
+        return create_app(
+            memory=memory,
+            http_api_enabled=True,
+            mcp_api_enabled=config.mcp_enabled,
+            mcp_mount_path="/mcp",
+            initialize_memory=True,
+            run_background_tasks=primary,
+        )
+
+    # host/port move to the shared listening socket; the rest is uvicorn's.
+    server_kwargs = {k: v for k, v in uvicorn_config.items() if k not in ("app", "host", "port", "workers", "reload")}
+    multi_loop.serve(
+        build_app=build_app,
+        loops=args.event_loops,
+        host=args.host,
+        port=args.port,
+        uvicorn_kwargs=server_kwargs,
+    )
 
 
 if __name__ == "__main__":
