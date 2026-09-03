@@ -55,6 +55,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -819,9 +820,11 @@ class OpenAICompatibleLLM(LLMInterface):
         )
 
         # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
-        client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
-        if default_headers:
-            client_kwargs["default_headers"] = default_headers
+        client_kwargs: dict[str, Any] = {
+            "api_key": self.api_key,
+            "max_retries": 0,
+            "default_headers": with_openai_compatible_user_agent(default_headers),
+        }
         if self.base_url:
             parsed = urlparse(self.base_url)
             if parsed.query:
