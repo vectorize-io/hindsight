@@ -157,6 +157,19 @@ def application_name_from_dsn(dsn: str) -> str | None:
     return values[-1] or None
 
 
+def _vector_codec_init(next_callback: Any | None) -> Any:
+    """Wrap a pool ``init`` callback so the binary vector codec is installed first."""
+
+    async def init(conn: Any) -> None:
+        from .vector_codec import register_vector_codec
+
+        await register_vector_codec(conn)
+        if next_callback is not None:
+            await next_callback(conn)
+
+    return init
+
+
 def _application_name_setup(app_name: str, init_callback: Any | None) -> Callable[[Any], Awaitable[None]]:
     """Wrap ``init_callback`` so every acquire re-asserts ``application_name``.
 
@@ -241,7 +254,13 @@ class PostgreSQLBackend(DatabaseBackend):
         # connection; behind pgbouncer it has to be re-asserted per acquire
         # (see _application_name_setup).
         app_name = application_name_from_dsn(dsn)
-        pool_init = _application_name_setup(app_name, init_callback) if app_name else init_callback
+        # Every connection gets pgvector's binary codec before anything else runs on it,
+        # so embeddings are bound as float32 rather than a ~12-bytes-per-dimension text
+        # literal the server has to parse. See engine/db/vector_codec.py for the
+        # measurement and for why a connection that cannot register it (a database that
+        # has not been migrated yet, so the `vector` type does not exist) still works.
+        pool_init = _vector_codec_init(init_callback)
+        pool_init = _application_name_setup(app_name, pool_init) if app_name else pool_init
 
         # init runs once per new connection; setup runs on every acquire, after
         # asyncpg's release-time RESET ALL. Re-running the session GUCs
