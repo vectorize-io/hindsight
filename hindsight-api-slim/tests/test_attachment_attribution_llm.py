@@ -134,10 +134,10 @@ async def test_the_api_returns_the_attachment_only_on_the_facts_that_used_it(rea
 
     `test_attachment_attribution` covers the pure number-to-id mapping and the
     test above covers whether the model attributes correctly, but both stop
-    before the database. Between them and a caller sit the `memory_attachments`
-    write and the unit-keyed read, and a regression in either — most obviously
-    reverting to the chunk-level join this replaced — restores exactly the bug
-    the feature removed while every other test still passes.
+    before the database. Between them and a caller sit the write of
+    `memory_units.attachment_ids` and the read that resolves it, and a regression
+    in either — most obviously reverting to the chunk-level join this replaced —
+    restores exactly the bug the feature removed while every other test passes.
 
     So this asserts the shape a caller actually sees: same document, same chunk,
     some memories carrying the diagram and some carrying nothing.

@@ -7820,8 +7820,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/attachments/{attachment_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/attachments/{attachment_id}")
 
     @app.get(
         "/v1/default/files/download/{key:path}",
