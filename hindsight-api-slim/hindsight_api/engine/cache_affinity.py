@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 # xAI's documented cache-pinning header, and OpenAI's cache-routing field.
 XAI_CONV_ID_HEADER = "x-grok-conv-id"
 OPENAI_PROMPT_CACHE_KEY_PARAM = "prompt_cache_key"
+# OpenCode Go's conversation-grouping header (#4071).
+OPENCODE_SESSION_HEADER = "x-opencode-session"
 
 # Hosts (exact or parent domain) whose backends implement the xAI header.
 _XAI_DOMAINS = ("x.ai", "grok.com")
@@ -155,6 +157,35 @@ def cache_affinity_id(messages: Any) -> str | None:
     if trace_ctx is not None and trace_ctx.trace_id:
         return hashlib.sha256(str(trace_ctx.trace_id).encode("utf-8")).hexdigest()[:32]
     return _first_message_fingerprint(messages)
+
+
+def apply_opencode_session(request: dict[str, Any], provider: str) -> None:
+    """Add OpenCode Go's conversation-grouping header to ``request`` in place.
+
+    OpenCode Go asks third-party clients to send ``x-opencode-session`` so
+    requests of one conversation are grouped, and has warned that requests
+    omitting it will be rejected (#4071). That makes it a protocol requirement
+    rather than a cache optimization, so it is applied whenever the provider is
+    ``opencode-go`` regardless of the configured ``cache_affinity`` mode — an
+    operator setting ``none`` to opt out of cache pinning must not lose a header
+    the backend requires.
+
+    The value is the operation-scoped id from :func:`cache_affinity_id`, so every
+    LLM call of one retain/reflect/consolidation run shares it — including the
+    provider's own retries, since this is applied to ``call_params`` once before
+    the retry loop — while separate runs get different ids.
+
+    User-wins, matching :func:`apply_cache_affinity`: a value the caller already
+    placed in ``extra_headers`` is kept. Never raises; when no id can be derived
+    the request goes out unchanged.
+    """
+    if provider.lower() != "opencode-go":
+        return
+    session_id = cache_affinity_id(request.get("messages"))
+    if session_id is None:
+        return
+    extra_headers = request.setdefault("extra_headers", {})
+    extra_headers.setdefault(OPENCODE_SESSION_HEADER, session_id)
 
 
 def apply_cache_affinity(request: dict[str, Any], mode: CacheAffinityMode) -> None:

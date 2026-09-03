@@ -40,6 +40,7 @@ from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.cache_affinity import (
     CacheAffinityMode,
     apply_cache_affinity,
+    apply_opencode_session,
     parse_cache_affinity,
     resolve_cache_affinity,
 )
@@ -1147,6 +1148,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # deterministic (the schema text is fixed per response_format), so the id
         # stays stable across the calls of one run.
         apply_cache_affinity(call_params, self._cache_affinity)
+        apply_opencode_session(call_params, self.provider)
 
         last_exception = None
 
@@ -1550,6 +1552,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         apply_bank_attribution(call_params)
         apply_cache_affinity(call_params, self._cache_affinity)
+        apply_opencode_session(call_params, self.provider)
 
         last_exception = None
 
