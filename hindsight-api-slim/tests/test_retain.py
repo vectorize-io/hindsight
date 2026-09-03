@@ -2642,13 +2642,16 @@ def test_chunks_extraction_mode():
             RetainContent(content="Bob fixed the critical bug in the payment service."),
         ]
 
-        facts, chunks, usage = asyncio.run(
+        extraction = asyncio.run(
             extract_facts_from_contents(
                 contents=contents,
                 llm_config=None,  # Must not be called
                 config=_get_raw_config(),
             )
         )
+        facts = extraction.facts
+        chunks = extraction.chunks
+        usage = extraction.usage
 
         # One fact per chunk (both contents fit in one chunk each)
         assert len(facts) == len(chunks) == 2
@@ -2709,11 +2712,13 @@ async def test_verbatim_extraction_mode():
                 content=text, event_date=datetime(2024, 3, 10, tzinfo=timezone.utc), context="onboarding notes"
             )
         ]
-        facts, chunks, _ = await extract_facts_from_contents(
+        extraction = await extract_facts_from_contents(
             contents=contents,
             llm_config=llm_config,
             config=_get_raw_config(),
         )
+        facts = extraction.facts
+        chunks = extraction.chunks
 
         logger.info(f"Verbatim mode extracted {len(facts)} facts from {len(chunks)} chunks")
         for i, f in enumerate(facts):
@@ -2960,13 +2965,15 @@ def test_strategy_overrides_extraction_mode_for_chunks():
         RetainContent(content="Bob reviewed the pull request."),
     ]
 
-    facts, chunks, usage = asyncio.run(
+    extraction = asyncio.run(
         extract_facts_from_contents(
             contents=contents,
             llm_config=None,  # chunks must not call the LLM
             config=strategy_config,
         )
     )
+    facts = extraction.facts
+    usage = extraction.usage
 
     assert len(facts) == 2
     assert facts[0].fact_text == contents[0].content

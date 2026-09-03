@@ -439,7 +439,6 @@ class OpenAIResponsesLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
-        cached_prefix: str | None = None,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Make a Responses API call with retry logic (see ``LLMInterface.call``)."""
@@ -533,8 +532,6 @@ class OpenAIResponsesLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        cached_prefix: str | None = None,
-        cached_prefix_message_count: int = 0,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """Make a Responses API call with tools (see ``LLMInterface.call_with_tools``).

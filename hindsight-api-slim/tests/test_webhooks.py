@@ -1593,13 +1593,14 @@ class TestRetainCompletedWebhook:
         """
         from hindsight_api.engine.response_models import TokenUsage
         from hindsight_api.engine.retain import fact_extraction
+        from hindsight_api.engine.retain.types import ExtractionResult
 
         bank_id = f"wh-zerofact-{uuid.uuid4().hex[:8]}"
         webhook_id = uuid.uuid4()
         original_manager = memory._webhook_manager
 
         async def _extract_no_facts(*args, **kwargs):
-            return [], [], TokenUsage()
+            return ExtractionResult([], [], TokenUsage())
 
         try:
             memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
@@ -1709,13 +1710,14 @@ class TestRetainCompletedWebhook:
         """
         from hindsight_api.engine.response_models import TokenUsage
         from hindsight_api.engine.retain import fact_extraction
+        from hindsight_api.engine.retain.types import ExtractionResult
 
         bank_id = f"wh-zerocount-{uuid.uuid4().hex[:8]}"
         webhook_id = uuid.uuid4()
         original_manager = memory._webhook_manager
 
         async def _extract_no_facts(*args, **kwargs):
-            return [], [], TokenUsage()
+            return ExtractionResult([], [], TokenUsage())
 
         try:
             memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])

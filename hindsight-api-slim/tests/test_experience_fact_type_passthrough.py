@@ -45,11 +45,12 @@ async def test_extract_facts_preserves_experience_type():
         "hindsight_api.engine.retain.fact_extraction.extract_facts_from_text",
         new=AsyncMock(return_value=([extracted_fact], [(contents[0].content, 1)], TokenUsage())),
     ):
-        facts, _chunks, _usage = await extract_facts_from_contents(
+        extraction = await extract_facts_from_contents(
             contents=contents,
             llm_config=None,
             config=_get_raw_config(),
         )
+        facts = extraction.facts
 
     assert len(facts) == 1
     assert facts[0].fact_type == "experience", (

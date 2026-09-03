@@ -145,7 +145,7 @@ def test_persistent_too_many_requests_exhausts_retry_budget() -> None:
 
 
 def test_default_tei_batch_size_is_32() -> None:
-    """Unset env keeps the historical 32 texts per /embed request."""
+    """Unset env keeps 32 texts per /embed request — TEI's own --max-client-batch-size."""
     import os
 
     from hindsight_api.config import HindsightConfig

@@ -411,6 +411,10 @@ ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE"
 ENV_EMBEDDINGS_OPENAI_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS"
 
+# How many embedding requests a remote provider keeps in flight for one encode()
+# call. Applies to every remote provider, not just one.
+ENV_EMBEDDINGS_MAX_CONCURRENT_REQUESTS = "HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS"
+
 # Retry/backoff for remote embedding APIs. Recall embeds its query inline on the
 # request path, so a single upstream 5xx must not surface as a user-visible 500.
 ENV_EMBEDDINGS_MAX_RETRIES = "HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES"
@@ -562,6 +566,9 @@ ENV_BASE_PATH = "HINDSIGHT_API_BASE_PATH"
 ENV_LOG_LEVEL = "HINDSIGHT_API_LOG_LEVEL"
 ENV_LOG_FORMAT = "HINDSIGHT_API_LOG_FORMAT"
 ENV_LOG_JSON_FIELDS = "HINDSIGHT_API_LOG_JSON_FIELDS"
+# Event loops per process. >1 only pays off on a free-threaded build, where the loops
+# execute Python in parallel rather than taking turns; see hindsight_api/multi_loop.py.
+ENV_EVENT_LOOPS = "HINDSIGHT_API_EVENT_LOOPS"
 ENV_WORKERS = "HINDSIGHT_API_WORKERS"
 ENV_ACCESS_LOG = "HINDSIGHT_API_ACCESS_LOG"
 ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
@@ -1068,10 +1075,24 @@ DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE = 32
 DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
-# Texts per TEI /embed request. Also the batch size the streaming retain producer
-# coalesces its per-chunk embedding calls up to (see embedding_coalescer), so raising
-# it is how a TEI deployment with headroom trades requests for larger ones.
+# Texts per TEI /embed request, and the unit the client fans out over (see
+# DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS). 32 is also TEI's own default
+# --max-client-batch-size, and that is a hard validation error rather than a soft cap, so
+# raising this above the server's value fails the request instead of being clamped.
+#
+# A sweep on bge-small/L4 at ~430-token inputs put batch 8 at 8 in-flight requests
+# slightly ahead of batch 32 (2,080 vs 1,904 texts/s, and 30ms p50 against 140ms), and
+# #4039 proposed lowering the default on that basis. Left at 32: a ~9% edge measured on
+# one model, one accelerator and one input length is too thin to change the request
+# profile of every existing TEI deployment, and the concurrency knob below is where the
+# throughput actually came from. Lower it per-deployment if a sweep on your own hardware
+# says so.
 DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE = 32
+# Embedding requests a remote provider issues concurrently for one encode() call. This
+# is what actually buys embedder throughput: the same TEI server measured 903 texts/s at
+# one in-flight request and 2,080 at eight. Bounded here rather than at the caller
+# because the right value is a property of the embedding service.
+DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS = 8
 # Embedding retry defaults: 4 retries (5 attempts total) with 0.5s -> 4s exponential
 # backoff, plus a 15s ceiling on the time any single encode() call may spend retrying
 # so a synchronous recall degrades to a slow response instead of a long stall.
@@ -1303,6 +1324,7 @@ DEFAULT_PORT = 8888
 DEFAULT_BASE_PATH = ""  # Empty string = root path
 DEFAULT_LOG_LEVEL = "info"
 DEFAULT_LOG_FORMAT = "text"  # Options: "text", "json"
+DEFAULT_EVENT_LOOPS = 1
 DEFAULT_WORKERS = 1
 DEFAULT_ACCESS_LOG = False
 DEFAULT_MCP_ENABLED = True
@@ -2981,6 +3003,7 @@ class HindsightConfig:
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
     embeddings_tei_batch_size: int = DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE
+    embeddings_max_concurrent_requests: int = DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS
     embeddings_openai_dimensions: int | None = None
     embeddings_query_prefix: str = DEFAULT_EMBEDDINGS_QUERY_PREFIX
     embeddings_passage_prefix: str = DEFAULT_EMBEDDINGS_PASSAGE_PREFIX
@@ -3771,6 +3794,11 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_TEI_BATCH_SIZE,
                 os.getenv(ENV_EMBEDDINGS_TEI_BATCH_SIZE),
                 DEFAULT_EMBEDDINGS_TEI_BATCH_SIZE,
+            ),
+            embeddings_max_concurrent_requests=_parse_positive_int(
+                ENV_EMBEDDINGS_MAX_CONCURRENT_REQUESTS,
+                os.getenv(ENV_EMBEDDINGS_MAX_CONCURRENT_REQUESTS),
+                DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS,
             ),
             embeddings_openai_dimensions=_parse_optional_positive_int(
                 ENV_EMBEDDINGS_OPENAI_DIMENSIONS,

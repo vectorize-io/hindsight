@@ -39,7 +39,7 @@ from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
 from .tags import TagGroup, TagsMatch, filter_results_by_tag_groups, filter_results_by_tags
-from .types import GraphRetrievalTimings, RetrievalResult
+from .types import GraphRetrieval, GraphRetrievalTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,9 @@ async def _find_semantic_seeds(
 
     tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
     tag_groups_param_start = 6 + (1 if tags else 0)
-    groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
+    built = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
+    groups_clause = built.sql
+    groups_params = built.params
 
     # created_after/created_before filter `updated_at`, matching the other recall arms
     # (see retrieval.py) so a window narrows every arm the same way.
@@ -141,7 +143,7 @@ class LinkExpansionRetriever(GraphRetriever):
         created_after: "datetime | None" = None,
         created_before: "datetime | None" = None,
         preselected_semantic_seeds: list[RetrievalResult] | None = None,
-    ) -> tuple[list[RetrievalResult], GraphRetrievalTimings | None]:
+    ) -> GraphRetrieval:
         """
         Retrieve facts by expanding links from seeds.
 
@@ -194,7 +196,7 @@ class LinkExpansionRetriever(GraphRetriever):
             )
 
             if not all_seeds:
-                return [], timings
+                return GraphRetrieval([], timings)
 
             seed_ids = list({s.id for s in all_seeds})
             timings.pattern_count = len(seed_ids)
@@ -290,7 +292,7 @@ class LinkExpansionRetriever(GraphRetriever):
             f"in {timings.traverse * 1000:.1f}ms (query: {timings.edge_load_time * 1000:.1f}ms)"
         )
 
-        return results, timings
+        return GraphRetrieval(results, timings)
 
     async def _expand_combined(
         self,

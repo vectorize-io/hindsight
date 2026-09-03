@@ -735,12 +735,13 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE` | Texts per ONNX forward pass. The provider runs in-process, so this is what bounds the activation tensor (and therefore peak memory) when a caller embeds a large list — an import, for example. | `32` |
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_CPU_MEM_ARENA` | Enable ONNX Runtime's CPU memory arena. The arena caches freed blocks and never returns them, so RSS holds its high-water mark for the life of the process. | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_TEI_URL` | TEI server URL | - |
-| `HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE` | Max texts per TEI `/embed` request. Also the batch size retain coalesces a document's per-chunk embeddings up to, so raise it when the TEI deployment has headroom for larger requests | `32` |
+| `HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE` | Max texts per TEI `/embed` request, and the unit the client fans out over (see `HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS`). TEI's own `--max-client-batch-size` (32 by default) is a hard validation error rather than a soft cap, so raising this above the server's value fails the request instead of being clamped | `32` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` | OpenAI API key (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE` | Max inputs per `embeddings.create` call for `openai`/`openrouter` providers — lower this when the upstream endpoint enforces stricter limits (e.g. DashScope caps at 10) | `100` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` | Optional requested output dimensions for OpenAI `text-embedding-3` models (e.g., `384` to match an existing pgvector schema) | - |
+| `HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS` | Embedding requests a remote provider keeps in flight for one `encode()` call. This is what buys throughput from an embedding service: the same TEI server sustains ~903 texts/s at one in-flight request and ~2,080 at eight. Applies to every remote provider (`tei`, `openai`, `cohere`, `zeroentropy`, `litellm`, `litellm-sdk`, `google`, ...); the in-process `local`/`onnx` backends are unaffected. Lower it when the embedding service or your provider quota cannot take the parallelism | `8` |
 | `HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES` | Retries after the first attempt when a remote embedding call fails transiently (5xx, timeout, connection error). `0` disables retrying. Applies to the `litellm` and `litellm-sdk` providers; 4xx auth/validation errors are never retried. | `4` |
 | `HINDSIGHT_API_EMBEDDINGS_INITIAL_BACKOFF` | Initial backoff in seconds between embedding retries (doubles per attempt, with jitter) | `0.5` |
 | `HINDSIGHT_API_EMBEDDINGS_MAX_BACKOFF` | Cap on the backoff between embedding retries, in seconds | `4.0` |
@@ -1319,6 +1320,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_PORT` | Server port | `8888` |
 | `HINDSIGHT_API_BASE_PATH` | Base path for API when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 | `HINDSIGHT_API_WORKERS` | Number of uvicorn worker processes | `1` |
+| `HINDSIGHT_API_EVENT_LOOPS` | Number of event loops served from a single process, each on its own thread. Only a throughput win on the free-threaded `-py3.14t` image, where the loops execute Python in parallel rather than taking turns; on a standard build it warns and buys nothing. The DB pool size is divided across the loops, not multiplied. | `1` |
 | `HINDSIGHT_API_ACCESS_LOG` | Enable uvicorn access log (`true`, `1`, `yes`, `on` to enable) | `false` |
 | `HINDSIGHT_API_LOG_LEVEL` | Log level: `debug`, `info`, `warning`, `error` | `info` |
 | `HINDSIGHT_API_LOG_FORMAT` | Log format: `text` or `json` (structured logging for cloud platforms) | `text` |
