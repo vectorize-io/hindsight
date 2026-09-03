@@ -39,7 +39,7 @@
     "websocket-driver": ">=0.7.5",
     "http-proxy-middleware": ">=2.0.10 <3",
     "next": ">=16.2.11 <17",
-    "fast-uri": ">=3.1.5 <4",
+    "fast-uri": ">=3.1.7 <4",
     "sharp": ">=0.35.0",
     "shell-quote": ">=1.9.0",
     "@istanbuljs/load-nyc-config": {
