@@ -59,14 +59,14 @@ async def test_consumer_failure_cancels_in_flight_extractions(monkeypatch):
         nonlocal calls, cancelled
         calls += 1
         if calls == 1:
-            return [], [], [], TokenUsage()
+            return orchestrator._EmbeddedExtraction([], [], [], TokenUsage())
         hanging_started.set()
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             cancelled += 1
             raise
-        return [], [], [], TokenUsage()
+        return orchestrator._EmbeddedExtraction([], [], [], TokenUsage())
 
     monkeypatch.setattr(orchestrator, "_extract_and_embed", fake_extract_and_embed)
 

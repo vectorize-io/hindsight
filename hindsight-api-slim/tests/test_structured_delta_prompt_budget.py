@@ -27,7 +27,7 @@ def test_build_structured_delta_prompt_truncates_huge_document():
 
 
 def test_fit_structured_delta_keeps_small_prompt_unchanged():
-    doc_out, cand_out, facts_out, truncated = _fit_structured_delta_prompt_parts(
+    fitted = _fit_structured_delta_prompt_parts(
         source_query="q",
         current_document_json='{"sections": []}',
         candidate_markdown="hello",
@@ -36,7 +36,34 @@ def test_fit_structured_delta_keeps_small_prompt_unchanged():
         task_footer="## Task\nDo it.",
         max_input_tokens=24_000,
     )
-    assert not truncated
-    assert doc_out == '{"sections": []}'
-    assert cand_out == "hello"
-    assert facts_out == "one line"
+    assert not fitted.truncated
+    assert fitted.document_json == '{"sections": []}'
+    assert fitted.candidate == "hello"
+    assert fitted.facts == "one line"
+
+
+def test_retraction_prompt_does_not_transpose_surviving_and_retracted():
+    """The two fact lists must land under their own headings.
+
+    ``build_structured_retraction_prompt`` reuses ``_fit_structured_delta_prompt_parts``
+    with the surviving facts in the ``candidate`` slot and the retracted ones in the
+    ``facts`` slot. Both are ``str``, so transposing them type-checks and produces a
+    grammatical prompt — one that tells the model to strip content resting on facts
+    that are still valid and keep content resting on facts that were withdrawn.
+    This asserts the mapping directly, since no type can.
+    """
+    from hindsight_api.engine.reflect.prompts import build_structured_retraction_prompt
+
+    prompt = build_structured_retraction_prompt(
+        current_document_json='{"sections": []}',
+        retracted_facts=[{"id": "r1", "text": "WITHDRAWN_MARKER", "type": "world", "context": ""}],
+        surviving_facts=[{"id": "v1", "text": "STILL_VALID_MARKER", "type": "world", "context": ""}],
+        source_query="topic",
+    )
+
+    surviving_heading = prompt.index("## STILL-SUPPORTED FACTS")
+    retracted_heading = prompt.index("## RETRACTED FACTS")
+    assert surviving_heading < prompt.index("STILL_VALID_MARKER") < retracted_heading, (
+        "the surviving fact must appear under STILL-SUPPORTED, before the RETRACTED heading"
+    )
+    assert prompt.index("WITHDRAWN_MARKER") > retracted_heading, "the retracted fact must appear under RETRACTED FACTS"

@@ -563,7 +563,7 @@ from .response_models import (
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.fold import FoldMemberRef
-from .retain.types import RetainContentDict
+from .retain.types import RetainBatchResult, RetainContentDict, merge_processed_content_tokens
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
 from .search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
@@ -5237,7 +5237,7 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     group_outbox_callback = outbox_callback if is_last_group else None
 
-                group_result, group_usage, group_processed = await self._retain_batch_async_internal(
+                group_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=group.contents,
                     request_context=request_context,
@@ -5250,13 +5250,12 @@ class MemoryEngine(MemoryEngineInterface):
                     outbox_callback=group_outbox_callback,
                 )
                 for local_idx, origin_idx in enumerate(group.origins):
-                    if local_idx < len(group_result):
-                        result[origin_idx] = group_result[local_idx]
-                total_usage = total_usage + group_usage
-                if total_processed_content_tokens is None or group_processed is None:
-                    total_processed_content_tokens = None
-                else:
-                    total_processed_content_tokens = total_processed_content_tokens + group_processed
+                    if local_idx < len(group_outcome.memory_ids):
+                        result[origin_idx] = group_outcome.memory_ids[local_idx]
+                total_usage = total_usage + group_outcome.usage
+                total_processed_content_tokens = merge_processed_content_tokens(
+                    total_processed_content_tokens, group_outcome.processed_content_tokens
+                )
 
         # A cancelled run (bank deleted mid-flight) skips the completion side
         # effects, mirroring the pre-grouping early return from the sub-batch loop.
@@ -5658,7 +5657,7 @@ class MemoryEngine(MemoryEngineInterface):
             collected: list[_SubBatchOutcome] = []
 
             async def _run_sub(idx: int, contents_, origins_, offset_, is_last_, body_, body_hash_):
-                r, u, pr = await self._retain_batch_async_internal(
+                sub_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=contents_,
                     request_context=request_context,
@@ -5678,7 +5677,13 @@ class MemoryEngine(MemoryEngineInterface):
                     body_accum=body_accum,
                     retain_session=retain_session,
                 )
-                return _SubBatchOutcome(index=idx, origins=origins_, results=r, usage=u, processed=pr)
+                return _SubBatchOutcome(
+                    index=idx,
+                    origins=origins_,
+                    results=sub_outcome.memory_ids,
+                    usage=sub_outcome.usage,
+                    processed=sub_outcome.processed_content_tokens,
+                )
 
             try:
                 for sub in sub_batch_stream:
@@ -5812,10 +5817,9 @@ class MemoryEngine(MemoryEngineInterface):
                     if sub_idx < len(sub_results):
                         per_input_results[origin_idx].extend(sub_results[sub_idx])
                 total_usage = total_usage + sub_usage
-                if total_processed_content_tokens is None or sub_processed is None:
-                    total_processed_content_tokens = None
-                else:
-                    total_processed_content_tokens = total_processed_content_tokens + sub_processed
+                total_processed_content_tokens = merge_processed_content_tokens(
+                    total_processed_content_tokens, sub_processed
+                )
                 # Per-sub-batch progress is intentionally not written here: the streaming
                 # retain pipeline emits finer-grained "storing N/total chunks" snapshots
                 # via progress_callback as each sub-batch's chunks commit.
@@ -5832,7 +5836,7 @@ class MemoryEngine(MemoryEngineInterface):
             # In a try/finally for the same reason the split path's commit is: a retain that fails
             # part-way must not discard what its earlier parts already produced.
             try:
-                result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
+                sub_batch_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=contents,
                     request_context=request_context,
@@ -5850,6 +5854,9 @@ class MemoryEngine(MemoryEngineInterface):
                 if retain_session is not None:
                     async with _retain_timing_mod.timed("store.commit"):
                         await retain_session.commit()
+            result = sub_batch_outcome.memory_ids
+            total_usage = sub_batch_outcome.usage
+            total_processed_content_tokens = sub_batch_outcome.processed_content_tokens
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
 
@@ -5898,7 +5905,7 @@ class MemoryEngine(MemoryEngineInterface):
         chunk_index_offset: int = 0,
         body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
         retain_session=None,
-    ) -> tuple[list[list[str]], "TokenUsage", int | None]:
+    ) -> "RetainBatchResult":
         """
         Internal method for batch processing without chunking logic.
 
@@ -5972,9 +5979,8 @@ class MemoryEngine(MemoryEngineInterface):
                 audit_logger=self._audit_logger,
             )
             # Map the created facts onto this retain's trace so the trace view can
-            # show which memories the ingestion produced. result[0] is the
-            # per-content-item list of created unit ids (see retain_batch).
-            created_ids = [uid for group in result[0] for uid in group]
+            # show which memories the ingestion produced.
+            created_ids = [uid for group in result.memory_ids for uid in group]
             # Fire-and-forget: the mapping is patched on a background task so it
             # never adds latency to the retain response.
             self._llm_recorder.attach_memory_ids(trace_context_of(retain_llm), created=created_ids)
@@ -5987,7 +5993,7 @@ class MemoryEngine(MemoryEngineInterface):
     # the operation-level retry re-runs the whole submission anyway.
     _APPEND_CONFLICT_ATTEMPTS = 3
 
-    async def _retain_batch_with_append_retry(self, **kwargs) -> tuple[list[list[str]], "TokenUsage", int | None]:
+    async def _retain_batch_with_append_retry(self, **kwargs) -> "RetainBatchResult":
         """Run ``orchestrator.retain_batch``, redoing an append that lost its race.
 
         ``update_mode="append"`` reads the stored document, concatenates onto it
@@ -11054,9 +11060,10 @@ class MemoryEngine(MemoryEngineInterface):
                 query_conditions.append(f"id ILIKE ${param_count}")
                 query_params.append(f"%{search_query}%")
 
-            tags_clause, tags_params, next_param = build_tags_where_clause(
-                tags, param_offset=param_count + 1, match=tags_match
-            )
+            built = build_tags_where_clause(tags, param_offset=param_count + 1, match=tags_match)
+            tags_clause = built.sql
+            tags_params = built.params
+            next_param = built.next_param_offset
             query_params.extend(tags_params)
             param_count = next_param - 1  # next_param is next available; convert to last used
 
@@ -16725,19 +16732,24 @@ class MemoryEngine(MemoryEngineInterface):
         params: list[Any] = [bank_id]
         where = ["bank_id = $1"]
 
-        tag_clause, tag_params, next_param = build_tags_where_clause(
+        built = build_tags_where_clause(
             tag_filtering.tags,
             param_offset=len(params) + 1,
             match=tag_filtering.tags_match,
         )
+        tag_clause = built.sql
+        tag_params = built.params
+        next_param = built.next_param_offset
         if tag_clause:
             where.append(tag_clause.removeprefix("AND "))
             params.extend(tag_params)
 
-        group_clause, group_params, _ = build_tag_groups_where_clause(
+        built = build_tag_groups_where_clause(
             tag_filtering.tag_groups,
             param_offset=next_param,
         )
+        group_clause = built.sql
+        group_params = built.params
         if group_clause:
             where.append(group_clause.removeprefix("AND "))
             params.extend(group_params)
@@ -18037,18 +18049,20 @@ class MemoryEngine(MemoryEngineInterface):
             # both filters apply independently — each wrapped in the untagged-OR rule —
             # so the directive set is the intersection of what either filter would admit.
             if tags:
-                tags_clause, tags_params, param_idx = build_tags_where_clause(
-                    tags=tags, param_offset=param_idx, table_alias="", match=tags_match
-                )
+                built = build_tags_where_clause(tags=tags, param_offset=param_idx, table_alias="", match=tags_match)
+                tags_clause = built.sql
+                tags_params = built.params
+                param_idx = built.next_param_offset
                 if tags_clause:
                     # Always include untagged directives; tagged ones must match the reflect tags
                     scoped_clause = tags_clause.replace("AND ", "", 1)
                     filters.append(f"((tags IS NULL OR tags = '{{}}') OR ({scoped_clause}))")
                     params.extend(tags_params)
             if tag_groups:
-                groups_clause, groups_params, param_idx = build_tag_groups_where_clause(
-                    tag_groups, param_offset=param_idx
-                )
+                built = build_tag_groups_where_clause(tag_groups, param_offset=param_idx)
+                groups_clause = built.sql
+                groups_params = built.params
+                param_idx = built.next_param_offset
                 if groups_clause:
                     # Same untagged-OR rule as the flat-tags branch above.
                     scoped_clause = groups_clause.replace("AND ", "", 1)

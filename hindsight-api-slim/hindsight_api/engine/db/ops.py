@@ -24,6 +24,55 @@ from typing import Any
 from .base import DatabaseConnection
 from .result import ResultRow
 
+#: The ``memory_units`` columns every link-expansion arm projects, in the order the
+#: arms are ``UNION ALL``-ed together.  Order is part of the contract, not a style
+#: choice: the arms are combined positionally, so two arms listing the same columns
+#: in different orders would union cleanly and silently mis-assign every value.
+MEMORY_UNIT_COLUMNS: tuple[str, ...] = (
+    "id",
+    "text",
+    "context",
+    "event_date",
+    "occurred_start",
+    "occurred_end",
+    "mentioned_at",
+    "fact_type",
+    "document_id",
+    "chunk_id",
+    "tags",
+    "proof_count",
+)
+
+
+def memory_unit_columns(alias: str = "", *, indent: int = 0) -> str:
+    """The shared ``memory_units`` projection for link expansion, optionally alias-qualified.
+
+    Single source of truth for a list that link expansion repeats ~20 times across
+    both backends — once per ``UNION ALL`` arm, again in the PostgreSQL semantic
+    arm's ``GROUP BY``, and again in each dialect's outer re-projection.  Spelling
+    it out per site made adding a column a 20-edit change where *every* miss is a
+    failure: a dropped column breaks the union arity, a reordered one corrupts the
+    results silently (see ``MEMORY_UNIT_COLUMNS``), and a ``GROUP BY`` left behind
+    is a runtime SQL error on a path only Oracle or a live recall exercises.
+
+    The score/weight/source expressions that follow the projection stay at the call
+    sites — they are what actually differs between the arms, and hiding them here
+    would trade a real distinction for a false one.
+
+    Args:
+        alias: Correlation name to qualify each column with (e.g. ``"mu"``).  Pass
+            ``""`` for bare columns, as subquery re-projections and ``GROUP BY``
+            lists need.
+        indent: Spaces to indent continuation lines by, so the generated SQL stays
+            readable in logs and ``EXPLAIN`` output.
+    """
+    prefix = f"{alias}." if alias else ""
+    columns = [f"{prefix}{column}" for column in MEMORY_UNIT_COLUMNS]
+    # Four per line keeps the longest alias-qualified row well inside the 120-column
+    # limit the rest of the file is formatted to.
+    lines = [", ".join(columns[i : i + 4]) for i in range(0, len(columns), 4)]
+    return (",\n" + " " * indent).join(lines)
+
 
 def document_serialization_sql(table: str, alias: str) -> str:
     """SQL predicate keeping one document to a single in-flight retain.

@@ -212,21 +212,6 @@ async def _audit_memory_defense(
     audit_logger.log_fire_and_forget(entry)
 
 
-def _merge_processed_content_tokens(a: int | None, b: int | None) -> int | None:
-    """Combine the processed-content-tokens signal across sub-results.
-
-    Semantics (see RetainResult.processed_content_tokens):
-      * None means "this part of the retain did not go through chunk-level
-        dedup" — i.e. the entire submitted payload was processed. If any
-        sub-result is None, the aggregate is None so callers conservatively
-        bill the full content.
-      * Otherwise, accumulate the int values.
-    """
-    if a is None or b is None:
-        return None
-    return a + b
-
-
 def _count_delta_content_tokens(delta_contents: list["RetainContent"]) -> int:
     """Sum content + context tokens across the chunk items that were
     actually fed into the extraction pipeline on a partial-delta retain.
@@ -295,9 +280,11 @@ from .types import (
     Phase1Result,
     ProcessedFact,
     ResolvedEntity,
+    RetainBatchResult,
     RetainContent,
     RetainContentDict,
     UserEntities,
+    merge_processed_content_tokens,
 )
 
 logger = logging.getLogger(__name__)
@@ -318,6 +305,26 @@ class _ProcessedFactBatch:
     extracted_facts: list[ExtractedFact]
     processed_facts: list[ProcessedFact]
     retained_index_by_original: list[int | None]
+
+
+@dataclass(frozen=True)
+class _EmbeddedExtraction:
+    """Facts extracted *and* embedded — what the retain paths share before storage.
+
+    ``extracted_facts`` and ``processed_facts`` are both here on purpose and are
+    not interchangeable: ``ProcessedFact.from_extracted_fact`` drops degenerate
+    facts, so ``processed_facts`` can be shorter, and the two are re-aligned via
+    ``_ProcessedFactBatch.retained_index_by_original``. Callers that need the
+    original chunk positions (causal-relation remapping) must read
+    ``extracted_facts``; callers that write rows must read ``processed_facts``.
+    Returning them as a bare 4-tuple made picking the wrong one a silent
+    positional mistake.
+    """
+
+    extracted_facts: list[ExtractedFact]
+    processed_facts: list[ProcessedFact]
+    chunks: list[ChunkMetadata]
+    usage: TokenUsage
 
 
 async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: str, units_created: int) -> None:
@@ -682,9 +689,8 @@ async def _streaming_session_retain(
         for idx, content in enumerate(batch_contents)
         if getattr(content, "entities", None)
     }
-    _texts, _dates, entities_per_fact = entity_processing._prepare_facts_for_entity_processing(
-        batch_processed, user_entities_per_content
-    )
+    prepared = entity_processing._prepare_facts_for_entity_processing(batch_processed, user_entities_per_content)
+    entities_per_fact = prepared.entities_per_fact
     names = {
         (unit_ids or [])[i]: [e["text"] for e in entities_per_fact[i]]
         for i in range(min(len(unit_ids or []), len(entities_per_fact)))
@@ -800,9 +806,8 @@ async def _streaming_store_owned_retain(
             for idx, content in enumerate(batch_contents)
             if getattr(content, "entities", None)
         }
-        _texts, _dates, entities_per_fact = entity_processing._prepare_facts_for_entity_processing(
-            batch_processed, user_entities_per_content
-        )
+        prepared = entity_processing._prepare_facts_for_entity_processing(batch_processed, user_entities_per_content)
+        entities_per_fact = prepared.entities_per_fact
         unit_entity_names = {
             unit_ids[i]: [e["text"] for e in entities_per_fact[i]]
             for i in range(min(len(unit_ids), len(entities_per_fact)))
@@ -984,9 +989,10 @@ async def _delta_store_owned_write(
                 for idx, content in enumerate(delta_contents)
                 if getattr(content, "entities", None)
             }
-            _t, _d, entities_per_fact = entity_processing._prepare_facts_for_entity_processing(
+            prepared = entity_processing._prepare_facts_for_entity_processing(
                 processed_facts, user_entities_per_content
             )
+            entities_per_fact = prepared.entities_per_fact
             unit_entity_names = {
                 unit_ids[i]: [e["text"] for e in entities_per_fact[i]]
                 for i in range(min(len(unit_ids), len(entities_per_fact)))
@@ -1038,13 +1044,8 @@ async def _extract_and_embed(
     pool: Any = None,
     operation_id: str | None = None,
     schema: str | None = None,
-) -> tuple[list, list[ProcessedFact], list[ChunkMetadata], TokenUsage]:
-    """
-    Shared pipeline: extract facts from contents and generate embeddings.
-
-    Returns:
-        Tuple of (extracted_facts, processed_facts, chunks_metadata, usage)
-    """
+) -> _EmbeddedExtraction:
+    """Shared pipeline: extract facts from contents and generate embeddings."""
     set_stage("retain.extract_and_embed")
     step_start = time.time()
     # No narrator: extraction takes none from this path at all. A "Narrator: {name}" line is
@@ -1055,16 +1056,17 @@ async def _extract_and_embed(
     # that never mentioned them (#3962). A caller that genuinely wants to name the speaker says
     # so in the item's `context`, which extraction already reads and which the dry-run
     # `agent_name` override is deprecated in favour of.
-    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
+    extraction = await fact_extraction.extract_facts_from_contents(
         contents, llm_config, config, pool, operation_id, schema
     )
+    extracted_facts, chunks, usage = extraction.facts, extraction.chunks, extraction.usage
     log_buffer.append(
         f"  Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks "
         f"from {len(contents)} contents in {time.time() - step_start:.3f}s"
     )
 
     if not extracted_facts:
-        return extracted_facts, [], chunks, usage
+        return _EmbeddedExtraction(extracted_facts, [], chunks, usage)
 
     if fact_type_override:
         for fact in extracted_facts:
@@ -1078,7 +1080,7 @@ async def _extract_and_embed(
 
     fact_batch = _process_extracted_facts(extracted_facts, embeddings)
 
-    return fact_batch.extracted_facts, fact_batch.processed_facts, chunks, usage
+    return _EmbeddedExtraction(fact_batch.extracted_facts, fact_batch.processed_facts, chunks, usage)
 
 
 def _remap_causal_relations(
@@ -1190,7 +1192,7 @@ async def retain_batch(
     webhook_manager: Any = None,
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
     audit_logger: Any = None,
-) -> tuple[list[list[str]], TokenUsage, int | None]:
+) -> RetainBatchResult:
     """
     Process a batch of content through the retain pipeline.
 
@@ -1300,7 +1302,7 @@ async def retain_batch(
                     outbox_callback_factory(group_dicts) if outbox_callback_factory is not None else outbox_callback
                 )
 
-                group_ids, group_usage, group_processed = await retain_batch(
+                group_result = await retain_batch(
                     pool=pool,
                     embeddings_model=embeddings_model,
                     llm_config=llm_config,
@@ -1338,16 +1340,18 @@ async def retain_batch(
                 # usage totals are not safe to accumulate from several tasks at once. The driver
                 # below merges them in one place, in group order, so the result does not depend on
                 # which group happened to finish first.
-                return doc_key, group_ids, group_usage, group_processed
+                return doc_key, group_result
 
             group_results = await asyncio.gather(*(_run_group(k, gd, gc) for k, (gd, gc) in groups.items()))
-            for doc_key, group_ids, group_usage, group_processed in group_results:
+            for doc_key, group_result in group_results:
                 for group_idx, orig_idx in enumerate(original_indices[doc_key]):
-                    if group_idx < len(group_ids):
-                        result_unit_ids[orig_idx] = group_ids[group_idx]
-                total_usage = total_usage + group_usage
-                total_processed_tokens = _merge_processed_content_tokens(total_processed_tokens, group_processed)
-            return result_unit_ids, total_usage, total_processed_tokens
+                    if group_idx < len(group_result.memory_ids):
+                        result_unit_ids[orig_idx] = group_result.memory_ids[group_idx]
+                total_usage = total_usage + group_result.usage
+                total_processed_tokens = merge_processed_content_tokens(
+                    total_processed_tokens, group_result.processed_content_tokens
+                )
+            return RetainBatchResult(result_unit_ids, total_usage, total_processed_tokens)
 
     # --- Memory Defense pre-extraction screening ---
     # Delegate to the loaded extension. `config` is a resolved HindsightConfig
@@ -1421,7 +1425,7 @@ async def retain_batch(
             contents_dicts = [contents_dicts[i] for i in _surviving]
             # If nothing survives, return empty results immediately.
             if not contents:
-                return [[] for _ in contents_dicts], TokenUsage(), 0
+                return RetainBatchResult([[] for _ in contents_dicts], TokenUsage(), 0)
 
     # Resolve effective document_id early so both delta and streaming paths
     # can find existing chunks from a prior attempt. On retry, a generated
@@ -1641,7 +1645,7 @@ async def retain_batch(
             logger.info("\n" + "\n".join(log_buffer) + "\n")
             # No new content was processed — report 0 so callers can skip
             # billing cleanly instead of falling back to full-content billing.
-            return [[] for _ in contents], TokenUsage(), 0
+            return RetainBatchResult([[] for _ in contents], TokenUsage(), 0)
 
     # --- Delta retain: check if we can skip unchanged chunks ---
     #
@@ -2208,7 +2212,7 @@ async def _streaming_retain_batch(
     append_base_hash: str | None = None,
     append_base_watermark: int | None = None,
     force_reextract: bool = False,
-) -> tuple[list[list[str]], TokenUsage]:
+) -> RetainBatchResult:
     """
     Process a large document in streaming mini-batches to bound memory usage.
 
@@ -2501,7 +2505,7 @@ async def _streaming_retain_batch(
 
             meta_token = set_call_metadata({"document_id": effective_doc_id})
             try:
-                extracted, processed, chunk_meta, usage = await _extract_and_embed(
+                embedded = await _extract_and_embed(
                     [content],
                     llm_config,
                     config,
@@ -2515,6 +2519,10 @@ async def _streaming_retain_batch(
                 )
             finally:
                 reset_call_metadata(meta_token)
+            extracted = embedded.extracted_facts
+            processed = embedded.processed_facts
+            chunk_meta = embedded.chunks
+            usage = embedded.usage
             # Reserve before queueing, so a producer running ahead of a slow write path
             # waits here instead of piling extracted facts up behind the queue. Extraction
             # for chunks already in flight continues; only the handover is throttled.
@@ -3365,7 +3373,7 @@ async def _streaming_retain_batch(
     # The streaming path doesn't compute per-chunk content-hash dedup in
     # a way that lets us report a partial-processed tokens count — signal
     # ``None`` so callers bill against the full submitted payload.
-    return result_unit_ids, total_usage, None
+    return RetainBatchResult(result_unit_ids, total_usage, None)
 
 
 # ---------------------------------------------------------------------------
@@ -3428,7 +3436,7 @@ async def _try_delta_retain(
     # `document_body_override`, which an append fills with only the new tail.
     delta_full_body: str | None = None,
     append_base_hash: str | None = None,
-) -> tuple[list[list[str]], TokenUsage, int | None] | None:
+) -> RetainBatchResult | None:
     """
     Attempt delta retain for a document upsert. Returns result tuple if delta
     was performed, or None to fall back to full retain.
@@ -3732,7 +3740,7 @@ async def _try_delta_retain(
 
     meta_token = set_call_metadata({"document_id": effective_doc_id})
     try:
-        extracted_facts, processed_facts, new_chunk_metadata, usage = await _extract_and_embed(
+        embedded = await _extract_and_embed(
             delta_contents,
             llm_config,
             config,
@@ -3746,6 +3754,10 @@ async def _try_delta_retain(
         )
     finally:
         reset_call_metadata(meta_token)
+    extracted_facts = embedded.extracted_facts
+    processed_facts = embedded.processed_facts
+    new_chunk_metadata = embedded.chunks
+    usage = embedded.usage
 
     # Database transaction
     result_unit_ids: list[list[str]] = []
@@ -3984,7 +3996,7 @@ async def _try_delta_retain(
     # changed/new chunks (see ``_build_delta_contents``) — i.e. exactly what
     # the LLM pipeline saw this call. Unchanged chunks contribute zero.
     processed_tokens = _count_delta_content_tokens(delta_contents)
-    return result_unit_ids, usage, processed_tokens
+    return RetainBatchResult(result_unit_ids, usage, processed_tokens)
 
 
 async def _delta_metadata_only(
@@ -4001,7 +4013,7 @@ async def _delta_metadata_only(
     document_body_override: str | None = None,
     config: Any = None,
     expected_content_hash: str | None = None,
-) -> tuple[list[list[str]], TokenUsage, int] | None:
+) -> RetainBatchResult | None:
     """Handle the case where no chunks changed — just update document metadata and tags."""
     from ..memories import get_memories as _get_memories_meta
 
@@ -4062,7 +4074,7 @@ async def _delta_metadata_only(
         total_time = time.time() - start_time
         log_buffer.append(f"DELTA RETAIN (no changes): metadata updated in {total_time:.3f}s")
         logger.info("\n" + "\n".join(log_buffer) + "\n")
-        return [[] for _ in contents], TokenUsage(), 0
+        return RetainBatchResult([[] for _ in contents], TokenUsage(), 0)
 
     async with acquire_with_retry(pool) as conn:
         async with conn.transaction():
@@ -4112,7 +4124,7 @@ async def _delta_metadata_only(
     # content tokens so callers can bill accordingly (a caller that's been
     # told ``0`` knows the retain was a pure metadata update and should
     # charge nothing for content).
-    return [[] for _ in contents], TokenUsage(), 0
+    return RetainBatchResult([[] for _ in contents], TokenUsage(), 0)
 
 
 # ---------------------------------------------------------------------------

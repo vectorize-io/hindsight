@@ -986,17 +986,15 @@ async def test_delta_retain_recall_with_chunks(memory, request_context):
 
 def test_merge_processed_content_tokens_helper():
     """Unit check on the None-propagating aggregator used by the engine."""
-    from hindsight_api.engine.retain.orchestrator import (
-        _merge_processed_content_tokens,
-    )
+    from hindsight_api.engine.retain.types import merge_processed_content_tokens
 
-    assert _merge_processed_content_tokens(0, 0) == 0
-    assert _merge_processed_content_tokens(5, 7) == 12
+    assert merge_processed_content_tokens(0, 0) == 0
+    assert merge_processed_content_tokens(5, 7) == 12
     # None "wins" in either slot — once any sub-result bypassed dedup, the
     # aggregate is None so callers bill full content.
-    assert _merge_processed_content_tokens(None, 10) is None
-    assert _merge_processed_content_tokens(10, None) is None
-    assert _merge_processed_content_tokens(None, None) is None
+    assert merge_processed_content_tokens(None, 10) is None
+    assert merge_processed_content_tokens(10, None) is None
+    assert merge_processed_content_tokens(None, None) is None
 
 
 @pytest.mark.asyncio

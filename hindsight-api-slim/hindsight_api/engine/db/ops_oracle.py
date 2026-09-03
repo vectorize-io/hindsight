@@ -18,6 +18,7 @@ from .ops import (
     UpdatedWindow,
     bank_serialization_sql,
     document_serialization_sql,
+    memory_unit_columns,
 )
 from .result import DictResultRow as ResultRow
 
@@ -604,9 +605,7 @@ class OracleOps(DataAccessOps):
                 GROUP BY t.unit_id
             ),
             entity_expanded AS (
-                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                       mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                SELECT {memory_unit_columns("mu", indent=23)},
                        es.score, 'entity' AS source
                 FROM entity_scores es
                 JOIN {mu_table} mu ON mu.id = es.unit_id
@@ -647,9 +646,7 @@ class OracleOps(DataAccessOps):
                 GROUP BY id
             ),
             semantic_expanded AS (
-                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                       mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                SELECT {memory_unit_columns("mu", indent=23)},
                        ss.score, 'semantic' AS source
                 FROM sem_scores ss
                 JOIN {mu_table} mu ON mu.id = ss.id
@@ -658,9 +655,7 @@ class OracleOps(DataAccessOps):
             ),
             causal_ranked AS (
                 SELECT
-                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                    mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    {memory_unit_columns("mu", indent=20)},
                     ml.weight AS score,
                     'causal' AS source,
                     ROW_NUMBER() OVER (PARTITION BY mu.id ORDER BY ml.weight DESC) AS rn_
@@ -672,8 +667,8 @@ class OracleOps(DataAccessOps):
                   {window.clause("mu")}
             ),
             causal_expanded AS (
-                SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
-                       fact_type, document_id, chunk_id, tags, proof_count, score, source
+                SELECT {memory_unit_columns(indent=23)},
+                       score, source
                 FROM causal_ranked WHERE rn_ = 1
                 ORDER BY score DESC
                 FETCH FIRST $3 ROWS ONLY
@@ -751,9 +746,7 @@ class OracleOps(DataAccessOps):
             ),
             observation_entity_expanded AS (
                 SELECT
-                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                    mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    {memory_unit_columns("mu", indent=20)},
                     (SELECT COUNT(*)
                      FROM {obs_sources_table} os2
                      WHERE os2.observation_id = mu.id
@@ -792,9 +785,7 @@ class OracleOps(DataAccessOps):
                 GROUP BY id
             ),
             semantic_expanded AS (
-                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                       mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                SELECT {memory_unit_columns("mu", indent=23)},
                        ss.score, 'semantic' AS source
                 FROM sem_scores ss
                 JOIN {mu_table} mu ON mu.id = ss.id
@@ -803,9 +794,8 @@ class OracleOps(DataAccessOps):
             ),
             causal_ranked AS (
                 SELECT
-                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                    mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
-                    mu.chunk_id, mu.tags, mu.proof_count, ml.weight AS score,
+                    {memory_unit_columns("mu", indent=20)},
+                    ml.weight AS score,
                     'causal' AS source,
                     ROW_NUMBER() OVER (PARTITION BY mu.id ORDER BY ml.weight DESC) AS rn_
                 FROM {ml_table} ml
@@ -816,8 +806,8 @@ class OracleOps(DataAccessOps):
                   {window.clause("mu")}
             ),
             causal_expanded AS (
-                SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
-                       fact_type, document_id, chunk_id, tags, proof_count, score, source
+                SELECT {memory_unit_columns(indent=23)},
+                       score, source
                 FROM causal_ranked WHERE rn_ = 1
                 ORDER BY score DESC
                 FETCH FIRST $2 ROWS ONLY

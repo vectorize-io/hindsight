@@ -598,11 +598,10 @@ async def test_retain_outcome_metadata_records_zero_counts(memory, request_conte
     """Completed retain operations expose explicit zero outcome counters."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import ExtractionResult
 
-    async def empty_extract_facts_from_contents(
-        *args: object, **kwargs: object
-    ) -> tuple[list[object], list[object], TokenUsage]:
-        return [], [], TokenUsage()
+    async def empty_extract_facts_from_contents(*args: object, **kwargs: object) -> ExtractionResult:
+        return ExtractionResult([], [], TokenUsage())
 
     monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", empty_extract_facts_from_contents)
 
@@ -634,10 +633,10 @@ async def test_all_degenerate_facts_still_persist_document_chunks(memory, reques
     """Filtering every extracted fact must not turn an extracted chunk into the zero-extraction fast path."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
-    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, ExtractionResult
 
     async def degenerate_extract_facts_from_contents(contents, *_args, **_kwargs):
-        return (
+        return ExtractionResult(
             [ExtractedFact(fact_text="...", fact_type="world", content_index=0, chunk_index=0)],
             [ChunkMetadata(chunk_text=contents[0].content, fact_count=1, content_index=0, chunk_index=0)],
             TokenUsage(),
@@ -669,7 +668,7 @@ async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request
     """Causal targets from independently extracted chunks must stay within their source chunk."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
-    from hindsight_api.engine.retain.types import CausalRelation, ChunkMetadata, ExtractedFact
+    from hindsight_api.engine.retain.types import CausalRelation, ChunkMetadata, ExtractedFact, ExtractionResult
 
     chunks = ["first-streaming-chunk", "second-streaming-chunk"]
     # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
@@ -678,7 +677,7 @@ async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request
 
     async def extract_chunk_facts(contents, *_args, **_kwargs):
         chunk_text = contents[0].content
-        return (
+        return ExtractionResult(
             [
                 ExtractedFact(fact_text=f"{chunk_text} cause", fact_type="world", chunk_index=0),
                 ExtractedFact(
@@ -738,7 +737,7 @@ async def test_degenerate_fact_preserves_later_chunk_provenance(memory, request_
     """
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
-    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, ExtractionResult
 
     chunks = ["chunk-zero-source", "chunk-one-source"]
     # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
@@ -753,7 +752,7 @@ async def test_degenerate_fact_preserves_later_chunk_provenance(memory, request_
             ExtractedFact(fact_text=real_fact_by_chunk[chunk_text], fact_type="world", chunk_index=0),
             ExtractedFact(fact_text="...", fact_type="world", chunk_index=0),
         ]
-        return (
+        return ExtractionResult(
             facts,
             [ChunkMetadata(chunk_text=chunk_text, fact_count=len(facts), content_index=0, chunk_index=0)],
             TokenUsage(),

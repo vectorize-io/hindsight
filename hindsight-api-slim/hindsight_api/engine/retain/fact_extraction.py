@@ -2210,7 +2210,7 @@ async def extract_facts_from_text(
 # Import types for the orchestration layer (note: ExtractedFact here is different from the Pydantic model above)
 
 from .types import CausalRelation as CausalRelationType
-from .types import ChunkMetadata, RetainContent
+from .types import ChunkMetadata, ExtractionResult, RetainContent
 from .types import ExtractedFact as ExtractedFactType
 
 logger = logging.getLogger(__name__)
@@ -2259,7 +2259,7 @@ async def extract_facts_from_contents_batch_api(
     pool=None,
     operation_id: str | None = None,
     schema: str | None = None,
-) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
+) -> ExtractionResult:
     """
     Extract facts using LLM Batch API (OpenAI/Groq).
 
@@ -2275,10 +2275,10 @@ async def extract_facts_from_contents_batch_api(
         schema: Database schema (for multi-tenant support)
 
     Returns:
-        Tuple of (extracted_facts, chunks_metadata, usage)
+        An ExtractionResult carrying the facts, their chunk metadata, and token usage.
     """
     if not contents:
-        return [], [], TokenUsage()
+        return ExtractionResult([], [], TokenUsage())
 
     logger.info(f"Using Batch API for fact extraction ({len(contents)} contents)")
 
@@ -2396,7 +2396,7 @@ async def extract_facts_from_contents_batch_api(
             )
 
     if not batch_requests and not batch_id:  # No requests and not resuming
-        return [], [], TokenUsage()
+        return ExtractionResult([], [], TokenUsage())
 
     # Step 2: Submit batch (skip if resuming)
     if not batch_id:
@@ -2799,13 +2799,13 @@ async def extract_facts_from_contents_batch_api(
 
     logger.info(f"Batch API extracted {len(extracted_facts)} facts from {len(all_chunks_info)} chunks")
 
-    return extracted_facts, chunks_metadata, total_usage
+    return ExtractionResult(extracted_facts, chunks_metadata, total_usage)
 
 
 def _extract_facts_chunks(
     contents: list[RetainContent],
     config,
-) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
+) -> ExtractionResult:
     """
     chunks mode: no LLM call, no entity extraction.
 
@@ -2849,7 +2849,7 @@ def _extract_facts_chunks(
             global_chunk_idx += 1
 
     _add_temporal_offsets(extracted_facts, contents)
-    return extracted_facts, chunks_metadata, TokenUsage()
+    return ExtractionResult(extracted_facts, chunks_metadata, TokenUsage())
 
 
 async def extract_facts_from_contents(
@@ -2859,7 +2859,7 @@ async def extract_facts_from_contents(
     pool=None,
     operation_id: str | None = None,
     schema: str | None = None,
-) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
+) -> ExtractionResult:
     """
     Extract facts from multiple content items in parallel.
 
@@ -2880,10 +2880,10 @@ async def extract_facts_from_contents(
         schema: Database schema (passed to batch API for multi-tenant support)
 
     Returns:
-        Tuple of (extracted_facts, chunks_metadata, usage)
+        An ExtractionResult carrying the facts, their chunk metadata, and token usage.
     """
     if not contents:
-        return [], [], TokenUsage()
+        return ExtractionResult([], [], TokenUsage())
 
     # chunks mode: skip LLM entirely, store each chunk as-is
     # Must come before the batch-API check so no LLM queue/locks are acquired
@@ -2996,7 +2996,7 @@ async def extract_facts_from_contents(
     # Step 6: Auto-tag facts from label groups with tag=True
     _inject_label_tags(extracted_facts, config)
 
-    return extracted_facts, chunks_metadata, total_usage
+    return ExtractionResult(extracted_facts, chunks_metadata, total_usage)
 
 
 def _collapse_to_verbatim(facts: list[ExtractedFactType], chunks: list[ChunkMetadata]) -> list[ExtractedFactType]:

@@ -202,7 +202,10 @@ async def list_memory_units(
             )
 
     if tags:
-        tags_clause, tags_params, next_param = build_tags_where_clause(tags, param_count + 1, "", tags_match)
+        built = build_tags_where_clause(tags, param_count + 1, "", tags_match)
+        tags_clause = built.sql
+        tags_params = built.params
+        next_param = built.next_param_offset
         if tags_clause:
             query_conditions.append(tags_clause.removeprefix("AND "))
             query_params.extend(tags_params)

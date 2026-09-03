@@ -133,9 +133,9 @@ def test_unmatched_token_stays_unsatisfiable_not_empty():
         [TagGroupLeaf(tags=["nosuchtag"], match="any_strict", resolve="fuzzy")],
         VOCABULARY,
     )
-    clause, params, _ = build_tag_groups_where_clause(resolved, 1)
-    assert clause != ""
-    assert params == [["nosuchtag"]]
+    built = build_tag_groups_where_clause(resolved, 1)
+    assert built.sql != ""
+    assert built.params == [["nosuchtag"]]
     assert filter_results_by_tag_groups([_Result(["typescript"])], resolved) == []
 
 

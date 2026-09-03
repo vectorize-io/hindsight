@@ -177,7 +177,7 @@ class PostgresMemories(MemoriesExtension):
             assert retriever is not None  # only resolved when the arm is on
 
             async def _run_graph(ft: str) -> list:
-                results, _timing = await retriever.retrieve(
+                retrieved = await retriever.retrieve(
                     pool=pool,
                     query_embedding_str=query_embedding,
                     bank_id=bank_id,
@@ -191,7 +191,8 @@ class PostgresMemories(MemoriesExtension):
                     created_before=created_before,
                     preselected_semantic_seeds=semantic_bm25[ft].graph_seeds,
                 )
-                return results
+                # Timings are diagnostics for the perf harness; this path drops them.
+                return retrieved.results
 
             # gather preserves input order, so zip back onto fact_types positionally.
             graph_lists = await asyncio.gather(*[_run_graph(ft) for ft in fact_types])
