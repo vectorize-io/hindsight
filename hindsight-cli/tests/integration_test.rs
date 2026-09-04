@@ -126,7 +126,7 @@ fn test_memory_item_timestamp_serializes_as_plain_string() {
     // spec-massage step now collapses string-only anyOf unions into a plain
     // `{type: string}`, so the field is just `Option<String>`. Assert that.
     let item = hindsight_client::types::MemoryItem {
-        content: "Bob went hiking yesterday".to_string(),
+        content: hindsight_client::types::Content::Variant0("Bob went hiking yesterday".to_string()),
         context: None,
         metadata: None,
         timestamp: Some("2026-05-31T10:00:00Z".to_string()),

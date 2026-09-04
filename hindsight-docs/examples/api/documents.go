@@ -28,7 +28,7 @@ func main() {
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
 				{
-					Content:    "Alice presented the Q4 roadmap...",
+					Content:    hindsight.TextContent("Alice presented the Q4 roadmap..."),
 					DocumentId: *hindsight.NewNullableString(&docID),
 				},
 			},
@@ -42,7 +42,7 @@ func main() {
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
 				{
-					Content:    "Project deadline: March 31",
+					Content:    hindsight.TextContent("Project deadline: March 31"),
 					DocumentId: *hindsight.NewNullableString(&planDoc),
 				},
 			},
@@ -53,7 +53,7 @@ func main() {
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
 				{
-					Content:    "Project deadline: April 15 (extended)",
+					Content:    hindsight.TextContent("Project deadline: April 15 (extended)"),
 					DocumentId: *hindsight.NewNullableString(&planDoc),
 				},
 			},

@@ -30,7 +30,7 @@ func main() {
 	} {
 		client.MemoryAPI.RetainMemories(ctx, "my-bank").
 			RetainRequest(hindsight.RetainRequest{
-				Items: []hindsight.MemoryItem{{Content: content}},
+				Items: []hindsight.MemoryItem{{Content: hindsight.TextContent(content)}},
 			}).Execute()
 	}
 

@@ -37,7 +37,7 @@ func main() {
 	} {
 		client.MemoryAPI.RetainMemories(ctx, mmBankID).
 			RetainRequest(hindsight.RetainRequest{
-				Items: []hindsight.MemoryItem{{Content: content}},
+				Items: []hindsight.MemoryItem{{Content: hindsight.TextContent(content)}},
 			}).Execute()
 	}
 	time.Sleep(2 * time.Second)
