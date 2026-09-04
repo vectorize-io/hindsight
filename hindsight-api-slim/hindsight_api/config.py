@@ -456,6 +456,16 @@ ENV_EMBEDDINGS_INITIAL_BACKOFF = "HINDSIGHT_API_EMBEDDINGS_INITIAL_BACKOFF"
 ENV_EMBEDDINGS_MAX_BACKOFF = "HINDSIGHT_API_EMBEDDINGS_MAX_BACKOFF"
 ENV_EMBEDDINGS_RETRY_BUDGET = "HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET"
 
+# Retry/backoff for remote reranker APIs. Rerank sits on the same synchronous recall
+# path as the query embedding, and with no fallback chain configured (the default) a
+# single upstream 429 used to fail the whole recall (#4134). Budgeted tighter than the
+# embedding twin: rerank runs after retrieval, so its latency is added to a request
+# that has already spent time.
+ENV_RERANKER_MAX_RETRIES = "HINDSIGHT_API_RERANKER_MAX_RETRIES"
+ENV_RERANKER_INITIAL_BACKOFF = "HINDSIGHT_API_RERANKER_INITIAL_BACKOFF"
+ENV_RERANKER_MAX_BACKOFF = "HINDSIGHT_API_RERANKER_MAX_BACKOFF"
+ENV_RERANKER_RETRY_BUDGET = "HINDSIGHT_API_RERANKER_RETRY_BUDGET"
+
 # Gemini/Vertex AI embeddings configuration
 ENV_EMBEDDINGS_GEMINI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY"
 ENV_EMBEDDINGS_GEMINI_MODEL = "HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL"
@@ -1145,6 +1155,14 @@ DEFAULT_EMBEDDINGS_MAX_RETRIES = 4
 DEFAULT_EMBEDDINGS_INITIAL_BACKOFF = 0.5
 DEFAULT_EMBEDDINGS_MAX_BACKOFF = 4.0
 DEFAULT_EMBEDDINGS_RETRY_BUDGET = 15.0
+# Reranker retry defaults: 3 retries (4 attempts) with 0.5s -> 4s exponential backoff
+# and a 10s ceiling on the time one rerank may spend retrying. Tighter than the
+# embedding budget because rerank runs after retrieval has already spent time on the
+# same request, and its failure mode is a degraded ranking rather than no answer.
+DEFAULT_RERANKER_MAX_RETRIES = 3
+DEFAULT_RERANKER_INITIAL_BACKOFF = 0.5
+DEFAULT_RERANKER_MAX_BACKOFF = 4.0
+DEFAULT_RERANKER_RETRY_BUDGET = 10.0
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
 DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = 768
 DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
@@ -3167,11 +3185,17 @@ class HindsightConfig:
     operation_cleanup_interval_seconds: int = DEFAULT_OPERATION_CLEANUP_INTERVAL_SECONDS
     maintenance_start_jitter_seconds: int = DEFAULT_MAINTENANCE_START_JITTER_SECONDS
 
-    # Retry/backoff applied to remote embedding API calls (see EmbeddingRetryPolicy).
+    # Retry/backoff applied to remote embedding API calls (see engine/remote_retry.py's RetryPolicy).
     embeddings_max_retries: int = DEFAULT_EMBEDDINGS_MAX_RETRIES
     embeddings_initial_backoff: float = DEFAULT_EMBEDDINGS_INITIAL_BACKOFF
     embeddings_max_backoff: float = DEFAULT_EMBEDDINGS_MAX_BACKOFF
     embeddings_retry_budget: float = DEFAULT_EMBEDDINGS_RETRY_BUDGET
+
+    # Retry/backoff applied to remote reranker API calls (see engine/remote_retry.py's RetryPolicy).
+    reranker_max_retries: int = DEFAULT_RERANKER_MAX_RETRIES
+    reranker_initial_backoff: float = DEFAULT_RERANKER_INITIAL_BACKOFF
+    reranker_max_backoff: float = DEFAULT_RERANKER_MAX_BACKOFF
+    reranker_retry_budget: float = DEFAULT_RERANKER_RETRY_BUDGET
 
     # Class-level sets for configuration categorization
 
@@ -3955,6 +3979,26 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_RETRY_BUDGET,
                 os.getenv(ENV_EMBEDDINGS_RETRY_BUDGET),
                 DEFAULT_EMBEDDINGS_RETRY_BUDGET,
+            ),
+            reranker_max_retries=_parse_non_negative_int(
+                ENV_RERANKER_MAX_RETRIES,
+                os.getenv(ENV_RERANKER_MAX_RETRIES),
+                DEFAULT_RERANKER_MAX_RETRIES,
+            ),
+            reranker_initial_backoff=_parse_non_negative_float(
+                ENV_RERANKER_INITIAL_BACKOFF,
+                os.getenv(ENV_RERANKER_INITIAL_BACKOFF),
+                DEFAULT_RERANKER_INITIAL_BACKOFF,
+            ),
+            reranker_max_backoff=_parse_non_negative_float(
+                ENV_RERANKER_MAX_BACKOFF,
+                os.getenv(ENV_RERANKER_MAX_BACKOFF),
+                DEFAULT_RERANKER_MAX_BACKOFF,
+            ),
+            reranker_retry_budget=_parse_non_negative_float(
+                ENV_RERANKER_RETRY_BUDGET,
+                os.getenv(ENV_RERANKER_RETRY_BUDGET),
+                DEFAULT_RERANKER_RETRY_BUDGET,
             ),
             # Cohere embeddings (with backward-compatible fallback to shared API key)
             embeddings_cohere_api_key=os.getenv(ENV_EMBEDDINGS_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),

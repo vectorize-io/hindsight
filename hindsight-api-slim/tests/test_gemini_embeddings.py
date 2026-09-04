@@ -20,7 +20,7 @@ import pytest
 
 from hindsight_api.config import HindsightConfig
 from hindsight_api.engine.embeddings import (
-    EmbeddingRetryPolicy,
+    RetryPolicy,
     GeminiEmbeddings,
     _gemini_model_aggregates_inputs,
     create_embeddings_from_env,
@@ -336,7 +336,7 @@ class _GenAIError(Exception):
 
 
 # Fast policy so these tests exercise the retry logic, not the sleeps.
-_FAST_POLICY = EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0)
+_FAST_POLICY = RetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0)
 
 
 class TestGeminiEmbeddingsRetry:
@@ -347,7 +347,7 @@ class TestGeminiEmbeddingsRetry:
     retain and consolidation operations during an ordinary quota window.
     """
 
-    def _make_embeddings(self, side_effect, policy: EmbeddingRetryPolicy = _FAST_POLICY) -> GeminiEmbeddings:
+    def _make_embeddings(self, side_effect, policy: RetryPolicy = _FAST_POLICY) -> GeminiEmbeddings:
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", retry_policy=policy)
         client = MagicMock()
         client.models.embed_content = MagicMock(side_effect=side_effect)
@@ -417,7 +417,7 @@ class TestGeminiEmbeddingsRetry:
         the whole call bounds it: here four concurrent batches with five retries each
         would be 24 upstream calls unshared, and the shared budget cuts it to a handful.
         """
-        policy = EmbeddingRetryPolicy(max_retries=5, initial_backoff=0.05, max_backoff=0.05, budget_seconds=0.06)
+        policy = RetryPolicy(max_retries=5, initial_backoff=0.05, max_backoff=0.05, budget_seconds=0.06)
         calls = {"n": 0}
         lock = threading.Lock()
 

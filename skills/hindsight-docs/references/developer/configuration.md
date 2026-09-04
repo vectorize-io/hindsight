@@ -1060,6 +1060,10 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
+| `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
+| `HINDSIGHT_API_RERANKER_MAX_BACKOFF` | Cap on the backoff between rerank retries, in seconds | `4.0` |
+| `HINDSIGHT_API_RERANKER_RETRY_BUDGET` | Wall-clock ceiling, in seconds, on the time one rerank may spend retrying (failed attempts plus backoff). Tighter than the embedding budget because rerank runs after retrieval has already spent time on the same request. With a fallback chain configured, each member spends its own budget before the chain advances. | `10.0` |
 | `HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER` | Add `X-Hindsight-Bank-Id: <bank_id>` to remote reranker requests. Enable only for trusted endpoints because this transmits the current bank ID. Covers TEI, Cohere-compatible HTTP, LiteLLM proxy, and LiteLLM SDK transports. | `false` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
