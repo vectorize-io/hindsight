@@ -716,7 +716,8 @@ export class HindsightClient {
    * @deprecated Removed server-side — the endpoint answers 410. Disposition traits and
    * the reflect mission are bank configuration: use {@link getBankConfig} and read
    * `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and
-   * `reflect_mission`. The bank's display name comes from {@link listBanks}.
+   * `reflect_mission`. The bank's display label, which was itself deprecated, is on
+   * `GET /v1/default/banks` — this wrapper exposes no bank listing.
    */
   async getBankProfile(
     bankId: string,

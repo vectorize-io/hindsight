@@ -1572,7 +1572,7 @@ impl ApiClient {
     // --- Bank Disposition ---
 
     /// Disposition traits are bank configuration; there is no profile endpoint.
-    pub fn update_bank_disposition(
+    pub fn set_bank_disposition(
         &self,
         bank_id: &str,
         skepticism: u64,

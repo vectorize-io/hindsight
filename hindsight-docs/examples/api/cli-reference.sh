@@ -113,14 +113,9 @@ hindsight bank name $BANK_ID "My Assistant"
 # [/docs:cli-bank-name]
 
 
-# [docs:cli-bank-background]
-hindsight bank background $BANK_ID "I am a helpful AI assistant interested in technology"
-# [/docs:cli-bank-background]
-
-
-# [docs:cli-bank-background-no-disposition]
-hindsight bank background $BANK_ID "Background text" --no-update-disposition
-# [/docs:cli-bank-background-no-disposition]
+# [docs:cli-bank-mission]
+hindsight bank mission $BANK_ID "I am a helpful AI assistant interested in technology"
+# [/docs:cli-bank-mission]
 
 
 # =============================================================================

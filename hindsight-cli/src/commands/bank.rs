@@ -961,7 +961,7 @@ pub fn set_disposition(
     };
 
     let response =
-        client.update_bank_disposition(bank_id, skepticism, literalism, empathy, verbose);
+        client.set_bank_disposition(bank_id, skepticism, literalism, empathy, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();

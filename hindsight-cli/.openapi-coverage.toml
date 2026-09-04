@@ -65,6 +65,15 @@ llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats c
 # and the control plane, not the end-user Rust CLI.
 export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 export_documents_sync_removed = "Removed sync export endpoint kept as a 410 stub; nothing should call it"
+
+# The bank profile/background endpoints were retired and answer 410. They stay in the
+# spec so generated SDK methods are not deleted out from under callers, but nothing —
+# the CLI least of all — should call them. Disposition traits and the reflect mission
+# are bank configuration: `bank disposition` and `bank set-disposition` read and write
+# them through get_bank_config / update_bank_config, and `bank mission` sets the mission.
+get_bank_profile = "Retired endpoint kept as a 410 stub; `bank disposition` reads the bank config instead"
+update_bank_disposition = "Retired endpoint kept as a 410 stub; `bank set-disposition` writes the bank config instead"
+add_bank_background = "Retired endpoint kept as a 410 stub; use `bank mission`"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 download_file = "Serves async export archives; fetched via the API/control plane, not the end-user CLI"
 
@@ -83,15 +92,12 @@ get_readiness = "Alias of /health, which `hindsight health` already calls"
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------
 
-[fields.add_bank_background]
-update_disposition = "Exposed inverted as --no-update-disposition on `bank background`."
-
 [fields.create_or_update_bank]
 disposition = "Flattened into --skepticism / --literalism / --empathy on `bank create`."
 disposition_skepticism = "Covered by --skepticism; the flat form is an API alias."
 disposition_literalism = "Covered by --literalism; the flat form is an API alias."
 disposition_empathy = "Covered by --empathy; the flat form is an API alias."
-background = "Set via the dedicated `bank background` subcommand."
+background = "Deprecated alias of the mission; set via `bank mission`."
 reflect_mission = "Set via `bank set-config --reflect-mission`."
 retain_mission = "Set via `bank set-config --retain-mission`."
 retain_extraction_mode = "Set via `bank set-config --retain-extraction-mode`."
@@ -110,7 +116,7 @@ disposition = "Flattened into --skepticism / --literalism / --empathy on `bank u
 disposition_skepticism = "Covered by --skepticism; the flat form is an API alias."
 disposition_literalism = "Covered by --literalism; the flat form is an API alias."
 disposition_empathy = "Covered by --empathy; the flat form is an API alias."
-background = "Set via the dedicated `bank background` subcommand."
+background = "Deprecated alias of the mission; set via `bank mission`."
 reflect_mission = "Set via `bank set-config --reflect-mission`."
 retain_mission = "Set via `bank set-config --retain-mission`."
 retain_extraction_mode = "Set via `bank set-config --retain-extraction-mode`."
@@ -123,9 +129,6 @@ enable_text_search = "Set via `bank set-config` (hierarchical config)."
 enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
 enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
 enable_reranking = "Set via `bank set-config` (hierarchical config)."
-
-[fields.update_bank_disposition]
-disposition = "Flattened into --skepticism / --literalism / --empathy on `bank set-disposition`."
 
 [fields.update_bank_config]
 updates = "Flattened into per-setting flags (--llm-provider, --llm-model, etc) on `bank set-config`."
