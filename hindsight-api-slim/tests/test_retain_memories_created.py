@@ -5,7 +5,8 @@ outcome — the document is stored, it just has no memory units, and recall can
 never reach it. The endpoint answered 200 either way and carried no count, so a
 caller could only discover the difference later, by recalling and finding
 nothing. Reported over enough content at once that looks like a storage engine
-silently dropping writes; it is not.
+silently dropping writes; it is not — the default ``concise`` extraction mode
+drops content it judges not worth recalling, per item.
 """
 
 import uuid
@@ -64,5 +65,22 @@ async def test_sync_retain_reports_zero_when_extraction_finds_nothing(api_client
     # The document is stored regardless — that is the shape the issue observed
     # from outside: a 200, a document, and nothing recallable behind it.
     assert await _document_unit_count(api_client, bank_id, "doc-no-facts") == 0
+
+    await api_client.delete(f"/v1/default/banks/{bank_id}")
+
+
+async def test_zero_unit_document_is_logged(api_client, monkeypatch, caplog):
+    """The server says so too — the outcome used to reach a metric and nothing else."""
+    import logging
+
+    from hindsight_api.engine.providers import mock_llm
+
+    monkeypatch.setattr(mock_llm.MockLLM, "_build_mock_facts", staticmethod(lambda messages: {"facts": []}))
+
+    bank_id = _bank()
+    with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.retain.orchestrator"):
+        await _retain(api_client, bank_id, "Independent concurrent marker CONCURRENT_INDEP_9.", "doc-logged")
+
+    assert any("has no memory units after this retain" in record.message for record in caplog.records)
 
     await api_client.delete(f"/v1/default/banks/{bank_id}")

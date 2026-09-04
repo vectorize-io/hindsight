@@ -320,16 +320,34 @@ The synchronous retain response includes:
 - `memories_created` — how many memory units the retain created, only present for synchronous operations
 - `usage` — token usage for the LLM calls (`input_tokens`, `output_tokens`, `total_tokens`), only present for synchronous operations
 
-> **📝 `memories_created` can legitimately be zero**
+> **⚠️ `memories_created` can be zero — retain is not lossless by default**
 >
 
-Extraction finds nothing to remember in content that carries no facts — a bare
-identifier, a greeting, boilerplate. The request still succeeds and the document
-is still stored; it just has no memory units, so recall cannot reach it. Check
-`memories_created` rather than the status code when you need to know that the
-content actually became memory. Re-retaining a document whose text has not
-changed also reports zero, because the unchanged content keeps the memories it
-already has.
+The default extraction mode (`concise`) is deliberately selective: it drops
+greetings, filler, process chatter, and anything else it judges not worth
+recalling in six months. Content with no substance — a bare identifier, a
+tracking marker, boilerplate — therefore produces **no memory units at all**.
+The request still succeeds and the document is still stored; it just cannot be
+reached through recall, ever, because only memory units carry embeddings.
+
+Which items survive is decided per item by the model, so a batch of similar
+low-substance items comes back partially stored, and the surviving subset
+changes when the text changes. That is the extraction policy working, not writes
+being dropped.
+
+Two things follow:
+
+- **Check `memories_created`, not the status code**, when you need to know that
+  content actually became memory. The server also logs a warning for every
+  document left with zero memory units.
+- **If every item must be retrievable, change `retain_extraction_mode`.**
+  `verbatim` stores each chunk's original text as one memory and uses the model
+  only for metadata; `chunks` skips the LLM entirely and stores chunks as-is.
+  Neither can judge content away. `concise` trades completeness for recall
+  quality — these two make the opposite trade.
+
+Re-retaining a document whose text has not changed also reports zero, for an
+unrelated and harmless reason: the delta path keeps the memories it already has.
 
 ---
 

@@ -340,12 +340,23 @@ async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: 
     ``units_created > 0`` already settles the outcome, so the count query only
     runs on the zero case — which is exactly the cheap path (nothing was written).
     Best-effort: telemetry must never fail a retain.
+
+    The zero case is also logged, not only counted. It was previously visible in
+    the metric alone, so an operator reading the logs of a retain that stored
+    nothing saw a completely ordinary, successful retain (#4065).
     """
     try:
         total = units_created
         if total == 0:
             async with acquire_with_retry(pool) as conn:
                 total = await fact_storage.count_document_memory_units(conn, bank_id, document_id)
+        if total == 0:
+            logger.warning(
+                f"[RETAIN] Document {document_id} (bank {bank_id}) has no memory units after this retain: "
+                f"extraction found nothing to remember in its content, so the document is stored but "
+                f"cannot be reached through recall. Content with no substance is dropped by design in "
+                f"'concise' extraction mode; set retain_extraction_mode='verbatim' to keep every item."
+            )
         get_metrics_collector().record_retain_document(bank_id=bank_id, memory_unit_count=total)
     except Exception:
         logger.debug("Failed to record retain document outcome metric", exc_info=True)
