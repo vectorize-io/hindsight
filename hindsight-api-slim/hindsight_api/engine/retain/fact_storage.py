@@ -425,6 +425,7 @@ async def update_memory_units_metadata_and_tags(
     metadata: dict[str, Any],
     *,
     observation_scopes: list | str | None = None,
+    label_tag_keys: set[str] | None = None,
     ops=None,
 ) -> int:
     """Update document-level attributes on existing memory units.
@@ -432,6 +433,22 @@ async def update_memory_units_metadata_and_tags(
     Delta retain preserves unchanged chunks and their facts. Propagate the
     current document tags, metadata and observation scoping so its optimized
     result matches a full replace.
+
+    ``tags`` is the DOCUMENT's tag set and replaces what a survivor carries of it
+    outright — the caller owns those, so a re-retain that drops one drops it here too.
+    But the column also holds *label tags*: the projection of the ``entity_labels``
+    groups flagged ``tag: true``, mirrored out of each unit's own entities at extraction
+    (``_inject_label_tags``). Those are derived per fact, not per document, and a unit
+    only acquires them by being extracted — so a survivor, which by definition was not
+    re-extracted, keeps the ones it has. ``label_tag_keys`` names the group keys that
+    projection claims; a ``key:value`` tag under one of them is carried forward rather
+    than overwritten (issue #4068).
+
+    Without that carry-forward the same document ended a delta retain holding units
+    labelled ``category:durable`` beside units that were not, differing only in whether
+    their chunk happened to change — and a tags filter returned an arbitrary slice of it.
+    Passing no ``label_tag_keys`` (or a bank with no such group) keeps the plain
+    overwrite, which is what a document with no label projection wants.
 
     ``metadata`` arrives as the raw retain_params bag (the document row keeps
     the caller's input verbatim), so null-valued keys are dropped here — the
@@ -457,6 +474,17 @@ async def update_memory_units_metadata_and_tags(
     """
     from ..memories import MemoryPatch, get_memories
     from ..memories.base import META_METADATA_JSON, META_OBSERVATION_SCOPES
+    from .entity_labels import split_label_tags
+
+    def _tags_for(existing: list[str] | None) -> list[str]:
+        """The document tags, plus the label projection this unit already carries."""
+        merged = list(tags or [])
+        seen = set(merged)
+        for t in split_label_tags(existing, label_tag_keys):
+            if t not in seen:
+                seen.add(t)
+                merged.append(t)
+        return merged
 
     store = get_memories()
     if store.store_owned_for(bank_id):
@@ -480,10 +508,11 @@ async def update_memory_units_metadata_and_tags(
         #
         # Set unconditionally, mirroring `SET metadata = $4`: a document whose metadata was cleared
         # must clear on its survivors too, which an absent key would not do.
+        new_tags_by_unit = {m.unit_id: _tags_for(m.tags) for m in page.memories}
         patches = [
             MemoryPatch(
                 unit_id=m.unit_id,
-                tags=list(tags or []),
+                tags=new_tags_by_unit[m.unit_id],
                 metadata={
                     META_METADATA_JSON: json.dumps(drop_null_values(metadata or {})),
                     META_OBSERVATION_SCOPES: json.dumps(observation_scopes),
@@ -493,12 +522,16 @@ async def update_memory_units_metadata_and_tags(
         ]
         if patches:
             await store.update_memories(bank_id, patches)
+        # Against the tags the unit will actually END with, not the document's: a survivor
+        # keeping its label projection has not been rescoped, and comparing it to the bare
+        # document tags reported every such unit as moved on every retain — an observation
+        # sweep and a full re-consolidation of the document for no change at all.
         rescoped = [
             m.unit_id
             for m in page.memories
             if m.fact_type in ("experience", "world")
             and (
-                set(m.tags or []) != set(tags or [])
+                set(m.tags or []) != set(new_tags_by_unit[m.unit_id])
                 or _normalize_scopes(m.observation_scopes) != _normalize_scopes(observation_scopes)
             )
         ]
@@ -520,12 +553,14 @@ async def update_memory_units_metadata_and_tags(
         bank_id,
         document_id,
     )
+    new_tags_by_id = {row["id"]: _tags_for(row["tags"]) for row in prior}
+    # See the store-owned branch: the comparison is against what the unit ends with.
     rescoped_ids = [
         row["id"]
         for row in prior
         if row["fact_type"] in ("experience", "world")
         and (
-            set(row["tags"] or []) != set(tags or [])
+            set(row["tags"] or []) != set(new_tags_by_id[row["id"]])
             or _normalize_scopes(row["observation_scopes"]) != _normalize_scopes(observation_scopes)
         )
     ]
@@ -542,6 +577,31 @@ async def update_memory_units_metadata_and_tags(
         json.dumps(drop_null_values(metadata)),
         json.dumps(observation_scopes) if observation_scopes is not None else None,
     )
+
+    # Restore each survivor's label projection over the blanket write above. Done as a
+    # follow-up rather than folded into that statement so a row inserted concurrently
+    # still gets the document tags and metadata exactly as before — this pass only
+    # touches ids that were read, and a document carrying no label tags issues nothing.
+    # Grouped by the FINAL array `_tags_for` computed rather than by the projection
+    # alone, so the value written here is the one it already deduped — a unit whose
+    # label tag is also a document tag must not come back carrying it twice.
+    by_final: dict[tuple[str, ...], list] = {}
+    for row in prior:
+        final = new_tags_by_id[row["id"]]
+        if final != list(tags or []):
+            by_final.setdefault(tuple(final), []).append(row["id"])
+    for final, ids in by_final.items():
+        await conn.execute(
+            f"""
+            UPDATE {fq_table("memory_units")}
+            SET tags = $3, updated_at = NOW()
+            WHERE bank_id = $1 AND document_id = $2 AND id = ANY($4::uuid[])
+            """,
+            bank_id,
+            document_id,
+            list(final),
+            ids,
+        )
 
     if rescoped_ids:
         await delete_stale_observations_for_memories(conn, bank_id, rescoped_ids, ops=ops)

@@ -8749,6 +8749,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 from .memories import MemoryPatch, get_memories
+                from .retain.entity_labels import label_tag_keys, split_label_tags
 
                 _store = get_memories()
 
@@ -8792,6 +8793,25 @@ class MemoryEngine(MemoryEngineInterface):
                 retag = (
                     tags if (tags is not None and (current_tags is None or set(current_tags) != set(tags))) else None
                 )
+
+                # A retag replaces the DOCUMENT's tags on every unit, but the column also
+                # holds the projection of the `entity_labels` groups flagged `tag: true` —
+                # derived per memory from that memory's own entities at extraction, not
+                # from the document. This PATCH re-processes nothing, so it has no business
+                # rewriting them: each unit keeps the ones it carries (issue #4068).
+                _label_keys: set[str] = set()
+                if retag is not None:
+                    _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+                    _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
+
+                def _retagged(existing: list[str] | None) -> list[str]:
+                    merged = list(retag or [])
+                    seen = set(merged)
+                    for t in split_label_tags(existing, _label_keys):
+                        if t not in seen:
+                            seen.add(t)
+                            merged.append(t)
+                    return merged
 
                 set_parts: list[str] = ["updated_at = now()"]
                 params: list[Any] = []
@@ -8838,7 +8858,7 @@ class MemoryEngine(MemoryEngineInterface):
                     _doc_units = _doc_page.memories
                     if _doc_units:
                         await _store.update_memories(
-                            bank_id, [MemoryPatch(unit_id=m.unit_id, tags=list(retag)) for m in _doc_units]
+                            bank_id, [MemoryPatch(unit_id=m.unit_id, tags=_retagged(m.tags)) for m in _doc_units]
                         )
                     _src_ids = [m.unit_id for m in _doc_units if m.fact_type in ("experience", "world")]
                     if _src_ids:
@@ -8849,12 +8869,15 @@ class MemoryEngine(MemoryEngineInterface):
                             conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=_src_ids, when=None
                         )
                 elif retag is not None:
+                    # `tags` as well as `id`: the projection each unit must keep is read
+                    # here, before the blanket write below overwrites it.
                     unit_rows = await conn.fetch(
-                        f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND bank_id = $2 AND fact_type IN ('experience', 'world')",
+                        f"SELECT id, tags, fact_type FROM {fq_table('memory_units')} "
+                        f"WHERE document_id = $1 AND bank_id = $2",
                         document_id,
                         bank_id,
                     )
-                    unit_ids = [str(row["id"]) for row in unit_rows]
+                    unit_ids = [str(row["id"]) for row in unit_rows if row["fact_type"] in ("experience", "world")]
 
                     await conn.execute(
                         f"UPDATE {fq_table('memory_units')} SET tags = $1, updated_at = now() "
@@ -8863,6 +8886,30 @@ class MemoryEngine(MemoryEngineInterface):
                         document_id,
                         bank_id,
                     )
+
+                    # Restore each unit's own label projection over that blanket write.
+                    # A follow-up rather than one combined statement so a unit created
+                    # concurrently still lands on the document tags exactly as before;
+                    # a bank with no `tag: true` group issues nothing here at all.
+                    # Grouped by the FINAL array `_retagged` computed, not by the
+                    # projection alone: a unit whose label tag is also a document tag
+                    # would otherwise be written `[..., 'category:durable',
+                    # 'category:durable']`, since the two would be concatenated here
+                    # after `_retagged` had already deduped them.
+                    _by_final: dict[tuple[str, ...], list] = {}
+                    for _row in unit_rows:
+                        _final = _retagged(_row["tags"])
+                        if _final != list(retag):
+                            _by_final.setdefault(tuple(_final), []).append(_row["id"])
+                    for _final, _ids in _by_final.items():
+                        await conn.execute(
+                            f"UPDATE {fq_table('memory_units')} SET tags = $1, updated_at = now() "
+                            f"WHERE document_id = $2 AND bank_id = $3 AND id = ANY($4::uuid[])",
+                            list(_final),
+                            document_id,
+                            bank_id,
+                            _ids,
+                        )
 
                     if unit_ids:
                         import uuid as uuid_module

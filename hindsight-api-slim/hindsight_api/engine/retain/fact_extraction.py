@@ -26,7 +26,9 @@ from .entity_labels import (
     build_labels_lookup,
     build_labels_model,
     is_label_entity,
+    label_tag_keys,
     parse_entity_labels,
+    split_label_tags,
 )
 
 
@@ -3099,11 +3101,11 @@ def _inject_label_tags(facts: list[ExtractedFactType], config) -> None:
     labels_cfg = parse_entity_labels(config.entity_labels)
     if not labels_cfg:
         return
-    tag_group_keys = {g.key.lower() for g in labels_cfg.attributes if g.tag}
+    tag_group_keys = label_tag_keys(labels_cfg)
     if not tag_group_keys:
         return
     for fact in facts:
-        label_tags = [e for e in fact.entities if ":" in e and e.split(":", 1)[0].lower() in tag_group_keys]
+        label_tags = split_label_tags(fact.entities, tag_group_keys)
         if label_tags:
             existing = set(fact.tags)
             fact.tags = fact.tags + [t for t in label_tags if t not in existing]

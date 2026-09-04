@@ -270,6 +270,7 @@ from . import (
 )
 from . import timing as _timing
 from .embedding_coalescer import CoalescingEmbedder
+from .entity_labels import label_tag_keys
 from .memory_budget import RetainMemoryBudget, estimate_chunk_bytes
 from .types import (
     CausalRelation,
@@ -3897,6 +3898,7 @@ async def _try_delta_retain(
                     merged_tags,
                     retain_params.get("metadata", {}),
                     observation_scopes=retain_params.get("observation_scopes"),
+                    label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
                     ops=pool.ops,
                 )
                 log_buffer.append(
@@ -4065,6 +4067,7 @@ async def _delta_metadata_only(
                     merged_tags,
                     retain_params.get("metadata", {}),
                     observation_scopes=retain_params.get("observation_scopes"),
+                    label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
                     ops=pool.ops,
                 )
         if outbox_callback is not None:
@@ -4112,6 +4115,7 @@ async def _delta_metadata_only(
                 merged_tags,
                 retain_params.get("metadata", {}),
                 observation_scopes=retain_params.get("observation_scopes"),
+                label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
                 ops=pool.ops,
             )
             if outbox_callback is not None:
