@@ -16,6 +16,8 @@ ZEROENTROPY_ENV_VARS = [
     "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT",
     "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE",
     "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY",
+    "HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES",
+    "HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET",
     "HINDSIGHT_API_RERANKER_PROVIDER",
     "HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY",
     "HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL",
@@ -280,3 +282,92 @@ async def test_embedding_utils_routes_document_embeddings_to_provider_hook():
     vectors = await generate_embeddings_batch(DocumentAwareEmbeddings(), ["document text"], input_type="document")
 
     assert vectors == [[13.0]]
+
+
+# ── bounded retry/backoff (issue #4103 for the native Gemini provider; same gap here) ──
+#
+# The provider posts through a bare httpx.Client, so before this a single 429 or 5xx
+# failed the whole retain/consolidation operation. These pin the same contract the
+# LiteLLM, Gemini and Cohere backends hold.
+
+
+def _retrying_embeddings(responses: list[int], policy=None):
+    """Build a provider whose transport replays `responses` (HTTP status codes) in order."""
+    import threading
+
+    from hindsight_api.engine.embeddings import EmbeddingRetryPolicy, ZeroEntropyEmbeddings
+
+    statuses = list(responses)
+    calls = {"n": 0}
+    lock = threading.Lock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        with lock:
+            index = calls["n"]
+            calls["n"] += 1
+        status = statuses[index] if index < len(statuses) else statuses[-1]
+        if status != 200:
+            return httpx.Response(status, json={"error": "upstream"})
+        body = CapturedZeroEntropyEmbedRequest.model_validate_json(request.content)
+        return httpx.Response(200, json={"results": [{"embedding": [0.1, 0.2]} for _ in body.input]})
+
+    # Fast policy so these tests exercise the retry logic, not the sleeps.
+    embeddings = ZeroEntropyEmbeddings(
+        api_key="ze-test",
+        dimensions=1280,
+        batch_size=2,
+        retry_policy=policy
+        or EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0),
+    )
+    embeddings._client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        headers={"Authorization": "Bearer ze-test", "Content-Type": "application/json"},
+    )
+    embeddings._dimension = 1280
+    return embeddings, calls
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504, 408])
+def test_zeroentropy_transient_status_then_success(status):
+    embeddings, calls = _retrying_embeddings([status, 200])
+
+    vectors = embeddings.encode_documents(["alpha"])
+
+    assert vectors == [[0.1, 0.2]]
+    assert calls["n"] == 2
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+def test_zeroentropy_permanent_client_errors_fail_fast(status):
+    """Auth and validation failures must not be retried — retrying cannot fix them."""
+    embeddings, calls = _retrying_embeddings([status])
+
+    with pytest.raises(RuntimeError, match="ZeroEntropy embedding request failed"):
+        embeddings.encode_documents(["alpha"])
+    assert calls["n"] == 1
+
+
+def test_zeroentropy_exhausted_retries_propagate_the_diagnostic_error():
+    """Retries are bounded, and an exhausted request still reaches the caller wrapped."""
+    embeddings, calls = _retrying_embeddings([503])
+
+    with pytest.raises(RuntimeError, match="ZeroEntropy embedding request failed"):
+        embeddings.encode_documents(["alpha"])
+    assert calls["n"] == embeddings.retry_policy.max_retries + 1
+
+
+def test_zeroentropy_create_from_env_wires_the_configured_policy(monkeypatch):
+    """The provider honours HINDSIGHT_API_EMBEDDINGS_* like the LiteLLM backends do."""
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings, create_embeddings_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY", "ze-test")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES", "7")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET", "42.5")
+    clear_config_cache()
+
+    embeddings = create_embeddings_from_env()
+
+    assert isinstance(embeddings, ZeroEntropyEmbeddings)
+    assert embeddings.retry_policy.max_retries == 7
+    assert embeddings.retry_policy.budget_seconds == 42.5
