@@ -86,6 +86,10 @@ def test_meta_uses_max_tokens_not_max_completion_tokens():
     Muse Spark is a reasoning model, but it is not one of the OpenAI products the
     frozen ``_supports_reasoning_model`` list recognises, so the parameter name must
     come from the provider default rather than that name check.
+
+    Verified live: Meta accepts ``max_completion_tokens`` too, so this is a choice
+    between two working names rather than a correctness fix — we send the one the
+    docs specify.
     """
     from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 

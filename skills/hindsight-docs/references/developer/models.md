@@ -163,6 +163,7 @@ The following models have been tested and verified to work correctly with Hindsi
 | **Gemini** | `gemini-3.1-flash-lite` |
 | **Groq** | `openai/gpt-oss-120b` |
 | **Groq** | `openai/gpt-oss-20b` |
+| **Meta** | `muse-spark-1.3` |
 
 ### Provider Default Models
 
