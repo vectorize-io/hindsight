@@ -894,7 +894,15 @@ class RemoteTEIEmbeddings(Embeddings):
         # A client per thread removes the sharing rather than trying to serialise around it. The
         # cost is one connection pool per executor thread, which is bounded by the executor.
         self._thread_clients = threading.local()
-        self._client: httpx.Client | None = None
+        # An injected client, used by EVERY thread. Tests hand in one httpx.Client wrapping a
+        # MockTransport and then encode, which fans batches across `_request_pool`'s threads —
+        # so a client installed on the calling thread alone would be invisible to the threads
+        # that actually make the requests.
+        self._injected_client: "httpx.Client | None" = None
+        # Separate from the client, because the client is per thread and this is not: encode()
+        # runs on executor threads that never ran initialize(), so "have we initialized" cannot
+        # be answered by asking whether THIS thread has a client yet.
+        self._initialized = False
         self._model_id: str | None = None
         self._dimension: int | None = None
 
@@ -908,8 +916,24 @@ class RemoteTEIEmbeddings(Embeddings):
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
         return self._dimension
 
+    @property
+    def _client(self) -> httpx.Client | None:
+        """The injected client, else this thread's.
+
+        Kept as an attribute because the suite injects a MockTransport by assigning it.
+        """
+        if self._injected_client is not None:
+            return self._injected_client
+        return getattr(self._thread_clients, "client", None)
+
+    @_client.setter
+    def _client(self, value: "httpx.Client | None") -> None:
+        self._injected_client = value
+
     def _client_for_thread(self) -> httpx.Client:
-        """This thread's client, created on first use."""
+        """This thread's client, created on first use — or the injected one, if a test set it."""
+        if self._injected_client is not None:
+            return self._injected_client
         client = getattr(self._thread_clients, "client", None)
         if client is None or client.is_closed:
             client = httpx.Client(
@@ -985,12 +1009,11 @@ class RemoteTEIEmbeddings(Embeddings):
 
     async def initialize(self) -> None:
         """Initialize the HTTP client and verify server connectivity."""
-        if self._client is not None:
+        if self._initialized:
             return
 
         logger.info(f"Embeddings: initializing TEI provider at {self.base_url}")
-        # Doubles as the "initialized" marker that `encode` checks.
-        self._client = self._client_for_thread()
+        self._initialized = True
 
         # Verify server is reachable and get model info
         try:
@@ -1028,7 +1051,10 @@ class RemoteTEIEmbeddings(Embeddings):
         Returns:
             List of embedding vectors
         """
-        if self._client is None:
+        # Either initialize() ran, or a caller handed us a client outright — the suite builds
+        # providers that way, assigning a MockTransport client and encoding without a server to
+        # initialize against.
+        if not self._initialized and self._client is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
         if not texts:
