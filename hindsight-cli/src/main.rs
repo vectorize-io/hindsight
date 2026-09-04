@@ -1357,6 +1357,22 @@ enum DirectiveCommands {
 }
 
 fn main() {
+    // Rust ignores SIGPIPE at startup so that `println!`/`print!` surface a
+    // closed stdout pipe as an `EPIPE` error rather than a signal. But the
+    // release profile sets `panic = "abort"`, so that write error becomes a
+    // silent SIGABRT — a spurious "fatal error" with no message — whenever
+    // the reader closes early (e.g. `hindsight ... | head`).
+    //
+    // Restore the default SIGPIPE disposition on Unix so the CLI terminates
+    // cleanly on a broken pipe, like other Unix CLI tools. Note this also
+    // applies to socket writes: on Linux a peer closing a connection mid-write
+    // surfaces as SIGPIPE rather than an `Err(EPIPE)`. ripgrep and fd accept
+    // the same trade-off, and it is the correct behavior here too.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     if let Err(e) = run() {
         ui::print_error(&format!("{:#}", e));
         std::process::exit(1);
