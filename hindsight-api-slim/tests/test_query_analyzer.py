@@ -235,6 +235,46 @@ def test_query_analyzer_last_weekend(query_analyzer):
     assert analysis.temporal_constraint.end_date.day == 12  # Sunday
 
 
+def test_query_analyzer_last_weekend_on_a_weekend_day(query_analyzer):
+    """'last weekend' asked on Sat/Sun means the previous one, not this one.
+
+    Stepping back to the most recent Saturday lands on the weekend in progress
+    when the question is asked during it, so a Sunday query returned yesterday
+    and today.
+    """
+    # 2025-01-18 is a Saturday, 2025-01-19 the Sunday after it. Both should
+    # resolve to the weekend before: Saturday 11th to Sunday 12th.
+    for reference_date in (datetime(2025, 1, 18, 12, 0, 0), datetime(2025, 1, 19, 12, 0, 0)):
+        analysis = query_analyzer.analyze("what did I do last weekend?", reference_date)
+
+        assert analysis.temporal_constraint is not None, reference_date.strftime("%A")
+        assert analysis.temporal_constraint.start_date.day == 11, reference_date.strftime("%A")
+        assert analysis.temporal_constraint.end_date.day == 12, reference_date.strftime("%A")
+        assert analysis.temporal_constraint.end_date < reference_date, (
+            f"{reference_date:%A}: last weekend must end before the query is asked"
+        )
+
+
+def test_query_analyzer_chinese_last_weekend_on_a_weekend_day(query_analyzer):
+    """上周末 asked on Sat/Sun means the previous weekend, as in English.
+
+    The Chinese extractor carried the same step-back-to-Saturday arithmetic, so
+    on a Sunday it returned the weekend in progress -- the same window as 这周末,
+    with the weekend the user meant reachable from neither it nor 上上周末.
+    """
+    # 2025-01-18 is a Saturday, 2025-01-19 the Sunday after it. Both should
+    # resolve to the weekend before: Saturday 11th to Sunday 12th.
+    for reference_date in (datetime(2025, 1, 18, 12, 0, 0), datetime(2025, 1, 19, 12, 0, 0)):
+        analysis = query_analyzer.analyze("上周末去了哪里", reference_date)
+
+        assert analysis.temporal_constraint is not None, reference_date.strftime("%A")
+        assert analysis.temporal_constraint.start_date.day == 11, reference_date.strftime("%A")
+        assert analysis.temporal_constraint.end_date.day == 12, reference_date.strftime("%A")
+        assert analysis.temporal_constraint.end_date < reference_date, (
+            f"{reference_date:%A}: 上周末 must end before the query is asked"
+        )
+
+
 def test_query_analyzer_couple_days_ago(query_analyzer):
     """Test extraction of 'a couple of days ago' colloquial expression."""
     reference_date = datetime(2025, 1, 15, 12, 0, 0)
