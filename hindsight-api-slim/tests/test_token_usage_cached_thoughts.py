@@ -214,12 +214,12 @@ async def test_openai_compatible_call_extracts_reasoning_into_thoughts_tokens():
     llm = _openai_llm()
     llm._client.chat.completions.create = AsyncMock(return_value=_response(usage=_usage(cached=200, reasoning=80)))
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Return whether this worked."}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     # reasoning_tokens must flow into thoughts_tokens (was dropped -> 0 before).
     assert token_usage.thoughts_tokens == 80
     assert token_usage.cached_tokens == 200
@@ -257,12 +257,12 @@ async def test_openai_compatible_call_no_token_details_keeps_thoughts_zero():
         return_value=_response(usage=_usage(cached=None, reasoning=None, prompt=10, completion=5, total=15))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "x"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     assert token_usage.thoughts_tokens == 0
     assert token_usage.cached_tokens == 0
 
@@ -282,12 +282,12 @@ async def test_openai_compatible_output_tokens_exclude_thoughts_like_gemini():
         return_value=_response(usage=_usage(reasoning=64, prompt=20, completion=83, total=103))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "17*23?"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     assert token_usage.thoughts_tokens == 64
     assert token_usage.output_tokens == 83 - 64  # visible-only, no reasoning
     assert token_usage.input_tokens == 20
@@ -320,7 +320,6 @@ async def test_openai_compatible_call_records_cached_and_thoughts_on_metrics():
             messages=[{"role": "user", "content": "Return whether this worked."}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
     recorded = _recorded_llm_call(collector)
     assert recorded["cached_input_tokens"] == 200
@@ -371,7 +370,6 @@ async def test_openai_compatible_metrics_account_for_every_billed_output_token()
             messages=[{"role": "user", "content": "17*23?"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
     recorded = _recorded_llm_call(collector)
     assert recorded["output_tokens"] == completion - reasoning  # visible-only
@@ -399,12 +397,12 @@ async def test_openai_compatible_call_unfolded_reasoning_keeps_visible_output():
         return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=4692))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Extract facts"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     assert token_usage.output_tokens == 673  # was 0: max(0, 673 - 909)
     assert token_usage.thoughts_tokens == 909
     assert token_usage.input_tokens == 3110
@@ -448,12 +446,12 @@ async def test_openai_compatible_call_unfolded_reasoning_survives_drifted_total(
         return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=4691))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Extract facts"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     assert token_usage.output_tokens == 672
     assert token_usage.thoughts_tokens == 909
 
@@ -467,12 +465,12 @@ async def test_openai_compatible_call_folded_reasoning_survives_drifted_total():
         return_value=_response(usage=_usage(reasoning=48, prompt=3340, completion=1337, total=4678))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Query"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     assert token_usage.output_tokens == (1337 - 48) + 1
     assert token_usage.thoughts_tokens == 48
 
@@ -486,12 +484,12 @@ async def test_openai_compatible_call_missing_total_falls_back_to_folded_reading
         return_value=_response(usage=_usage(reasoning=64, prompt=20, completion=83, total=0))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Query"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     assert token_usage.output_tokens == 83 - 64
     assert token_usage.thoughts_tokens == 64
     assert token_usage.total_tokens == 20 + (83 - 64)
@@ -512,24 +510,24 @@ async def test_openai_compatible_call_clamps_unusable_total_to_an_admissible_rea
         return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=99))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, low = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Query"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        low = call_result.usage
     assert low.output_tokens == 0  # max(0, 673 - 909), the folded reading
 
     llm._client.chat.completions.create = AsyncMock(
         return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=999_999))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, high = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Query"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        high = call_result.usage
     assert high.output_tokens == 673  # capped at completion_tokens
 
 
@@ -542,12 +540,12 @@ async def test_openai_compatible_call_without_reasoning_reports_completion_verba
         return_value=_response(usage=_usage(reasoning=0, prompt=120, completion=45, total=165))
     )
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        _, token_usage = await llm.call(
+        call_result = await llm.call(
             messages=[{"role": "user", "content": "Query"}],
             response_format=_OkModel,
             max_retries=0,
-            return_usage=True,
         )
+        token_usage = call_result.usage
     assert token_usage.output_tokens == 45
     assert token_usage.thoughts_tokens == 0
     assert token_usage.total_tokens == 165

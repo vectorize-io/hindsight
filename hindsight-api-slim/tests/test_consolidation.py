@@ -4,6 +4,7 @@ These tests exercise the real consolidation implementation with actual database 
 Note: Consolidation runs automatically after retain via SyncTaskBackend in tests.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -2428,7 +2429,9 @@ class TestBuildResponseModel:
         creates = [_CreateAction(text=f"observation {index}", source_fact_ids=[f"fact-{index}"]) for index in range(3)]
         llm_config = SimpleNamespace(
             _provider_impl=None,
-            call=AsyncMock(return_value=_ConsolidationBatchResponse(creates=creates)),
+            call=AsyncMock(
+                return_value=LLMCallResult(content=_ConsolidationBatchResponse(creates=creates), usage=TokenUsage())
+            ),
         )
         config = SimpleNamespace(
             llm_output_language=None,

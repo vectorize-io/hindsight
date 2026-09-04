@@ -60,6 +60,8 @@ from hindsight_api.engine.structured_output import provider_json_schema, strict_
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 # Seed applied to every Groq request for deterministic behavior
@@ -1024,9 +1026,8 @@ class OpenAICompatibleLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make an LLM API call with retry logic.
 
@@ -1043,11 +1044,8 @@ class OpenAICompatibleLLM(LLMInterface):
             strict_schema: Use strict json_schema (grammar-enforced) response_format instead of
                 the soft json_object path. Supported by OpenAI and schema-capable self-hosted
                 backends (llama.cpp, vLLM). Server-wide via HINDSIGHT_API_LLM_STRICT_SCHEMA.
-            return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
-            If return_usage=False: Parsed response if response_format is provided, otherwise text content.
-            If return_usage=True: Tuple of (result, TokenUsage) with token counts.
 
         Raises:
             OutputTooLongError: If output exceeds token limits.
@@ -1075,7 +1073,6 @@ class OpenAICompatibleLLM(LLMInterface):
                 max_backoff=max_backoff,
                 skip_validation=skip_validation,
                 scope=scope,
-                return_usage=return_usage,
                 attempt_context=attempt_context,
             )
 
@@ -1340,9 +1337,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"time={duration:.3f}s, ratio out/in={ratio:.2f}"
                     )
 
-                if return_usage:
-                    return result, token_counts
-                return result
+                return LLMCallResult(content=result, usage=token_counts)
 
             except LengthFinishReasonError as e:
                 logger.warning(f"LLM output exceeded token limits: {str(e)}")
@@ -1411,9 +1406,10 @@ class OpenAICompatibleLLM(LLMInterface):
                                         output_tokens=0,
                                         success=True,
                                     )
-                                    if return_usage:
-                                        return result, TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
-                                    return result
+                                    return LLMCallResult(
+                                        content=result,
+                                        usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),
+                                    )
                     except (json.JSONDecodeError, KeyError, TypeError):
                         pass  # Failed to parse tool_use_failed, continue with normal retry
 
@@ -1732,7 +1728,6 @@ class OpenAICompatibleLLM(LLMInterface):
         max_backoff: float,
         skip_validation: bool,
         scope: str = "memory",
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
@@ -1956,14 +1951,12 @@ class OpenAICompatibleLLM(LLMInterface):
                         error=None,
                     )
 
-                    if return_usage:
-                        token_usage = TokenUsage(
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            total_tokens=total_tokens,
-                        )
-                        return validated_result, token_usage
-                    return validated_result
+                    token_usage = TokenUsage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        total_tokens=total_tokens,
+                    )
+                    return LLMCallResult(content=validated_result, usage=token_usage)
 
                 except ProviderResponseError as e:
                     last_exception = e

@@ -36,6 +36,7 @@ from hindsight_api.engine.structured_output import provider_json_schema, strict_
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
 from .codex_auth import (
     _CODEX_CLIENT_ID,
     _CODEX_REFRESH_TOKEN_URL,
@@ -448,9 +449,8 @@ class CodexLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """Make API call to Codex backend with SSE streaming.
 
         Args:
@@ -673,18 +673,14 @@ class CodexLLM(LLMInterface):
                     # bugs that would otherwise silently erase spans (#3025).
                     logger.debug("Codex span recording failed: %s", span_error, exc_info=True)
 
-                if return_usage:
-                    # Codex doesn't provide token counts, estimate based on content
-                    estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
-                    estimated_output = len(content) // 4
-                    token_usage = TokenUsage(
-                        input_tokens=estimated_input,
-                        output_tokens=estimated_output,
-                        total_tokens=estimated_input + estimated_output,
-                    )
-                    return result, token_usage
-
-                return result
+                estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
+                estimated_output = len(content) // 4
+                token_usage = TokenUsage(
+                    input_tokens=estimated_input,
+                    output_tokens=estimated_output,
+                    total_tokens=estimated_input + estimated_output,
+                )
+                return LLMCallResult(content=result, usage=token_usage)
 
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code

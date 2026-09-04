@@ -137,11 +137,13 @@ async def test_call_ignores_non_error_result_message(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     provider = _instantiate_provider()
-    result = await provider.call(
-        messages=[{"role": "user", "content": "hi"}],
-        max_retries=0,
-        scope="test",
-    )
+    result = (
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=0,
+            scope="test",
+        )
+    ).content
 
     assert result == "ok"
 
@@ -165,13 +167,15 @@ async def test_call_records_span_for_unvalidated_dict(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     monkeypatch.setattr(tracing, "get_span_recorder", lambda: span_recorder)
 
-    result = await _instantiate_provider().call(
-        messages=[{"role": "user", "content": "extract facts"}],
-        response_format=_StructuredResponse,
-        skip_validation=True,
-        max_retries=0,
-        scope="retain_extract_facts",
-    )
+    result = (
+        await _instantiate_provider().call(
+            messages=[{"role": "user", "content": "extract facts"}],
+            response_format=_StructuredResponse,
+            skip_validation=True,
+            max_retries=0,
+            scope="retain_extract_facts",
+        )
+    ).content
 
     assert result == {"fact": "x"}
     assert span_recorder.record_llm_call.call_args.kwargs["response_content"] == '{"fact": "x"}'
@@ -197,11 +201,13 @@ async def test_call_survives_span_recorder_failure(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     monkeypatch.setattr(tracing, "get_span_recorder", lambda: span_recorder)
 
-    result = await _instantiate_provider().call(
-        messages=[{"role": "user", "content": "hi"}],
-        max_retries=0,
-        scope="test",
-    )
+    result = (
+        await _instantiate_provider().call(
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=0,
+            scope="test",
+        )
+    ).content
 
     assert result == "ok"
     span_recorder.record_llm_call.assert_called_once()

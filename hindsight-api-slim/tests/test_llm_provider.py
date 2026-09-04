@@ -83,13 +83,15 @@ async def test_llm_api_methods():
     await llm.verify_connection()
 
     # Test 2: call() with plain text
-    response = await llm.call(
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "What is 2+2? Answer in one word."},
-        ],
-        max_completion_tokens=50,
-    )
+    response = (
+        await llm.call(
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "What is 2+2? Answer in one word."},
+            ],
+            max_completion_tokens=50,
+        )
+    ).content
     assert response is not None, "call() returned None"
     assert len(response) > 0, "call() returned empty string"
 
@@ -100,14 +102,16 @@ async def test_llm_api_methods():
         answer: str
         confidence: str
 
-    structured = await llm.call(
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "What is the capital of France?"},
-        ],
-        response_format=TestResponse,
-        max_completion_tokens=100,
-    )
+    structured = (
+        await llm.call(
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "What is the capital of France?"},
+            ],
+            response_format=TestResponse,
+            max_completion_tokens=100,
+        )
+    ).content
     assert isinstance(structured, TestResponse), f"Expected TestResponse, got {type(structured)}"
     assert structured.answer, "Structured output missing 'answer'"
     assert structured.confidence, "Structured output missing 'confidence'"

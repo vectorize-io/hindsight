@@ -25,6 +25,8 @@ from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 
@@ -243,9 +245,8 @@ class AnthropicLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make an LLM API call with retry logic.
 
@@ -262,11 +263,8 @@ class AnthropicLLM(LLMInterface):
             strict_schema: Route structured output through a forced tool_use tool for
                 native constrained decoding (issue #1002). When False, falls back to
                 schema-in-prompt + JSON parse.
-            return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
-            If return_usage=False: Parsed response if response_format is provided, otherwise text content.
-            If return_usage=True: Tuple of (result, TokenUsage) with token counts.
 
         Raises:
             OutputTooLongError: If output exceeds token limits.
@@ -433,15 +431,13 @@ class AnthropicLLM(LLMInterface):
                         f"time={duration:.3f}s"
                     )
 
-                if return_usage:
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=total_tokens,
-                        cached_tokens=cached_tokens,
-                    )
-                    return result, token_usage
-                return result
+                token_usage = TokenUsage(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    cached_tokens=cached_tokens,
+                )
+                return LLMCallResult(content=result, usage=token_usage)
 
             except json.JSONDecodeError as e:
                 last_exception = e

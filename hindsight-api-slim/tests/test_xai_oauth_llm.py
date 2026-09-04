@@ -814,7 +814,7 @@ async def test_a_401_refreshes_once_and_retries_once(tmp_path, monkeypatch):
         refresh_replies=[_refresh_ok()],
     )
 
-    result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+    result = (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)).content
 
     assert result == "recovered"
     assert len(llm._client.calls) == 2
@@ -904,7 +904,7 @@ async def test_a_429_is_retried_honoring_retry_after(tmp_path, monkeypatch):
         replies=[_FakeResponse(429, "slow down", {"Retry-After": "7"}), _ok_reply("after backoff")],
     )
 
-    result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2, initial_backoff=1.0)
+    result = (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2, initial_backoff=1.0)).content
 
     assert result == "after backoff"
     assert slept == [7.0]
@@ -1360,7 +1360,7 @@ def test_output_tokens_survive_when_completion_tokens_is_already_visible_only():
     assert counts.total_tokens == 50
 
 
-async def test_return_usage_surfaces_cached_tokens(tmp_path, monkeypatch):
+async def test_call_usage_surfaces_cached_tokens(tmp_path, monkeypatch):
     usage = {
         "prompt_tokens": 200,
         "completion_tokens": 20,
@@ -1369,7 +1369,7 @@ async def test_return_usage_surfaces_cached_tokens(tmp_path, monkeypatch):
     }
     llm = _make_llm(tmp_path, monkeypatch, replies=[_ok_reply("hi", usage)])
 
-    _, token_usage = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0, return_usage=True)
+    token_usage = (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)).usage
 
     assert token_usage.input_tokens == 200
     assert token_usage.cached_tokens == 150
@@ -1459,12 +1459,14 @@ class _Answer(BaseModel):
 async def test_structured_output_uses_a_strict_json_schema_when_requested(tmp_path, monkeypatch):
     llm = _make_llm(tmp_path, monkeypatch, replies=[_ok_reply(json.dumps({"answer": "42"}))])
 
-    result = await llm.call(
-        messages=[{"role": "user", "content": "hi"}],
-        response_format=_Answer,
-        strict_schema=True,
-        max_retries=0,
-    )
+    result = (
+        await llm.call(
+            messages=[{"role": "user", "content": "hi"}],
+            response_format=_Answer,
+            strict_schema=True,
+            max_retries=0,
+        )
+    ).content
 
     body = llm._client.calls[0]["json"]
     assert body["response_format"]["type"] == "json_schema"
@@ -1577,7 +1579,7 @@ async def test_a_502_retry_lands_on_a_new_client_not_the_pinned_one(tmp_path, mo
     second_client = _FakeAsyncHttp([_ok_reply("recovered")])
     llm._new_client = lambda: second_client  # type: ignore[method-assign]
 
-    result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)
+    result = (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)).content
 
     assert result == "recovered"
     assert llm._client is second_client
@@ -1594,7 +1596,7 @@ async def test_a_429_retry_does_not_recycle_the_connection(tmp_path, monkeypatch
     original_client = llm._client
     llm._new_client = _never_called  # type: ignore[method-assign]
 
-    result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)
+    result = (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)).content
 
     assert result == "ok"
     assert llm._client is original_client
@@ -1713,7 +1715,7 @@ async def test_a_recycle_leaves_a_sibling_request_on_the_stale_client_alive(tmp_
     assert not gated.closed, "the stale client was closed while a sibling was still using it"
 
     gated.gate.set()
-    assert await sibling == "sibling"
+    assert (await sibling).content == "sibling"
 
     await _settle()
     assert gated.closed, "the stale client must still be closed once it drains"
@@ -1823,7 +1825,7 @@ async def test_a_transient_refresh_failure_is_retried_like_any_other_blip(tmp_pa
 
     llm._auth.get_access_token = _flaky  # type: ignore[method-assign]
 
-    assert await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2) == "recovered"
+    assert (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2)).content == "recovered"
     assert len(attempts) == 2
     assert len(llm._client.calls) == 1
 

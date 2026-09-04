@@ -221,7 +221,7 @@ class TestMockLLMProvider:
             )
 
         result = asyncio.run(make_call())
-        assert result == {"custom": "response"}
+        assert result.content == {"custom": "response"}
 
     def test_mock_provider_returns_usage_when_requested(self):
         """Test that mock provider returns token usage."""
@@ -237,12 +237,9 @@ class TestMockLLMProvider:
         import asyncio
 
         async def make_call():
-            return await provider.call(
-                messages=[{"role": "user", "content": "test"}],
-                return_usage=True,
-            )
+            return await provider.call(messages=[{"role": "user", "content": "test"}])
 
-        result, usage = asyncio.run(make_call())
+        usage = asyncio.run(make_call()).usage
         assert usage.input_tokens == 10
         assert usage.output_tokens == 5
         assert usage.total_tokens == 15

@@ -31,6 +31,8 @@ from hindsight_api.engine.structured_output import has_tagged_union, provider_js
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 # Per-request Gemini safety settings override.
@@ -412,10 +414,9 @@ class GeminiLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         cached_prefix: str | None = None,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make a Gemini/VertexAI API call with retry logic.
 
@@ -431,7 +432,6 @@ class GeminiLLM(LLMInterface):
             skip_validation: Return raw JSON without Pydantic validation.
             strict_schema: Ignored — Gemini always grammar-enforces structured output via its
                 native response_schema, so it is strict regardless of this flag.
-            return_usage: If True, return tuple (result, TokenUsage).
             cached_prefix: Optional CachedContent resource name (from
                 ``GeminiCacheManager.get_or_create``). When set, the
                 system_instruction is assumed to live in the cache; this call
@@ -442,8 +442,6 @@ class GeminiLLM(LLMInterface):
                 normal uncached path.
 
         Returns:
-            If return_usage=False: Parsed response if response_format provided, else text.
-            If return_usage=True: Tuple of (result, TokenUsage).
         """
         start_time = time.time()
 
@@ -663,16 +661,14 @@ class GeminiLLM(LLMInterface):
                         f"time={duration:.3f}s"
                     )
 
-                if return_usage:
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=input_tokens + output_tokens,
-                        cached_tokens=cached_tokens,
-                        thoughts_tokens=thoughts_tokens,
-                    )
-                    return result, token_usage
-                return result
+                token_usage = TokenUsage(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    cached_tokens=cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
+                )
+                return LLMCallResult(content=result, usage=token_usage)
 
             except json.JSONDecodeError as e:
                 last_exception = e

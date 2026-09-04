@@ -20,6 +20,7 @@ only on the ``retain_extract_facts`` scope, and assert the operation is retried
 (reset to ``pending`` with ``retry_count`` bumped) rather than silently completed.
 """
 
+from hindsight_api.engine.response_models import TokenUsage
 import json
 import uuid
 

@@ -28,7 +28,7 @@ from hindsight_api.engine.reflect.agent import (
     _normalize_tool_name,
     run_reflect_agent,
 )
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 from tests.llm_judge import assert_meets_criteria
 
 
@@ -230,11 +230,11 @@ class TestReflectAgentMocked:
         """Create a mock LLM provider."""
         llm = MagicMock()
         llm.call_with_tools = AsyncMock()
-        # Also mock call() for final iteration fallback - returns (response, usage) tuple
+        # Also mock call() for the final-iteration fallback.
         llm.call = AsyncMock(
-            return_value=(
-                "Fallback answer from final iteration",
-                TokenUsage(input_tokens=100, output_tokens=50, total_tokens=150),
+            return_value=LLMCallResult(
+                content="Fallback answer from final iteration",
+                usage=TokenUsage(input_tokens=100, output_tokens=50, total_tokens=150),
             )
         )
         return llm
@@ -983,9 +983,9 @@ class TestReflectAgentMocked:
             LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
         ]
         mock_llm.call = AsyncMock(
-            return_value=(
-                "Synthesized final answer.",
-                TokenUsage(input_tokens=40, output_tokens=12, total_tokens=52),
+            return_value=LLMCallResult(
+                content="Synthesized final answer.",
+                usage=TokenUsage(input_tokens=40, output_tokens=12, total_tokens=52),
             )
         )
 
@@ -1216,9 +1216,9 @@ class TestContextOverflowBehavior:
         llm = MagicMock()
         llm.call_with_tools = AsyncMock()
         llm.call = AsyncMock(
-            return_value=(
-                "Synthesized answer from gathered evidence.",
-                TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70),
+            return_value=LLMCallResult(
+                content="Synthesized answer from gathered evidence.",
+                usage=TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70),
             )
         )
         return llm
@@ -1307,9 +1307,9 @@ class TestNoAnswerFailsHard:
         llm.model = "gpt-test"
         llm.call_with_tools = AsyncMock()
         llm.call = AsyncMock(
-            return_value=(
-                "Synthesized answer from gathered evidence.",
-                TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+            return_value=LLMCallResult(
+                content="Synthesized answer from gathered evidence.",
+                usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
             )
         )
         return llm
@@ -1380,7 +1380,10 @@ class TestNoAnswerFailsHard:
     @pytest.mark.asyncio
     async def test_empty_final_synthesis_raises(self, mock_llm, mock_functions):
         """The forced final synthesis (tools disabled) returning nothing also fails."""
-        mock_llm.call.return_value = ("   ", TokenUsage(input_tokens=10, output_tokens=0, total_tokens=10))
+        mock_llm.call.return_value = LLMCallResult(
+            content="   ",
+            usage=TokenUsage(input_tokens=10, output_tokens=0, total_tokens=10),
+        )
         # Gather evidence, then stop tool-calling: the agent falls through to the
         # forced synthesis, which is where the empty text comes from.
         mock_llm.call_with_tools.side_effect = [
@@ -1716,7 +1719,7 @@ class _StepCacheProvider:
         return res
 
     async def call(self, *args, **kwargs):  # final-synthesis fallback (unused on the happy path)
-        return ("final", TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2))
+        return LLMCallResult(content="final", usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2))
 
 
 class TestReflectIncrementalCache:

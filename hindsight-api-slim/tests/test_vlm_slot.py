@@ -16,6 +16,7 @@ from datetime import datetime
 import pytest
 
 from hindsight_api.config import HindsightConfig
+from hindsight_api.engine.response_models import LLMCallResult
 from hindsight_api.engine.retain.attachment_content import (
     LoadedAttachment,
     attachment_placeholder,
@@ -42,7 +43,7 @@ class _RecordingConfig:
         self._calls.append(self.provider)
         from hindsight_api.engine.response_models import TokenUsage
 
-        return {"facts": []}, TokenUsage()
+        return LLMCallResult(content={"facts": []}, usage=TokenUsage())
 
     async def get_or_create_cached_prefix(self, *a, **k):
         return None

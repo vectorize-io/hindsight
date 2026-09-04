@@ -28,7 +28,7 @@ from hindsight_api.engine.reflect.prompts import (
     split_context_history,
 )
 from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 
 # The splitter floors its per-chunk budget at _MIN_SPLIT_CHUNK_TOKENS, so tests
 # use budgets above the floor to exercise the packing logic itself.
@@ -144,12 +144,17 @@ class TestSplitSynthesisAgentFlow:
             # the final system prompt. Answer accordingly so the test can tell
             # which output made it into the result.
             if "extract evidence" in messages[0]["content"]:
-                return (
-                    f"- claim from prompt of {count_prompt_tokens(messages[1]['content'])} tokens "
-                    "(mentioned_at: 2026-01-01; occurred: unknown; memory_ids: mem-1)",
-                    TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+                return LLMCallResult(
+                    content=(
+                        f"- claim from prompt of {count_prompt_tokens(messages[1]['content'])} tokens "
+                        "(mentioned_at: 2026-01-01; occurred: unknown; memory_ids: mem-1)"
+                    ),
+                    usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
                 )
-            return (final_answer, TokenUsage(input_tokens=20, output_tokens=10, total_tokens=30))
+            return LLMCallResult(
+                content=final_answer,
+                usage=TokenUsage(input_tokens=20, output_tokens=10, total_tokens=30),
+            )
 
         llm.call = AsyncMock(side_effect=_call)
         return llm

@@ -70,11 +70,13 @@ async def test_free_form_call_goes_native_and_carries_num_ctx():
     client, patched = _patch_native(_native_response("hello there"))
 
     with patched:
-        result = await llm.call(
-            messages=[{"role": "user", "content": "hi"}],
-            max_completion_tokens=64,
-            max_retries=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "hi"}],
+                max_completion_tokens=64,
+                max_retries=0,
+            )
+        ).content
 
     payload = client.post.call_args.kwargs["json"]
     assert client.post.call_args.args[0] == "http://localhost:11434/api/chat"
@@ -110,7 +112,7 @@ async def test_free_form_call_without_num_ctx_stays_on_openai_endpoint():
     client, patched = _patch_native(_native_response("unused"))
 
     with patched:
-        result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+        result = (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)).content
 
     assert result == "hello there"
     assert create.await_count == 1
@@ -124,11 +126,13 @@ async def test_structured_call_still_validates_against_the_schema():
     client, patched = _patch_native(_native_response(json.dumps({"answer": "42"})))
 
     with patched:
-        result = await llm.call(
-            messages=[{"role": "user", "content": "hi"}],
-            response_format=_Answer,
-            max_retries=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "hi"}],
+                response_format=_Answer,
+                max_retries=0,
+            )
+        ).content
 
     assert "format" in client.post.call_args.kwargs["json"]
     assert isinstance(result, _Answer)
@@ -142,7 +146,7 @@ async def test_free_form_native_strips_reasoning_tags():
     client, patched = _patch_native(_native_response("<think>weighing it up</think>Paris"))
 
     with patched:
-        result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+        result = (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)).content
 
     assert result == "Paris"
 
@@ -154,12 +158,14 @@ async def test_free_form_native_retries_empty_content():
     client, patched = _patch_native(_native_response(""), _native_response("second try"))
 
     with patched:
-        result = await llm.call(
-            messages=[{"role": "user", "content": "hi"}],
-            max_retries=1,
-            initial_backoff=0.0,
-            max_backoff=0.0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "hi"}],
+                max_retries=1,
+                initial_backoff=0.0,
+                max_backoff=0.0,
+            )
+        ).content
 
     assert result == "second try"
     assert client.post.await_count == 2

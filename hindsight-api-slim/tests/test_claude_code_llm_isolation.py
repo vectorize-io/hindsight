@@ -82,11 +82,13 @@ async def test_call_passes_isolation_env_to_sdk_options(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     provider = _instantiate_provider()
-    result = await provider.call(
-        messages=[{"role": "user", "content": "hi"}],
-        max_retries=0,
-        scope="test",
-    )
+    result = (
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=0,
+            scope="test",
+        )
+    ).content
 
     assert result == "ok"
     assert "options" in captured, "fake query was not called"

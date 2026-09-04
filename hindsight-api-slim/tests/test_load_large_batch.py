@@ -21,7 +21,7 @@ from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.engine.retain.fact_extraction import FactExtractionResponse, ExtractedFact
-from hindsight_api.engine.response_models import TokenUsage
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +170,9 @@ class TestLargeBatchRetain:
             # Consolidation calls expect a _ConsolidationBatchResponse (not a raw dict),
             # because consolidation does NOT use skip_validation=True.
             if kwargs.get("scope") == "consolidation":
-                return_usage = kwargs.get("return_usage", False)
-                if return_usage:
-                    return _ConsolidationBatchResponse(), TokenUsage(input_tokens=0, output_tokens=0)
-                return _ConsolidationBatchResponse()
+                return LLMCallResult(
+                    content=_ConsolidationBatchResponse(), usage=TokenUsage(input_tokens=0, output_tokens=0)
+                )
 
             call_tracker["count"] += 1
 
@@ -186,14 +185,11 @@ class TestLargeBatchRetain:
             # Return a dict (parsed JSON) — fact extraction uses skip_validation=True
             response_dict = {"facts": mock_facts}
 
-            return_usage = kwargs.get("return_usage", False)
-            if return_usage:
-                usage = TokenUsage(
-                    input_tokens=len(user_msg) // 4,
-                    output_tokens=len(json.dumps(response_dict)) // 4,
-                )
-                return response_dict, usage
-            return response_dict
+            usage = TokenUsage(
+                input_tokens=len(user_msg) // 4,
+                output_tokens=len(json.dumps(response_dict)) // 4,
+            )
+            return LLMCallResult(content=response_dict, usage=usage)
 
         # Patch LLMProvider.call at the class level
         with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
@@ -267,20 +263,16 @@ class TestLargeBatchRetain:
             from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
 
             if kwargs.get("scope") == "consolidation":
-                return_usage = kwargs.get("return_usage", False)
-                if return_usage:
-                    return _ConsolidationBatchResponse(), TokenUsage(input_tokens=0, output_tokens=0)
-                return _ConsolidationBatchResponse()
+                return LLMCallResult(
+                    content=_ConsolidationBatchResponse(), usage=TokenUsage(input_tokens=0, output_tokens=0)
+                )
 
             messages = kwargs.get("messages", args[0] if args else [])
             user_msg = messages[-1]["content"] if messages else ""
             mock_facts = create_mock_facts_from_content(user_msg, ratio=1.0)
             response_dict = {"facts": mock_facts}
 
-            return_usage = kwargs.get("return_usage", False)
-            if return_usage:
-                return response_dict, TokenUsage(input_tokens=100, output_tokens=50)
-            return response_dict
+            return LLMCallResult(content=response_dict, usage=TokenUsage(input_tokens=100, output_tokens=50))
 
         with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
             start_time = time.time()
@@ -326,10 +318,7 @@ class TestLargeBatchRetain:
             ]
             response_dict = {"facts": mock_facts}
 
-            return_usage = kwargs.get("return_usage", False)
-            if return_usage:
-                return response_dict, TokenUsage(input_tokens=10, output_tokens=10)
-            return response_dict
+            return LLMCallResult(content=response_dict, usage=TokenUsage(input_tokens=10, output_tokens=10))
 
         with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
             # Run 10 concurrent retain operations

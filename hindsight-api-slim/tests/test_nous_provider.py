@@ -8,6 +8,7 @@ provider validation, and the proactive/reactive token-refresh plumbing on
 
 from __future__ import annotations
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 from unittest.mock import patch
 
 import httpx
@@ -114,10 +115,10 @@ async def test_call_refreshes_once_on_401_then_retries() -> None:
                 response=httpx.Response(401, request=httpx.Request("POST", "http://x")),
                 body=None,
             )
-        return "ok"
+        return LLMCallResult(content="ok", usage=TokenUsage())
 
     with patch.object(NousLLM.__bases__[0], "call", side_effect=fake_super_call, autospec=False):
-        result = await llm.call(messages=[{"role": "user", "content": "hi"}])
+        result = (await llm.call(messages=[{"role": "user", "content": "hi"}])).content
 
     assert result == "ok"
     assert calls["n"] == 2  # original + one retry

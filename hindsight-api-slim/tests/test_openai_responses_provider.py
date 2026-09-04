@@ -144,9 +144,9 @@ async def test_call_sends_reasoning_object_and_omits_temperature_for_reasoning_m
     llm = _make_llm()
     create = _mock_create(llm, _fake_response(output_text="hello"))
     with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "hi"}], temperature=0.7, max_completion_tokens=1000
-        )
+        result = (
+            await llm.call(messages=[{"role": "user", "content": "hi"}], temperature=0.7, max_completion_tokens=1000)
+        ).content
 
     kwargs = create.call_args.kwargs
     assert result == "hello"
@@ -175,7 +175,7 @@ async def test_call_splits_reasoning_tokens_out_of_visible_output():
     llm = _make_llm()
     _mock_create(llm, _fake_response(output_text="hi", input_tokens=100, output_tokens=30, reasoning_tokens=12))
     with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        _, usage = await llm.call(messages=[{"role": "user", "content": "hi"}], return_usage=True)
+        usage = (await llm.call(messages=[{"role": "user", "content": "hi"}])).usage
 
     assert usage.input_tokens == 100
     assert usage.output_tokens == 18  # 30 - 12 reasoning
@@ -192,11 +192,13 @@ async def test_call_strict_schema_uses_text_format_json_schema():
     llm = _make_llm()
     create = _mock_create(llm, _fake_response(output_text=json.dumps({"answer": "42"})))
     with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "q"}],
-            response_format=_Answer,
-            strict_schema=True,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "q"}],
+                response_format=_Answer,
+                strict_schema=True,
+            )
+        ).content
 
     text_format = create.call_args.kwargs["text"]["format"]
     assert text_format["type"] == "json_schema"

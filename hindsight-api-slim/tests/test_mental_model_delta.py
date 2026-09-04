@@ -30,7 +30,7 @@ import pytest
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.llm_wrapper import LLMConfig
 from hindsight_api.engine.maintenance import MaintenanceLoop
-from hindsight_api.engine.response_models import ReflectResult
+from hindsight_api.engine.response_models import LLMCallResult, ReflectResult, TokenUsage
 from hindsight_api.engine.retain import embedding_utils
 from tests.conftest import stub_refresh_has_sources
 
@@ -114,7 +114,7 @@ def patch_llm_call(monkeypatch):
 
         async def fake_call(*, messages, **kwargs):
             calls.append({"messages": messages, **kwargs})
-            return canned
+            return LLMCallResult(content=canned, usage=TokenUsage())
 
         monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
         return calls
@@ -1062,7 +1062,7 @@ class TestDeltaRefreshPlumbing:
             captured["trace_operation"] = ctx.operation if ctx else None
             captured["trace_bank_id"] = ctx.bank_id if ctx else None
             captured["trace_metadata"] = dict(ctx.metadata) if ctx else None
-            return DeltaOperationList()
+            return LLMCallResult(content=DeltaOperationList(), usage=TokenUsage())
 
         # First (seeding) refresh — value captured here is overwritten by the second.
         monkeypatch.setattr(memory._reflect_llm_config, "call", capturing_call)
@@ -1268,7 +1268,7 @@ class TestDeltaRefreshPlumbing:
         async def ok_call(*, messages, **kwargs):
             from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
 
-            return DeltaOperationList()
+            return LLMCallResult(content=DeltaOperationList(), usage=TokenUsage())
 
         monkeypatch.setattr(memory._reflect_llm_config, "call", ok_call)
         seeded = await memory.refresh_mental_model(

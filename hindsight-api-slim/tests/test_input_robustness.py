@@ -21,7 +21,7 @@ from hindsight_api.engine.llm_wrapper import (
     sanitize_text,
 )
 from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.retain.fact_extraction import Fact
 from hindsight_api.engine.token_encoding import count_tokens, truncate_to_tokens
 
@@ -102,8 +102,8 @@ async def test_fact_extraction_sanitizes_surrogates_generated_by_llm():
     llm = MagicMock(spec=LLMProvider)
     llm.provider = "mock"
     llm.call = AsyncMock(
-        return_value=(
-            {
+        return_value=LLMCallResult(
+            content={
                 "facts": [
                     {
                         "what": "Alex laughed 😂",
@@ -116,7 +116,7 @@ async def test_fact_extraction_sanitizes_surrogates_generated_by_llm():
                     }
                 ]
             },
-            TokenUsage(),
+            usage=TokenUsage(),
         )
     )
 
@@ -178,8 +178,12 @@ def test_sanitize_llm_value_scrubs_pydantic_models():
     assert cleaned.output_tokens == 42
 
 
-def test_sanitize_llm_value_preserves_return_usage_tuple_shape():
-    """``return_usage=True`` hands back ``(result, TokenUsage)`` — both must survive."""
+def test_sanitize_llm_value_preserves_tuple_shape():
+    """A tuple reaching the scrubber keeps its shape — both members must survive.
+
+    ``call`` returns an ``LLMCallResult`` now (handled by the BaseModel branch), but
+    parsed JSON payloads still nest tuples, so the tuple branch has to stay correct.
+    """
     usage = TokenUsage()
     cleaned = sanitize_llm_value(({"text": f"x{HIGH_SURROGATE}"}, usage))
     assert isinstance(cleaned, tuple) and len(cleaned) == 2
@@ -221,8 +225,8 @@ async def test_llm_provider_call_sanitizes_response():
 
     result = await llm.call(messages=[{"role": "user", "content": "hi"}], skip_validation=True)
 
-    assert result["facts"][0]["what"] == "Alex laughed 😂"
-    assert result["facts"][0]["what"].encode("utf-8")
+    assert result.content["facts"][0]["what"] == "Alex laughed 😂"
+    assert result.content["facts"][0]["what"].encode("utf-8")
 
 
 @pytest.mark.asyncio

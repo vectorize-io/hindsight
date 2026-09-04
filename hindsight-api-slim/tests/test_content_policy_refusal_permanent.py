@@ -19,6 +19,8 @@ These tests pin the permanence at all three layers:
 
 from __future__ import annotations
 
+from hindsight_api.engine.response_models import TokenUsage
+
 import json
 import uuid
 from dataclasses import dataclass, field

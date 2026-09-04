@@ -348,15 +348,14 @@ async def _dedup_adjudicate(
     if best_id is None:
         return _DedupOutcome(best_id=None, merged_text="", should_merge=False)
 
-    decision = _dedup_decision_from_response(
-        await dedup_llm_config.call(
-            messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
-            response_format=_DedupDecision,
-            temperature=config.llm_temperature_consolidation,
-            scope="consolidation_dedup",
-            strict_schema=get_config().llm_strict_schema_consolidation,
-        )
+    dedup_call = await dedup_llm_config.call(
+        messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
+        response_format=_DedupDecision,
+        temperature=config.llm_temperature_consolidation,
+        scope="consolidation_dedup",
+        strict_schema=get_config().llm_strict_schema_consolidation,
     )
+    decision = _dedup_decision_from_response(dedup_call.content)
     if decision.action != "merge":
         return _DedupOutcome(best_id=best_id, merged_text="", should_merge=False, best_text=best_text)
     merged_text = (sanitize_llm_output(decision.text) or "").strip() or best_text
@@ -3194,7 +3193,8 @@ async def _consolidate_batch_with_llm(
                 call_kwargs["max_retries"] = inner_max_retries
             if cached_prefix_name is not None:
                 call_kwargs["cached_prefix"] = cached_prefix_name
-            response: _ConsolidationBatchResponse = await llm_config.call(**call_kwargs)
+            batch_call = await llm_config.call(**call_kwargs)
+            response: _ConsolidationBatchResponse = batch_call.content
             # Defensive truncation: some LLM providers may not enforce JSON schema max_length
             creates = response.creates
             if remaining_observation_slots is not None and remaining_observation_slots >= 0:

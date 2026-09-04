@@ -1,6 +1,7 @@
 """Tests for consolidation retry budget configurability (issue #1042) and
 failure classification (issue #3684)."""
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,7 +21,10 @@ def mock_llm_config():
     response.creates = []
     response.updates = []
     response.deletes = []
-    llm.call.return_value = response
+    llm.call.return_value = LLMCallResult(
+        content=response,
+        usage=TokenUsage(),
+    )
     return llm
 
 

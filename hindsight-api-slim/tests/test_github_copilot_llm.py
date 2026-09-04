@@ -201,14 +201,15 @@ def test_invalid_reasoning_effort_does_not_acquire_runtime(monkeypatch):
 async def test_plain_call_isolates_session_and_reports_usage(monkeypatch):
     provider, client = _provider(monkeypatch, [_assistant_event("ok"), _usage_event()])
 
-    result, usage = await provider.call(
+    call_result = await provider.call(
         messages=[
             {"role": "system", "content": "Reply concisely."},
             {"role": "user", "content": "Say ok."},
         ],
-        return_usage=True,
         max_retries=0,
     )
+    result = call_result.content
+    usage = call_result.usage
 
     assert result == "ok"
     assert usage.input_tokens == 120
@@ -245,11 +246,13 @@ async def test_structured_call_uses_terminal_schema_tool(monkeypatch):
         [_assistant_event("", [request]), _usage_event()],
     )
 
-    result = await provider.call(
-        messages=[{"role": "user", "content": "Return an answer."}],
-        response_format=_StructuredAnswer,
-        max_retries=0,
-    )
+    result = (
+        await provider.call(
+            messages=[{"role": "user", "content": "Return an answer."}],
+            response_format=_StructuredAnswer,
+            max_retries=0,
+        )
+    ).content
 
     assert result == _StructuredAnswer(answer="captured")
     tool = client.create_kwargs["tools"][0]
@@ -448,8 +451,7 @@ async def test_session_cleanup_timeout_invalidates_runtime(monkeypatch):
             messages=[{"role": "user", "content": "say ok"}],
             max_retries=0,
         )
-        == "ok"
-    )
+    ).content == "ok"
 
     assert time.monotonic() - started < 0.2
     assert runtime.invalidations == ["transient session cleanup timed out or failed"]

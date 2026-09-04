@@ -34,6 +34,8 @@ from hindsight_api.engine.providers.nous_auth import (
 )
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["NousLLM", "NousAuthManager", "NousNotLoggedInError", "NousRefreshExpiredError"]
@@ -154,7 +156,7 @@ class NousLLM(OpenAICompatibleLLM):
         await self._ensure_fresh_token()
         return await super().verify_connection()
 
-    async def call(self, *args: Any, **kwargs: Any) -> Any:
+    async def call(self, *args: Any, **kwargs: Any) -> LLMCallResult:
         return await self._with_auth_retry(super().call, "call", *args, **kwargs)
 
     async def call_with_tools(self, *args: Any, **kwargs: Any) -> Any:

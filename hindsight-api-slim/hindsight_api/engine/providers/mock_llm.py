@@ -11,7 +11,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
-from ..response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from ..response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +44,11 @@ class MockLLM(LLMInterface):
         mock_llm.set_mock_response({"answer": "test"})
 
         # Make calls
-        result = await mock_llm.call(
+        call_result = await mock_llm.call(
             messages=[{"role": "user", "content": "test"}],
             response_format=MyResponseModel
         )
+        result = call_result.content
 
         # Verify calls
         calls = mock_llm.get_mock_calls()
@@ -112,9 +113,8 @@ class MockLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make a mock LLM API call.
 
@@ -131,11 +131,8 @@ class MockLLM(LLMInterface):
             max_backoff: Not used in mock.
             skip_validation: Return raw JSON without Pydantic validation.
             strict_schema: Not used in mock.
-            return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
-            If return_usage=False: Parsed response if response_format is provided, otherwise text content.
-            If return_usage=True: Tuple of (result, TokenUsage) with mock token counts.
         """
         # Record the call for test verification
         call_record = {
@@ -208,10 +205,8 @@ class MockLLM(LLMInterface):
         else:
             result = "mock response"
 
-        if return_usage:
-            token_usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
-            return result, token_usage
-        return result
+        token_usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
+        return LLMCallResult(content=result, usage=token_usage)
 
     async def call_with_tools(
         self,

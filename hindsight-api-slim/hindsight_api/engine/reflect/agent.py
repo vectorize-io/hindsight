@@ -260,7 +260,7 @@ INSTRUCTIONS:
 
 OUTPUT:"""
 
-        structured_result, usage = await llm_config.call(
+        call_result = await llm_config.call(
             messages=[
                 {
                     "role": "system",
@@ -279,8 +279,9 @@ OUTPUT:"""
             initial_backoff=0.25,
             max_backoff=1.0,
             skip_validation=True,  # We'll handle the dict ourselves
-            return_usage=True,
         )
+        structured_result = call_result.content
+        usage = call_result.usage
 
         # Convert to dict
         if hasattr(structured_result, "model_dump"):
@@ -714,7 +715,7 @@ async def _run_reflect_agent_inner(
         """One tool-less LLM call with usage/trace accounting folded in."""
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         llm_start = time.time()
-        response, usage = await llm_config.call(
+        call_result = await llm_config.call(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -722,8 +723,9 @@ async def _run_reflect_agent_inner(
             scope="reflect",
             temperature=get_config().llm_temperature_reflect,
             max_completion_tokens=completion_cap,
-            return_usage=True,
         )
+        response = call_result.content
+        usage = call_result.usage
         llm_duration = int((time.time() - llm_start) * 1000)
         total_input_tokens += usage.input_tokens
         total_output_tokens += usage.output_tokens
@@ -1387,7 +1389,7 @@ async def _process_done_tool(
             )
             rewrite_user = f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}"
 
-        rewritten, rewrite_usage = await llm_config.call(
+        call_result = await llm_config.call(
             messages=[
                 {"role": "system", "content": rewrite_system},
                 {"role": "user", "content": rewrite_user},
@@ -1395,8 +1397,9 @@ async def _process_done_tool(
             scope="reflect",
             temperature=get_config().llm_temperature_reflect,
             max_completion_tokens=get_config().reflect_max_completion_tokens,
-            return_usage=True,
         )
+        rewritten = call_result.content
+        rewrite_usage = call_result.usage
         if document is not None:
             trimmed = _document_from_rewrite(rewritten, answer)
             document, answer = trimmed.structure, trimmed.markdown

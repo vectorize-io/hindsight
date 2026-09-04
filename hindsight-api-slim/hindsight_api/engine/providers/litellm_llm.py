@@ -37,6 +37,8 @@ from hindsight_api.engine.structured_output import provider_json_schema, strict_
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
+
 
 @lru_cache(maxsize=1)
 def _litellm_timeout_exc() -> type[BaseException]:
@@ -296,9 +298,8 @@ class LiteLLMLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         start_time = time.time()
 
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
@@ -442,14 +443,12 @@ class LiteLLMLLM(LLMInterface):
                         f"time={duration:.3f}s"
                     )
 
-                if return_usage:
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=total_tokens,
-                    )
-                    return result, token_usage
-                return result
+                token_usage = TokenUsage(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                )
+                return LLMCallResult(content=result, usage=token_usage)
 
             except OutputTooLongError:
                 raise

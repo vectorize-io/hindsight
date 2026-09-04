@@ -28,6 +28,8 @@ from hindsight_api._cross_loop import CrossLoopLock
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.response_models import LLMToolCallResult
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 # Default GGUF model for offline mode
@@ -428,9 +430,8 @@ class LlamaCppLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """Delegate call to the OpenAI-compatible API."""
         await self._ensure_initialized()
         return await self._delegate.call(
@@ -444,7 +445,6 @@ class LlamaCppLLM(LLMInterface):
             max_backoff=max_backoff,
             skip_validation=skip_validation,
             strict_schema=strict_schema,
-            return_usage=return_usage,
             attempt_context=attempt_context,
         )
 

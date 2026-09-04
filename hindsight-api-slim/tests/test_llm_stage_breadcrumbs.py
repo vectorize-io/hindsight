@@ -7,6 +7,7 @@ An operator debugging a wedged worker spent hours on Bedrock for tasks that had
 never reached Bedrock.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import asyncio
 
 import pytest
@@ -52,7 +53,7 @@ async def test_stage_drops_queued_once_the_call_is_in_flight(monkeypatch):
 
     async def fake_call(**_kwargs):
         seen.append(holder.stage)
-        return "ok"
+        return LLMCallResult(content="ok", usage=TokenUsage())
 
     monkeypatch.setattr(llm._provider_impl, "call", fake_call)
 

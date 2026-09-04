@@ -13,6 +13,7 @@ truncates the visible answer mid-word. These tests pin the decoupled contract:
   text.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -65,7 +66,11 @@ def _mock_llm(final_answer: str = "Synthesized final answer."):
     llm = MagicMock()
     llm.provider = "gemini"
     llm.model = "gemini-2.5-flash"
-    llm.call = AsyncMock(return_value=(final_answer, TokenUsage(input_tokens=40, output_tokens=12, total_tokens=52)))
+    llm.call = AsyncMock(
+        return_value=LLMCallResult(
+            content=final_answer, usage=TokenUsage(input_tokens=40, output_tokens=12, total_tokens=52)
+        )
+    )
     return llm
 
 
@@ -166,7 +171,9 @@ async def test_gemini_warns_on_max_tokens_truncation(caplog):
     llm._provider_impl._client.aio.models.generate_content = AsyncMock(return_value=response)
 
     with caplog.at_level(logging.WARNING):
-        out = await llm._provider_impl.call([{"role": "user", "content": "write a page"}], max_completion_tokens=500)
+        out = (
+            await llm._provider_impl.call([{"role": "user", "content": "write a page"}], max_completion_tokens=500)
+        ).content
 
     assert out == "A page that was cut off mid-wor"
     assert any("truncated at max_output_tokens" in r.message for r in caplog.records)

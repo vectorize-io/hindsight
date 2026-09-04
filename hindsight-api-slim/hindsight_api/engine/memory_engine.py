@@ -16156,7 +16156,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_output_tokens=max(2048, int(doc_max_tokens * 1.5)),
                         )
                         unsay_llm = await _op_llm()
-                        raw_unsay = await unsay_llm.call(
+                        unsay_call = await unsay_llm.call(
                             messages=[
                                 {"role": "system", "content": STRUCTURED_RETRACTION_SYSTEM_PROMPT},
                                 {"role": "user", "content": unsay_prompt},
@@ -16165,6 +16165,7 @@ class MemoryEngine(MemoryEngineInterface):
                             temperature=get_config().llm_temperature_consolidation,
                             scope="mental_model_retraction_ops",
                         )
+                        raw_unsay = unsay_call.content
                         unsay_ops = parse_delta_operation_list(raw_unsay)
                         unsay_outcome = apply_operations(current_doc, unsay_ops.operations)
                         retraction_operations = MentalModelDeltaOperations(
@@ -16288,7 +16289,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # same decoupling reflect's synthesis got in #3365/#3389 — the
                     # document-length budget lives in the prompt (``max_output_tokens``
                     # above), never in the transport cap.
-                    raw = await delta_llm.call(
+                    delta_call = await delta_llm.call(
                         messages=[
                             {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
                             {"role": "user", "content": user_prompt},
@@ -16300,6 +16301,7 @@ class MemoryEngine(MemoryEngineInterface):
                         temperature=get_config().llm_temperature_consolidation,
                         scope="mental_model_delta_ops",
                     )
+                    raw = delta_call.content
                     op_list = parse_delta_operation_list(raw)
                     apply_outcome = apply_operations(current_doc, op_list.operations)
                     delta_operations = MentalModelDeltaOperations(

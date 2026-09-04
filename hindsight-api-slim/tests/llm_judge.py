@@ -133,13 +133,15 @@ async def _judge_once(
     last_error: Exception | None = None
     for attempt in range(max(1, _JUDGE_CALL_ATTEMPTS)):
         try:
-            result = await judge.call(
-                messages=messages,
-                response_format=JudgeVerdict,
-                max_completion_tokens=256,
-                temperature=temperature,
-                scope="test_judge",
-            )
+            result = (
+                await judge.call(
+                    messages=messages,
+                    response_format=JudgeVerdict,
+                    max_completion_tokens=256,
+                    temperature=temperature,
+                    scope="test_judge",
+                )
+            ).content
             if isinstance(result, JudgeVerdict):
                 return result
             if isinstance(result, dict):

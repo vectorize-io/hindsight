@@ -181,12 +181,14 @@ async def test_reflect_forced_synthesis_configured_output_language_overrides_que
     system_prompt = build_final_system_prompt(_REFLECT_BANK_PROFILE.get("mission"), "English", None)
     prompt = build_final_prompt(_REFLECT_QUERY, context_history, _REFLECT_BANK_PROFILE, llm_output_language="English")
 
-    answer = await llm_config.call(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        scope="reflect",
-    )
+    answer = (
+        await llm_config.call(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            scope="reflect",
+        )
+    ).content
 
     await _assert_reflect_answer_is_english(answer)

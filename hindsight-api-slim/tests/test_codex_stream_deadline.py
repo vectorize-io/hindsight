@@ -141,7 +141,7 @@ async def test_normal_response_still_parses():
     server, base_url = await _sse_server(chunks_per_second=1, body=body, finite=True)
     llm = _build_llm(base_url, timeout=30.0)
     try:
-        assert await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0) == "hello world"
+        assert (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)).content == "hello world"
     finally:
         await llm.cleanup()
         server.close()

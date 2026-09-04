@@ -1902,12 +1902,13 @@ async def _extract_facts_from_chunk(
                 initial_backoff=initial_backoff,
                 max_backoff=max_backoff,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
-                return_usage=True,
             )
             if cached_prefix_name is not None:
                 call_kwargs["cached_prefix"] = cached_prefix_name
 
-            extraction_response_json, call_usage = await llm_config.call(**call_kwargs)
+            extraction_call = await llm_config.call(**call_kwargs)
+            extraction_response_json = extraction_call.content
+            call_usage = extraction_call.usage
             usage = usage + call_usage  # Aggregate usage across retries
 
             # Lenient parsing of facts from raw JSON
