@@ -52,6 +52,13 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-semantic-conventions>=0.65b0",
     "dateparser>=1.4.2",
+    # Transitive via dateparser, pinned here because the floor is load-bearing on a
+    # free-threaded build: 2025.11.3 turns concurrent entry into dateparser's locale
+    # caches into a SIGSEGV inside _regex (verified on the py3.14t image -- exit 139
+    # in seconds, 3/3; the same probe on 2026.9.3 survives). The engine also
+    # serialises those entries now (see engine/query_analyzer.py _DATEPARSER_LOCK),
+    # so this is the second of two independent guards, not the only one.
+    "regex>=2026.9.3",
     "google-genai>=1.72.0",
     "google-auth>=2.0.0",
     "anthropic>=0.40.0",
