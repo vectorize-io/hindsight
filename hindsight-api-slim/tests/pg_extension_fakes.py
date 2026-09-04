@@ -19,6 +19,14 @@ class _Result:
         return self._value
 
 
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
 class FakePgConnection:
     """Minimal stand-in for a SQLAlchemy ``Connection`` in extension tests.
 
@@ -53,6 +61,15 @@ class FakePgConnection:
         if "set_config('search_path'" in sql:
             self.search_path = (params or {}).get("schema") or (params or {}).get("previous") or ""
             return _Result(self.search_path)
+        if "= ANY(:names)" in sql:
+            wanted = (params or {}).get("names") or []
+            return _Rows(
+                [
+                    (name,)
+                    for name, (schema, relocatable) in self.extensions.items()
+                    if name in wanted and schema != "public" and relocatable
+                ]
+            )
         if "FROM pg_extension" in sql:
             name = (params or {}).get("name")
             return _Result(self.extensions.get(name))

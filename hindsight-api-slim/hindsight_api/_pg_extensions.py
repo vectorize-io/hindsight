@@ -21,14 +21,14 @@ and relocating them is not allowed.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-#: Extension names Hindsight may install. Kept explicit so a typo cannot turn
-#: into DDL, since extension names cannot be passed as bound parameters.
+#: Extension names are interpolated into DDL — PostgreSQL cannot bind an
+#: identifier as a parameter — so every name is checked against this first.
 _IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 PUBLIC_SCHEMA = "public"
@@ -51,7 +51,7 @@ MANAGED_EXTENSIONS: tuple[str, ...] = (
 class _Executable(Protocol):
     """The slice of SQLAlchemy's ``Connection`` these helpers need."""
 
-    def execute(self, statement, *args, **kwargs): ...
+    def execute(self, statement: Any, parameters: Any = None, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class _Transactional(_Executable, Protocol):
@@ -162,6 +162,18 @@ def relocate_extension_to_public(conn: _Transactional, name: str) -> bool:
 
 
 def ensure_extensions_in_public(conn: _Transactional, names: tuple[str, ...] = MANAGED_EXTENSIONS) -> None:
-    """Repair extensions a previous version installed into a tenant schema."""
-    for name in names:
-        relocate_extension_to_public(conn, name)
+    """Repair extensions a previous version installed into a tenant schema.
+
+    One catalog query, not one per extension: this runs before every schema
+    migration, and a deployment sweeping tens of thousands of tenant schemas pays
+    it once per schema.
+    """
+    misplaced = conn.execute(
+        text(
+            "SELECT e.extname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace "
+            "WHERE e.extname = ANY(:names) AND n.nspname <> :public AND e.extrelocatable"
+        ),
+        {"names": list(names), "public": PUBLIC_SCHEMA},
+    ).fetchall()
+    for row in misplaced:
+        relocate_extension_to_public(conn, row[0])
