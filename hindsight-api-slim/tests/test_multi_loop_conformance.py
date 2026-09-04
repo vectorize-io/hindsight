@@ -18,6 +18,8 @@ server with eight loops. Each failed with either
 """
 
 import asyncio
+import subprocess
+import sys
 import threading
 from typing import Any, Callable
 
@@ -25,6 +27,41 @@ import pytest
 
 LOOPS = 4
 PER_LOOP = 6
+
+# Run in a subprocess by test_query_analyzers_can_warm_up_concurrently, which needs
+# both a cold interpreter and a survivable crash. See that test for why.
+_WARMUP_PROBE = """
+import threading
+from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+
+QUERIES = [
+    "what did I do yesterday about the deploy",
+    "the meeting on 2026-06-10 with the team",
+    "notes from last March about the migration",
+]
+errors = []
+
+
+def warm_and_analyze():
+    # A fresh analyzer per thread, exactly as one MemoryEngine per event loop.
+    analyzer = DateparserQueryAnalyzer()
+    try:
+        analyzer.load()
+        for query in QUERIES:
+            analyzer.analyze(query)
+    except BaseException as exc:  # noqa: BLE001 - reported to the parent verbatim
+        errors.append(f"{type(exc).__name__}: {exc}")
+
+
+threads = [threading.Thread(target=warm_and_analyze) for _ in range(8)]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+
+print("ERRORS " + repr(errors))
+print("OK")
+"""
 
 
 def _across_loops(make_coros: Callable[[], list], loops: int = LOOPS) -> list[BaseException]:
@@ -135,6 +172,88 @@ def test_temporal_language_detection_is_usable_from_several_threads():
 
     errors = _across_loops(lambda: [detect] * 2, loops=6)
     assert not errors, f"language detection failed across threads: {errors[:1]}"
+
+
+def test_locale_dictionaries_are_never_built_by_two_threads_at_once():
+    """Regression: `_char_tables` built its result *before* taking the lock.
+
+    Only the assignment was guarded, so N threads missing the cache together each
+    swept all 200+ locales concurrently. `get_wordchars_for_detection` is not a
+    read: on a miss it builds the locale's dictionary under a fresh `Settings`
+    (hence a fresh `registry_key`) and writes it into `Locale.dictionaries` and
+    dateparser's class-level regex caches. Missing together is the normal case —
+    it is what N engines warming their analyzers on the startup executor do.
+
+    On 3.11 that surfaced as the "dictionary changed size during iteration" above;
+    on 3.14t it was a SIGSEGV inside the `regex` extension, which is handed
+    borrowed references into a dict another thread is resizing. This asserts the
+    invariant rather than waiting for either symptom, so it fails deterministically
+    on both interpreters.
+    """
+    from dateparser.languages.loader import LocaleDataLoader
+
+    import hindsight_api.engine.temporal_language_detection as tld
+
+    # A private loader, so the locales — and therefore their dictionaries — are
+    # cold whatever an earlier test in this worker already parsed.
+    locales = list(LocaleDataLoader().get_locales(languages=None, locales=None, region=None))[:40]
+    tld._char_table_cache.clear()
+
+    counter_lock = threading.Lock()
+    inside = 0
+    peak = 0
+    original = type(locales[0]).get_wordchars_for_detection
+
+    def counting_get_wordchars(self, settings=None):
+        nonlocal inside, peak
+        with counter_lock:
+            inside += 1
+            peak = max(peak, inside)
+        try:
+            return original(self, settings=settings)
+        finally:
+            with counter_lock:
+                inside -= 1
+
+    async def detect() -> None:
+        for text in ("what happened last friday", "cosa e successo ieri sera"):
+            tld.best_language(text, locales)
+
+    type(locales[0]).get_wordchars_for_detection = counting_get_wordchars
+    try:
+        errors = _across_loops(lambda: [detect], loops=8)
+    finally:
+        type(locales[0]).get_wordchars_for_detection = original
+        tld._char_table_cache.clear()
+
+    assert not errors, f"language detection failed across threads: {errors[:1]}"
+    assert peak == 1, f"{peak} threads built locale dictionaries concurrently; that corrupts them"
+
+
+def test_query_analyzers_can_warm_up_concurrently():
+    """Regression: N engines warming their analyzers at once segfaulted 3.14t.
+
+    `MemoryEngine.initialize` warms its analyzer with `run_in_executor(None, ...)`,
+    so a process with an event loop per thread warms N analyzers on the *unbounded*
+    default executor simultaneously, each entering dateparser's unguarded lazy
+    caches. Six loops killed the interpreter within a minute.
+
+    A subprocess because the failure it guards is a fatal signal — there is no
+    exception left to catch — and because the caches have to be cold, which they
+    are not in a pytest worker that has already parsed a date.
+    """
+    result = subprocess.run(
+        [sys.executable, "-X", "faulthandler", "-c", _WARMUP_PROBE],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, (
+        f"concurrent analyzer warm-up crashed (exit {result.returncode}; "
+        f"a negative status is a fatal signal):\n{result.stderr}"
+    )
+    assert "OK" in result.stdout, f"probe did not finish:\n{result.stdout}\n{result.stderr}"
+    assert "ERRORS []" in result.stdout, f"threads raised:\n{result.stdout}"
 
 
 @pytest.mark.asyncio

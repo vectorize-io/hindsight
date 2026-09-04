@@ -7,6 +7,7 @@ structured information like temporal constraints.
 
 import logging
 import re
+import threading
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
@@ -203,6 +204,32 @@ class QueryAnalysis(BaseModel):
     )
 
 
+# dateparser is not safe to enter from more than one thread at a time. Its
+# locale dictionaries, split/match regexes and sorted-word lists are built
+# lazily into *class-level* caches on ``dateparser.languages.dictionary
+# .Dictionary`` and friends, keyed by settings + language name. Two threads
+# that reach an unwarmed locale together mutate and iterate the same dicts
+# concurrently: the mild outcome is ``RuntimeError: dictionary changed size
+# during iteration`` / ``KeyError``, the bad one is a segfault inside the
+# ``regex`` extension, which is handed borrowed references into a dict another
+# thread is resizing.
+#
+# Under the GIL this is rare enough to have gone unnoticed; on a free-threaded
+# build (``python3.14t``) it is immediate — six event loops in one process, each
+# warming its own analyzer on the default executor, crash the interpreter with
+# SIGSEGV in under a minute (traceback bottoming out in
+# ``dateparser/languages/dictionary.py`` ``split`` -> ``_regex...so``).
+#
+# One process-wide lock around every entry into dateparser fixes both. It costs
+# nothing on the recall path, which already funnels through the single-worker
+# executor in ``search/temporal_extraction.py``; what it adds is protection for
+# the paths that do *not* go through that executor — ``load()`` (run on the
+# default unbounded executor at engine startup, once per engine) and any direct
+# ``analyze()`` caller. Re-entrant because ``load()`` warms the caches by
+# calling ``_find_dates`` while holding it.
+_DATEPARSER_LOCK = threading.RLock()
+
+
 class QueryAnalyzer(ABC):
     """
     Abstract base class for query analysis.
@@ -276,24 +303,34 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         from dateparser.search import _search_with_detection
         from dateparser.search.search import _ExactLanguageSearch
 
-        available = _search_with_detection.available_language_map
-        if self._languages is None:
-            self._locales = list(available.values())
-        else:
-            unknown = set(self._languages) - set(available)
-            if unknown:
-                raise ValueError("Unknown language(s): %s" % ", ".join(map(repr, sorted(unknown))))
-            self._locales = [available[code] for code in self._languages]
+        # Serialised against every other entry into dateparser: warming builds
+        # its process-global locale caches, and a second thread reading them
+        # mid-build is what crashes free-threaded builds. See _DATEPARSER_LOCK.
+        with _DATEPARSER_LOCK:
+            if self._loaded:
+                return
 
-        # Our own instance rather than dateparser's module-level singleton:
-        # _ExactLanguageSearch caches the "current" locale on itself, so sharing
-        # it across callers is a data race the moment this runs off the event
-        # loop thread.
-        self._exact_search = _ExactLanguageSearch(_search_with_detection.loader)
-        self._loaded = True
+            available = _search_with_detection.available_language_map
+            if self._languages is None:
+                self._locales = list(available.values())
+            else:
+                unknown = set(self._languages) - set(available)
+                if unknown:
+                    raise ValueError("Unknown language(s): %s" % ", ".join(map(repr, sorted(unknown))))
+                self._locales = [available[code] for code in self._languages]
 
-        # Warm the lazily-built locale dictionaries and the character tables.
-        self._find_dates("today", settings=dateparser_settings)
+            # Our own instance rather than dateparser's module-level singleton:
+            # _ExactLanguageSearch caches the "current" locale on itself, so sharing
+            # it across callers is a data race the moment this runs off the event
+            # loop thread.
+            self._exact_search = _ExactLanguageSearch(_search_with_detection.loader)
+
+            # Warm the lazily-built locale dictionaries and the character tables.
+            self._find_dates("today", settings=dateparser_settings)
+
+            # Last: a concurrent load() must not return before the warm-up above
+            # has finished, and neither must a concurrent analyze() skip it.
+            self._loaded = True
 
     @apply_settings
     def _find_dates(self, query: str, settings: "Settings | None" = None) -> list[tuple[str, datetime]] | None:
@@ -319,14 +356,17 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         # points.
         settings = settings or dateparser_defaults
         check_settings(settings)
-        text = _search_with_detection.preprocess_text(query, self._languages)
-        # Settings populates its attributes dynamically, so this is a getattr
-        # rather than a plain access: the name is not statically visible.
-        default_languages = getattr(settings, "DEFAULT_LANGUAGES", None)
-        language = best_language(text, self._locales) or (default_languages[0] if default_languages else None)
-        if not language:
-            return None
-        return self._exact_search.search_parse(language, text, settings=settings) or None
+        # dateparser's caches are process-global and built lazily; only one
+        # thread may be inside them at a time. See _DATEPARSER_LOCK.
+        with _DATEPARSER_LOCK:
+            text = _search_with_detection.preprocess_text(query, self._languages)
+            # Settings populates its attributes dynamically, so this is a getattr
+            # rather than a plain access: the name is not statically visible.
+            default_languages = getattr(settings, "DEFAULT_LANGUAGES", None)
+            language = best_language(text, self._locales) or (default_languages[0] if default_languages else None)
+            if not language:
+                return None
+            return self._exact_search.search_parse(language, text, settings=settings) or None
 
     def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:
         """
