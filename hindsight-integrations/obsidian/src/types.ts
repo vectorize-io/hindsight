@@ -6,6 +6,8 @@
 
 export type Budget = "low" | "mid" | "high";
 
+export type ObservationScopes = "combined" | "shared" | "per_tag" | "all_combinations";
+
 export type TagMatch = "any" | "all" | "any_strict" | "all_strict";
 
 /** A leaf tag filter. `all_strict` = AND match that also excludes untagged memories. */
@@ -24,6 +26,7 @@ export type TagGroup = TagLeaf | TagAnd;
 
 export interface RetainOptions {
   tags?: string[];
+  observationScopes?: ObservationScopes;
   metadata?: Record<string, string>;
   /** ISO 8601 timestamp, or "unset" for timeless content. */
   timestamp?: string;
