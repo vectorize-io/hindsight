@@ -2771,7 +2771,11 @@ paths:
       - Operations
   /v1/default/banks/{bank_id}/operations/{operation_id}:
     delete:
-      description: Cancel a pending async operation by removing it from the queue
+      description: "Cancel a pending or processing async operation. A pending operation\
+        \ is removed from the queue; a processing one has its worker claim released\
+        \ and stops at its next checkpoint, which is also how a row orphaned by a\
+        \ worker crash is cleared. Returns 409 for operations that already reached\
+        \ a terminal status."
       operationId: cancel_operation
       parameters:
       - explode: false
@@ -2811,7 +2815,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Cancel a pending async operation
+      summary: Cancel a pending or processing async operation
       tags:
       - Operations
     get:

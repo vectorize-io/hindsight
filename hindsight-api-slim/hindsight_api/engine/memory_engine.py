@@ -18633,29 +18633,53 @@ class MemoryEngine(MemoryEngineInterface):
         op_uuid = uuid.UUID(operation_id)
 
         async with acquire_with_retry(backend) as conn:
-            # Check if operation exists, belongs to this bank, and is in a cancellable state
-            result = await conn.fetchrow(
-                f"SELECT bank_id, status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+            # One conditional write, like retry_operation: a SELECT-then-UPDATE pair would let a
+            # worker claim a 'pending' row between the two statements and get cancelled out from
+            # under its own claim without releasing it.
+            #
+            # 'processing' is cancellable, not just 'pending' (#4131). A worker crash or restart
+            # leaves rows orphaned in 'processing' — their worker_id never comes back, so the
+            # worker's own recovery pass (which filters on `worker_id = self._worker_id`) cannot
+            # reclaim them, and refusing to cancel left `UPDATE async_operations SET status=...`
+            # by hand as the only way out. Clearing worker_id/claimed_at is what makes the
+            # cancellation stick for a LIVE worker too: its shutdown/startup release path only
+            # touches rows it still owns, so it can no longer resurrect this one as 'pending'.
+            # The task itself stops at its next checkpoint (_check_op_alive) and _mark_completed
+            # is guarded on 'processing', so neither can undo the cancel.
+            cancelled = await conn.fetchrow(
+                f"""
+                UPDATE {fq_table("async_operations")}
+                SET status = 'cancelled',
+                    worker_id = NULL,
+                    claimed_at = NULL,
+                    completed_at = COALESCE(completed_at, now()),
+                    updated_at = now()
+                WHERE operation_id = $1
+                  AND bank_id = $2
+                  AND status IN ('pending', 'processing')
+                RETURNING operation_id
+                """,
                 op_uuid,
                 bank_id,
             )
 
-            if not result:
-                raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+            if cancelled is None:
+                row = await conn.fetchrow(
+                    f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                    op_uuid,
+                    bank_id,
+                )
 
-            if result["status"] != "pending":
+                if not row:
+                    raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+
                 from hindsight_api.extensions import OperationValidationError
 
                 raise OperationValidationError(
-                    f"Operation {operation_id} cannot be cancelled: status is '{result['status']}', only 'pending' operations can be cancelled",
+                    f"Operation {operation_id} cannot be cancelled: status is '{row['status']}', "
+                    f"only 'pending' or 'processing' operations can be cancelled",
                     409,
                 )
-
-            # Mark the operation as cancelled
-            await conn.execute(
-                f"UPDATE {fq_table('async_operations')} SET status = 'cancelled', updated_at = now() WHERE operation_id = $1",
-                op_uuid,
-            )
 
             return {
                 "success": True,

@@ -6790,8 +6790,13 @@ def _register_routes(app: FastAPI):
     @app.delete(
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
         response_model=CancelOperationResponse,
-        summary="Cancel a pending async operation",
-        description="Cancel a pending async operation by removing it from the queue",
+        summary="Cancel a pending or processing async operation",
+        description=(
+            "Cancel a pending or processing async operation. A pending operation is removed from "
+            "the queue; a processing one has its worker claim released and stops at its next "
+            "checkpoint, which is also how a row orphaned by a worker crash is cleared. Returns "
+            "409 for operations that already reached a terminal status."
+        ),
         operation_id="cancel_operation",
         tags=["Operations"],
     )
@@ -6799,7 +6804,7 @@ def _register_routes(app: FastAPI):
     async def api_cancel_operation(
         bank_id: str, operation_id: str, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Cancel a pending async operation."""
+        """Cancel a pending or processing async operation."""
         try:
             # Validate UUID format
             try:

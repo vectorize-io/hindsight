@@ -275,7 +275,7 @@ hindsight operation list <bank_id>
 # Get operation status
 hindsight operation get <bank_id> <operation_id>
 
-# Cancel a pending operation
+# Cancel a pending or processing operation
 hindsight operation cancel <bank_id> <operation_id>
 
 # Retry a failed operation
