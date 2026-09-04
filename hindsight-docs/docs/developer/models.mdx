@@ -250,6 +250,10 @@ export HINDSIGHT_API_LLM_API_KEY=your-meta-model-api-key  # base_url defaults to
 export HINDSIGHT_API_LLM_MODEL=muse-spark-1.3  # or muse-spark-1.2 / -contributor variants
 # Muse Spark always reasons: reasoning_effort "none" is rejected (HTTP 400), and reasoning
 # tokens come out of the output budget — keep the per-operation max-token limits generous.
+# Muse Spark reasons before every reply, so raise the deadlines — reflect's 30s default
+# is too short for its final synthesis:
+export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=300
+export HINDSIGHT_API_LLM_TIMEOUT=300
 
 # Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
 export HINDSIGHT_API_LLM_PROVIDER=nous

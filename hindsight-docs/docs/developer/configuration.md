@@ -464,6 +464,11 @@ export HINDSIGHT_API_LLM_MODEL=muse-spark-1.3
 # Muse Spark always reasons: leave HINDSIGHT_API_LLM_REASONING_EFFORT unset or set it to
 # minimal/low/medium/high/xhigh. "none" is rejected with HTTP 400. Reasoning tokens are
 # billed against the output budget, so keep the per-operation max-token limits generous.
+# Muse Spark reasons before every reply, so calls are slow: reflect's 30s default
+# deadline is not enough for its final synthesis and the call fails after retries.
+# Raise it (and the global deadline) when using this provider:
+export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=300
+export HINDSIGHT_API_LLM_TIMEOUT=300
 
 # Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
 export HINDSIGHT_API_LLM_PROVIDER=nous

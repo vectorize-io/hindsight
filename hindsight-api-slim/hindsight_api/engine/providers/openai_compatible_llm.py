@@ -478,6 +478,14 @@ def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[di
     return normalized
 
 
+# Provider implementations that reject every tool_choice except "auto" with an
+# HTTP 400 rather than ignoring it. Meta Model API: 'only `"auto"` is supported
+# for `tool_choice`. `"none"`, `"required"`, and named function choices are not
+# currently supported'. Reflect's agent loop forces a retrieval tool on its first
+# turn, so without this every reflect call against Meta fails outright.
+_NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS = frozenset({"meta"})
+
+
 def _summarize_status_error(e: APIStatusError, body_max: int = 400) -> str:
     """Render an APIStatusError with status code + truncated response body.
 
@@ -873,6 +881,17 @@ class OpenAICompatibleLLM(LLMInterface):
         tool choice after the tools list has been narrowed.
         """
         return self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS
+
+    def _rejects_non_auto_tool_choice(self) -> bool:
+        """Whether this endpoint rejects every ``tool_choice`` except ``"auto"``.
+
+        Distinct from ``_drops_tool_choice_required``: those endpoints accept the
+        field and quietly ignore it, so reflect gets a useless answer. These
+        endpoints fail the request outright with HTTP 400, so reflect gets no
+        answer at all. Meta Model API is the first of them — it rejects "none",
+        "required" and named choices alike.
+        """
+        return self.provider in _NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS
 
     def _verification_max_completion_tokens(self) -> int:
         """Return the startup verification budget for OpenAI-compatible gateways."""
@@ -1489,6 +1508,16 @@ class OpenAICompatibleLLM(LLMInterface):
         # tool_choice values. The tools list has already been narrowed for
         # forced calls, so omitting tool_choice preserves the practical behavior.
         if "deepseek" in self.model.lower() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+            request_tool_choice = None
+
+        # Meta rejects any tool_choice other than "auto" outright (HTTP 400), so the
+        # field has to come off the request entirely. A named choice has already been
+        # narrowed to a single tool above, so the call stays practically forced under
+        # auto — the same reasoning as the DeepSeek branch. NOTE: "none" cannot be
+        # expressed this way and would become "auto"; no caller on this path uses it
+        # (only the gemini / claude-code / github-copilot providers handle NONE), so
+        # it is left rather than given an untested tools-stripping branch.
+        if self._rejects_non_auto_tool_choice() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
             request_tool_choice = None
 
         # LM Studio and Ollama silently drop tool_choice="required", returning an
