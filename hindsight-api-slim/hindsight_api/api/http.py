@@ -7252,6 +7252,10 @@ def _register_routes(app: FastAPI):
     # overlaying it on top of the legacy DB columns. The three endpoints below are
     # retired — they stay in the spec (so generated SDK methods are not deleted out
     # from under callers) but always answer 410 with the config call to use instead.
+    # Their request bodies and `request_context` are declared but unused on purpose:
+    # dropping the body would change the generated signatures, which is the breakage
+    # this shape exists to avoid, and keeping the dependency means an unauthenticated
+    # caller still gets 401 rather than learning the route is gone.
     _PROFILE_RETIRED_DETAIL = (
         "The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank "
         "configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, "

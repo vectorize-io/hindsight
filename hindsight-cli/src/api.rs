@@ -250,7 +250,6 @@ impl ApiClient {
         })
     }
 
-
     pub fn recall(
         &self,
         agent_id: &str,
