@@ -15,14 +15,7 @@ from hindsight_api._vector_index import (
 )
 from hindsight_api.engine.retain import bank_utils
 from hindsight_api.migrations import _bootstrap_vector_extension_for_migrations
-
-
-class RecordingConn:
-    def __init__(self):
-        self.statements = []
-
-    def execute(self, statement, *args, **kwargs):
-        self.statements.append(str(statement))
+from tests.pg_extension_fakes import FakePgConnection
 
 
 def test_validate_extension_accepts_scann():
@@ -61,33 +54,27 @@ def test_index_type_keyword_scann_round_trips_pg_indexes_indexdef():
 
 
 def test_bootstrap_extension_scann_installs_vector_before_alloydb_scann():
-    conn = RecordingConn()
+    conn = FakePgConnection()
 
     bootstrap_extension(conn, "scann")
 
-    assert conn.statements == [
-        "CREATE EXTENSION IF NOT EXISTS vector",
-        "CREATE EXTENSION IF NOT EXISTS alloydb_scann CASCADE",
-    ]
+    assert conn.created_extensions() == ["vector", "alloydb_scann"]
 
 
 def test_migration_bootstrap_vchord_skips_pgvector_preflight():
-    conn = RecordingConn()
+    conn = FakePgConnection()
 
     _bootstrap_vector_extension_for_migrations(conn, "vchord")
 
-    assert conn.statements == ["CREATE EXTENSION IF NOT EXISTS vchord CASCADE"]
+    assert conn.created_extensions() == ["vchord"]
 
 
 def test_migration_bootstrap_scann_uses_dispatcher_without_legacy_pgvector_check():
-    conn = RecordingConn()
+    conn = FakePgConnection()
 
     _bootstrap_vector_extension_for_migrations(conn, "scann")
 
-    assert conn.statements == [
-        "CREATE EXTENSION IF NOT EXISTS vector",
-        "CREATE EXTENSION IF NOT EXISTS alloydb_scann CASCADE",
-    ]
+    assert conn.created_extensions() == ["vector", "alloydb_scann"]
 
 
 def test_scann_index_creation_defers_until_table_is_large_enough():

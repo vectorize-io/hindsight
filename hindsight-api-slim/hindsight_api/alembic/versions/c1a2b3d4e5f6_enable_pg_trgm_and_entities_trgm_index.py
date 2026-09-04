@@ -11,9 +11,10 @@ block; see migrations.py for how this is handled safely.
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import context, op
+from sqlalchemy import text
 
+from hindsight_api._pg_extensions import create_extension
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "c1a2b3d4e5f6"
@@ -36,12 +37,16 @@ def _pg_upgrade() -> None:
     # auto-detect and fall back to the "full" lookup strategy at runtime.  See #626.
     conn = op.get_bind()
     try:
-        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        # Pinned to the public schema: in schema mode the search_path starts with
+        # the tenant schema, and an extension installed there is invisible to the
+        # runtime, which fails every retain on `operator does not exist: text %
+        # text` (#4118).
+        create_extension(conn, "pg_trgm")
     except Exception:
         # Extension not available (managed Postgres, insufficient privileges, etc.)
         # Roll back the failed statement and skip index creation.
-        conn.execute(sa.text("ROLLBACK"))
-        conn.execute(sa.text("BEGIN"))
+        conn.execute(text("ROLLBACK"))
+        conn.execute(text("BEGIN"))
         return
 
     schema = _get_schema_prefix()

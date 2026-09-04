@@ -8,6 +8,8 @@ import os
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from ._pg_extensions import create_extension
+
 logger = logging.getLogger(__name__)
 
 # Extensions a user can set via HINDSIGHT_API_VECTOR_EXTENSION.
@@ -140,17 +142,14 @@ _ANN_TUNING_HIGH_RECALL: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-_EXTENSION_INSTALL_SQL = {
-    "pgvector": ("CREATE EXTENSION IF NOT EXISTS vector",),
-    "pgvectorscale": (
-        "CREATE EXTENSION IF NOT EXISTS vector",
-        "CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE",
-    ),
-    "vchord": ("CREATE EXTENSION IF NOT EXISTS vchord CASCADE",),
-    "scann": (
-        "CREATE EXTENSION IF NOT EXISTS vector",
-        "CREATE EXTENSION IF NOT EXISTS alloydb_scann CASCADE",
-    ),
+# (extension name, needs CASCADE) per configured backend, in install order.
+# Creation goes through _pg_extensions.create_extension so every extension lands
+# in ``public`` even when migrations run with a tenant schema on the search_path.
+_EXTENSION_INSTALL_PLAN: dict[str, tuple[tuple[str, bool], ...]] = {
+    "pgvector": (("vector", False),),
+    "pgvectorscale": (("vector", False), ("vectorscale", True)),
+    "vchord": (("vchord", True),),
+    "scann": (("vector", False), ("alloydb_scann", True)),
 }
 
 _INSTALL_HINTS = {
@@ -339,8 +338,8 @@ def per_bank_index_min_submit_interval_seconds() -> int:
 def bootstrap_extension(conn: Connection, ext: str) -> None:
     """Install the configured vector extension and any prerequisites if possible."""
     normalized = validate_extension(ext)
-    for statement in _EXTENSION_INSTALL_SQL[normalized]:
-        conn.execute(text(statement))
+    for name, cascade in _EXTENSION_INSTALL_PLAN[normalized]:
+        create_extension(conn, name, cascade=cascade)
 
 
 def detect_vector_extension(conn: Connection, vector_extension: str = "pgvector") -> str:
