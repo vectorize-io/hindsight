@@ -252,7 +252,20 @@ The synchronous retain response includes:
 - `bank_id` — the memory bank that received the content
 - `items_count` — number of items processed
 - `async` — whether processing ran asynchronously
+- `memories_created` — how many memory units the retain created, only present for synchronous operations
 - `usage` — token usage for the LLM calls (`input_tokens`, `output_tokens`, `total_tokens`), only present for synchronous operations
+
+:::note `memories_created` can legitimately be zero
+
+Extraction finds nothing to remember in content that carries no facts — a bare
+identifier, a greeting, boilerplate. The request still succeeds and the document
+is still stored; it just has no memory units, so recall cannot reach it. Check
+`memories_created` rather than the status code when you need to know that the
+content actually became memory. Re-retaining a document whose text has not
+changed also reports zero, because the unchanged content keeps the memories it
+already has.
+
+:::
 
 ---
 

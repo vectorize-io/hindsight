@@ -28,6 +28,7 @@ type RetainResponse struct {
 	Async bool `json:"async"`
 	OperationId NullableString `json:"operation_id,omitempty"`
 	OperationIds []string `json:"operation_ids,omitempty"`
+	MemoriesCreated NullableInt32 `json:"memories_created,omitempty"`
 	Usage NullableTokenUsage `json:"usage,omitempty"`
 }
 
@@ -225,6 +226,48 @@ func (o *RetainResponse) SetOperationIds(v []string) {
 	o.OperationIds = v
 }
 
+// GetMemoriesCreated returns the MemoriesCreated field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RetainResponse) GetMemoriesCreated() int32 {
+	if o == nil || IsNil(o.MemoriesCreated.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.MemoriesCreated.Get()
+}
+
+// GetMemoriesCreatedOk returns a tuple with the MemoriesCreated field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RetainResponse) GetMemoriesCreatedOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MemoriesCreated.Get(), o.MemoriesCreated.IsSet()
+}
+
+// HasMemoriesCreated returns a boolean if a field has been set.
+func (o *RetainResponse) HasMemoriesCreated() bool {
+	if o != nil && o.MemoriesCreated.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMemoriesCreated gets a reference to the given NullableInt32 and assigns it to the MemoriesCreated field.
+func (o *RetainResponse) SetMemoriesCreated(v int32) {
+	o.MemoriesCreated.Set(&v)
+}
+// SetMemoriesCreatedNil sets the value for MemoriesCreated to be an explicit nil
+func (o *RetainResponse) SetMemoriesCreatedNil() {
+	o.MemoriesCreated.Set(nil)
+}
+
+// UnsetMemoriesCreated ensures that no value is present for MemoriesCreated, not even an explicit nil
+func (o *RetainResponse) UnsetMemoriesCreated() {
+	o.MemoriesCreated.Unset()
+}
+
 // GetUsage returns the Usage field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *RetainResponse) GetUsage() TokenUsage {
 	if o == nil || IsNil(o.Usage.Get()) {
@@ -286,6 +329,9 @@ func (o RetainResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.OperationIds != nil {
 		toSerialize["operation_ids"] = o.OperationIds
+	}
+	if o.MemoriesCreated.IsSet() {
+		toSerialize["memories_created"] = o.MemoriesCreated.Get()
 	}
 	if o.Usage.IsSet() {
 		toSerialize["usage"] = o.Usage.Get()

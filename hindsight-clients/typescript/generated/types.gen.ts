@@ -4859,6 +4859,12 @@ export type RetainResponse = {
    */
   operation_ids?: Array<string> | null;
   /**
+   * Memories Created
+   *
+   * How many memory units this retain created (only present for synchronous operations). Extraction can legitimately find nothing to remember in content that carries no facts, and that outcome is a success, not an error: the document is stored but has no memory units, so it cannot be reached through recall. Zero here is what tells the caller that happened. A re-retain of a document whose text is unchanged also reports zero, because the delta path keeps the units it already has.
+   */
+  memories_created?: number | null;
+  /**
    * Token usage metrics for LLM calls during fact extraction (only present for synchronous operations)
    */
   usage?: TokenUsage | null;

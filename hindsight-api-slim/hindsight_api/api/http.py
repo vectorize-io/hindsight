@@ -921,6 +921,7 @@ class RetainResponse(BaseModel):
                 "bank_id": "user123",
                 "items_count": 2,
                 "async": False,
+                "memories_created": 5,
                 "usage": {"input_tokens": 500, "output_tokens": 100, "total_tokens": 600},
             }
         },
@@ -939,6 +940,17 @@ class RetainResponse(BaseModel):
     operation_ids: list[str] | None = Field(
         default=None,
         description="Operation IDs when items were submitted as multiple strategy groups (async=true with mixed per-item strategies). operation_id is set to the first entry for backward compatibility.",
+    )
+    memories_created: int | None = Field(
+        default=None,
+        description=(
+            "How many memory units this retain created (only present for synchronous operations). "
+            "Extraction can legitimately find nothing to remember in content that carries no facts, "
+            "and that outcome is a success, not an error: the document is stored but has no memory "
+            "units, so it cannot be reached through recall. Zero here is what tells the caller that "
+            "happened. A re-retain of a document whose text is unchanged also reports zero, because "
+            "the delta path keeps the units it already has."
+        ),
     )
     usage: TokenUsage | None = Field(
         default=None,
@@ -8124,6 +8136,12 @@ def _register_routes(app: FastAPI):
 
                 # Synchronous processing: one batch per strategy group, aggregate results
                 total_items_count = 0
+                # Reported back to the caller. A retain whose extraction finds no
+                # facts stores the document and returns 200 with nothing behind it;
+                # without this count the caller cannot tell that from a retain that
+                # produced memories, and only discovers it later when recall comes
+                # back empty (#4065).
+                total_memories_created = 0
                 total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
                 with metrics.record_operation("retain", bank_id=bank_id, source="api"):
                     for group_strategy, contents in strategy_groups.items():
@@ -8141,6 +8159,8 @@ def _register_routes(app: FastAPI):
                             ),
                         )
                         total_items_count += len(contents)
+                        # `result` is the per-content-item list of created unit ids.
+                        total_memories_created += sum(len(unit_ids) for unit_ids in result)
                         if usage:
                             total_usage = TokenUsage(
                                 input_tokens=total_usage.input_tokens + usage.input_tokens,
@@ -8154,6 +8174,7 @@ def _register_routes(app: FastAPI):
                         "bank_id": bank_id,
                         "items_count": total_items_count,
                         "async": False,
+                        "memories_created": total_memories_created,
                         "usage": total_usage,
                     }
                 )
