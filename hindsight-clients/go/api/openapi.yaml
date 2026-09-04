@@ -5979,6 +5979,9 @@ components:
         retain_structured_chunk_size:
           nullable: true
           type: integer
+        retain_max_attachments_per_chunk:
+          nullable: true
+          type: integer
         enable_observations:
           nullable: true
           type: boolean

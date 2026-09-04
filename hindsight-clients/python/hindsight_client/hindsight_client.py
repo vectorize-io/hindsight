@@ -742,7 +742,6 @@ class Hindsight:
                 retain_custom_instructions=retain_custom_instructions,
                 retain_chunk_size=retain_chunk_size,
                 retain_structured_chunk_size=retain_structured_chunk_size,
-            retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
                 retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,

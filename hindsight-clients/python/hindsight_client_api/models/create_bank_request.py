@@ -41,13 +41,14 @@ class CreateBankRequest(BaseModel):
     retain_custom_instructions: Optional[StrictStr] = None
     retain_chunk_size: Optional[StrictInt] = None
     retain_structured_chunk_size: Optional[StrictInt] = None
+    retain_max_attachments_per_chunk: Optional[StrictInt] = None
     enable_observations: Optional[StrictBool] = None
     observations_mission: Optional[StrictStr] = None
     enable_text_search: Optional[StrictBool] = None
     enable_temporal_retrieval: Optional[StrictBool] = None
     enable_graph_retrieval: Optional[StrictBool] = None
     enable_reranking: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["name", "disposition", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "mission", "background", "reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking"]
+    __properties: ClassVar[List[str]] = ["name", "disposition", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "mission", "background", "reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "retain_max_attachments_per_chunk", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -156,6 +157,11 @@ class CreateBankRequest(BaseModel):
         if self.retain_structured_chunk_size is None and "retain_structured_chunk_size" in self.model_fields_set:
             _dict['retain_structured_chunk_size'] = None
 
+        # set to None if retain_max_attachments_per_chunk (nullable) is None
+        # and model_fields_set contains the field
+        if self.retain_max_attachments_per_chunk is None and "retain_max_attachments_per_chunk" in self.model_fields_set:
+            _dict['retain_max_attachments_per_chunk'] = None
+
         # set to None if enable_observations (nullable) is None
         # and model_fields_set contains the field
         if self.enable_observations is None and "enable_observations" in self.model_fields_set:
@@ -211,6 +217,7 @@ class CreateBankRequest(BaseModel):
             "retain_custom_instructions": obj.get("retain_custom_instructions"),
             "retain_chunk_size": obj.get("retain_chunk_size"),
             "retain_structured_chunk_size": obj.get("retain_structured_chunk_size"),
+            "retain_max_attachments_per_chunk": obj.get("retain_max_attachments_per_chunk"),
             "enable_observations": obj.get("enable_observations"),
             "observations_mission": obj.get("observations_mission"),
             "enable_text_search": obj.get("enable_text_search"),

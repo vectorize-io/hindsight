@@ -1310,6 +1310,12 @@ export type CreateBankRequest = {
    */
   retain_structured_chunk_size?: number | null;
   /**
+   * Retain Max Attachments Per Chunk
+   *
+   * Maximum inline attachments one extraction chunk may carry. retain_chunk_size budgets text only — a placeholder costs the characters it occupies and nothing more — so this is what bounds attachments. Match it to the provider's per-request limit.
+   */
+  retain_max_attachments_per_chunk?: number | null;
+  /**
    * Enable Observations
    *
    * Toggle automatic observation consolidation after retain().

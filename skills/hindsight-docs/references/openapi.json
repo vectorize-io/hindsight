@@ -9082,6 +9082,18 @@
             "title": "Retain Structured Chunk Size",
             "description": "Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset."
           },
+          "retain_max_attachments_per_chunk": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Max Attachments Per Chunk",
+            "description": "Maximum inline attachments one extraction chunk may carry. retain_chunk_size budgets text only \u2014 a placeholder costs the characters it occupies and nothing more \u2014 so this is what bounds attachments. Match it to the provider's per-request limit."
+          },
           "enable_observations": {
             "anyOf": [
               {

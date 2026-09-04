@@ -55,7 +55,7 @@ func (dst *Content) UnmarshalJSON(data []byte) error {
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src *Content) MarshalJSON() ([]byte, error) {
+func (src Content) MarshalJSON() ([]byte, error) {
 	if src.ArrayOfContentAnyOfInner != nil {
 		return json.Marshal(&src.ArrayOfContentAnyOfInner)
 	}

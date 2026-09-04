@@ -55,7 +55,7 @@ func (dst *ValidationErrorLocInner) UnmarshalJSON(data []byte) error {
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src *ValidationErrorLocInner) MarshalJSON() ([]byte, error) {
+func (src ValidationErrorLocInner) MarshalJSON() ([]byte, error) {
 	if src.Int32 != nil {
 		return json.Marshal(&src.Int32)
 	}

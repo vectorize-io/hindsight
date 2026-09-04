@@ -1741,6 +1741,14 @@ class CreateBankRequest(BaseModel):
             "Defaults to retain_chunk_size when unset."
         ),
     )
+    retain_max_attachments_per_chunk: int | None = Field(
+        default=None,
+        description=(
+            "Maximum inline attachments one extraction chunk may carry. retain_chunk_size budgets "
+            "text only — a placeholder costs the characters it occupies and nothing more — so this "
+            "is what bounds attachments. Match it to the provider's per-request limit."
+        ),
+    )
     enable_observations: bool | None = Field(
         default=None,
         description="Toggle automatic observation consolidation after retain().",
@@ -1809,6 +1817,7 @@ class CreateBankRequest(BaseModel):
             "retain_custom_instructions",
             "retain_chunk_size",
             "retain_structured_chunk_size",
+            "retain_max_attachments_per_chunk",
             "enable_observations",
             "observations_mission",
             "enable_text_search",
