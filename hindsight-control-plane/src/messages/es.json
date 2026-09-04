@@ -1689,10 +1689,6 @@
         "update": "No se pudo actualizar la configuración del banco",
         "reset": "No se pudo restablecer la configuración del banco"
       },
-      "bankProfile": {
-        "fetch": "No se pudo obtener el perfil del banco",
-        "update": "No se pudo actualizar el perfil del banco"
-      },
       "memories": {
         "list": "No se pudieron listar las unidades de memoria",
         "fetch": "No se pudo obtener la memoria",

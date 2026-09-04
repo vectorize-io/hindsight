@@ -7246,53 +7246,38 @@ def _register_routes(app: FastAPI):
         except Exception as e:
             raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete")
 
+    # The bank "profile" (disposition traits + mission) is no longer a surface of
+    # its own: both live in the bank configuration, which
+    # ``_get_bank_profile_authenticated`` already treated as the source of truth by
+    # overlaying it on top of the legacy DB columns. The three endpoints below are
+    # retired — they stay in the spec (so generated SDK methods are not deleted out
+    # from under callers) but always answer 410 with the config call to use instead.
+    _PROFILE_RETIRED_DETAIL = (
+        "The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank "
+        "configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, "
+        "`disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with "
+        "PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a "
+        "display-only label; read it from GET /v1/default/banks."
+    )
+
     @app.get(
         "/v1/default/banks/{bank_id}/profile",
         response_model=BankProfileResponse,
-        summary="Get memory bank profile",
-        description="Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.",
+        summary="Get memory bank profile (removed — use GET .../config)",
+        description=f"**Removed.** {_PROFILE_RETIRED_DETAIL}",
         operation_id="get_bank_profile",
         tags=["Banks"],
         deprecated=True,
     )
     async def api_get_bank_profile(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
-        """Get memory bank profile (disposition + mission)."""
-        try:
-            # Read endpoints must not have create-as-side-effect: a client
-            # holding onto a stale bank_id (e.g., a UI polling after the user
-            # changed context) would otherwise silently re-create the bank in
-            # an unrelated tenant. Surface a missing bank as 404.
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
-            if profile is None:
-                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-            # Convert DispositionTraits object to dict for Pydantic
-            disposition_dict = (
-                profile["disposition"].model_dump()
-                if hasattr(profile["disposition"], "model_dump")
-                else dict(profile["disposition"])
-            )
-            mission = profile.get("mission") or ""
-            return BankProfileResponse(
-                bank_id=bank_id,
-                name=profile["name"],
-                disposition=DispositionTraits(**disposition_dict),
-                mission=mission,
-                background=mission,  # Backwards compat
-            )
-        except OperationValidationError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except (AuthenticationError, HTTPException):
-            raise
-        except Exception as e:
-            raise _internal_error(e, f"/v1/default/banks/{bank_id}/profile")
+        """Removed bank-profile read — always 410, pointing at the bank config API."""
+        raise HTTPException(status_code=410, detail=_PROFILE_RETIRED_DETAIL)
 
     @app.put(
         "/v1/default/banks/{bank_id}/profile",
         response_model=BankProfileResponse,
-        summary="Update memory bank disposition",
-        description="Update bank's disposition traits (skepticism, literalism, empathy)",
+        summary="Update memory bank disposition (removed — use PATCH .../config)",
+        description=f"**Removed.** {_PROFILE_RETIRED_DETAIL}",
         operation_id="update_bank_disposition",
         tags=["Banks"],
         deprecated=True,
@@ -7300,40 +7285,19 @@ def _register_routes(app: FastAPI):
     async def api_update_bank_disposition(
         bank_id: str, request: UpdateDispositionRequest, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Update bank disposition traits."""
-        try:
-            # Update disposition
-            await app.state.memory.update_bank_disposition(
-                bank_id, request.disposition.model_dump(), request_context=request_context
-            )
-
-            # Get updated profile
-            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
-            disposition_dict = (
-                profile["disposition"].model_dump()
-                if hasattr(profile["disposition"], "model_dump")
-                else dict(profile["disposition"])
-            )
-            mission = profile.get("mission") or ""
-            return BankProfileResponse(
-                bank_id=bank_id,
-                name=profile["name"],
-                disposition=DispositionTraits(**disposition_dict),
-                mission=mission,
-                background=mission,  # Backwards compat
-            )
-        except OperationValidationError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except (AuthenticationError, HTTPException):
-            raise
-        except Exception as e:
-            raise _internal_error(e, f"/v1/default/banks/{bank_id}/profile")
+        """Removed disposition write — always 410, pointing at the bank config API."""
+        raise HTTPException(status_code=410, detail=_PROFILE_RETIRED_DETAIL)
 
     @app.post(
         "/v1/default/banks/{bank_id}/background",
         response_model=BackgroundResponse,
-        summary="Add/merge memory bank background (deprecated)",
-        description="Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.",
+        summary="Add/merge memory bank background (removed — use PATCH .../config)",
+        description=(
+            "**Removed.** The bank background was folded into the reflect mission. Write it with "
+            "PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That call replaces the value "
+            "rather than merging into it, so read the current mission from GET .../config first if you "
+            "relied on this endpoint's append behaviour."
+        ),
         operation_id="add_bank_background",
         tags=["Banks"],
         deprecated=True,
@@ -7341,19 +7305,16 @@ def _register_routes(app: FastAPI):
     async def api_add_bank_background(
         bank_id: str, request: AddBackgroundRequest, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Deprecated: Add or merge bank background. Now updates mission field."""
-        try:
-            result = await app.state.memory.merge_bank_mission(
-                bank_id, request.content, request_context=request_context
-            )
-            mission = result.get("mission") or ""
-            return BackgroundResponse(mission=mission, background=mission)
-        except OperationValidationError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except (AuthenticationError, HTTPException):
-            raise
-        except Exception as e:
-            raise _internal_error(e, f"/v1/default/banks/{bank_id}/background")
+        """Removed background merge — always 410, pointing at the bank config API."""
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "The bank background endpoint has been removed. The background was folded into the reflect "
+                "mission: write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That "
+                "call replaces the value rather than merging into it, so read the current mission from "
+                "GET /v1/default/banks/{bank_id}/config first if you relied on this endpoint's append behaviour."
+            ),
+        )
 
     @app.put(
         "/v1/default/banks/{bank_id}",
@@ -8013,17 +7974,19 @@ def _register_routes(app: FastAPI):
         response_model=BankConfigResponse,
         summary="Get bank configuration",
         description="Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). "
-        "The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.",
+        "The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. "
+        "Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.",
         operation_id="get_bank_config",
         tags=["Banks"],
     )
     async def api_get_bank_config(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
-        """Get configuration for a bank with all hierarchical overrides applied."""
-        if not get_config().enable_bank_config_api:
-            raise HTTPException(
-                status_code=404,
-                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
-            )
+        """Get configuration for a bank with all hierarchical overrides applied.
+
+        Deliberately not gated on ``enable_bank_config_api``: that flag exists to stop
+        clients *changing* per-bank configuration, and a bank must always be able to
+        read its own resolved settings — it is the only surface exposing disposition
+        traits and the reflect mission since the profile endpoints were retired.
+        """
         try:
             state = await app.state.memory.get_bank_config(bank_id, request_context=request_context)
             return BankConfigResponse(bank_id=bank_id, config=state.config, overrides=state.overrides)

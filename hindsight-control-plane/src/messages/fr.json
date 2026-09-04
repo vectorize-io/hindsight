@@ -1689,10 +1689,6 @@
         "update": "Impossible de mettre à jour la configuration de la banque",
         "reset": "Impossible de réinitialiser la configuration de la banque"
       },
-      "bankProfile": {
-        "fetch": "Impossible de récupérer le profil de la banque",
-        "update": "Impossible de mettre à jour le profil de la banque"
-      },
       "memories": {
         "list": "Impossible de lister les unités de mémoire",
         "fetch": "Impossible de récupérer le souvenir",

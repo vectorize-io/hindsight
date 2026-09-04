@@ -418,7 +418,35 @@ pub fn prompt_confirmation(message: &str) -> io::Result<bool> {
     Ok(input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes"))
 }
 
-pub fn print_disposition(profile: &BankProfileResponse) {
+/// A bank's disposition as the CLI shows it.
+///
+/// Assembled from the bank config (the traits and the reflect mission) plus the bank
+/// listing (the display name) — there is no single profile endpoint to read.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DispositionView {
+    pub bank_id: String,
+    pub name: String,
+    pub mission: String,
+    pub skepticism: i64,
+    pub literalism: i64,
+    pub empathy: i64,
+}
+
+impl From<&BankProfileResponse> for DispositionView {
+    /// The bank create/update endpoints still answer with a full profile body.
+    fn from(profile: &BankProfileResponse) -> Self {
+        Self {
+            bank_id: profile.bank_id.clone(),
+            name: profile.name.clone(),
+            mission: profile.mission.clone(),
+            skepticism: profile.disposition.skepticism.get() as i64,
+            literalism: profile.disposition.literalism.get() as i64,
+            empathy: profile.disposition.empathy.get() as i64,
+        }
+    }
+}
+
+pub fn print_disposition(profile: &DispositionView) {
     print_section_header(&format!("Disposition: {}", profile.bank_id));
 
     // Print name
@@ -442,22 +470,17 @@ pub fn print_disposition(profile: &BankProfileResponse) {
     let traits: [(_, i64, f32, _); 3] = [
         (
             "Skepticism",
-            profile.disposition.skepticism.get() as i64,
+            profile.skepticism,
             0.0,
             "1=trusting, 5=skeptical",
         ),
         (
             "Literalism",
-            profile.disposition.literalism.get() as i64,
+            profile.literalism,
             0.5,
             "1=flexible, 5=literal",
         ),
-        (
-            "Empathy",
-            profile.disposition.empathy.get() as i64,
-            1.0,
-            "1=detached, 5=empathetic",
-        ),
+        ("Empathy", profile.empathy, 1.0, "1=detached, 5=empathetic"),
     ];
 
     for (name, value, t, desc) in &traits {

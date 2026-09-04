@@ -4278,8 +4278,8 @@
         "tags": [
           "Banks"
         ],
-        "summary": "Get memory bank profile",
-        "description": "Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.",
+        "summary": "Get memory bank profile (removed \u2014 use GET .../config)",
+        "description": "**Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.",
         "operationId": "get_bank_profile",
         "deprecated": true,
         "parameters": [
@@ -4336,8 +4336,8 @@
         "tags": [
           "Banks"
         ],
-        "summary": "Update memory bank disposition",
-        "description": "Update bank's disposition traits (skepticism, literalism, empathy)",
+        "summary": "Update memory bank disposition (removed \u2014 use PATCH .../config)",
+        "description": "**Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.",
         "operationId": "update_bank_disposition",
         "deprecated": true,
         "parameters": [
@@ -4406,8 +4406,8 @@
         "tags": [
           "Banks"
         ],
-        "summary": "Add/merge memory bank background (deprecated)",
-        "description": "Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.",
+        "summary": "Add/merge memory bank background (removed \u2014 use PATCH .../config)",
+        "description": "**Removed.** The bank background was folded into the reflect mission. Write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That call replaces the value rather than merging into it, so read the current mission from GET .../config first if you relied on this endpoint's append behaviour.",
         "operationId": "add_bank_background",
         "deprecated": true,
         "parameters": [
@@ -5458,7 +5458,7 @@
           "Banks"
         ],
         "summary": "Get bank configuration",
-        "description": "Get fully resolved configuration for a bank including all hierarchical overrides (global \u2192 tenant \u2192 bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.",
+        "description": "Get fully resolved configuration for a bank including all hierarchical overrides (global \u2192 tenant \u2192 bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.",
         "operationId": "get_bank_config",
         "parameters": [
           {

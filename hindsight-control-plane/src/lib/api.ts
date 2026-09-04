@@ -1217,20 +1217,32 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Get bank profile
+   * Get a bank's profile: its display name, disposition traits and reflect mission.
+   *
+   * There is no profile endpoint any more — the traits and the mission are bank
+   * configuration, and the display name lives on the bank listing — so this composes
+   * the two reads. The name lookup is best-effort: a bank past the first page of a
+   * large deployment still resolves because the list is filtered by id, but if it
+   * cannot be found the id itself is the label.
    */
   async getBankProfile(bankId: string) {
-    return this.fetchApi<{
-      bank_id: string;
-      name: string;
+    const [configResp, banksResp] = await Promise.all([
+      this.getBankConfig(bankId),
+      this.listBanks({ q: bankId, limit: 100 }).catch(() => ({ banks: [] as any[] })),
+    ]);
+    const config = configResp.config ?? {};
+    const trait = (key: string) => Number(config[key] ?? 3);
+    const listed = banksResp.banks.find((bank) => bank.bank_id === bankId);
+    return {
+      bank_id: bankId,
+      name: (listed?.name as string | undefined) || bankId,
       disposition: {
-        skepticism: number;
-        literalism: number;
-        empathy: number;
-      };
-      mission: string;
-      background?: string; // Deprecated, kept for backwards compatibility
-    }>(`/api/profile/${encodeURIComponent(bankId)}`);
+        skepticism: trait("disposition_skepticism"),
+        literalism: trait("disposition_literalism"),
+        empathy: trait("disposition_empathy"),
+      },
+      mission: (config.reflect_mission as string | undefined) ?? "",
+    };
   }
 
   /**

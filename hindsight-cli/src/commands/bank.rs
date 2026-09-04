@@ -36,6 +36,35 @@ pub fn list(client: &ApiClient, verbose: bool, output_format: OutputFormat) -> R
     }
 }
 
+/// Read a bank's disposition traits and mission out of its configuration.
+///
+/// The display name is not configuration, so it comes from the bank listing.
+fn load_disposition(
+    client: &ApiClient,
+    bank_id: &str,
+    verbose: bool,
+) -> Result<ui::DispositionView> {
+    let config = client.get_bank_config(bank_id, verbose)?.config;
+    let trait_value = |key: &str| config.get(key).and_then(|v| v.as_i64()).unwrap_or(3);
+    let name = client
+        .find_bank(bank_id, verbose)
+        .ok()
+        .and_then(|bank| bank.name)
+        .unwrap_or_else(|| bank_id.to_string());
+    Ok(ui::DispositionView {
+        bank_id: bank_id.to_string(),
+        name,
+        mission: config
+            .get("reflect_mission")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        skepticism: trait_value("disposition_skepticism"),
+        literalism: trait_value("disposition_literalism"),
+        empathy: trait_value("disposition_empathy"),
+    })
+}
+
 pub fn disposition(
     client: &ApiClient,
     bank_id: &str,
@@ -48,7 +77,7 @@ pub fn disposition(
         None
     };
 
-    let response = client.get_profile(bank_id, verbose);
+    let response = load_disposition(client, bank_id, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -211,56 +240,23 @@ pub fn update_name(
     }
 }
 
+/// Deprecated alias for `bank mission`.
+///
+/// The server-side background endpoint is gone: it LLM-merged the new text into the
+/// existing mission, and nothing replaces that merge. This now *sets* the mission, so
+/// the difference is called out on stderr rather than applied silently.
 pub fn update_background(
     client: &ApiClient,
     bank_id: &str,
     content: &str,
-    no_update_disposition: bool,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
-    let current_profile = if !no_update_disposition {
-        client.get_profile(bank_id, verbose).ok()
-    } else {
-        None
-    };
-
-    let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Merging background..."))
-    } else {
-        None
-    };
-
-    let response = client.add_background(bank_id, content, !no_update_disposition, verbose);
-
-    if let Some(mut sp) = spinner {
-        sp.finish();
-    }
-
-    match response {
-        Ok(profile) => {
-            if output_format == OutputFormat::Pretty {
-                ui::print_success("Background updated successfully");
-                println!("\n{}", profile.mission);
-
-                if !no_update_disposition {
-                    if let (Some(old_p), Some(new_p)) = (
-                        current_profile.as_ref().map(|p| p.disposition.clone()),
-                        &profile.disposition,
-                    ) {
-                        println!("\nDisposition changes:");
-                        println!("  Skepticism:  {} → {}", old_p.skepticism, new_p.skepticism);
-                        println!("  Literalism:  {} → {}", old_p.literalism, new_p.literalism);
-                        println!("  Empathy:     {} → {}", old_p.empathy, new_p.empathy);
-                    }
-                }
-            } else {
-                output::print_output(&profile, output_format)?;
-            }
-            Ok(())
-        }
-        Err(e) => Err(e),
-    }
+    eprintln!(
+        "warning: `bank background` is deprecated and now *replaces* the mission instead of \
+         merging into it. Use `bank mission` instead."
+    );
+    mission(client, bank_id, content, verbose, output_format)
 }
 
 /// Set bank mission
@@ -348,7 +344,7 @@ pub fn create(
             if output_format == OutputFormat::Pretty {
                 ui::print_success(&format!("Bank '{}' created successfully", bank_id));
                 println!();
-                ui::print_disposition(&profile);
+                ui::print_disposition(&(&profile).into());
             } else {
                 output::print_output(&profile, output_format)?;
             }
@@ -417,7 +413,7 @@ pub fn update(
             if output_format == OutputFormat::Pretty {
                 ui::print_success(&format!("Bank '{}' updated successfully", bank_id));
                 println!();
-                ui::print_disposition(&profile);
+                ui::print_disposition(&(&profile).into());
             } else {
                 output::print_output(&profile, output_format)?;
             }
@@ -967,7 +963,7 @@ pub fn reset_config(
     }
 }
 
-/// Set disposition traits (skepticism, literalism, empathy) via PUT /profile
+/// Set disposition traits (skepticism, literalism, empathy) as bank configuration
 pub fn set_disposition(
     client: &ApiClient,
     bank_id: &str,
@@ -990,7 +986,8 @@ pub fn set_disposition(
         sp.finish();
     }
 
-    let profile = response?;
+    response?;
+    let profile = load_disposition(client, bank_id, verbose)?;
     if output_format == OutputFormat::Pretty {
         ui::print_success(&format!("Disposition updated for bank '{}'", bank_id));
         ui::print_disposition(&profile);

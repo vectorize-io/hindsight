@@ -1979,7 +1979,8 @@ class Hindsight:
         """
         Get the resolved configuration for a bank (sync wrapper — use ``await client.banks.get_bank_config(...)`` in async code).
 
-        Can be disabled on the server by setting ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false``.
+        Always available: ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`` disables only
+        the config *writes*, not this read.
 
         Args:
             bank_id: The memory bank ID

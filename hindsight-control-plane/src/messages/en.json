@@ -1689,10 +1689,6 @@
         "update": "Failed to update bank config",
         "reset": "Failed to reset bank config"
       },
-      "bankProfile": {
-        "fetch": "Failed to fetch bank profile",
-        "update": "Failed to update bank profile"
-      },
       "memories": {
         "list": "Failed to list memory units",
         "fetch": "Failed to fetch memory",

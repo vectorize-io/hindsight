@@ -1689,10 +1689,6 @@
         "update": "Falha ao atualizar configuração do banco",
         "reset": "Falha ao redefinir configuração do banco"
       },
-      "bankProfile": {
-        "fetch": "Falha ao buscar perfil do banco",
-        "update": "Falha ao atualizar perfil do banco"
-      },
       "memories": {
         "list": "Falha ao listar unidades de memória",
         "fetch": "Falha ao buscar memória",

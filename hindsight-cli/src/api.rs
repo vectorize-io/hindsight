@@ -190,18 +190,23 @@ impl ApiClient {
         })
     }
 
-    pub fn get_profile(
-        &self,
-        agent_id: &str,
-        _verbose: bool,
-    ) -> Result<types::BankProfileResponse> {
+    /// Look one bank up by exact id.
+    ///
+    /// The per-bank profile endpoint was retired server-side (it answers 410), so a
+    /// single bank is found by filtering the list endpoint — `q` is a substring
+    /// match, hence the exact-id check on the way out.
+    pub fn find_bank(&self, bank_id: &str, _verbose: bool) -> Result<types::BankListItem> {
         self.runtime.block_on(async {
-            let response = self
+            let page = self
                 .client
-                .get_bank_profile(agent_id, None)
+                .list_banks(Some(100), Some(0), Some(bank_id), None)
                 .humanized()
-                .await?;
-            Ok(response.into_inner())
+                .await?
+                .into_inner();
+            page.banks
+                .into_iter()
+                .find(|bank| bank.bank_id == bank_id)
+                .ok_or_else(|| anyhow::anyhow!("Bank '{}' not found", bank_id))
         })
     }
 
@@ -245,26 +250,6 @@ impl ApiClient {
         })
     }
 
-    pub fn add_background(
-        &self,
-        agent_id: &str,
-        content: &str,
-        update_disposition: bool,
-        _verbose: bool,
-    ) -> Result<types::BackgroundResponse> {
-        self.runtime.block_on(async {
-            let request = types::AddBackgroundRequest {
-                content: content.to_string(),
-                update_disposition,
-            };
-            let response = self
-                .client
-                .add_bank_background(agent_id, None, &request)
-                .humanized()
-                .await?;
-            Ok(response.into_inner())
-        })
-    }
 
     pub fn recall(
         &self,
@@ -1586,33 +1571,21 @@ impl ApiClient {
 
     // --- Bank Disposition ---
 
+    /// Disposition traits are bank configuration; there is no profile endpoint.
     pub fn update_bank_disposition(
         &self,
         bank_id: &str,
         skepticism: u64,
         literalism: u64,
         empathy: u64,
-        _verbose: bool,
-    ) -> Result<types::BankProfileResponse> {
-        self.runtime.block_on(async {
-            let to_nz = |v: u64| -> Result<std::num::NonZeroU64> {
-                std::num::NonZeroU64::new(v)
-                    .ok_or_else(|| anyhow::anyhow!("disposition traits must be 1-5"))
-            };
-            let request = types::UpdateDispositionRequest {
-                disposition: types::DispositionTraits {
-                    skepticism: to_nz(skepticism)?,
-                    literalism: to_nz(literalism)?,
-                    empathy: to_nz(empathy)?,
-                },
-            };
-            let response = self
-                .client
-                .update_bank_disposition(bank_id, None, &request)
-                .humanized()
-                .await?;
-            Ok(response.into_inner())
-        })
+        verbose: bool,
+    ) -> Result<types::BankConfigResponse> {
+        let updates = std::collections::HashMap::from([
+            ("disposition_skepticism".to_string(), skepticism.into()),
+            ("disposition_literalism".to_string(), literalism.into()),
+            ("disposition_empathy".to_string(), empathy.into()),
+        ]);
+        self.update_bank_config(bank_id, updates, verbose)
     }
 }
 

@@ -275,7 +275,7 @@ enum BankCommands {
         mission: String,
     },
 
-    /// Set or merge bank background (deprecated: use mission instead)
+    /// Set bank background (deprecated: use mission instead)
     #[command(hide = true)]
     Background {
         /// Bank ID
@@ -284,8 +284,8 @@ enum BankCommands {
         /// Background content
         content: String,
 
-        /// Skip automatic disposition inference
-        #[arg(long)]
+        /// Deprecated and ignored: disposition was never inferred from the background
+        #[arg(long, hide = true)]
         no_update_disposition: bool,
     },
 
@@ -415,7 +415,7 @@ enum BankCommands {
         yes: bool,
     },
 
-    /// Set disposition traits directly (1-5 each, via PUT /profile)
+    /// Set disposition traits directly (1-5 each, stored as bank config)
     SetDisposition {
         /// Bank ID
         bank_id: String,
@@ -1472,12 +1472,11 @@ fn run() -> Result<()> {
             BankCommands::Background {
                 bank_id,
                 content,
-                no_update_disposition,
+                no_update_disposition: _,
             } => commands::bank::update_background(
                 &client,
                 &bank_id,
                 &content,
-                no_update_disposition,
                 verbose,
                 output_format,
             ),

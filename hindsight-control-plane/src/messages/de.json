@@ -1689,10 +1689,6 @@
         "update": "Bankkonfiguration konnte nicht aktualisiert werden",
         "reset": "Bankkonfiguration konnte nicht zurückgesetzt werden"
       },
-      "bankProfile": {
-        "fetch": "Bankprofil konnte nicht abgerufen werden",
-        "update": "Bankprofil konnte nicht aktualisiert werden"
-      },
       "memories": {
         "list": "Speichereinheiten konnten nicht aufgelistet werden",
         "fetch": "Erinnerung konnte nicht abgerufen werden",
