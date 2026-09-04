@@ -31,7 +31,10 @@
     "hindsight-devin-hook": "dist/devin-hook.js",
     "hindsight-qwen-hook": "dist/qwen-hook.js",
     "hindsight-qwen-sessionstart-hook": "dist/qwen-sessionstart-hook.js",
-    "hindsight-qwen-stop-hook": "dist/qwen-stop-hook.js"
+    "hindsight-qwen-stop-hook": "dist/qwen-stop-hook.js",
+    "hindsight-droid-hook": "dist/droid-hook.js",
+    "hindsight-droid-sessionstart-hook": "dist/droid-sessionstart-hook.js",
+    "hindsight-droid-stop-hook": "dist/droid-stop-hook.js"
   },
   "exports": {
     ".": {

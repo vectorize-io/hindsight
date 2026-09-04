@@ -139,6 +139,24 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       cwd: "/repo",
       lastAssistantMessage: "done",
     });
+
+    const droid = HOOK_HARNESSES["factory-droid"];
+    expect(droid.additionalHooks).toEqual([
+      { event: "Notification", entry: "droid-stop-hook.js", timeout: 60 },
+    ]);
+    expect(
+      droid.retain.accept?.({
+        hook_event_name: "Notification",
+        notification_type: "idle_prompt",
+      })
+    ).toBe(true);
+    expect(
+      droid.retain.accept?.({
+        hook_event_name: "Notification",
+        notification_type: "permission_prompt",
+      })
+    ).toBe(false);
+    expect(droid.retain.accept?.({ hook_event_name: "Stop" })).toBe(true);
   });
 
   // The prompt hook must outlive the once-per-session reflect, or the FIRST prompt of every

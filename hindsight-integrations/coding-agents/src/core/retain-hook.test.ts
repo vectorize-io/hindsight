@@ -403,6 +403,23 @@ describe("runRetainHook honors retainSessions", () => {
     expect(retain).toHaveBeenCalledTimes(1);
   });
 
+  it("applies an event gate before building a client", async () => {
+    const { retain, makeClient } = stubClient();
+    const notificationSpec = {
+      ...spec,
+      accept: (ev: Record<string, unknown>) => ev.notification_type === "idle_prompt",
+    };
+
+    stdin = JSON.stringify({ ...event(), notification_type: "permission_prompt" });
+    await runRetainHook(notificationSpec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    expect(makeClient).not.toHaveBeenCalled();
+
+    stdin = JSON.stringify({ ...event(), notification_type: "idle_prompt" });
+    await runRetainHook(notificationSpec, makeClient);
+    expect(retain).toHaveBeenCalledTimes(1);
+  });
+
   it("retainSessions: false -> no write-back, and no client is even built", async () => {
     rawConfig = { retainSessions: false };
     const { retain, makeClient } = stubClient();

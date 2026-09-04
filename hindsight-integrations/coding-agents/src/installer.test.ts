@@ -240,10 +240,170 @@ describe("qwen-code installer", () => {
   });
 });
 
+describe("factory-droid installer", () => {
+  const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".factory", "hooks.json");
+  const mcpPath = (ctx: InstallCtx) => join(ctx.home, ".factory", "mcp.json");
+
+  it("installs lifecycle and cancellation hooks at the top level", () => {
+    // Droid's user-level hooks file is a standalone event map (no wrapping "hooks" key, unlike
+    // Claude Code's settings.json) with Claude-shaped matcher groups. Writing a "hooks" wrapper
+    // would register nothing.
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const hooks = readJson(hooksPath(ctx));
+    expect(Object.keys(hooks).sort()).toEqual([
+      "Notification",
+      "SessionStart",
+      "Stop",
+      "UserPromptSubmit",
+    ]);
+    const entry = (ev: string) => hooks[ev][0].hooks[0];
+    expect(entry("SessionStart").timeout).toBe(30);
+    expect(entry("UserPromptSubmit").timeout).toBe(30);
+    expect(entry("Stop").timeout).toBe(60);
+    expect(entry("Notification").timeout).toBe(60);
+    expect(entry("SessionStart").command).toContain("droid-sessionstart-hook.js");
+    expect(entry("UserPromptSubmit").command).toContain("droid-hook.js");
+    expect(entry("Stop").command).toContain("droid-stop-hook.js");
+    expect(entry("Notification").command).toContain("droid-stop-hook.js");
+  });
+
+  it("copies settings.json fallback hooks before creating hooks.json", () => {
+    const ctx = makeCtx();
+    const settingsPath = join(ctx.home, ".factory", "settings.json");
+    writeJsonAt(settingsPath, {
+      hooks: {
+        PreToolUse: [{ matcher: "Execute", hooks: [{ command: "their-hook", type: "command" }] }],
+      },
+      untouched: true,
+    });
+
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    expect(JSON.stringify(readJson(hooksPath(ctx)).PreToolUse)).toContain("their-hook");
+    expect(readJson(settingsPath)).toMatchObject({ untouched: true });
+  });
+
+  it("registers the stdio MCP server in mcp.json with the factory-droid harness env", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const mcp = readJson(mcpPath(ctx));
+    expect(mcp.mcpServers.hindsight).toMatchObject({
+      command: "node",
+      env: { HINDSIGHT_MCP_HARNESS: "factory-droid" },
+    });
+    expect(mcp.mcpServers.hindsight.args[0]).toContain("mcp-server.js");
+  });
+
+  it("replaces an existing package-owned MCP entry and preserves other servers", () => {
+    const ctx = makeCtx();
+    writeJsonAt(mcpPath(ctx), {
+      mcpServers: {
+        playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
+        hindsight: {
+          command: "node",
+          args: ["/old/node_modules/@vectorize-io/hindsight-coding-agents/dist/mcp-server.js"],
+        },
+      },
+    });
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const mcp = readJson(mcpPath(ctx));
+    expect(mcp.mcpServers.playwright).toBeDefined();
+    expect(mcp.mcpServers.hindsight.env.HINDSIGHT_MCP_HARNESS).toBe("factory-droid");
+  });
+
+  it("refuses to overwrite a user-managed MCP server with the same name", () => {
+    const ctx = makeCtx();
+    const existing = {
+      mcpServers: {
+        // An incidental marker string is not proof that this package created the registration.
+        hindsight: { command: "coding-agents-proxy", args: ["serve"] },
+      },
+    };
+    writeJsonAt(mcpPath(ctx), existing);
+
+    expect(
+      run(
+        ["install", "factory-droid", "--server", "self-hosted", "--api-url", "http://box:8888"],
+        ctx
+      )
+    ).toBe(1);
+    expect(readJson(mcpPath(ctx))).toEqual(existing);
+    expect(existsSync(hooksPath(ctx))).toBe(false);
+    expect(existsSync(join(ctx.home, ".hindsight", "coding-agent.json"))).toBe(false);
+  });
+
+  it("installs the companion skill into ~/.factory/skills", () => {
+    const ctx = makeCtx();
+    // makeCtx's pkgRoot is a synthetic /opt path the test cannot write; stage the packaged skill
+    // in a real temp package root like the skills-sync family test does.
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-droidskill-"));
+    homes.push(pkgRoot);
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    const droidCtx: InstallCtx = { ...ctx, pkgRoot, dist: join(pkgRoot, "dist") };
+    expect(run(["install", "factory-droid"], droidCtx)).toBe(0);
+    const skill = join(
+      droidCtx.home,
+      ...SKILL_DIRS["factory-droid"],
+      "hindsight-coding-agent",
+      "SKILL.md"
+    );
+    expect(readFileSync(skill, "utf8")).toBe("packaged skill body");
+  });
+
+  it("uninstall strips our hooks and MCP entry and keeps foreign ones", () => {
+    const ctx = makeCtx();
+    writeJsonAt(hooksPath(ctx), {
+      Stop: [{ hooks: [{ type: "command", command: "their-tool", timeout: 5 }] }],
+    });
+    writeJsonAt(mcpPath(ctx), {
+      mcpServers: {
+        playwright: { command: "npx" },
+        hindsight: {
+          command: "node",
+          args: ["/old/coding-agents/dist/mcp-server.js"],
+        },
+      },
+    });
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    expect(run(["uninstall", "factory-droid"], ctx)).toBe(0);
+    const hooks = readJson(hooksPath(ctx));
+    expect(JSON.stringify(hooks)).toContain("their-tool");
+    expect(JSON.stringify(hooks)).not.toContain("droid-stop-hook.js");
+    const mcp = readJson(mcpPath(ctx));
+    expect(mcp.mcpServers.playwright).toBeDefined();
+    expect(mcp.mcpServers.hindsight).toBeUndefined();
+  });
+
+  it("uninstall preserves a same-named MCP server that no longer belongs to the package", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    const mcp = readJson(mcpPath(ctx));
+    mcp.mcpServers.hindsight = { command: "coding-agents-proxy", args: ["serve"] };
+    writeJsonAt(mcpPath(ctx), mcp);
+
+    expect(run(["uninstall", "factory-droid"], ctx)).toBe(0);
+    expect(readJson(mcpPath(ctx)).mcpServers.hindsight).toEqual({
+      command: "coding-agents-proxy",
+      args: ["serve"],
+    });
+  });
+
+  it("uninstall removes empty config files it created", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "factory-droid"], ctx)).toBe(0);
+    expect(run(["uninstall", "factory-droid"], ctx)).toBe(0);
+    expect(existsSync(hooksPath(ctx))).toBe(false);
+    expect(existsSync(mcpPath(ctx))).toBe(false);
+    expect(existsSync(join(SKILL_DIRS["factory-droid"].join("/"), "hindsight-coding-agent"))).toBe(
+      false
+    );
+  });
+});
+
 describe("codex installer", () => {
   const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "hooks.json");
   const tomlPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "config.toml");
-
   it("install writes the 3 hook events into hooks.json", () => {
     const ctx = makeCtx();
     expect(run(["install", "codex"], ctx)).toBe(0);
@@ -1177,6 +1337,7 @@ describe("run() CLI behavior", () => {
       "cline-cli",
       "dcode",
       "dsh",
+      "factory-droid",
     ]);
   });
 });

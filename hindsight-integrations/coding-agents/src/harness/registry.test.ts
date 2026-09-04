@@ -24,9 +24,10 @@ describe("HARNESS_NAMES", () => {
         "copilot-cli",
         "grok-build",
         "qwen-code",
+        "factory-droid",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(16);
+    expect(HARNESS_NAMES).toHaveLength(17);
   });
 });
 

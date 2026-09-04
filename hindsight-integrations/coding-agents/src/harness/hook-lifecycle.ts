@@ -15,6 +15,7 @@ import { grokTranscriptPath, readGrokTranscript } from "../core/transcript-grok"
 import { readDevinTranscript } from "../core/transcript-devin";
 import { dcodeAssistantText, readDcodeTranscript } from "../core/transcript-dcode";
 import { readQwenTranscript } from "../core/transcript-qwen";
+import { readDroidTranscript } from "../core/transcript-droid";
 
 export type HookHarnessName =
   | "claude-code"
@@ -25,7 +26,8 @@ export type HookHarnessName =
   | "devin-cli"
   | "grok-build"
   | "dcode"
-  | "qwen-code";
+  | "qwen-code"
+  | "factory-droid";
 export type HookLifecycle = "sessionStart" | "prompt" | "stop";
 export type HookConfigStyle = "nested" | "flat";
 
@@ -50,6 +52,8 @@ export interface HookHarnessSpec {
   /** Defaults to "seconds" when absent — the unit every host but qwen-code uses. */
   timeoutUnit?: HookTimeoutUnit;
   install: Record<HookLifecycle, HookInstallSpec>;
+  /** Native host events beyond the shared three-stage lifecycle. */
+  additionalHooks?: HookInstallSpec[];
   sessionStart: SessionStartHookSpec;
   prompt: HookSpec;
   retain: RetainHookSpec;
@@ -86,6 +90,18 @@ const codexPrompt: HookSpec = {
 const dcodePrompt: HookSpec = {
   ...claudePrompt,
   harness: "dcode",
+};
+
+/**
+ * Factory Droid speaks Claude Code's hook protocol field for field: `session_id`, `transcript_path`
+ * and `cwd` in, `hookSpecificOutput.additionalContext` + `systemMessage` out. Its user-level hook
+ * config (`~/.factory/hooks.json`) also uses Claude's matcher-group shape, so the only real
+ * difference from `claude-code` is where the installer writes the registration and which transcript
+ * reader parses the file.
+ */
+const droidPrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "factory-droid",
 };
 
 /**
@@ -444,6 +460,33 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
       }),
       readTranscript: readQwenTranscript,
+    },
+  },
+  "factory-droid": {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "droid-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "droid-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "droid-stop-hook.js", timeout: 60 },
+    },
+    // Droid emits Notification(idle_prompt), not Stop, after user cancellation. Reusing the
+    // idempotent retain entry point captures that final partial turn; its event gate ignores every
+    // other notification type before config or daemon work begins.
+    additionalHooks: [{ event: "Notification", entry: "droid-stop-hook.js", timeout: 60 }],
+    sessionStart: standardSessionStart("factory-droid"),
+    prompt: droidPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "factory-droid",
+      accept: (ev) =>
+        ev.hook_event_name === "Stop" ||
+        (ev.hook_event_name === "Notification" && ev.notification_type === "idle_prompt"),
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readDroidTranscript,
     },
   },
 };

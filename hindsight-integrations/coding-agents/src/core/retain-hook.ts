@@ -60,6 +60,9 @@ export interface RetainHookSpec {
   hostTimeoutSec: number;
   /** Read the fields out of the harness's stdin event (shapes differ per harness). */
   parse(event: Record<string, unknown>): RetainHookEventFields;
+  /** Optional event gate for one entry point registered on multiple host events. Evaluated before
+   *  config loading or daemon startup, so irrelevant notifications stay cheap no-ops. */
+  accept?(event: Record<string, unknown>): boolean;
   /** Harness-specific transcript parser. Defaults to the Claude JSONL reader. */
   readTranscript?: TranscriptReader;
   /** Harness-specific decoder for `lastAssistantMessage`. Defaults to identity. */
@@ -157,6 +160,7 @@ export async function runRetainHook(
   } catch {
     return; // no/invalid event: stay silent
   }
+  if (spec.accept && !spec.accept(ev)) return;
   const { sessionId, transcriptPath, cwd: rawCwd, lastAssistantMessage } = spec.parse(ev);
   const cwd = rawCwd || process.cwd();
 
