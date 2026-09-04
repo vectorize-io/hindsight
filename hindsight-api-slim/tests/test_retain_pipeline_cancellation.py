@@ -36,11 +36,6 @@ class _ExplodingPool:
         raise RuntimeError("deadlock detected")
 
 
-@pytest.mark.asyncio
-# Injects the consumer failure through an exploding Postgres pool. The store-owned write path is
-# PG-free and never acquires from it, so the failure never fires, the deliberately-hanging
-# extraction is never cancelled, and the test times out at 600s rather than failing.
-@pytest.mark.memory_backend_incompatible
 def _mock_config() -> MagicMock:
     """A stand-in config that models the fields the streaming pipeline actually reads."""
     config = MagicMock()
@@ -48,6 +43,11 @@ def _mock_config() -> MagicMock:
     return config
 
 
+@pytest.mark.asyncio
+# Injects the consumer failure through an exploding Postgres pool. The store-owned write path is
+# PG-free and never acquires from it, so the failure never fires, the deliberately-hanging
+# extraction is never cancelled, and the test times out at 600s rather than failing.
+@pytest.mark.memory_backend_incompatible
 async def test_consumer_failure_cancels_in_flight_extractions(monkeypatch):
     hanging_started = asyncio.Event()
     cancelled = 0

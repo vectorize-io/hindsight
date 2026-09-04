@@ -2402,6 +2402,9 @@ def test_recall_result_model_empty_construction():
 
 
 @pytest.mark.asyncio
+# Calls a real provider for extraction, so it needs a key and cannot run in a suite that has
+# none: without the marker it raises rather than skipping, costing a whole run to discover.
+@pytest.mark.hs_llm_core
 async def test_custom_extraction_mode():
     """
     Test that custom extraction mode uses custom guidelines from env variable.
@@ -2678,6 +2681,9 @@ def test_chunks_extraction_mode():
 
 
 @pytest.mark.asyncio
+# Calls a real provider for extraction, so it needs a key and cannot run in a suite that has
+# none: without the marker it raises rather than skipping, costing a whole run to discover.
+@pytest.mark.hs_llm_core
 async def test_verbatim_extraction_mode():
     """
     Integration test for verbatim extraction mode.
@@ -3016,6 +3022,9 @@ def test_retain_request_per_item_strategy_field():
 
 
 @pytest.mark.asyncio
+# Calls a real provider for extraction, so it needs a key and cannot run in a suite that has
+# none: without the marker it raises rather than skipping, costing a whole run to discover.
+@pytest.mark.hs_llm_core
 async def test_named_strategy_applied_end_to_end(memory, request_context):
     """
     Integration test: a named strategy stored in bank config is actually applied
