@@ -24,7 +24,7 @@ func TestTraceResponse(t *testing.T) {
 	// First retain some data
 	retainReq := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "The sky is blue"},
+			{Content: TextContent("The sky is blue")},
 		},
 	}
 	_, _, err := client.MemoryAPI.RetainMemories(ctx, "test_trace_bank").RetainRequest(retainReq).Execute()

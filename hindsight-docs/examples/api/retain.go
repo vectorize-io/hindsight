@@ -29,7 +29,7 @@ func main() {
 	client.MemoryAPI.RetainMemories(ctx, "my-bank").
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
-				{Content: "Alice works at Google as a software engineer"},
+				{Content: hindsight.TextContent("Alice works at Google as a software engineer")},
 			},
 		}).Execute()
 	// [/docs:retain-basic]
@@ -49,7 +49,7 @@ func main() {
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
 				{
-					Content:    conversation,
+					Content:    hindsight.TextContent(conversation),
 					Context:    *hindsight.NewNullableString(&context_),
 					DocumentId: *hindsight.NewNullableString(&docID),
 					Timestamp: *hindsight.NewNullableTimestamp(&hindsight.Timestamp{
@@ -67,7 +67,7 @@ func main() {
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
 				{
-					Content: "Alice got promoted to senior engineer",
+					Content: hindsight.TextContent("Alice got promoted to senior engineer"),
 					Context: *hindsight.NewNullableString(&ctxLabel),
 					Timestamp: *hindsight.NewNullableTimestamp(&hindsight.Timestamp{
 						String: &ts2,
@@ -86,9 +86,9 @@ func main() {
 	client.MemoryAPI.RetainMemories(ctx, "my-bank").
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
-				{Content: "Alice works at Google", Context: *hindsight.NewNullableString(&ctx1), DocumentId: *hindsight.NewNullableString(&doc1)},
-				{Content: "Bob is a data scientist at Meta", Context: *hindsight.NewNullableString(&ctx1), DocumentId: *hindsight.NewNullableString(&doc2)},
-				{Content: "Alice and Bob are friends", Context: *hindsight.NewNullableString(&ctx2), DocumentId: *hindsight.NewNullableString(&doc3)},
+				{Content: hindsight.TextContent("Alice works at Google"), Context: *hindsight.NewNullableString(&ctx1), DocumentId: *hindsight.NewNullableString(&doc1)},
+				{Content: hindsight.TextContent("Bob is a data scientist at Meta"), Context: *hindsight.NewNullableString(&ctx1), DocumentId: *hindsight.NewNullableString(&doc2)},
+				{Content: hindsight.TextContent("Alice and Bob are friends"), Context: *hindsight.NewNullableString(&ctx2), DocumentId: *hindsight.NewNullableString(&doc3)},
 			},
 		}).Execute()
 	// [/docs:retain-batch]
@@ -101,8 +101,8 @@ func main() {
 	retainResp, _, _ := client.MemoryAPI.RetainMemories(ctx, "my-bank").
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
-				{Content: "Large batch item 1", DocumentId: *hindsight.NewNullableString(&largeDoc1)},
-				{Content: "Large batch item 2", DocumentId: *hindsight.NewNullableString(&largeDoc2)},
+				{Content: hindsight.TextContent("Large batch item 1"), DocumentId: *hindsight.NewNullableString(&largeDoc1)},
+				{Content: hindsight.TextContent("Large batch item 2"), DocumentId: *hindsight.NewNullableString(&largeDoc2)},
 			},
 			Async: &asyncTrue,
 		}).Execute()

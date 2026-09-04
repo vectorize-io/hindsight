@@ -649,6 +649,9 @@ export class HindsightClient {
       retainChunkSize?: number;
       /** Maximum characters for a single JSONL line or conversation turn to keep whole during retain. */
       retainStructuredChunkSize?: number;
+      /** Max inline attachments one extraction chunk may carry. `retainChunkSize`
+       *  budgets text only, so this is what bounds attachments. */
+      retainMaxAttachmentsPerChunk?: number;
       /** Toggle automatic observation consolidation after retain(). */
       enableObservations?: boolean;
       /** Controls what gets synthesised into observations. Replaces built-in rules. */
@@ -681,6 +684,7 @@ export class HindsightClient {
         retain_custom_instructions: options.retainCustomInstructions,
         retain_chunk_size: options.retainChunkSize,
         retain_structured_chunk_size: options.retainStructuredChunkSize,
+        retain_max_attachments_per_chunk: options.retainMaxAttachmentsPerChunk,
         enable_observations: options.enableObservations,
         observations_mission: options.observationsMission,
         enable_text_search: options.enableTextSearch,
@@ -757,6 +761,9 @@ export class HindsightClient {
       retainCustomInstructions?: string;
       retainChunkSize?: number;
       retainStructuredChunkSize?: number;
+      /** Max inline attachments one extraction chunk may carry. `retainChunkSize`
+       *  budgets text only, so this is what bounds attachments. */
+      retainMaxAttachmentsPerChunk?: number;
       /**
        * Controlled vocabulary for entity labels. Each group classifies a fact under a
        * `key`: `"value"`/`"multi-values"` pick from the group's declared `values`, while
@@ -856,6 +863,8 @@ export class HindsightClient {
     if (options.retainChunkSize !== undefined) updates.retain_chunk_size = options.retainChunkSize;
     if (options.retainStructuredChunkSize !== undefined)
       updates.retain_structured_chunk_size = options.retainStructuredChunkSize;
+    if (options.retainMaxAttachmentsPerChunk !== undefined)
+      updates.retain_max_attachments_per_chunk = options.retainMaxAttachmentsPerChunk;
     if (options.entityLabels !== undefined) updates.entity_labels = options.entityLabels;
     if (options.entitiesAllowFreeForm !== undefined)
       updates.entities_allow_free_form = options.entitiesAllowFreeForm;

@@ -77,6 +77,11 @@ TABLE_VOLUME: dict[str, VolumeTier] = {
     "graph_maintenance_queue": MEDIUM_VOLUME,
     "entity_maintenance_queue": MEDIUM_VOLUME,
     "file_storage": MEDIUM_VOLUME,
+    # One row per distinct inline attachment per bank, and one per document that
+    # references it — so both grow with documents, not with facts. Content
+    # addressing means an image reused across an article set is stored once.
+    "attachments": MEDIUM_VOLUME,
+    "document_attachments": MEDIUM_VOLUME,
     # Configuration-sized: a handful of rows per bank or tenant.
     "banks": LOW_VOLUME,
     "webhooks": LOW_VOLUME,

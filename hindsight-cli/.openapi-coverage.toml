@@ -68,6 +68,11 @@ export_documents_sync_removed = "Removed sync export endpoint kept as a 410 stub
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 download_file = "Serves async export archives; fetched via the API/control plane, not the end-user CLI"
 
+# Streams an inline attachment's raw bytes, for a UI or agent that already holds
+# the handle a read surface returned. Same shape as download_file above: a byte
+# stream fetched by whatever rendered the memory, not an end-user CLI command.
+get_bank_attachment = "Streams attachment bytes for the control plane/API, not the end-user CLI"
+
 # Kubernetes probe endpoints. `hindsight health` already calls /health, which is
 # the readiness check; /health/ready is its alias and /health/live is a DB-free
 # liveness signal meant for kubelet, not for a human at a terminal.

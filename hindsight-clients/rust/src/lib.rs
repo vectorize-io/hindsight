@@ -103,7 +103,7 @@ mod tests {
             async_: false,
             items: vec![
                 types::MemoryItem {
-                    content: "Alice is a software engineer at Google".to_string(),
+                    content: types::Content::Variant0("Alice is a software engineer at Google".to_string()),
                     context: None,
                     document_id: None,
                     metadata: None,
@@ -116,7 +116,7 @@ mod tests {
                     update_mode: None,
                 },
                 types::MemoryItem {
-                    content: "Bob works with Alice on the search team".to_string(),
+                    content: types::Content::Variant0("Bob works with Alice on the search team".to_string()),
                     context: None,
                     document_id: None,
                     metadata: None,

@@ -28,7 +28,7 @@ func main() {
 	// Retain a memory
 	retainReq := hindsight.RetainRequest{
 		Items: []hindsight.MemoryItem{
-			{Content: "Alice works at Google"},
+			{Content: hindsight.TextContent("Alice works at Google")},
 		},
 	}
 	client.MemoryAPI.RetainMemories(ctx, "my-bank").RetainRequest(retainReq).Execute()
@@ -60,7 +60,7 @@ func main() {
 	retainReq2 := hindsight.RetainRequest{
 		Items: []hindsight.MemoryItem{
 			{
-				Content:   "Alice got promoted",
+				Content:   hindsight.TextContent("Alice got promoted"),
 				Context:   *hindsight.NewNullableString(hindsight.PtrString("career update")),
 				Timestamp: *hindsight.NewNullableTimestamp(&hindsight.Timestamp{TimeTime: hindsight.PtrTime(timestamp)}),
 				Tags:      []string{"career"},

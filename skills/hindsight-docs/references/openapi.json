@@ -5035,6 +5035,73 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/attachments/{attachment_id}": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Fetch an attachment retained inline with a document",
+        "description": "Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads \u2014 so an agent can show or reason over the original behind an attachment-derived fact.\n\nBytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.",
+        "operationId": "get_bank_attachment",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Attachment Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment bytes",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/octet-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/files/download/{key}": {
       "get": {
         "tags": [
@@ -7859,6 +7926,18 @@
             "title": "Retain Chunk Batch Size",
             "description": "Max chunks per streaming batch (0 disables batching)"
           },
+          "retain_max_attachments_per_chunk": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Max Attachments Per Chunk",
+            "description": "Hard cap on inline images in a single extraction chunk"
+          },
           "mcp_enabled_tools": {
             "anyOf": [
               {
@@ -8443,6 +8522,33 @@
         "title": "BankTemplateMentalModel",
         "description": "A mental model definition within a bank template manifest."
       },
+      "Base64AttachmentSource": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "base64",
+            "title": "Type",
+            "default": "base64"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed type is accepted; whether the model can read it is the model's answer to give, and a provider that rejects it fails the retain with its own error."
+          },
+          "data": {
+            "type": "string",
+            "title": "Data",
+            "description": "Base64-encoded bytes (no data: URI prefix)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "media_type",
+          "data"
+        ],
+        "title": "Base64AttachmentSource",
+        "description": "Inline attachment bytes, base64-encoded.\n\nThe only source type in this version. ``url`` (server-side fetch) and\n``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this\nis modelled as a discriminated union on ``type`` rather than as bare fields."
+      },
       "Body_file_retain": {
         "properties": {
           "files": {
@@ -8573,6 +8679,63 @@
         "title": "ChildOperationStatus",
         "description": "Status of a child operation (for batch operations)."
       },
+      "ChunkAttachment": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The id inside the text's placeholder; a prefix of the bytes' sha256."
+          },
+          "hash": {
+            "type": "string",
+            "title": "Hash",
+            "description": "Full sha256 of the attachment bytes."
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "'image' or 'file', as the caller sent it."
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME type of the attachment."
+          },
+          "byte_size": {
+            "type": "integer",
+            "title": "Byte Size",
+            "description": "Size of the attachment in bytes."
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename, when the caller supplied one."
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Bank-scoped API path serving the bytes. Requires the same authorization as the bank."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "hash",
+          "kind",
+          "media_type",
+          "byte_size",
+          "url"
+        ],
+        "title": "ChunkAttachment",
+        "description": "An attachment referenced by retained text, and where to fetch it."
+      },
       "ChunkData": {
         "properties": {
           "id": {
@@ -8592,6 +8755,21 @@
             "title": "Truncated",
             "description": "Whether the chunk text was truncated due to token limits",
             "default": false
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments this chunk's text references, in order of first appearance, when it was retained with inline content. The text keeps each attachment's placeholder token (\u27e6hs-att:...\u27e7) where it sat, so a multimodal agent can render or reason over the original at the position it occupied in the source document. Omitted when there are none."
           }
         },
         "type": "object",
@@ -8641,6 +8819,21 @@
           "created_at": {
             "type": "string",
             "title": "Created At"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments referenced by this chunk's text, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
           }
         },
         "type": "object",
@@ -9674,6 +9867,21 @@
             ],
             "title": "Observation Scopes",
             "description": "The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured."
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments referenced by this document, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
           }
         },
         "type": "object",
@@ -10363,6 +10571,37 @@
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
       },
+      "FileContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file",
+            "title": "Type"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Base64AttachmentSource"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename, passed to providers that show one to the model (e.g. OpenAI)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "source"
+        ],
+        "title": "FileContentBlock",
+        "description": "A non-image attachment \u2014 a PDF, a spreadsheet \u2014 in the position it was written.\n\nSplit from ``image`` rather than folded into one type because the providers\nsplit it: Anthropic has distinct image and document blocks, OpenAI has\nimage_url and file parts. Carrying the caller's own distinction through means\nthe per-provider conversion never has to guess from the media type alone."
+      },
       "FileRetainResponse": {
         "properties": {
           "operation_ids": {
@@ -10479,6 +10718,25 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImageContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Base64AttachmentSource"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "source"
+        ],
+        "title": "ImageContentBlock",
+        "description": "An image within a multimodal item, in the position the caller wrote it."
       },
       "IncludeOptions": {
         "properties": {
@@ -11756,8 +12014,37 @@
       "MemoryItem": {
         "properties": {
           "content": {
-            "type": "string",
-            "title": "Content"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContentBlock"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageContentBlock"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileContentBlock"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                      "file": "#/components/schemas/FileContentBlock",
+                      "image": "#/components/schemas/ImageContentBlock",
+                      "text": "#/components/schemas/TextContentBlock"
+                    }
+                  }
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Content",
+            "description": "The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:\n\n  [{\"type\": \"text\", \"text\": \"click the button shown:\"},\n   {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},\n   {\"type\": \"text\", \"text\": \"...then reconnect.\"}]\n\nThe block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form."
           },
           "timestamp": {
             "anyOf": [
@@ -15394,6 +15681,26 @@
         ],
         "title": "TemporalWindow",
         "description": "A caller-supplied window for recall's temporal arm.\n\nSupplying this **replaces the date extraction** recall would otherwise run\nover the query text, so a caller that already knows the range it means does\nnot have to phrase it in English and hope the parser agrees.\n\nIt is **not a filter**. The temporal arm is one of four retrieval arms: it\nsurfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /\n``occurred_end``) fall inside the window so fusion can rank them higher.\nThe semantic, keyword and graph arms are unaffected, so results dated\noutside the window are still returned. Narrowing results to a date range is\na different operation this does not provide.\n\nHas no effect when the bank's ``enable_temporal_retrieval`` config is off:\nthat flag gates the arm itself, and stays the single switch for it."
+      },
+      "TextContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "TextContentBlock",
+        "description": "A run of text within a multimodal item, in the position the caller wrote it."
       },
       "TokenUsage": {
         "properties": {

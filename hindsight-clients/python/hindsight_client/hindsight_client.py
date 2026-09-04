@@ -685,6 +685,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         enable_text_search: bool | None = None,
@@ -710,6 +711,10 @@ class Hindsight:
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+            retain_max_attachments_per_chunk: Maximum inline attachments one extraction chunk may
+                carry. retain_chunk_size budgets text only — a placeholder costs the characters it
+                occupies and nothing more — so this is what bounds attachments. Match it to the
+                provider's per-request limit.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
             enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
@@ -737,6 +742,8 @@ class Hindsight:
                 retain_custom_instructions=retain_custom_instructions,
                 retain_chunk_size=retain_chunk_size,
                 retain_structured_chunk_size=retain_structured_chunk_size,
+            retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
+                retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,
                 enable_text_search=enable_text_search,
@@ -762,6 +769,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         enable_text_search: bool | None = None,
@@ -804,6 +812,8 @@ class Hindsight:
             body["retain_chunk_size"] = retain_chunk_size
         if retain_structured_chunk_size is not None:
             body["retain_structured_chunk_size"] = retain_structured_chunk_size
+        if retain_max_attachments_per_chunk is not None:
+            body["retain_max_attachments_per_chunk"] = retain_max_attachments_per_chunk
         if enable_observations is not None:
             body["enable_observations"] = enable_observations
         if observations_mission is not None:
@@ -851,6 +861,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         enable_text_search: bool | None = None,
@@ -876,6 +887,10 @@ class Hindsight:
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+            retain_max_attachments_per_chunk: Maximum inline attachments one extraction chunk may
+                carry. retain_chunk_size budgets text only — a placeholder costs the characters it
+                occupies and nothing more — so this is what bounds attachments. Match it to the
+                provider's per-request limit.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
             enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
@@ -902,6 +917,7 @@ class Hindsight:
             retain_custom_instructions=retain_custom_instructions,
             retain_chunk_size=retain_chunk_size,
             retain_structured_chunk_size=retain_structured_chunk_size,
+            retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
             enable_observations=enable_observations,
             observations_mission=observations_mission,
             enable_text_search=enable_text_search,
@@ -1997,6 +2013,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         retain_default_strategy: str | None = None,
         retain_strategies: dict[str, Any] | None = None,
         retain_chunk_batch_size: int | None = None,
@@ -2061,6 +2078,10 @@ class Hindsight:
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+            retain_max_attachments_per_chunk: Maximum inline attachments one extraction chunk may
+                carry. retain_chunk_size budgets text only — a placeholder costs the characters it
+                occupies and nothing more — so this is what bounds attachments. Match it to the
+                provider's per-request limit.
             retain_default_strategy: Default retain strategy name.
             retain_strategies: Named strategy definitions (dict of strategy name to config).
             retain_chunk_batch_size: Number of chunks per sub-batch in chunks extraction mode.
@@ -2124,6 +2145,7 @@ class Hindsight:
                 "retain_custom_instructions": retain_custom_instructions,
                 "retain_chunk_size": retain_chunk_size,
                 "retain_structured_chunk_size": retain_structured_chunk_size,
+                "retain_max_attachments_per_chunk": retain_max_attachments_per_chunk,
                 "retain_default_strategy": retain_default_strategy,
                 "retain_strategies": retain_strategies,
                 "retain_chunk_batch_size": retain_chunk_batch_size,

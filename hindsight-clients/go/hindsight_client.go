@@ -63,3 +63,17 @@ func NewAPIClientWithTimeout(baseURL, token string, timeout time.Duration) *APIC
 	cfg.HTTPClient = &http.Client{Timeout: timeout}
 	return NewAPIClient(cfg)
 }
+
+// TextContent wraps a plain string as a retain item's content.
+//
+// `content` accepts either a string or an ordered list of content blocks, so
+// the generated type is a union and a bare string no longer satisfies it. That
+// is a poor trade for the overwhelmingly common case — a caller retaining text
+// should not have to take the address of a temporary — so this restores it:
+//
+//	Items: []MemoryItem{{Content: hindsight.TextContent("Alice joined Google")}}
+//
+// Use the ArrayOfContentAnyOfInner field directly to interleave attachments.
+func TextContent(text string) Content {
+	return Content{String: &text}
+}
