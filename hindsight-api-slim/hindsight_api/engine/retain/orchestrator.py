@@ -26,6 +26,7 @@ from ...extensions.memory_defense import (
 from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
+from ..llm_interface import ProviderReauthenticationRequiredError
 from ..memory_engine import count_tokens, fq_table
 
 if TYPE_CHECKING:
@@ -3236,6 +3237,12 @@ async def _streaming_retain_batch(
 
         # Propagate producer errors (e.g. LLM failures)
         if producer_error:
+            # All chunk errors are already collected. A terminal auth failure
+            # must not be hidden by an earlier transient error and retried.
+            if isinstance(producer_error[0], Exception):
+                for error in producer_error:
+                    if isinstance(error, ProviderReauthenticationRequiredError):
+                        raise error
             raise producer_error[0]
 
         # If no batch was processed (e.g. zero facts extracted from gibberish

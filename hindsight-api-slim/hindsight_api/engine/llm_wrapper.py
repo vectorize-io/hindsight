@@ -35,9 +35,11 @@ from ..config import (
 from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
+    LLMFailureClassification,
     LLMInterface,
     LLMToolChoice,
     LLMToolChoiceMode,
+    ProviderReauthenticationRequiredError,
 )
 from .llm_interface import (
     OutputTooLongError as OutputTooLongError,
@@ -808,6 +810,10 @@ class LLMProvider:
     Supports OpenAI, Groq, Ollama (OpenAI-compatible), and Gemini.
     """
 
+    def classify_failure(self, exc: BaseException) -> LLMFailureClassification | None:
+        """Delegate provider-specific failure knowledge without leaking SDK types."""
+        return self._provider_impl.classify_failure(exc)
+
     def __init__(
         self,
         provider: str,
@@ -838,6 +844,7 @@ class LLMProvider:
         # callers that pass these positionally would otherwise have one argument
         # land in the wrong slot.
         codex_home: str | None = None,
+        member_label: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -893,6 +900,8 @@ class LLMProvider:
                 uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
                 multi-LLM chain to run two independently authorized ChatGPT profiles, so that
                 failover away from a rate-limited profile actually reaches a different account.
+            member_label: Optional non-secret server-side diagnostic label for this configured
+                member. Unset uses the router's generic primary/member-index fallback.
 
         This constructor uses every argument as passed and does not read global
         ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
@@ -919,6 +928,7 @@ class LLMProvider:
         # Codex credentials directory (openai-codex only). Used verbatim — the caller
         # resolves the server-level default, like the fields around it.
         self.codex_home = codex_home
+        self.member_label = member_label
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = openai_service_tier
@@ -1340,6 +1350,11 @@ class LLMProvider:
                         duration=time.monotonic() - call_start,
                         error=e,
                     )
+                    if isinstance(e, ProviderReauthenticationRequiredError):
+                        raise ProviderReauthenticationRequiredError(
+                            f"LLM profile {self.member_label or 'primary'} requires reauthentication. "
+                            "Refresh its configured credentials before retrying."
+                        ) from None
                     raise
 
                 # Backward compatibility: Update mock call tracking for mock provider
@@ -1488,6 +1503,11 @@ class LLMProvider:
                         duration=time.monotonic() - call_start,
                         error=e,
                     )
+                    if isinstance(e, ProviderReauthenticationRequiredError):
+                        raise ProviderReauthenticationRequiredError(
+                            f"LLM profile {self.member_label or 'primary'} requires reauthentication. "
+                            "Refresh its configured credentials before retrying."
+                        ) from None
                     raise
 
                 # Backward compatibility: Update mock call tracking for mock provider

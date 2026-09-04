@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
+from ..llm_interface import (
+    ProviderContentPolicyError,
+    ProviderRateLimitResetError,
+    ProviderReauthenticationRequiredError,
+)
 from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_llm_value
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
@@ -2319,7 +2323,17 @@ async def _extract_facts_with_auto_split(
             ),
         ]
 
-        sub_results = await asyncio.gather(*sub_tasks)
+        pending = [asyncio.create_task(task) for task in sub_tasks]
+        try:
+            sub_results = await asyncio.gather(*pending)
+        except Exception:
+            # Await already-started siblings before allowing a retry: an earlier
+            # transient failure must not hide a confirmed terminal auth failure.
+            completed = await asyncio.gather(*pending, return_exceptions=True)
+            for result in completed:
+                if isinstance(result, ProviderReauthenticationRequiredError):
+                    raise result
+            raise
 
         # Combine results from both halves
         all_facts = []
@@ -2430,6 +2444,11 @@ async def extract_facts_from_text(
         total_usage = total_usage + chunk_usage
 
     if failed_chunks:
+        # Keep the terminal signal intact so a sibling's transient failure cannot
+        # turn confirmed broken credentials into a retry of the whole retain.
+        for _, error in failed_chunks:
+            if isinstance(error, ProviderReauthenticationRequiredError):
+                raise error
         # Include the exception message — not just the type — so operators
         # can tell a structured-JSON parse failure apart from a rate limit
         # apart from a network 5xx, all of which can surface as the same
@@ -3206,6 +3225,12 @@ async def extract_facts_from_contents(
     # siblings (which would leave orphaned LLM calls / partial work); we await
     # them all, then propagate.
     all_fact_results = await asyncio.gather(*fact_extraction_tasks, return_exceptions=True)
+
+    # A terminal failure must outrank an earlier document's retryable error;
+    # otherwise the worker would replay the operation with broken credentials.
+    for result in all_fact_results:
+        if isinstance(result, ProviderReauthenticationRequiredError):
+            raise result
 
     # Step 3: Flatten and convert to typed objects
     extracted_facts: list[ExtractedFactType] = []
