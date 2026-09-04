@@ -204,3 +204,67 @@ def _record():
         llm_info=None,
         metadata=None,
     )
+
+
+def test_each_loops_thread_gets_its_own_extension_context():
+    """One extension instance, N loops, N contexts — each thread must see its own.
+
+    ``build_app`` is called once per loop, on that loop's thread, and sets a context holding
+    that loop's engine on the SAME extension object. Keeping one attribute means the last
+    writer wins and every other loop reads an engine — and therefore a connection pool —
+    belonging to a foreign loop, which is the failure this whole module exists to prevent.
+    """
+    import threading
+
+    from hindsight_api.extensions.base import Extension
+
+    class _Ext(Extension):
+        pass
+
+    class _Ctx:
+        def __init__(self, name):
+            self.name = name
+
+    ext = _Ext({})
+    seen: dict[str, str] = {}
+    barrier = threading.Barrier(3)
+
+    def build_and_read(name: str) -> None:
+        ext.set_context(_Ctx(name))
+        # Every loop sets its context before any of them reads one, which is what makes a
+        # single shared attribute lose: without the barrier the threads could interleave
+        # benignly and the test would pass against the broken version.
+        barrier.wait()
+        seen[name] = ext.context.name
+
+    threads = [threading.Thread(target=build_and_read, args=(f"loop{i}",)) for i in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert seen == {"loop0": "loop0", "loop1": "loop1", "loop2": "loop2"}
+
+
+def test_a_thread_with_no_context_of_its_own_falls_back():
+    """A single-loop server sets exactly one context, and work handed to an executor thread
+    still has to find it — so a thread that never had one set reads the first one set."""
+    import threading
+
+    from hindsight_api.extensions.base import Extension
+
+    class _Ext(Extension):
+        pass
+
+    class _Ctx:
+        name = "the-only-one"
+
+    ext = _Ext({})
+    ext.set_context(_Ctx())
+
+    got: list[str] = []
+    t = threading.Thread(target=lambda: got.append(ext.context.name))
+    t.start()
+    t.join()
+
+    assert got == ["the-only-one"]

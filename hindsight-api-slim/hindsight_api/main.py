@@ -488,8 +488,15 @@ def _serve_multi_loop(args, config, uvicorn_config, operation_validator, tenant_
             run_background_tasks=primary,
         )
         if tenant_extension:
+            # One context per loop, holding THIS loop's engine. build_app runs on the loop's
+            # own thread, and the extension keeps the context per thread, so each loop reaches
+            # its own pool rather than whichever loop happened to be built last.
             tenant_extension.set_context(
-                DefaultExtensionContext(database_url=config.database_url, memory_engine=memory)
+                DefaultExtensionContext(
+                    database_url=config.database_url,
+                    memory_engine=memory,
+                    is_primary=primary,
+                )
             )
         return create_app(
             memory=memory,
