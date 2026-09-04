@@ -217,4 +217,63 @@ describe("ControlPlaneClient direct fetch error formatting", () => {
       expect.stringContaining("/api/documents/transfer?bank_id=bank-a&include_knowledge_base=true")
     );
   });
+
+  // The bank profile endpoint was retired server-side; getBankProfile now composes
+  // the bank config (traits + mission) with the filtered bank list (display name).
+  it("composes a bank profile from the config and the bank list", async () => {
+    fetchSpy.mockImplementation(((url: string) =>
+      Promise.resolve(
+        url.includes("/config")
+          ? new Response(
+              JSON.stringify({
+                bank_id: "bank-a",
+                config: {
+                  disposition_skepticism: 5,
+                  disposition_literalism: 2,
+                  disposition_empathy: 4,
+                  reflect_mission: "Be useful",
+                },
+                overrides: {},
+              }),
+              { status: 200 }
+            )
+          : new Response(
+              JSON.stringify({
+                banks: [
+                  { bank_id: "bank-a-other", name: "Wrong bank" },
+                  { bank_id: "bank-a", name: "Bank A" },
+                ],
+                total: 2,
+                limit: 100,
+                offset: 0,
+              }),
+              { status: 200 }
+            )
+      )) as unknown as typeof fetch);
+
+    await expect(client.getBankProfile("bank-a")).resolves.toEqual({
+      bank_id: "bank-a",
+      name: "Bank A",
+      disposition: { skepticism: 5, literalism: 2, empathy: 4 },
+      mission: "Be useful",
+    });
+  });
+
+  it("falls back to the bank id when the listing cannot supply a name", async () => {
+    fetchSpy.mockImplementation(((url: string) =>
+      url.includes("/config")
+        ? Promise.resolve(
+            new Response(JSON.stringify({ bank_id: "bank-a", config: {}, overrides: {} }), {
+              status: 200,
+            })
+          )
+        : Promise.reject(new Error("list unavailable"))) as unknown as typeof fetch);
+
+    await expect(client.getBankProfile("bank-a")).resolves.toEqual({
+      bank_id: "bank-a",
+      name: "bank-a",
+      disposition: { skepticism: 3, literalism: 3, empathy: 3 },
+      mission: "",
+    });
+  });
 });

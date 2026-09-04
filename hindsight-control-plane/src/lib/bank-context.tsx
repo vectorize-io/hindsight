@@ -141,17 +141,19 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   const banks = bankInfos.map((b) => b.bank_id);
 
   // The selected bank is only in `bankInfos` if it happens to be on a loaded page, so
-  // its name is fetched directly — otherwise the header would fall back to the raw id
-  // for any bank sitting past the first page.
+  // its name is looked up through the id-filtered list — otherwise the header would
+  // fall back to the raw id for any bank sitting past the first page. (`q` is a
+  // substring match, hence the exact-id check on the result.)
   const [fetchedBankName, setFetchedBankName] = useState<string | null>(null);
   const loadedBankName = bankInfos.find((b) => b.bank_id === currentBank)?.name ?? null;
   useEffect(() => {
     if (!currentBank || loadedBankName) return;
     let cancelled = false;
     client
-      .getBankProfile(currentBank)
-      .then((profile) => {
-        if (!cancelled) setFetchedBankName(profile.name || null);
+      .listBanks({ q: currentBank, limit: 100 })
+      .then(({ banks }) => {
+        const match = banks.find((bank) => bank.bank_id === currentBank);
+        if (!cancelled) setFetchedBankName(match?.name || null);
       })
       .catch(() => {
         if (!cancelled) setFetchedBankName(null);
