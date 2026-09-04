@@ -11,17 +11,16 @@ These tests cover:
 """
 
 import os
+import threading
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hindsight_api.config import (
-    ENV_EMBEDDINGS_GEMINI_API_KEY,
-    ENV_EMBEDDINGS_PROVIDER,
-    HindsightConfig,
-)
+from hindsight_api.config import HindsightConfig
 from hindsight_api.engine.embeddings import (
+    EmbeddingRetryPolicy,
     GeminiEmbeddings,
     _gemini_model_aggregates_inputs,
     create_embeddings_from_env,
@@ -327,6 +326,139 @@ class TestGeminiEmbeddings:
         assert _gemini_model_aggregates_inputs(model) is expected
 
 
+class _GenAIError(Exception):
+    """Stand-in for google.genai.errors.APIError, which carries the status on `code`."""
+
+    def __init__(self, code: int, message: str = "RESOURCE_EXHAUSTED"):
+        super().__init__(f"{code} {message}")
+        self.code = code
+        self.response = None
+
+
+# Fast policy so these tests exercise the retry logic, not the sleeps.
+_FAST_POLICY = EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0)
+
+
+class TestGeminiEmbeddingsRetry:
+    """Bounded retry for quota and transient service responses (#4103).
+
+    A shared Gemini project hands out 429s well before anything is actually wrong.
+    Without a request-level retry the worker's coarse whole-task retry dead-letters
+    retain and consolidation operations during an ordinary quota window.
+    """
+
+    def _make_embeddings(self, side_effect, policy: EmbeddingRetryPolicy = _FAST_POLICY) -> GeminiEmbeddings:
+        emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", retry_policy=policy)
+        client = MagicMock()
+        client.models.embed_content = MagicMock(side_effect=side_effect)
+        emb._client = client
+        emb._dimension = 768
+        return emb
+
+    def test_transient_status_then_success(self):
+        """A 429 is retried and the later success is returned."""
+        calls = {"n": 0}
+
+        def flaky(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _GenAIError(429)
+            return _make_mock_embed_result([[0.1] * 768])
+
+        emb = self._make_embeddings(flaky)
+        assert emb.encode(["hello"]) == [[0.1] * 768]
+        assert calls["n"] == 2
+
+    def test_transient_5xx_is_retried(self):
+        calls = {"n": 0}
+
+        def flaky(**kwargs):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise _GenAIError(503, "UNAVAILABLE")
+            return _make_mock_embed_result([[0.2] * 768])
+
+        emb = self._make_embeddings(flaky)
+        assert emb.encode(["hello"]) == [[0.2] * 768]
+        assert calls["n"] == 3
+
+    @pytest.mark.parametrize("code", [400, 401, 403, 404])
+    def test_permanent_client_errors_fail_fast(self, code):
+        """Auth and validation failures must not be retried — retrying cannot fix them."""
+        calls = {"n": 0}
+
+        def always_fail(**kwargs):
+            calls["n"] += 1
+            raise _GenAIError(code, "INVALID_ARGUMENT")
+
+        emb = self._make_embeddings(always_fail)
+        with pytest.raises(_GenAIError):
+            emb.encode(["hello"])
+        assert calls["n"] == 1
+
+    def test_exhausted_retries_propagate(self):
+        """A sustained outage still surfaces to the worker, after a bounded attempt count."""
+        calls = {"n": 0}
+
+        def always_429(**kwargs):
+            calls["n"] += 1
+            raise _GenAIError(429)
+
+        emb = self._make_embeddings(always_429)
+        with pytest.raises(_GenAIError):
+            emb.encode(["hello"])
+        assert calls["n"] == _FAST_POLICY.max_retries + 1
+
+    def test_retry_budget_is_shared_across_batches(self):
+        """Batching must not multiply the worst-case added latency of one encode().
+
+        The batches of one encode() go out concurrently, so a per-batch budget would let
+        a degraded provider be hammered in proportion to the text volume. One budget for
+        the whole call bounds it: here four concurrent batches with five retries each
+        would be 24 upstream calls unshared, and the shared budget cuts it to a handful.
+        """
+        policy = EmbeddingRetryPolicy(max_retries=5, initial_backoff=0.05, max_backoff=0.05, budget_seconds=0.06)
+        calls = {"n": 0}
+        lock = threading.Lock()
+
+        def always_429(**kwargs):
+            with lock:
+                calls["n"] += 1
+            raise _GenAIError(429)
+
+        emb = self._make_embeddings(always_429, policy=policy)
+        emb.batch_size = 1
+        emb.max_concurrent_requests = 4
+
+        started = time.monotonic()
+        with pytest.raises(_GenAIError):
+            emb.encode(["a", "b", "c", "d"])
+
+        assert calls["n"] < 4 * (policy.max_retries + 1) / 2
+        # The budget caps wall-clock too, not just the attempt count.
+        assert time.monotonic() - started < 1.0
+
+    async def test_initialize_probe_retries_transient_failures(self):
+        """A quota blip during the startup dimension probe must not crash-loop the daemon."""
+        mock_genai = _make_mock_genai()
+        calls = {"n": 0}
+
+        def flaky(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _GenAIError(429)
+            return _make_mock_embed_result([[0.3] * 768])
+
+        mock_genai.Client.return_value.models.embed_content = MagicMock(side_effect=flaky)
+        emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", retry_policy=_FAST_POLICY)
+
+        with _patch_google_import(mock_genai):
+            await emb.initialize()
+
+        assert emb.dimension == 768
+        assert calls["n"] == 2
+
+
 class TestGeminiEmbeddingsFactory:
     """Tests for create_embeddings_from_env() with 'google' provider."""
 
@@ -375,6 +507,23 @@ class TestGeminiEmbeddingsFactory:
         assert emb.api_key == "test-key"
         assert emb._is_vertexai is False
         assert emb.force_ipv4 is False
+
+    def test_create_wires_the_configured_retry_policy(self):
+        """The provider honours HINDSIGHT_API_EMBEDDINGS_* like the LiteLLM backends do (#4103)."""
+        config = self._make_config(
+            embeddings_max_retries=7,
+            embeddings_initial_backoff=0.25,
+            embeddings_max_backoff=2.0,
+            embeddings_retry_budget=42.5,
+        )
+        with patch("hindsight_api.config.get_config", return_value=config):
+            emb = create_embeddings_from_env()
+
+        assert isinstance(emb, GeminiEmbeddings)
+        assert emb.retry_policy.max_retries == 7
+        assert emb.retry_policy.initial_backoff == 0.25
+        assert emb.retry_policy.max_backoff == 2.0
+        assert emb.retry_policy.budget_seconds == 42.5
 
     def test_create_with_force_ipv4(self):
         config = self._make_config(embeddings_gemini_force_ipv4=True)

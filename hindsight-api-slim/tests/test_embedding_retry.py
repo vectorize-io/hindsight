@@ -14,6 +14,7 @@ contract of the retry wrapper:
 """
 
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
@@ -24,6 +25,7 @@ from hindsight_api.engine.embeddings import (
     LiteLLMEmbeddings,
     LiteLLMSDKEmbeddings,
     _is_transient_embedding_error,
+    _status_code_of,
 )
 
 
@@ -99,6 +101,18 @@ class TestTransientClassification:
     def test_unknown_errors_are_not_transient(self):
         assert _is_transient_embedding_error(ValueError("bad input")) is False
         assert _is_transient_embedding_error(Exception("API Error")) is False
+
+    def test_google_genai_status_on_code_attribute(self):
+        """google.genai.errors.APIError carries the status on `code`, with `response` often None."""
+        assert _is_transient_embedding_error(SimpleNamespace(code=429, response=None)) is True
+        assert _is_transient_embedding_error(SimpleNamespace(code=503, response=None)) is True
+        assert _is_transient_embedding_error(SimpleNamespace(code=403, response=None)) is False
+
+    def test_non_status_code_attributes_are_ignored(self):
+        """`code` is a common attribute name; only plausible HTTP statuses may classify."""
+        assert _status_code_of(SimpleNamespace(code="RESOURCE_EXHAUSTED")) is None
+        assert _status_code_of(SimpleNamespace(code=1)) is None
+        assert _status_code_of(SimpleNamespace(code=429)) == 429
 
 
 class TestEncodeRetries:

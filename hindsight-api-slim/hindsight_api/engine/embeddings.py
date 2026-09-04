@@ -155,18 +155,23 @@ class _RetryBudget:
 
 
 def _status_code_of(exc: BaseException) -> int | None:
-    """Best-effort HTTP status extraction across httpx, openai and litellm errors."""
+    """Best-effort HTTP status extraction across httpx, openai, litellm and google.genai errors."""
     candidates = (
         getattr(exc, "status_code", None),
         getattr(getattr(exc, "response", None), "status_code", None),
+        # google.genai.errors.APIError carries the status on `code`, and leaves
+        # `response` as None on the paths that raise from a parsed error body.
+        getattr(exc, "code", None),
     )
     for candidate in candidates:
         if isinstance(candidate, bool):
             continue
-        if isinstance(candidate, int):
-            return candidate
         if isinstance(candidate, str) and candidate.isdigit():
-            return int(candidate)
+            candidate = int(candidate)
+        # Range-checked because `code` is a common attribute name that is not
+        # always an HTTP status (SystemExit.code, OSError subclasses).
+        if isinstance(candidate, int) and 100 <= candidate <= 599:
+            return candidate
     return None
 
 
@@ -1985,6 +1990,7 @@ class GeminiEmbeddings(Embeddings):
         output_dimensionality: int | None = None,
         batch_size: int = 100,
         force_ipv4: bool = False,
+        retry_policy: EmbeddingRetryPolicy | None = None,
     ):
         self.model = model
         self.api_key = api_key
@@ -1994,6 +2000,7 @@ class GeminiEmbeddings(Embeddings):
         self.output_dimensionality = output_dimensionality
         self.batch_size = batch_size
         self.force_ipv4 = force_ipv4
+        self.retry_policy = retry_policy or EmbeddingRetryPolicy()
         self._client = None
         self._httpx_client = None
         self._dimension: int | None = None
@@ -2034,7 +2041,16 @@ class GeminiEmbeddings(Embeddings):
         if self._embed_config is not None:
             embed_kwargs["config"] = self._embed_config
 
-        result = self._client.models.embed_content(**embed_kwargs)  # type: ignore[union-attr]
+        # to_thread + the async retry helper: initialize() is awaited on the event
+        # loop, so a blocking call and a time.sleep() backoff would stall the model
+        # loads running concurrently with it. Retried so a quota blip at startup
+        # does not crash-loop the daemon.
+        result = await _acall_with_retry(
+            lambda: asyncio.to_thread(self._client.models.embed_content, **embed_kwargs),  # type: ignore[union-attr]
+            policy=self.retry_policy,
+            budget=self.retry_policy.new_budget(),
+            provider=self.provider_name,
+        )
         if result.embeddings and len(result.embeddings) > 0:
             self._dimension = len(result.embeddings[0].values)
 
@@ -2131,7 +2147,14 @@ class GeminiEmbeddings(Embeddings):
         # round trip per text.
         batch_size = 1 if _gemini_model_aggregates_inputs(self.model) else self.batch_size
 
-        all_embeddings = self._encode_batched(texts, self._embed_batch, batch_size=batch_size)
+        # One retry budget for the whole call: batching must not multiply the
+        # worst-case added latency of a single encode(). Shared across the concurrent
+        # batches too, which is why _RetryBudget takes a lock.
+        budget = self.retry_policy.new_budget()
+
+        all_embeddings = self._encode_batched(
+            texts, lambda batch: self._embed_batch(batch, budget), batch_size=batch_size
+        )
 
         # L2-normalize when output_dimensionality is set — Gemini only returns
         # normalized vectors at full 3072 dims; truncated dims need re-normalization
@@ -2146,13 +2169,21 @@ class GeminiEmbeddings(Embeddings):
 
         return all_embeddings
 
-    def _embed_batch(self, batch: list[str]) -> list[list[float]]:
+    def _embed_batch(self, batch: list[str], budget: "_RetryBudget") -> list[list[float]]:
         """Embed one batch-sized slice through the google.genai sync client."""
         embed_kwargs = {"model": self.model, "contents": batch}
         if self._embed_config is not None:
             embed_kwargs["config"] = self._embed_config
 
-        result = self._client.models.embed_content(**embed_kwargs)
+        # Recall runs this inline, and a shared Gemini project hands out 429s well
+        # before anything is actually wrong, so transient upstream failures are
+        # retried here rather than dead-lettering the whole operation (#4103).
+        result = _call_with_retry(
+            lambda: self._client.models.embed_content(**embed_kwargs),
+            policy=self.retry_policy,
+            budget=budget,
+            provider=self.provider_name,
+        )
 
         embeddings = result.embeddings or []
         if len(embeddings) != len(batch):
@@ -2400,6 +2431,7 @@ def create_embeddings_from_env() -> Embeddings:
                 vertexai_service_account_key=config.embeddings_vertexai_service_account_key,
                 output_dimensionality=config.embeddings_gemini_output_dimensionality,
                 force_ipv4=config.embeddings_gemini_force_ipv4,
+                retry_policy=_retry_policy_from_config(config),
             ),
             config,
         )
