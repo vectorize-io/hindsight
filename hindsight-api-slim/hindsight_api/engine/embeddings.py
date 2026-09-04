@@ -1733,6 +1733,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         self,
         api_key: str | None = None,
         model: str = DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
+        model_id: str | None = None,
         api_base: str | None = None,
         output_dimensions: int | None = None,
         batch_size: int = 100,
@@ -1749,6 +1750,11 @@ class LiteLLMSDKEmbeddings(Embeddings):
             api_key: API key for the embedding provider (optional — omit for
                      providers that use ambient credentials, e.g. AWS Bedrock with IAM)
             model: Model name with provider prefix (e.g., "cohere/embed-english-v3.0")
+            model_id: Bedrock only — the real invoke target when it differs from
+                `model` (e.g. an application inference profile ARN). LiteLLM picks the
+                Bedrock request/response shape from `model`, so that has to stay a
+                recognizable id ("bedrock/amazon.titan-embed-text-v2:0") while
+                `model_id` is what actually gets invoked. None means "invoke `model`".
             api_base: Custom base URL for API (optional)
             output_dimensions: Optional output embedding dimensions (provider-dependent)
             batch_size: Maximum batch size for embedding requests (default: 100)
@@ -1762,6 +1768,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         """
         self.api_key = api_key
         self.model = model
+        self.model_id = model_id
         self.api_base = api_base
         self.output_dimensions = output_dimensions
         self.batch_size = batch_size
@@ -1810,6 +1817,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
             }
             if self.api_key:
                 embed_kwargs["api_key"] = self.api_key
+            if self.model_id:
+                embed_kwargs["model_id"] = self.model_id
             if self.encoding_format:
                 embed_kwargs["encoding_format"] = self.encoding_format
             if self.api_base:
@@ -1900,6 +1909,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
             }
             if self.api_key:
                 embed_kwargs["api_key"] = self.api_key
+            if self.model_id:
+                embed_kwargs["model_id"] = self.model_id
             if self.encoding_format:
                 embed_kwargs["encoding_format"] = self.encoding_format
             if self.api_base:
@@ -2359,6 +2370,7 @@ def create_embeddings_from_env() -> Embeddings:
             LiteLLMSDKEmbeddings(
                 api_key=config.embeddings_litellm_sdk_api_key or None,
                 model=config.embeddings_litellm_sdk_model,
+                model_id=config.embeddings_litellm_sdk_model_id,
                 api_base=config.embeddings_litellm_sdk_api_base,
                 output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
                 encoding_format=config.embeddings_litellm_sdk_encoding_format,
