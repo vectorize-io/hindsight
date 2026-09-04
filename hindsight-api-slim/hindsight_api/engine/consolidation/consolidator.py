@@ -1866,6 +1866,15 @@ async def _run_consolidation_job(
             batch_results: list[_BatchDeltas] = [d for gd in group_results for d in gd]
             any_cancelled = any(d.cancelled for d in batch_results)
         else:
+            if llm_parallelism > 1 and len(numbered_groups) <= 1:
+                logger.warning(
+                    "[CONSOLIDATION] bank=%s consolidation_llm_parallelism=%d but only %d "
+                    "tag group(s) in this fetch — memories share a tag set so batches run "
+                    "serially (one LLM call at a time); parallelism is not exercised",
+                    bank_id,
+                    llm_parallelism,
+                    len(numbered_groups),
+                )
             batch_results = []
             any_cancelled = False
             for g in numbered_groups:
