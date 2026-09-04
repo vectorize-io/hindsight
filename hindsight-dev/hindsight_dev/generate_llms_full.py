@@ -116,7 +116,7 @@ def main():
     timestamp = datetime.now(timezone.utc).isoformat()
     sections.append(f"""# Hindsight Documentation
 
-> Agent Memory that Works Like Human Memory
+> Agent Memory That Learns
 
 This file contains the complete Hindsight documentation for LLM consumption.
 Generated: {timestamp}
