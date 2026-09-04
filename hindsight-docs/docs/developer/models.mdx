@@ -867,7 +867,29 @@ export HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL=text-embedding-3-small
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=openai/text-embedding-3-small
+
+# AWS Bedrock (via LiteLLM SDK; credentials come from the environment or an IAM role)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=bedrock/amazon.titan-embed-text-v2:0
 ```
+
+:::tip AWS Bedrock application inference profiles
+
+If your org's Service Control Policy denies `bedrock:InvokeModel` on the bare model id once an [application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html) exists, keep `..._MODEL` as-is and add the profile ARN separately:
+
+```bash
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
+# Stays a recognizable model id — this is what picks the request format
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=bedrock/amazon.titan-embed-text-v2:0
+# The profile actually invoked
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL_ID=arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc123
+```
+
+The two are separate because Bedrock's embedding request and response formats differ per model family (Titan, Cohere, TwelveLabs, Nova), and the family is read off the model id. A profile ARN is opaque and account-scoped, so it can't be used for that — put it in `..._MODEL_ID` and leave `..._MODEL` naming the real model.
+
+Chat models don't need this: set `HINDSIGHT_API_LLM_MODEL=bedrock/converse/<arn>`, since the Converse API takes one format for every model.
+
+:::
 
 See [Configuration](./configuration#embeddings) for all options including Azure OpenAI and custom endpoints.
 
