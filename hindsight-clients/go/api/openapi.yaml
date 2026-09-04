@@ -365,6 +365,55 @@ paths:
       summary: "Dry-run fact extraction (preview, no persistence)"
       tags:
       - Memory
+  /v1/default/banks/{bank_id}/prompts/preview:
+    post:
+      description: "Render the exact system and user messages retain, observations\
+        \ or reflect would send for this bank, without calling an LLM, reading memories,\
+        \ or changing anything. Any prompt-affecting setting can be overridden in\
+        \ the body, so a candidate mission can be previewed before it is saved. Both\
+        \ messages are returned: retain and observations keep their system prompt\
+        \ bank-agnostic (one provider-side cache serves every bank) and carry the\
+        \ mission in the user message instead."
+      operationId: preview_prompt
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptPreviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptPreviewResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Preview an operation's prompts (no LLM call)
+      tags:
+      - Banks
   /v1/default/banks/{bank_id}/memories/{memory_id}:
     get:
       description: "Get a single memory unit by ID with all its metadata including\
@@ -9501,6 +9550,307 @@ components:
       - operations
       - total
       title: OperationsListResponse
+    PromptBlockModel:
+      description: |-
+        One block of a message: its text, and the setting that decides it.
+
+        The **active** blocks of a message concatenate back to the exact text sent, so a
+        client can render them separately without showing the reader something the model
+        never receives. An **inactive** block has no text: it marks a setting that is
+        switched off, at the point where it would land if it were on, with `note`
+        explaining what turning it on would do.
+      example:
+        note: note
+        field: ""
+        kind: text
+        editable: false
+        active: true
+        label: label
+        text: text
+        source: config
+        choices:
+        - choices
+        - choices
+        value: value
+      properties:
+        label:
+          description: Human-readable name for the block.
+          title: Label
+          type: string
+        text:
+          description: The block's text; empty when the block is inactive.
+          title: Text
+          type: string
+        source:
+          description: '`config` — a setting the reader can change (`field` names
+            it); `builtin` — Hindsight''s own fixed wording; `runtime` — a stand-in
+            for the data the operation would be given.'
+          enum:
+          - config
+          - builtin
+          - runtime
+          title: Source
+          type: string
+        field:
+          default: ""
+          description: Config field behind this block; empty for pure runtime data.
+          title: Field
+          type: string
+        active:
+          default: true
+          description: Whether this block is in the prompt as configured.
+          title: Active
+          type: boolean
+        note:
+          nullable: true
+          type: string
+        value:
+          nullable: true
+          type: string
+        kind:
+          description: "Shape of the value, so a client can offer the right control.\
+            \ `complex` means the value has structure this flattens for display and\
+            \ must be edited by its own dedicated UI."
+          enum:
+          - text
+          - boolean
+          - choice
+          - complex
+          title: Kind
+          type: string
+        choices:
+          items:
+            type: string
+          nullable: true
+          type: array
+        editable:
+          default: false
+          description: "Whether this bank may override the field via the bank config\
+            \ API. Server-level fields shape the prompt but cannot be set per bank,\
+            \ and offering to edit one would only collect a 400."
+          title: Editable
+          type: boolean
+      required:
+      - kind
+      - label
+      - source
+      - text
+      title: PromptBlockModel
+    PromptMessageModel:
+      description: "One message of the request, as the blocks it is built from."
+      example:
+        role: system
+        blocks:
+        - note: note
+          field: ""
+          kind: text
+          editable: false
+          active: true
+          label: label
+          text: text
+          source: config
+          choices:
+          - choices
+          - choices
+          value: value
+        - note: note
+          field: ""
+          kind: text
+          editable: false
+          active: true
+          label: label
+          text: text
+          source: config
+          choices:
+          - choices
+          - choices
+          value: value
+      properties:
+        role:
+          enum:
+          - system
+          - user
+          title: Role
+          type: string
+        blocks:
+          items:
+            $ref: '#/components/schemas/PromptBlockModel'
+          type: array
+      required:
+      - role
+      title: PromptMessageModel
+    PromptPreviewRequest:
+      description: |-
+        Request to render the prompts an operation would send, without calling an LLM.
+
+        Every field is optional: with an empty body you get the bank's current prompts with
+        bracketed placeholders where the runtime data (the chunk, the facts, the question)
+        would go. The mission/config fields override the bank's stored values for this call
+        only, so the control plane can preview an unsaved edit.
+      example:
+        content: Acme moved to a usage-based plan in March.
+        operation: retain
+        retain_mission: Only retain facts about pricing and contract terms.
+      properties:
+        operation:
+          default: retain
+          description: Which operation's prompts to render.
+          enum:
+          - retain
+          - observations
+          - reflect
+          title: Operation
+          type: string
+        content:
+          nullable: true
+          type: string
+        context:
+          nullable: true
+          type: string
+        timestamp:
+          format: date-time
+          nullable: true
+          type: string
+        existing_observations:
+          nullable: true
+          type: string
+        include_observations:
+          default: true
+          description: Whether search_observations is in the reflect tool list (reflect
+            only).
+          title: Include Observations
+          type: boolean
+        has_mental_models:
+          default: true
+          description: Whether the bank has mental models to search (reflect only).
+          title: Has Mental Models
+          type: boolean
+        budget:
+          nullable: true
+          type: string
+        retain_mission:
+          nullable: true
+          type: string
+        retain_extraction_mode:
+          nullable: true
+          type: string
+        retain_custom_instructions:
+          nullable: true
+          type: string
+        retain_extract_causal_links:
+          nullable: true
+          type: boolean
+        retain_chunk_size:
+          nullable: true
+          type: integer
+        entity_labels:
+          items:
+            $ref: '#/components/schemas/LabelGroup-Input'
+          nullable: true
+          type: array
+        entities_allow_free_form:
+          nullable: true
+          type: boolean
+        observations_mission:
+          nullable: true
+          type: string
+        reflect_mission:
+          nullable: true
+          type: string
+        llm_output_language:
+          nullable: true
+          type: string
+      title: PromptPreviewRequest
+    PromptPreviewResponse:
+      description: |-
+        The messages one call of the operation would send.
+
+        `messages` is in send order, system first. Both are always present because a
+        mission is not necessarily in the system prompt: retain and observations keep
+        their system prompt bank-agnostic (so one provider-side cache serves every bank)
+        and carry the mission in the user message instead.
+
+        When `skipped_reason` is set the configuration means no prompt is sent at all —
+        `chunks` extraction mode stores each chunk verbatim and never calls an LLM — and
+        `messages` is empty.
+      example:
+        response_schema:
+          key: ""
+        messages:
+        - role: system
+          blocks:
+          - note: note
+            field: ""
+            kind: text
+            editable: false
+            active: true
+            label: label
+            text: text
+            source: config
+            choices:
+            - choices
+            - choices
+            value: value
+          - note: note
+            field: ""
+            kind: text
+            editable: false
+            active: true
+            label: label
+            text: text
+            source: config
+            choices:
+            - choices
+            - choices
+            value: value
+        - role: system
+          blocks:
+          - note: note
+            field: ""
+            kind: text
+            editable: false
+            active: true
+            label: label
+            text: text
+            source: config
+            choices:
+            - choices
+            - choices
+            value: value
+          - note: note
+            field: ""
+            kind: text
+            editable: false
+            active: true
+            label: label
+            text: text
+            source: config
+            choices:
+            - choices
+            - choices
+            value: value
+        operation: operation
+        skipped_reason: skipped_reason
+      properties:
+        operation:
+          description: The operation these prompts belong to.
+          title: Operation
+          type: string
+        messages:
+          description: "Request messages, in send order. Each is given as the blocks\
+            \ it is built from."
+          items:
+            $ref: '#/components/schemas/PromptMessageModel'
+          type: array
+        response_schema:
+          additionalProperties: {}
+          nullable: true
+        skipped_reason:
+          nullable: true
+          type: string
+      required:
+      - operation
+      title: PromptPreviewResponse
     RecallRequest:
       description: Request model for recall endpoint.
       example:

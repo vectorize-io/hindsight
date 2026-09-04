@@ -1984,6 +1984,52 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Render the prompts an operation would send for this bank — no LLM call, no writes.
+   *
+   * `overrides` carries the settings currently in the editor (a mission the user has
+   * typed but not saved, say), so the preview reflects the pending change rather than
+   * what is stored. Both messages come back, in send order, because a mission is not
+   * always in the system prompt: retain and observations keep theirs bank-agnostic and
+   * put the mission in the user message. Each message arrives as the `blocks` it is
+   * built from — the active ones concatenate back to its text — and each names the
+   * setting behind it, including settings that are currently switched off.
+   */
+  async previewPrompt(
+    bankId: string,
+    operation: "retain" | "observations" | "reflect",
+    overrides: Record<string, unknown> = {}
+  ) {
+    return this.fetchApi<{
+      operation: string;
+      messages: {
+        role: "system" | "user";
+        /** Active blocks concatenate to the message exactly as sent. */
+        blocks: {
+          label: string;
+          text: string;
+          source: "config" | "builtin";
+          field: string;
+          /** False for a setting that is switched off, shown where it would land. */
+          active: boolean;
+          note?: string | null;
+          value?: string | null;
+          kind: "text" | "boolean" | "choice" | "complex";
+          choices?: string[] | null;
+          /** False for server-level fields, which shape the prompt but cannot be set per bank. */
+          editable: boolean;
+        }[];
+      }[];
+      response_schema?: Record<string, unknown> | null;
+      /** Set when the configuration means no prompt is sent at all (chunks mode). */
+      skipped_reason?: string | null;
+    }>(bankApi(bankId, "/prompts/preview"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation, ...overrides }),
+    });
+  }
+
+  /**
    * Update bank configuration overrides
    */
   async updateBankConfig(bankId: string, updates: Record<string, any>) {

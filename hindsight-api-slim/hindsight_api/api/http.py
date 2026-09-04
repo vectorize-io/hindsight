@@ -1973,6 +1973,147 @@ class ListMemoryUnitsResponse(BaseModel):
     offset: int
 
 
+class PromptPreviewRequest(BaseModel):
+    """Request to render the prompts an operation would send, without calling an LLM.
+
+    Every field is optional: with an empty body you get the bank's current prompts with
+    bracketed placeholders where the runtime data (the chunk, the facts, the question)
+    would go. The mission/config fields override the bank's stored values for this call
+    only, so the control plane can preview an unsaved edit.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "operation": "retain",
+                "retain_mission": "Only retain facts about pricing and contract terms.",
+                "content": "Acme moved to a usage-based plan in March.",
+            }
+        }
+    )
+
+    operation: Literal["retain", "observations", "reflect"] = Field(
+        default="retain", description="Which operation's prompts to render."
+    )
+    content: str | None = Field(
+        default=None,
+        description=(
+            "Stands in for the runtime data: the text being retained, the batch of facts being "
+            "consolidated, or the question being reflected on. A placeholder is used when omitted."
+        ),
+    )
+    context: str | None = Field(default=None, description="Context accompanying the content (retain, reflect).")
+    timestamp: datetime | None = Field(
+        default=None,
+        description=(
+            "Reference timestamp shown to the model (retain only, ISO 8601). Omit it and the current "
+            "time is used, which is what retain itself stamps on an item that carries no timestamp."
+        ),
+    )
+    existing_observations: str | None = Field(
+        default=None, description="Stands in for the bank's current observations (observations only)."
+    )
+    include_observations: bool = Field(
+        default=True, description="Whether search_observations is in the reflect tool list (reflect only)."
+    )
+    has_mental_models: bool = Field(
+        default=True, description="Whether the bank has mental models to search (reflect only)."
+    )
+    budget: str | None = Field(default=None, description="Reflect search-depth budget: low, mid or high.")
+
+    # --- prompt-affecting config overrides (null = use the bank's value) ---
+    retain_mission: str | None = None
+    retain_extraction_mode: str | None = None
+    retain_custom_instructions: str | None = None
+    retain_extract_causal_links: bool | None = None
+    retain_chunk_size: int | None = None
+    entity_labels: list[LabelGroup] | None = Field(
+        default=None, description="Controlled vocabulary for entity labels (overrides the bank's config for this call)"
+    )
+    entities_allow_free_form: bool | None = None
+    observations_mission: str | None = None
+    reflect_mission: str | None = None
+    llm_output_language: str | None = None
+
+    _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
+
+
+class PromptBlockModel(BaseModel):
+    """One block of a message: its text, and the setting that decides it.
+
+    The **active** blocks of a message concatenate back to the exact text sent, so a
+    client can render them separately without showing the reader something the model
+    never receives. An **inactive** block has no text: it marks a setting that is
+    switched off, at the point where it would land if it were on, with `note`
+    explaining what turning it on would do.
+    """
+
+    label: str = Field(description="Human-readable name for the block.")
+    text: str = Field(description="The block's text; empty when the block is inactive.")
+    source: Literal["config", "builtin", "runtime"] = Field(
+        description=(
+            "`config` — a setting the reader can change (`field` names it); "
+            "`builtin` — Hindsight's own fixed wording; "
+            "`runtime` — a stand-in for the data the operation would be given."
+        )
+    )
+    field: str = Field(default="", description="Config field behind this block; empty for pure runtime data.")
+    active: bool = Field(default=True, description="Whether this block is in the prompt as configured.")
+    note: str | None = Field(default=None, description="For an inactive block, what turning the setting on would do.")
+    value: str | None = Field(default=None, description="The field's effective value; null when unset.")
+    # Required, with no default: progenitor (the Rust client generator) rejects a
+    # default value on an inline enum property with TypeError(InvalidValue), and the
+    # server always sends this field anyway. Same reason `source` and `role` carry no
+    # default. Don't add one back without regenerating the Rust client.
+    kind: Literal["text", "boolean", "choice", "complex"] = Field(
+        description=(
+            "Shape of the value, so a client can offer the right control. `complex` means the value "
+            "has structure this flattens for display and must be edited by its own dedicated UI."
+        ),
+    )
+    choices: list[str] | None = Field(default=None, description="Allowed values, when `kind` is `choice`.")
+    editable: bool = Field(
+        default=False,
+        description=(
+            "Whether this bank may override the field via the bank config API. Server-level fields shape "
+            "the prompt but cannot be set per bank, and offering to edit one would only collect a 400."
+        ),
+    )
+
+
+class PromptMessageModel(BaseModel):
+    """One message of the request, as the blocks it is built from."""
+
+    role: Literal["system", "user"]
+    blocks: list[PromptBlockModel] = Field(default_factory=list)
+
+
+class PromptPreviewResponse(BaseModel):
+    """The messages one call of the operation would send.
+
+    `messages` is in send order, system first. Both are always present because a
+    mission is not necessarily in the system prompt: retain and observations keep
+    their system prompt bank-agnostic (so one provider-side cache serves every bank)
+    and carry the mission in the user message instead.
+
+    When `skipped_reason` is set the configuration means no prompt is sent at all —
+    `chunks` extraction mode stores each chunk verbatim and never calls an LLM — and
+    `messages` is empty.
+    """
+
+    operation: str = Field(description="The operation these prompts belong to.")
+    messages: list[PromptMessageModel] = Field(
+        default_factory=list,
+        description="Request messages, in send order. Each is given as the blocks it is built from.",
+    )
+    response_schema: dict[str, Any] | None = Field(
+        default=None, description="JSON schema the response is constrained to, when the operation constrains it."
+    )
+    skipped_reason: str | None = Field(
+        default=None, description="Why no prompt is sent, when the configuration means none is."
+    )
+
+
 class DryRunExtractRequest(BaseModel):
     """Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).
 
@@ -5073,6 +5214,90 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/dry-run-extract")
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/prompts/preview",
+        response_model=PromptPreviewResponse,
+        summary="Preview an operation's prompts (no LLM call)",
+        description=(
+            "Render the exact system and user messages retain, observations or reflect would send "
+            "for this bank, without calling an LLM, reading memories, or changing anything. Any "
+            "prompt-affecting setting can be overridden in the body, so a candidate mission can be "
+            "previewed before it is saved. Both messages are returned: retain and observations keep "
+            "their system prompt bank-agnostic (one provider-side cache serves every bank) and carry "
+            "the mission in the user message instead."
+        ),
+        operation_id="preview_prompt",
+        tags=["Banks"],
+    )
+    async def api_preview_prompt(
+        bank_id: str,
+        body: PromptPreviewRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            override_fields = (
+                "retain_mission",
+                "retain_extraction_mode",
+                "retain_custom_instructions",
+                "retain_extract_causal_links",
+                "retain_chunk_size",
+                "entity_labels",
+                "entities_allow_free_form",
+                "observations_mission",
+                "reflect_mission",
+                "llm_output_language",
+            )
+            overrides = {f: getattr(body, f) for f in override_fields if getattr(body, f) is not None}
+            # Same normalisation as dry-run extract: the resolved-config path expects the
+            # plain-dict shape it gets from the bank's stored config, not typed models.
+            if "entity_labels" in overrides:
+                overrides["entity_labels"] = [lg.model_dump() for lg in overrides["entity_labels"]]
+            preview = await app.state.memory.preview_prompt(
+                bank_id,
+                body.operation,
+                content=body.content,
+                context=body.context,
+                event_date=body.timestamp,
+                existing_observations=body.existing_observations,
+                include_observations=body.include_observations,
+                has_mental_models=body.has_mental_models,
+                budget=body.budget,
+                overrides=overrides,
+                request_context=request_context,
+            )
+            return PromptPreviewResponse(
+                operation=preview.operation,
+                messages=[
+                    PromptMessageModel(
+                        role=m.role,
+                        blocks=[
+                            PromptBlockModel(
+                                label=b.label,
+                                text=b.text,
+                                source=b.source,
+                                field=b.field,
+                                active=b.active,
+                                note=b.note,
+                                value=b.value,
+                                kind=b.kind,
+                                choices=b.choices,
+                                editable=b.editable,
+                            )
+                            for b in m.blocks
+                        ],
+                    )
+                    for m in preview.messages
+                ],
+                response_schema=preview.response_schema,
+                skipped_reason=preview.skipped_reason,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/prompts/preview")
 
     @app.get(
         "/v1/default/banks/{bank_id}/memories/{memory_id}",

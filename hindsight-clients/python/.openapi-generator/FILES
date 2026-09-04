@@ -139,6 +139,10 @@ hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py
 hindsight_client_api/models/operations_list_response.py
+hindsight_client_api/models/prompt_block_model.py
+hindsight_client_api/models/prompt_message_model.py
+hindsight_client_api/models/prompt_preview_request.py
+hindsight_client_api/models/prompt_preview_response.py
 hindsight_client_api/models/recall_request.py
 hindsight_client_api/models/recall_response.py
 hindsight_client_api/models/recall_result.py

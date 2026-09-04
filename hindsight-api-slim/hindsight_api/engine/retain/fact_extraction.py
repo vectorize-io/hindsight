@@ -1587,6 +1587,54 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     return prompt, response_schema
 
 
+@dataclass(frozen=True)
+class ChunkPromptParts:
+    """Exactly what one extraction call sends: both messages plus the response schema.
+
+    Both messages are kept because the bank's retain mission is deliberately absent
+    from ``system_prompt`` — see :func:`_retain_mission_preamble`. A preview that
+    showed only the system prompt would show a configured mission as missing.
+    """
+
+    system_prompt: str
+    user_message: str
+    response_schema: type
+
+
+def build_chunk_prompt_parts(
+    config,
+    *,
+    chunk: str,
+    chunk_index: int = 0,
+    total_chunks: int = 1,
+    event_date: datetime | None = None,
+    context: str = "",
+    metadata: dict[str, str] | None = None,
+    agent_name: str | None = None,
+) -> ChunkPromptParts:
+    """Render the extraction messages for one chunk without calling the LLM.
+
+    The single place both the extraction path and the prompt-preview endpoint go
+    through, so a preview always reflects the real request.
+    """
+    system_prompt, response_schema = _build_extraction_prompt_and_schema(config)
+    user_message = _build_user_message(
+        chunk,
+        chunk_index,
+        total_chunks,
+        event_date,
+        context,
+        metadata,
+        agent_name,
+        mission_preamble=_retain_mission_preamble(config),
+    )
+    return ChunkPromptParts(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        response_schema=response_schema,
+    )
+
+
 def _retain_mission_preamble(config) -> str:
     """The bank's retain mission, formatted for the per-request user message.
 
@@ -1810,24 +1858,25 @@ async def _extract_facts_from_chunk(
 
     logger = logging.getLogger(__name__)
 
-    # Build prompt and schema using helper function
-    prompt, response_schema = _build_extraction_prompt_and_schema(config)
+    # Assembled by the same helper the prompt-preview endpoint calls, so what the
+    # control plane shows for a candidate mission cannot drift from what is sent.
+    parts = build_chunk_prompt_parts(
+        config,
+        chunk=chunk,
+        chunk_index=chunk_index,
+        total_chunks=total_chunks,
+        event_date=event_date,
+        context=context,
+        metadata=metadata,
+        agent_name=agent_name,
+    )
+    prompt = parts.system_prompt
+    response_schema = parts.response_schema
+    user_message = parts.user_message
 
     # Check config for extraction mode and causal link extraction
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
-
-    # Build user message — the bank mission rides here (not in the cached prefix).
-    user_message = _build_user_message(
-        chunk,
-        chunk_index,
-        total_chunks,
-        event_date,
-        context,
-        metadata,
-        agent_name,
-        mission_preamble=_retain_mission_preamble(config),
-    )
 
     # Swap image placeholders for the images themselves, in place. Done on the
     # fully assembled message rather than on the chunk so the surrounding prompt

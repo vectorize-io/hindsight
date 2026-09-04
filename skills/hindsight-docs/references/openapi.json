@@ -562,6 +562,75 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/prompts/preview": {
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Preview an operation's prompts (no LLM call)",
+        "description": "Render the exact system and user messages retain, observations or reflect would send for this bank, without calling an LLM, reading memories, or changing anything. Any prompt-affecting setting can be overridden in the body, so a candidate mission can be previewed before it is saved. Both messages are returned: retain and observations keep their system prompt bank-agnostic (one provider-side cache serves every bank) and carry the mission in the user message instead.",
+        "operationId": "preview_prompt",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptPreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/memories/{memory_id}": {
       "get": {
         "tags": [
@@ -14023,6 +14092,390 @@
           ],
           "total": 150
         }
+      },
+      "PromptBlockModel": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "Human-readable name for the block."
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The block's text; empty when the block is inactive."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "config",
+              "builtin",
+              "runtime"
+            ],
+            "title": "Source",
+            "description": "`config` \u2014 a setting the reader can change (`field` names it); `builtin` \u2014 Hindsight's own fixed wording; `runtime` \u2014 a stand-in for the data the operation would be given."
+          },
+          "field": {
+            "type": "string",
+            "title": "Field",
+            "description": "Config field behind this block; empty for pure runtime data.",
+            "default": ""
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "Whether this block is in the prompt as configured.",
+            "default": true
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "For an inactive block, what turning the setting on would do."
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "The field's effective value; null when unset."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "boolean",
+              "choice",
+              "complex"
+            ],
+            "title": "Kind",
+            "description": "Shape of the value, so a client can offer the right control. `complex` means the value has structure this flattens for display and must be edited by its own dedicated UI."
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choices",
+            "description": "Allowed values, when `kind` is `choice`."
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "description": "Whether this bank may override the field via the bank config API. Server-level fields shape the prompt but cannot be set per bank, and offering to edit one would only collect a 400.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "text",
+          "source",
+          "kind"
+        ],
+        "title": "PromptBlockModel",
+        "description": "One block of a message: its text, and the setting that decides it.\n\nThe **active** blocks of a message concatenate back to the exact text sent, so a\nclient can render them separately without showing the reader something the model\nnever receives. An **inactive** block has no text: it marks a setting that is\nswitched off, at the point where it would land if it were on, with `note`\nexplaining what turning it on would do."
+      },
+      "PromptMessageModel": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user"
+            ],
+            "title": "Role"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/PromptBlockModel"
+            },
+            "type": "array",
+            "title": "Blocks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "PromptMessageModel",
+        "description": "One message of the request, as the blocks it is built from."
+      },
+      "PromptPreviewRequest": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "retain",
+              "observations",
+              "reflect"
+            ],
+            "title": "Operation",
+            "description": "Which operation's prompts to render.",
+            "default": "retain"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content",
+            "description": "Stands in for the runtime data: the text being retained, the batch of facts being consolidated, or the question being reflected on. A placeholder is used when omitted."
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Context accompanying the content (retain, reflect)."
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp",
+            "description": "Reference timestamp shown to the model (retain only, ISO 8601). Omit it and the current time is used, which is what retain itself stamps on an item that carries no timestamp."
+          },
+          "existing_observations": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Observations",
+            "description": "Stands in for the bank's current observations (observations only)."
+          },
+          "include_observations": {
+            "type": "boolean",
+            "title": "Include Observations",
+            "description": "Whether search_observations is in the reflect tool list (reflect only).",
+            "default": true
+          },
+          "has_mental_models": {
+            "type": "boolean",
+            "title": "Has Mental Models",
+            "description": "Whether the bank has mental models to search (reflect only).",
+            "default": true
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget",
+            "description": "Reflect search-depth budget: low, mid or high."
+          },
+          "retain_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Mission"
+          },
+          "retain_extraction_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extraction Mode"
+          },
+          "retain_custom_instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Custom Instructions"
+          },
+          "retain_extract_causal_links": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extract Causal Links"
+          },
+          "retain_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Chunk Size"
+          },
+          "entity_labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LabelGroup-Input"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Labels",
+            "description": "Controlled vocabulary for entity labels (overrides the bank's config for this call)"
+          },
+          "entities_allow_free_form": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities Allow Free Form"
+          },
+          "observations_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observations Mission"
+          },
+          "reflect_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Mission"
+          },
+          "llm_output_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Output Language"
+          }
+        },
+        "type": "object",
+        "title": "PromptPreviewRequest",
+        "description": "Request to render the prompts an operation would send, without calling an LLM.\n\nEvery field is optional: with an empty body you get the bank's current prompts with\nbracketed placeholders where the runtime data (the chunk, the facts, the question)\nwould go. The mission/config fields override the bank's stored values for this call\nonly, so the control plane can preview an unsaved edit.",
+        "example": {
+          "content": "Acme moved to a usage-based plan in March.",
+          "operation": "retain",
+          "retain_mission": "Only retain facts about pricing and contract terms."
+        }
+      },
+      "PromptPreviewResponse": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "title": "Operation",
+            "description": "The operation these prompts belong to."
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/PromptMessageModel"
+            },
+            "type": "array",
+            "title": "Messages",
+            "description": "Request messages, in send order. Each is given as the blocks it is built from."
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema",
+            "description": "JSON schema the response is constrained to, when the operation constrains it."
+          },
+          "skipped_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped Reason",
+            "description": "Why no prompt is sent, when the configuration means none is."
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation"
+        ],
+        "title": "PromptPreviewResponse",
+        "description": "The messages one call of the operation would send.\n\n`messages` is in send order, system first. Both are always present because a\nmission is not necessarily in the system prompt: retain and observations keep\ntheir system prompt bank-agnostic (so one provider-side cache serves every bank)\nand carry the mission in the user message instead.\n\nWhen `skipped_reason` is set the configuration means no prompt is sent at all \u2014\n`chunks` extraction mode stores each chunk verbatim and never calls an LLM \u2014 and\n`messages` is empty."
       },
       "RecallRequest": {
         "properties": {
