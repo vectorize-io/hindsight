@@ -18,7 +18,7 @@ class EmbedManager(ABC):
         Ensure daemon is running for the given profile with config.
 
         Args:
-            config: Environment configuration dict (HINDSIGHT_API_* vars)
+            config: Environment configuration dict (HINDSIGHT_* vars)
             profile: Profile name for isolation
 
         Returns:

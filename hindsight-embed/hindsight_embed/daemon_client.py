@@ -44,8 +44,10 @@ def ensure_daemon_running(config: dict, profile: str | None = None, extra_args: 
     Ensure daemon is running, starting it if needed.
 
     Args:
-        config: Configuration dict with LLM settings (accepts both simple keys
-                like "llm_api_key" and env var format like "HINDSIGHT_API_LLM_API_KEY").
+        config: Overrides for the daemon, keyed by environment variable name
+                ("HINDSIGHT_API_LLM_API_KEY", ...). Every HINDSIGHT_* key is
+                forwarded to the daemon process; the profile's own .env is
+                merged underneath it.
         profile: Profile name (None = resolve from priority).
         extra_args: Extra CLI arguments to pass to hindsight-api (e.g. ["--offline"]).
 

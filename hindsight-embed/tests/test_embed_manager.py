@@ -62,20 +62,47 @@ def test_manager_singleton():
 
 def test_register_profile_skips_when_no_api_keys():
     """
-    When config contains only short keys (no HINDSIGHT_API_* prefix),
-    _register_profile should not call create_profile, preserving any
-    existing profile .env file.
+    When config carries no HINDSIGHT_API_* keys there is nothing to persist, so
+    _register_profile must not call create_profile — which would rewrite the
+    profile .env from an empty config.
 
     Regression test for https://github.com/vectorize-io/hindsight/issues/894
     """
     manager = DaemonEmbedManager()
     manager._profile_manager = MagicMock()
 
-    # Config with short keys (as passed from cli.py's get_config())
-    config = {"llm_api_key": "sk-123", "llm_provider": "openai", "llm_model": "gpt-4o"}
-    manager._register_profile("myprofile", 8100, config)
+    manager._register_profile("myprofile", 8100, {"HINDSIGHT_EMBED_API_URL": "http://elsewhere"})
 
     manager._profile_manager.create_profile.assert_not_called()
+
+
+def test_register_profile_does_not_overwrite_configured_values(tmp_path, monkeypatch):
+    """A daemon start seeds missing keys but never rewrites configured ones.
+
+    `config` reaching _register_profile is the profile merged with this
+    invocation's ambient HINDSIGHT_* environment. Letting it win would make a
+    one-off `HINDSIGHT_API_LLM_MODEL=... hindsight-embed recall` permanently
+    rewrite the user's profile; the file is owned by `configure` and the
+    control center.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    manager = DaemonEmbedManager()
+    manager._profile_manager.create_profile(
+        "p", {"HINDSIGHT_API_LLM_PROVIDER": "anthropic", "HINDSIGHT_API_LLM_MODEL": "claude-sonnet-4-20250514"}
+    )
+
+    manager._register_profile(
+        "p",
+        9100,
+        {"HINDSIGHT_API_LLM_MODEL": "gpt-4o", "HINDSIGHT_API_LLM_BASE_URL": "https://example.com/v1"},
+    )
+
+    env = (tmp_path / ".hindsight" / "profiles" / "p.env").read_text(encoding="utf-8")
+    assert "HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514" in env  # configured value kept
+    assert "HINDSIGHT_API_LLM_MODEL=gpt-4o" not in env
+    assert "HINDSIGHT_API_LLM_BASE_URL=https://example.com/v1" in env  # missing key seeded
 
 
 def test_register_profile_calls_create_when_api_keys_present():
