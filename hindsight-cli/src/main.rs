@@ -275,20 +275,6 @@ enum BankCommands {
         mission: String,
     },
 
-    /// Set bank background (deprecated: use mission instead)
-    #[command(hide = true)]
-    Background {
-        /// Bank ID
-        bank_id: String,
-
-        /// Background content
-        content: String,
-
-        /// Deprecated and ignored: disposition was never inferred from the background
-        #[arg(long, hide = true)]
-        no_update_disposition: bool,
-    },
-
     /// Get memory graph data
     Graph {
         /// Bank ID
@@ -1469,17 +1455,6 @@ fn run() -> Result<()> {
             BankCommands::Mission { bank_id, mission } => {
                 commands::bank::mission(&client, &bank_id, &mission, verbose, output_format)
             }
-            BankCommands::Background {
-                bank_id,
-                content,
-                no_update_disposition: _,
-            } => commands::bank::update_background(
-                &client,
-                &bank_id,
-                &content,
-                verbose,
-                output_format,
-            ),
             BankCommands::Graph {
                 bank_id,
                 fact_type,

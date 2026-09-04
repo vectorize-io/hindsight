@@ -240,25 +240,6 @@ pub fn update_name(
     }
 }
 
-/// Deprecated alias for `bank mission`.
-///
-/// The server-side background endpoint is gone: it LLM-merged the new text into the
-/// existing mission, and nothing replaces that merge. This now *sets* the mission, so
-/// the difference is called out on stderr rather than applied silently.
-pub fn update_background(
-    client: &ApiClient,
-    bank_id: &str,
-    content: &str,
-    verbose: bool,
-    output_format: OutputFormat,
-) -> Result<()> {
-    eprintln!(
-        "warning: `bank background` is deprecated and now *replaces* the mission instead of \
-         merging into it. Use `bank mission` instead."
-    );
-    mission(client, bank_id, content, verbose, output_format)
-}
-
 /// Set bank mission
 pub fn mission(
     client: &ApiClient,
