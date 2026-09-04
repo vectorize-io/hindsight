@@ -1942,6 +1942,28 @@ outside ``str | None`` to say the caller isn't moving anything.
 """
 
 
+def _attachment_ids_of(value: "Any") -> list[str]:
+    """Read `memory_units.attachment_ids` back on either backend.
+
+    Postgres stores it as TEXT[] and hands back a list; Oracle has no array type
+    in this tree's dialect surface, so it is a JSON CLOB — the same shape `tags`
+    and `observation_scopes` already take there — and arrives as a string. A
+    reader that assumed one of the two worked on that backend and silently
+    returned nothing on the other.
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        import json as _json
+
+        try:
+            decoded = _json.loads(value)
+        except ValueError:
+            return []
+        return [str(v) for v in decoded] if isinstance(decoded, list) else []
+    return [str(v) for v in value]
+
+
 def _provider_default_base_url(provider: str | None) -> str:
     """The base URL a provider needs when the caller did not supply one.
 
@@ -6520,14 +6542,18 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with backend.acquire() as conn:
             rows = await conn.fetch(
+                # No `cardinality(...)` filter: it is a Postgres collection
+                # function, and Oracle stores this column as a JSON CLOB, where
+                # it raises ORA-00932. The rows are being fetched anyway for
+                # their document_id, so the empty ones are dropped below.
                 f"SELECT id::text AS id, document_id, attachment_ids FROM {fq_table('memory_units')} "
-                f"WHERE bank_id = $1 AND id = ANY($2::uuid[]) AND cardinality(attachment_ids) > 0",
+                f"WHERE bank_id = $1 AND id = ANY($2::uuid[])",
                 bank_id,
                 wanted_units,
             )
             if not rows:
                 return {}
-            ids_by_unit = {row["id"]: list(row["attachment_ids"]) for row in rows}
+            ids_by_unit = {row["id"]: ids for row in rows if (ids := _attachment_ids_of(row["attachment_ids"]))}
             document_by_unit = {row["id"]: row["document_id"] for row in rows}
             # The filename lives on the document edge, so resolve per document.
             # A page of memories usually spans very few documents, and the common

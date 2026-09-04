@@ -471,21 +471,26 @@ async def sync_document_attachments(
     if not referenced:
         return
     # The placeholder carries the short id; the row carries the full digest, so
-    # resolve through attachments rather than storing a second key shape.
-    await conn.execute(
+    # resolve through attachments rather than storing a second key shape. Done as
+    # a lookup and then an executemany rather than one INSERT..SELECT joined
+    # against `unnest`: pairing two arrays that way is Postgres-only, and the
+    # same statement has to run on Oracle. (`ON CONFLICT DO NOTHING` is fine —
+    # the Oracle layer rewrites it.)
+    pairs = await conn.fetch(
+        f"SELECT attachment_hash, short_id FROM {fq_table('attachments')} "
+        f"WHERE bank_id = $1 AND short_id = ANY($2::text[])",
+        bank_id,
+        referenced,
+    )
+    if not pairs:
+        return
+    await conn.executemany(
         f"""
         INSERT INTO {fq_table("document_attachments")} (bank_id, document_id, attachment_hash, filename)
-        SELECT $1, $2, attachment_hash, names.filename
-        FROM {fq_table("attachments")}
-        LEFT JOIN unnest($3::text[], $4::text[]) AS names(short_id, filename)
-          ON names.short_id = {fq_table("attachments")}.short_id
-        WHERE bank_id = $1 AND {fq_table("attachments")}.short_id = ANY($3::text[])
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (bank_id, document_id, attachment_hash) DO NOTHING
         """,
-        bank_id,
-        document_id,
-        referenced,
-        [resolved.get(short_id) for short_id in referenced],
+        [(bank_id, document_id, row["attachment_hash"], resolved.get(row["short_id"])) for row in pairs],
     )
 
 
