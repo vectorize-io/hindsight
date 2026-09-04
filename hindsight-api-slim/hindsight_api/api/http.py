@@ -8055,14 +8055,14 @@ def _register_routes(app: FastAPI):
                     content_dict["event_date"] = item.timestamp
                 if item.context:
                     content_dict["context"] = item.context
-                if item.metadata:
+                if item.metadata is not None:
                     content_dict["metadata"] = item.metadata
                 if item.document_id:
                     content_dict["document_id"] = item.document_id
                 if item.entities:
                     content_dict["entities"] = [{"text": e.text, "type": e.type or "CONCEPT"} for e in item.entities]
                     content_dict["resolve_entities"] = item.resolve_entities
-                if item.tags:
+                if item.tags is not None:
                     content_dict["tags"] = item.tags
                 if item.observation_scopes is not None:
                     content_dict["observation_scopes"] = item.observation_scopes

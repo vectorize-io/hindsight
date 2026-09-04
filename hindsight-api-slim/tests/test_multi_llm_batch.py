@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from hindsight_api.config import LLM_STRATEGY_FAILOVER, HindsightConfig, LLMStrategyConfig
+from hindsight_api.config import LLM_STRATEGY_FAILOVER, HindsightConfig, LLMMetadataRoute, LLMStrategyConfig
 from hindsight_api.engine.multi_llm import MultiLLMProvider
 from hindsight_api.engine.retain.fact_extraction import RetainContent, extract_facts_from_contents_batch_api
 
@@ -87,6 +87,9 @@ class _BatchMember:
             return None
         return self._provider_impl
 
+    def with_config(self, config: HindsightConfig, **kwargs: Any) -> "_BatchMember":
+        return self
+
 
 class _FakeConn:
     """Serves the ``result_metadata`` read the resume path makes, and records the
@@ -130,6 +133,16 @@ def _chain(*members: _BatchMember) -> MultiLLMProvider:
     return MultiLLMProvider(list(members), LLMStrategyConfig(mode=LLM_STRATEGY_FAILOVER))
 
 
+def _metadata_chain(*members: _BatchMember) -> MultiLLMProvider:
+    return MultiLLMProvider(
+        list(members),
+        LLMStrategyConfig(
+            mode="metadata",
+            routes=[LLMMetadataRoute(key="tags", value="sensitive", member=1)],
+        ),
+    )
+
+
 def _batch_config() -> HindsightConfig:
     config = HindsightConfig.from_env()
     config.retain_batch_enabled = True
@@ -167,6 +180,67 @@ async def test_batch_provider_impl_is_none_when_no_member_capable() -> None:
     """``None`` is the single 'cannot serve a batch' answer; the caller raises."""
     multi = _chain(_BatchMember("deepseek", False), _BatchMember("gemini", False))
     assert await multi.batch_provider_impl() is None
+
+
+async def test_metadata_routes_require_batch_support_on_every_selectable_member() -> None:
+    assert await _metadata_chain(_BatchMember("openai", True), _BatchMember("groq", True)).supports_batch_api()
+    assert not await _metadata_chain(_BatchMember("openai", True), _BatchMember("deepseek", False)).supports_batch_api()
+
+
+async def test_metadata_batch_selection_defaults_to_primary_without_request_metadata() -> None:
+    primary = _BatchMember("deepseek", False)
+    secondary = _BatchMember("openai", True)
+    assert await _metadata_chain(primary, secondary).batch_provider_impl() is None
+
+
+async def test_metadata_batch_lifecycle_runs_on_sensitive_member() -> None:
+    primary = _BatchMember("openai", True, account="primary")
+    secondary = _BatchMember("openai", True, account="sensitive")
+    configured = _metadata_chain(primary, secondary).with_config(
+        _batch_config(),
+        routing_metadata={"tags": ["sensitive"]},
+    )
+
+    await extract_facts_from_contents_batch_api(
+        contents=[RetainContent(content="Sensitive account details.")],
+        llm_config=configured,
+        config=_batch_config(),
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    assert secondary._provider_impl.calls == ["submit", "status", "retrieve"]
+    assert primary._provider_impl.calls == []
+
+
+async def test_metadata_batch_resume_stays_on_sensitive_account() -> None:
+    primary = _BatchMember("openai", True, account="primary")
+    secondary = _BatchMember("openai", True, account="sensitive")
+    configured = _metadata_chain(primary, secondary).with_config(
+        _batch_config(),
+        routing_metadata={"tags": ["sensitive"]},
+    )
+    pool = _FakePool(
+        {
+            "batch_id": "batch_123",
+            "batch_provider": "openai",
+            "batch_account": secondary._provider_impl.batch_account_key,
+            "chunk_count": 1,
+        }
+    )
+
+    await extract_facts_from_contents_batch_api(
+        contents=[RetainContent(content="Sensitive account details.")],
+        llm_config=configured,
+        config=_batch_config(),
+        pool=pool,
+        operation_id=str(uuid.uuid4()),
+        schema=None,
+    )
+
+    assert secondary._provider_impl.calls == ["status", "retrieve"]
+    assert primary._provider_impl.calls == []
 
 
 # ── the batch lifecycle targets the selected member ─────────────────────────────

@@ -527,11 +527,11 @@ export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
 
 The config is a credential field — never returned by the bank-config API. Hindsight already retries calls; set `"num_retries": 0` in the Router config to avoid double-retries. Batch APIs aren't supported in router mode.
 
-### Multi-LLM Strategies (failover / round-robin)
+### Multi-LLM Strategies (failover / round-robin / metadata)
 
 Configure additional LLMs **by index** alongside the primary, then choose a strategy for routing across them. This is a provider-agnostic alternative to the LiteLLM Router: the indexed LLMs can be any mix of providers, each fully configured.
 
-The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra members are numbered from 1:
+The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (routing member `0`). Extra members are numbered from `1`, and their environment suffix is also their routing member index:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -547,10 +547,11 @@ The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra 
 | `HINDSIGHT_API_LLM_<n>_LITELLMROUTER_CONFIG` | Per-member LiteLLM Router config JSON (for a `litellmrouter` member). Falls back to the global `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` when unset. | - |
 | `HINDSIGHT_API_LLM_STRATEGY` | JSON routing strategy across the chain. Unset = single primary LLM (no change). | - |
 
-The strategy JSON supports two modes:
+The strategy JSON supports three modes:
 
 - `{"mode": "failover"}` — try members in order (primary first); on a member's failure (after its own retries) advance to the next.
 - `{"mode": "round-robin"}` — rotate the starting member per request to spread load, then fall through the rest on failure. Add `"weights": [3, 1, ...]` (positive ints, one per member, primary first) for an **unbalanced** rotation.
+- `{"mode": "metadata", "routes": [...]}` — evaluate operation-metadata routes and pin the operation to its matching member. An unmatched operation uses member `0` (the primary). A matched operation does **not** fall back to another member if its selected model fails, so sensitive data cannot cross into a differently classified provider lane.
 
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic
@@ -564,11 +565,31 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 
 # Weighted round-robin: serve the primary 3x as often as member 1
 export HINDSIGHT_API_LLM_STRATEGY='{"mode": "round-robin", "weights": [3, 1]}'
+
+# Keep sensitive memories on member 1 across retain, reflect, and consolidation
+export HINDSIGHT_API_LLM_1_PROVIDER=ollama
+export HINDSIGHT_API_LLM_1_MODEL=qwen3:8b
+export HINDSIGHT_API_LLM_STRATEGY='{
+  "mode": "metadata",
+  "routes": [{"key": "tags", "value": "sensitive", "member": 1}]
+}'
 ```
+
+Each metadata route has a string `key`, a string `value`, and a non-negative `member` index. Use `tags` to match an item or document tag, as above. User-defined retain metadata is exposed to the router under a `metadata.` prefix, so `{"key": "metadata.classification", "value": "restricted", "member": 1}` matches an item submitted with `"metadata": {"classification": "restricted"}`. Routing values are ephemeral and are not added to LLM trace metadata.
+
+Retain can combine several items in one LLM prompt. Hindsight unions their tags and metadata values before routing and persists the union for shared documents, so if any item matches a route, the entire combined prompt and later appends use that member. Multiple matching routes may target the same member. If one operation matches routes to different members, Hindsight rejects it rather than disclosing either classification to the other member; split the input or route those classifications to one member. Because reflect and consolidation must include every configured tag route to stay fail-closed, all `tags` routes must select the same member; conflicting tag routes are rejected at startup.
+
+Append reprocesses the existing document body, so Hindsight also routes using the document's stored tags and metadata. Stored classification is inherited when an append omits those fields, and merged into nonempty updates so adding an unrelated tag or metadata key does not accidentally remove it. A supplied metadata value replaces the stored value for the same key. Supplying an explicit empty collection (`"tags": []` or `"metadata": {}`) clears that classification for future operations; the clearing append itself still uses the previous route because its prompt includes the previously classified body.
+
+Retain routes from item tags and user-defined metadata. Reflect selects its model before the agent retrieves data, and its expand tool can return a fact's full document. Every reflect therefore includes all configured tag routes and uses their shared member, even for an exact public-only scope. This fail-closed behavior keeps a mixed-classification document or concurrent sensitive retain from entering a review after it has already selected the primary.
+
+Consolidation also selects one model for a job that can repeatedly fetch newly retained facts. With tag routes configured, it therefore includes all configured route tags and pins the job to their shared member. Mental-model refresh uses the same fail-closed reflect routing, including its delta-operation calls.
+
+Only retain has user-defined `metadata.*` values. Reflect, mental-model refresh, and consolidation route from stored tags. Configure the strategy globally, as above, to apply it to each operation, or repeat the members and strategy under the `RETAIN`, `REFLECT`, and `CONSOLIDATION` prefixes when those operations need different providers.
 
 **Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
 
-The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the first batch-capable member in declared order, which need not be the primary — so a chain whose primary has no batch API can still use `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` as long as one member supports it. That member serves the whole batch (submit, polling and retrieval all target the account that holds it), so batch does not fail over the way the interactive retain/reflect/consolidation calls do. An in-flight batch is bound to the account that submitted it, so if the worker restarts mid-batch it resumes on that same account even when the chain has since been reordered or extended. Removing that member — or rotating its API key — while a batch is still running makes the operation fail with an explicit error instead of polling a different account.
+The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** with failover or round-robin runs on the first batch-capable member in declared order, which need not be the primary — so a chain whose primary has no batch API can still use `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` as long as one member supports it. Metadata routing instead requires the primary and every route-selectable member to support batch, because each operation is pinned before submission. The selected member serves the whole batch (submit, polling and retrieval all target the account that holds it), so batch does not fail over the way the interactive failover/round-robin calls do. An in-flight batch is bound to the account that submitted it, so if the worker restarts mid-batch it resumes on that same account even when the chain has since been reordered or extended. Removing that member — or rotating its API key — while a batch is still running makes the operation fail with an explicit error instead of polling a different account.
 
 ### Built-in llama.cpp
 

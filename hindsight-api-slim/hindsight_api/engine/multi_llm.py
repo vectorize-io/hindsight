@@ -1,4 +1,4 @@
-"""Multi-LLM routing: failover and (weighted) round-robin across N providers.
+"""Multi-LLM routing across N providers.
 
 ``MultiLLMProvider`` wraps an ordered list of :class:`LLMProvider` members and a
 :class:`~hindsight_api.config.LLMStrategyConfig`, exposing the same public surface
@@ -14,13 +14,16 @@ Strategies:
 - ``failover``: try members in declared order ``[0..N]``.
 - ``round-robin``: rotate the starting member per request (optionally weighted),
   then fall through the remaining members on error.
+- ``metadata``: bind an operation to the member selected by its ephemeral
+  metadata, defaulting to member 0. Matches to different members are rejected;
+  a selected member is strict and never falls across lanes on error.
 
-Batch retain runs on the **first batch-capable member** in declared order (see
-``batch_provider_impl``), which need not be the primary; once selected, the whole
-batch lifecycle stays on that member and does not fail over. Every other direct
-``_provider_impl`` access still resolves to the primary via attribute passthrough
-— failover/round-robin apply to the interactive ``call`` / ``call_with_tools``
-paths.
+For failover/round-robin, batch retain runs on the **first batch-capable member**
+in declared order (see ``batch_provider_impl``), which need not be the primary.
+Metadata routing pins the member before batch submission. Once selected, the
+whole batch lifecycle stays on that member and does not fail over. Every other
+direct ``_provider_impl`` access still resolves to the primary via attribute
+passthrough.
 """
 
 import logging
@@ -28,7 +31,7 @@ import threading
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from ..config import LLM_STRATEGY_FAILOVER, LLMStrategyConfig
+from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
 from .llm_wrapper import LLMProvider, OutputTooLongError
 
 if TYPE_CHECKING:
@@ -97,15 +100,64 @@ class MultiLLMProvider:
             )
         self._scheduler = _WeightedRoundRobin(weights)
 
+        if strategy.mode == LLM_STRATEGY_METADATA:
+            if not strategy.routes:
+                raise ValueError("Metadata LLM routing requires at least one route")
+            for route in strategy.routes:
+                if route.member >= len(members):
+                    raise ValueError(
+                        f"LLM metadata route {route.key}={route.value!r} selects member {route.member}, "
+                        f"but the chain has members 0..{len(members) - 1}."
+                    )
+            tag_members = {route.member for route in strategy.routes if route.key == "tags"}
+            if len(tag_members) > 1:
+                raise ValueError(
+                    "Metadata LLM routes with key 'tags' must all select the same member; "
+                    "reflect and consolidation include every configured tag route to stay fail-closed."
+                )
+
     # ── routing ────────────────────────────────────────────────────────────────
 
     def _member_order(self) -> list[int]:
         """Indices to try, in order, for one request."""
         n = len(self._members)
+        if self._strategy.mode == LLM_STRATEGY_METADATA:
+            # Metadata is supplied at operation binding time (``with_config``).
+            # A direct call has no routing context, so it stays on the primary.
+            return [0]
         if self._strategy.mode == LLM_STRATEGY_FAILOVER:
             return list(range(n))
         start = self._scheduler.next()
         return [(start + i) % n for i in range(n)]
+
+    def _member_for_metadata(self, metadata: dict[str, Any] | None) -> LLMProvider:
+        """Return the unambiguous metadata route match, or the primary.
+
+        One LLM call cannot be split across classification lanes. If its combined
+        metadata matches routes to different members, choosing either member
+        could disclose the other lane's data. Refuse the operation instead.
+        """
+        matched_members: list[int] = []
+        for route in self._strategy.routes or []:
+            actual = (metadata or {}).get(route.key)
+            matches = actual == route.value or (
+                isinstance(actual, (list, tuple, set, frozenset)) and route.value in actual
+            )
+            if matches:
+                matched_members.append(route.member)
+
+        distinct_members = set(matched_members)
+        if len(distinct_members) > 1:
+            raise ValueError(
+                "LLM metadata routes for this operation select multiple members; "
+                "split the input or route all matching classifications to one member."
+            )
+        return self._members[matched_members[0]] if matched_members else self._members[0]
+
+    def validate_routing_metadata(self, metadata: dict[str, Any] | None) -> None:
+        """Validate operation-wide metadata before work is split or queued."""
+        if self._strategy.mode == LLM_STRATEGY_METADATA:
+            self._member_for_metadata(metadata)
 
     async def _dispatch(self, method_name: str, **kwargs: Any) -> Any:
         last_exc: BaseException | None = None
@@ -148,10 +200,10 @@ class MultiLLMProvider:
     async def verify_connection(self) -> None:
         """Strictly verify the primary; soft-verify the rest (warn, don't fail).
 
-        A failover member being unreachable at startup must not block the server —
-        it may come back before it's needed. The primary is the steady-state path,
-        so its failure is still surfaced (the caller already wraps this in a
-        warn-only try/except at startup).
+        A secondary being unreachable at startup must not block the server — it
+        may come back before its routing strategy selects it. The primary is the
+        steady-state path, so its failure is still surfaced (the caller already
+        wraps this in a warn-only try/except at startup).
         """
         await self._members[0].verify_connection()
         for member in self._members[1:]:
@@ -159,8 +211,8 @@ class MultiLLMProvider:
                 await member.verify_connection()
             except Exception as e:  # noqa: BLE001 - soft verification
                 logger.warning(
-                    "Failover LLM member %s/%s failed connection verification: %s. "
-                    "It will be tried at request time if the primary fails.",
+                    "Secondary LLM member %s/%s failed connection verification: %s. "
+                    "It will be used if the routing strategy selects it at request time.",
                     member.provider,
                     member.model,
                     e,
@@ -169,13 +221,18 @@ class MultiLLMProvider:
     # ── batch routing ───────────────────────────────────────────────────────────
 
     async def supports_batch_api(self) -> bool:
-        """Whether ANY member supports the batch API.
+        """Whether the configured strategy can safely use the batch API.
 
-        The single-provider path delegates to the primary, but in a multi-LLM
-        chain batch capacity may live on a secondary member (e.g. an ``openai`` /
-        ``groq`` fallback behind a non-batch primary). Mirroring the failover
-        semantics, the batch path can proceed as long as one member can serve it.
+        Failover and round-robin need any one capable member. Metadata routing
+        needs every selectable member because the request-specific member is not
+        known during startup validation.
         """
+        if self._strategy.mode == LLM_STRATEGY_METADATA:
+            routed_indices = {0, *(route.member for route in self._strategy.routes or [])}
+            for index in routed_indices:
+                if not await self._members[index].supports_batch_api():
+                    return False
+            return True
         return (await self.batch_provider_impl()) is not None
 
     async def batch_provider_impl(self, account_key: str | None = None) -> "LLMInterface | None":
@@ -195,7 +252,8 @@ class MultiLLMProvider:
         submit time and gets back the member that owns the batch, or ``None`` —
         never a lookalike.
         """
-        for member in self._members:
+        members = self._members[:1] if self._strategy.mode == LLM_STRATEGY_METADATA else self._members
+        for member in members:
             impl = await member.batch_provider_impl(account_key)
             if impl is not None:
                 return impl
@@ -212,10 +270,22 @@ class MultiLLMProvider:
         bank_id: str | None = None,
         operation: str | None = None,
         metadata: dict[str, Any] | None = None,
+        routing_metadata: dict[str, Any] | None = None,
     ) -> "ConfiguredLLMProvider":
         """Mirror ``LLMProvider.with_config`` so the strategy runs inside the
         per-operation configured wrapper (gemini-safety + trace contextvars wrap
         every member call)."""
+        if self._strategy.mode == LLM_STRATEGY_METADATA:
+            # Pin the whole operation before any interactive or batch call. A
+            # sensitive route is intentionally strict: if its selected provider
+            # fails, its content must not spill into a differently classified lane.
+            return self._member_for_metadata(routing_metadata).with_config(
+                config,
+                bank_id=bank_id,
+                operation=operation,
+                metadata=metadata,
+            )
+
         from .llm_trace import LLMTraceContext
         from .llm_wrapper import ConfiguredLLMProvider
 
@@ -235,6 +305,10 @@ class MultiLLMProvider:
     @property
     def members(self) -> list[LLMProvider]:
         return self._members
+
+    @property
+    def strategy(self) -> LLMStrategyConfig:
+        return self._strategy
 
     def __getattr__(self, name: str) -> Any:
         # Anything not defined here (provider, model, api_key, base_url,

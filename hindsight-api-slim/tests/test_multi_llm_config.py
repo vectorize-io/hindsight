@@ -10,12 +10,13 @@ import pytest
 from hindsight_api.config import (
     HindsightConfig,
     LLMMemberConfig,
+    LLMMetadataRoute,
     LLMStrategyConfig,
     _parse_llm_members,
     _parse_llm_strategy,
 )
 from hindsight_api.engine.llm_wrapper import LLMProvider
-from hindsight_api.engine.memory_engine import _build_llm, _LLMCallDefaults
+from hindsight_api.engine.memory_engine import _build_llm, _LLMCallDefaults, _retain_llm_routing_metadata
 from hindsight_api.engine.multi_llm import MultiLLMProvider
 
 # No per-request overrides — exercises the chain-resolution logic without
@@ -206,6 +207,14 @@ def test_parse_strategy_weighted_round_robin():
     assert s.weights == [3, 1]
 
 
+def test_parse_strategy_metadata_routes():
+    s = _parse_llm_strategy('{"mode": "metadata", "routes": [{"key": "tags", "value": "sensitive", "member": 1}]}')
+    assert s == LLMStrategyConfig(
+        mode="metadata",
+        routes=[LLMMetadataRoute(key="tags", value="sensitive", member=1)],
+    )
+
+
 def test_parse_strategy_invalid_json():
     with pytest.raises(ValueError, match="invalid JSON"):
         _parse_llm_strategy("{not json")
@@ -226,6 +235,24 @@ def test_parse_strategy_weights_must_be_positive_ints():
         _parse_llm_strategy('{"mode": "round-robin", "weights": [1, 0]}')
     with pytest.raises(ValueError, match="positive integers"):
         _parse_llm_strategy('{"mode": "round-robin", "weights": []}')
+
+
+@pytest.mark.parametrize(
+    "raw, message",
+    [
+        ('{"mode": "metadata"}', "non-empty list"),
+        ('{"mode": "metadata", "routes": []}', "non-empty list"),
+        ('{"mode": "metadata", "routes": [{}]}', "'key'"),
+        (
+            '{"mode": "metadata", "routes": [{"key": "tags", "value": "sensitive", "member": -1}]}',
+            "non-negative integer",
+        ),
+        ('{"mode": "failover", "routes": []}', "only valid with mode"),
+    ],
+)
+def test_parse_strategy_metadata_routes_validate(raw, message):
+    with pytest.raises(ValueError, match=message):
+        _parse_llm_strategy(raw)
 
 
 # ── from_env integration ────────────────────────────────────────────────────────
@@ -323,6 +350,32 @@ def test_build_llm_members_without_strategy_stays_plain(clean_llm_env):
     config = _empty_config(llm_members=[_member("ollama")], llm_strategy=None)
     base = _base_llm()
     assert _build_llm(base, config, "", _NO_CALL_DEFAULTS) is base
+
+
+def test_build_llm_rejects_metadata_route_to_missing_member(clean_llm_env):
+    config = _empty_config(
+        llm_members=[_member("ollama")],
+        llm_strategy=LLMStrategyConfig(
+            mode="metadata",
+            routes=[LLMMetadataRoute(key="tags", value="sensitive", member=2)],
+        ),
+    )
+    with pytest.raises(ValueError, match="members 0..1"):
+        _build_llm(_base_llm(), config, "", _NO_CALL_DEFAULTS)
+
+
+def test_retain_routing_metadata_unions_item_and_document_values():
+    metadata = _retain_llm_routing_metadata(
+        [
+            {"content": "public", "tags": ["public"], "metadata": {"classification": "internal"}},
+            {"content": "secret", "tags": ["sensitive"], "metadata": {"classification": "restricted"}},
+        ],
+        document_tags=["shared"],
+    )
+    assert metadata == {
+        "metadata.classification": ["internal", "restricted"],
+        "tags": ["public", "sensitive", "shared"],
+    }
 
 
 # ── vertexai member build path (_member_to_llm) ─────────────────────────────────

@@ -1,4 +1,4 @@
-"""Unit tests for MultiLLMProvider routing (failover + weighted round-robin).
+"""Unit tests for MultiLLMProvider routing strategies.
 
 Deterministic: members are lightweight fakes that record calls and either return
 a sentinel or raise a chosen exception. No real providers / network.
@@ -8,7 +8,7 @@ import asyncio
 
 import pytest
 
-from hindsight_api.config import LLMStrategyConfig
+from hindsight_api.config import LLMMetadataRoute, LLMStrategyConfig
 from hindsight_api.engine.llm_wrapper import OutputTooLongError
 from hindsight_api.engine.multi_llm import (
     MultiLLMProvider,
@@ -51,6 +51,9 @@ class FakeMember:
     async def cleanup(self):
         pass
 
+    def with_config(self, config, **kwargs):
+        return self
+
     def _resolve(self):
         b = self.behavior
         if isinstance(b, BaseException):
@@ -66,6 +69,16 @@ def _failover(*members):
 
 def _round_robin(*members, weights=None):
     return MultiLLMProvider(list(members), LLMStrategyConfig(mode="round-robin", weights=weights))
+
+
+def _metadata(*members):
+    return MultiLLMProvider(
+        list(members),
+        LLMStrategyConfig(
+            mode="metadata",
+            routes=[LLMMetadataRoute(key="tags", value="sensitive", member=1)],
+        ),
+    )
 
 
 # ── failover ─────────────────────────────────────────────────────────────────
@@ -159,6 +172,88 @@ async def test_weighted_round_robin_honors_ratio():
         await rr.call(messages=[])
     # 3:1 over 8 requests → a served 6, b served 2.
     assert (a.calls, b.calls) == (6, 2)
+
+
+# ── metadata routing ──────────────────────────────────────────────────────────
+
+
+async def test_metadata_route_pins_matching_tag_to_secondary():
+    a, b = FakeMember("a", "RA"), FakeMember("b", "RB")
+    routed = _metadata(a, b).with_config(object(), routing_metadata={"tags": ["sensitive"]})
+    assert await routed.call(messages=[]) == "RB"
+    assert (a.calls, b.calls) == (0, 1)
+
+
+async def test_metadata_route_defaults_to_primary():
+    a, b = FakeMember("a", "RA"), FakeMember("b", "RB")
+    routed = _metadata(a, b).with_config(object(), routing_metadata={"tags": ["public"]})
+    assert await routed.call(messages=[]) == "RA"
+    assert (a.calls, b.calls) == (1, 0)
+
+
+async def test_metadata_route_does_not_fall_back_across_privacy_lanes():
+    a = FakeMember("a", "RA")
+    b = FakeMember("b", RuntimeError("sensitive lane down"))
+    routed = _metadata(a, b).with_config(object(), routing_metadata={"tags": ["sensitive"]})
+    with pytest.raises(RuntimeError, match="sensitive lane down"):
+        await routed.call(messages=[])
+    assert (a.calls, b.calls) == (0, 1)
+
+
+def test_metadata_route_rejects_ambiguous_cross_member_match():
+    a, b, c = FakeMember("a", "RA"), FakeMember("b", "RB"), FakeMember("c", "RC")
+    router = MultiLLMProvider(
+        [a, b, c],
+        LLMStrategyConfig(
+            mode="metadata",
+            routes=[
+                LLMMetadataRoute(key="metadata.classification", value="internal", member=1),
+                LLMMetadataRoute(key="metadata.clearance", value="restricted", member=2),
+            ],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="select multiple members"):
+        router.with_config(
+            object(),
+            routing_metadata={
+                "metadata.classification": ["internal"],
+                "metadata.clearance": ["restricted"],
+            },
+        )
+    assert (a.calls, b.calls, c.calls) == (0, 0, 0)
+
+
+def test_metadata_routes_reject_conflicting_tag_members_at_construction():
+    with pytest.raises(ValueError, match="routes with key 'tags' must all select the same member"):
+        MultiLLMProvider(
+            [FakeMember("a", "RA"), FakeMember("b", "RB"), FakeMember("c", "RC")],
+            LLMStrategyConfig(
+                mode="metadata",
+                routes=[
+                    LLMMetadataRoute(key="tags", value="internal", member=1),
+                    LLMMetadataRoute(key="tags", value="sensitive", member=2),
+                ],
+            ),
+        )
+
+
+async def test_metadata_route_allows_multiple_matches_to_same_member():
+    a, b = FakeMember("a", "RA"), FakeMember("b", "RB")
+    router = MultiLLMProvider(
+        [a, b],
+        LLMStrategyConfig(
+            mode="metadata",
+            routes=[
+                LLMMetadataRoute(key="tags", value="internal", member=1),
+                LLMMetadataRoute(key="tags", value="sensitive", member=1),
+            ],
+        ),
+    )
+
+    routed = router.with_config(object(), routing_metadata={"tags": ["internal", "sensitive"]})
+    assert await routed.call(messages=[]) == "RB"
+    assert (a.calls, b.calls) == (0, 1)
 
 
 def test_weighted_scheduler_distribution():

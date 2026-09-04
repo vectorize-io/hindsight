@@ -65,6 +65,20 @@ def test_a_new_field_round_trips_without_being_listed():
     assert _params(content="x", some_future_field="v")["some_future_field"] == "v"
 
 
+def test_shared_document_metadata_unions_values_from_every_item():
+    retain_params, _tags = orch._build_retain_params(
+        [
+            {"content": "public", "metadata": {"classification": "public", "source": "crm"}},
+            {"content": "restricted", "metadata": {"classification": "restricted"}},
+        ]
+    )
+
+    assert retain_params["metadata"] == {
+        "classification": ["public", "restricted"],
+        "source": "crm",
+    }
+
+
 def test_every_field_api_retain_sends_can_round_trip():
     """Pairs the writer against the rule so they cannot drift apart.
 

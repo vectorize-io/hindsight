@@ -11,7 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from unittest.mock import DEFAULT, AsyncMock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -668,17 +668,34 @@ async def test_dedup_update_all_updated_sources_deleted_skips_fold_and_delete() 
 # ── _process_memory_batch create-contract (created vs skipped) ────────────────
 
 
-def _batch_engine():
-    return types.SimpleNamespace(_consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object()))
+@dataclass
+class _CreateBatchRun:
+    result: tuple[list[dict], int, bool]
+    create_action: AsyncMock
+    memory_id: str
+    base_llm_config: MagicMock
+    child_llm_config: object
+    config: object
+    routing_metadata: dict[str, list[str]]
+    dedup_adjudicate: AsyncMock
 
 
-async def _run_create_batch(create_action_result: str):
+async def _run_create_batch(create_action_result: str) -> _CreateBatchRun:
     from hindsight_api.engine.consolidation import consolidator as C
 
     mem_id = str(uuid.uuid4())
     memories = [{"id": mem_id, "text": "Uzbek YouTube content is very rich.", "tags": []}]
     create = C._CreateAction(text="Uzbek YouTube content is very rich.", source_fact_ids=[mem_id])
     llm_result = C._BatchLLMResult(creates=[create])
+    child_llm_config = object()
+    base_llm_config = MagicMock()
+    base_llm_config.with_config.return_value = child_llm_config
+    routing_metadata = {"tags": ["sensitive"]}
+    memory_engine = types.SimpleNamespace(
+        _consolidation_llm_config=base_llm_config,
+        _pending_consolidation_llm_routing_metadata=lambda: routing_metadata,
+    )
+    config = object()
     with (
         patch.object(
             C,
@@ -696,40 +713,62 @@ async def _run_create_batch(create_action_result: str):
             C,
             "_dedup_adjudicate",
             new=AsyncMock(return_value=_DedupOutcome(best_id=None, merged_text="", should_merge=False)),
-        ),
+        ) as dedup_adjudicate,
         patch.object(C, "_apply_create_action", new=AsyncMock(return_value=create_action_result)) as create_action,
     ):
         result = await C._process_memory_batch(
             pool=_DedupBackend(_DedupConn()),
-            memory_engine=_batch_engine(),
+            memory_engine=memory_engine,
             llm_config=object(),
             bank_id="bank1",
             memories=memories,
             request_context=object(),
-            config=object(),
+            config=config,
         )
-    return result, create_action, mem_id
+    return _CreateBatchRun(
+        result=result,
+        create_action=create_action,
+        memory_id=mem_id,
+        base_llm_config=base_llm_config,
+        child_llm_config=child_llm_config,
+        config=config,
+        routing_metadata=routing_metadata,
+        dedup_adjudicate=dedup_adjudicate,
+    )
 
 
 async def test_process_batch_creates_when_dedup_target_vanished() -> None:
     # Caller contract: when the adjudicator finds no twin to fold into, _process_memory_batch
     # must still CREATE the observation instead of dropping it.
-    result, create_action, mem_id = await _run_create_batch("created")
-    create_action.assert_awaited_once()
-    prepared = create_action.await_args.kwargs["prepared"]
+    run = await _run_create_batch("created")
+    run.create_action.assert_awaited_once()
+    prepared = run.create_action.await_args.kwargs["prepared"]
     assert prepared.text == "Uzbek YouTube content is very rich."
-    assert prepared.source_memory_ids == [mem_id]
-    assert result == ([{"action": "created"}], 0, False)
+    assert prepared.source_memory_ids == [run.memory_id]
+    assert run.result == ([{"action": "created"}], 0, False)
 
 
 async def test_process_batch_reports_skipped_when_create_skipped() -> None:
     # _apply_create_action returns "skipped" (all sources deleted in the write txn) ->
     # _process_memory_batch must NOT mark the memory created; it falls through to skipped.
-    result, _create_action, _mem_id = await _run_create_batch("skipped")
-    assert result == ([{"action": "skipped", "reason": "no_durable_knowledge"}], 0, False)
+    run = await _run_create_batch("skipped")
+    assert run.result == ([{"action": "skipped", "reason": "no_durable_knowledge"}], 0, False)
 
 
 async def test_process_batch_reports_created_when_create_created() -> None:
     # _apply_create_action returns "created" -> the memory is marked created.
-    result, _create_action, _mem_id = await _run_create_batch("created")
-    assert result == ([{"action": "created"}], 0, False)
+    run = await _run_create_batch("created")
+    assert run.result == ([{"action": "created"}], 0, False)
+
+
+async def test_process_batch_derives_dedup_wrapper_from_pinned_consolidation_lane() -> None:
+    run = await _run_create_batch("created")
+
+    assert run.result == ([{"action": "created"}], 0, False)
+    run.base_llm_config.with_config.assert_called_once_with(
+        run.config,
+        bank_id="bank1",
+        operation="consolidation_dedup",
+        routing_metadata=run.routing_metadata,
+    )
+    assert run.dedup_adjudicate.await_args.args[4] is run.child_llm_config

@@ -9,7 +9,8 @@ from hindsight_api.models import RequestContext
 
 
 @pytest.mark.asyncio
-async def test_submit_async_retain_includes_document_tags_in_task_payload():
+@pytest.mark.parametrize("document_tags", [["scope:tools", "user:alice"], []])
+async def test_submit_async_retain_includes_document_tags_in_task_payload(document_tags):
     """submit_async_retain should include document_tags in queued task payload.
 
     submit_async_batch_retain inserts the parent + all children inline inside
@@ -25,6 +26,7 @@ async def test_submit_async_retain_includes_document_tags_in_task_payload():
     engine._initialized = True
     engine._authenticate_tenant = AsyncMock()
     engine._operation_validator = None
+    engine._retain_llm_config = MagicMock()
     # Children are now inserted inline (no _submit_async_operation hop), and
     # submit_task fires post-commit. Mock both so the inline path runs cleanly
     # without the test needing real DB or task backend.
@@ -54,7 +56,6 @@ async def test_submit_async_retain_includes_document_tags_in_task_payload():
 
     request_context = RequestContext(tenant_id="tenant-a", api_key_id="key-a")
     contents = [{"content": "Async retain payload test."}]
-    document_tags = ["scope:tools", "user:alice"]
 
     # Stub the lazy bank-create/default-template hook to a no-op (created=False)
     # so the inline transaction path runs against the mock connection without

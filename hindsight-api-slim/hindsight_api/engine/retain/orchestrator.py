@@ -384,7 +384,7 @@ def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     if items:
         first_item = items[0]
         for key, value in first_item.items():
-            if key in _RETAIN_PARAMS_NOT_REPLAYED or value is None:
+            if key in _RETAIN_PARAMS_NOT_REPLAYED or key == "metadata" or value is None:
                 continue
             # event_date arrives as a datetime from some callers and a string from
             # others; retain_params is JSON, so normalise here rather than at every
@@ -392,6 +392,28 @@ def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
             if key == "event_date":
                 value = value.isoformat() if hasattr(value, "isoformat") else str(value)
             retain_params[key] = value
+
+        metadata_values: dict[str, list[Any]] = {}
+        for item in items:
+            item_metadata = item.get("metadata")
+            if not isinstance(item_metadata, dict):
+                continue
+            for key, value in item_metadata.items():
+                values = metadata_values.setdefault(key, [])
+                if value not in values:
+                    values.append(value)
+        if metadata_values:
+            # A shared document can combine several input items. Persist every
+            # classification value so an append cannot inherit only items[0]
+            # and accidentally fall back to the primary LLM. Single-valued
+            # keys retain their existing scalar representation.
+            retain_params["metadata"] = {
+                key: values[0] if len(values) == 1 else values for key, values in metadata_values.items()
+            }
+        elif first_item.get("metadata") is not None:
+            # Validation normally guarantees a mapping. Keep the historical
+            # pass-through for internal callers and the round-trip contract.
+            retain_params["metadata"] = first_item["metadata"]
 
     return retain_params, merged_tags
 

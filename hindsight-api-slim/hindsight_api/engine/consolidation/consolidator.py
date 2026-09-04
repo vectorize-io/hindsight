@@ -1342,7 +1342,13 @@ async def run_consolidation_job(
 
     # Build a configured LLM wrapper that applies per-bank settings (e.g. safety settings)
     # to every call without leaking across operations.
-    llm_config = memory_engine._consolidation_llm_config.with_config(config, bank_id=bank_id, operation="consolidation")
+    routing_metadata = memory_engine._pending_consolidation_llm_routing_metadata()
+    llm_config = memory_engine._consolidation_llm_config.with_config(
+        config,
+        bank_id=bank_id,
+        operation="consolidation",
+        routing_metadata=routing_metadata,
+    )
 
     # Bind the operation trace context for the whole run so the create/update DB
     # sites (deep inside _process_memory_batch) can accumulate the observations
@@ -2266,8 +2272,14 @@ async def _process_memory_batch(
     # "consolidation_dedup" (routes through the consolidation concurrency bucket via llm_wrapper's
     # "consolidation" prefix; recorded distinctly in llm_requests).
     dedup_enabled = _dedup_active(config)
+    routing_metadata = memory_engine._pending_consolidation_llm_routing_metadata() if dedup_enabled else None
     dedup_llm_config = (
-        memory_engine._consolidation_llm_config.with_config(config, bank_id=bank_id, operation="consolidation_dedup")
+        memory_engine._consolidation_llm_config.with_config(
+            config,
+            bank_id=bank_id,
+            operation="consolidation_dedup",
+            routing_metadata=routing_metadata,
+        )
         if dedup_enabled
         else None
     )

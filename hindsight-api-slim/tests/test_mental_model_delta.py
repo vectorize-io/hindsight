@@ -28,8 +28,10 @@ from typing import Any
 import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
-from hindsight_api.engine.llm_wrapper import LLMConfig
+from hindsight_api.config import LLMMetadataRoute, LLMStrategyConfig
+from hindsight_api.engine.llm_wrapper import LLMConfig, LLMProvider
 from hindsight_api.engine.maintenance import MaintenanceLoop
+from hindsight_api.engine.multi_llm import MultiLLMProvider
 from hindsight_api.engine.response_models import ReflectResult
 from hindsight_api.engine.retain import embedding_utils
 from tests.conftest import stub_refresh_has_sources
@@ -1053,8 +1055,27 @@ class TestDeltaRefreshPlumbing:
         patch_reflect(memory, text="ignored — full mode candidate")
 
         captured: dict[str, Any] = {}
+        primary_calls = 0
+        secondary_calls = 0
+
+        primary = LLMProvider(provider="mock", api_key="", base_url="", model="primary")
+        secondary = LLMProvider(provider="mock", api_key="", base_url="", model="secondary")
+        memory._reflect_llm_config = MultiLLMProvider(
+            [primary, secondary],
+            LLMStrategyConfig(
+                mode="metadata",
+                routes=[LLMMetadataRoute(key="tags", value="sensitive", member=1)],
+            ),
+        )
+
+        async def primary_call(*, messages, **kwargs):
+            nonlocal primary_calls
+            primary_calls += 1
+            raise AssertionError("mental-model delta must not use the primary lane")
 
         async def capturing_call(*, messages, **kwargs):
+            nonlocal secondary_calls
+            secondary_calls += 1
             ctx = current_trace_context()
             captured["max_completion_tokens"] = kwargs.get("max_completion_tokens")
             captured["scope"] = kwargs.get("scope")
@@ -1064,7 +1085,8 @@ class TestDeltaRefreshPlumbing:
             return DeltaOperationList()
 
         # First (seeding) refresh — value captured here is overwritten by the second.
-        monkeypatch.setattr(memory._reflect_llm_config, "call", capturing_call)
+        monkeypatch.setattr(primary, "call", primary_call)
+        monkeypatch.setattr(secondary, "call", capturing_call)
         await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
         # Second refresh with a genuine new fact so the delta call actually fires.
@@ -1085,6 +1107,8 @@ class TestDeltaRefreshPlumbing:
         assert captured["trace_operation"] == "mental_model_delta_ops"
         assert captured["trace_bank_id"] == bank_id
         assert captured["trace_metadata"] == {"mental_model_id": str(mm["id"])}
+        assert secondary_calls == 1
+        assert primary_calls == 0
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

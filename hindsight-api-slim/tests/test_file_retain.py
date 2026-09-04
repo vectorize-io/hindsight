@@ -1024,7 +1024,8 @@ async def test_file_retain_maps_timestamp_to_event_date(memory_no_llm_verify, sa
 
 
 @pytest.mark.asyncio
-async def test_file_retain_forwards_all_content_fields(memory_no_llm_verify, sample_txt_content):
+@pytest.mark.parametrize("document_tags", [["batch_tag"], []])
+async def test_file_retain_forwards_all_content_fields(memory_no_llm_verify, sample_txt_content, document_tags):
     """Regression: _handle_file_convert_retain must forward every FileRetainMetadata
     field to the inner batch_retain task without renaming or dropping it.
 
@@ -1091,7 +1092,7 @@ async def test_file_retain_forwards_all_content_fields(memory_no_llm_verify, sam
                     "strategy": "my_strategy",
                 }
             ],
-            document_tags=["batch_tag"],
+            document_tags=document_tags,
             request_context=request_context,
         )
 
@@ -1101,7 +1102,7 @@ async def test_file_retain_forwards_all_content_fields(memory_no_llm_verify, sam
 
         # Per-request fields (live on the outer task payload, not per-content).
         assert payload.get("strategy") == "my_strategy", "strategy must be forwarded at request level"
-        assert payload.get("document_tags") == ["batch_tag"], "document_tags must be forwarded at request level"
+        assert payload.get("document_tags") == document_tags, "document_tags must be forwarded at request level"
 
         # Per-content fields.
         assert len(payload["contents"]) == 1

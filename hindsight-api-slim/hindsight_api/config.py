@@ -2105,7 +2105,17 @@ class LLMMemberConfig:
 # Valid multi-LLM strategy modes.
 LLM_STRATEGY_FAILOVER = "failover"
 LLM_STRATEGY_ROUND_ROBIN = "round-robin"
-_VALID_LLM_STRATEGY_MODES = (LLM_STRATEGY_FAILOVER, LLM_STRATEGY_ROUND_ROBIN)
+LLM_STRATEGY_METADATA = "metadata"
+_VALID_LLM_STRATEGY_MODES = (LLM_STRATEGY_FAILOVER, LLM_STRATEGY_ROUND_ROBIN, LLM_STRATEGY_METADATA)
+
+
+@dataclass(frozen=True)
+class LLMMetadataRoute:
+    """One metadata match that pins an LLM request to a member."""
+
+    key: str
+    value: str
+    member: int
 
 
 @dataclass
@@ -2113,22 +2123,27 @@ class LLMStrategyConfig:
     """How to route a request across the members of a multi-LLM chain.
 
     ``mode`` is "failover" (try members in order) or "round-robin" (rotate the
-    starting member per request, then fall through the rest on error). ``weights``
-    is round-robin only: positive integers, one per member (primary first), giving
-    an unbalanced rotation; ``None`` means uniform.
+    starting member per request, then fall through the rest on error), or
+    "metadata" (pin when all matching routes agree, defaulting to the primary).
+    ``weights`` is round-robin only: positive integers, one per member (primary
+    first), giving an unbalanced rotation; ``routes`` is metadata only and every
+    matching route must select the same member.
     """
 
     mode: str
     weights: list[int] | None = None
+    routes: list[LLMMetadataRoute] | None = None
 
 
 def _parse_llm_strategy(raw: str | None) -> LLMStrategyConfig | None:
     """Parse a multi-LLM strategy from a JSON env var.
 
     Returns ``None`` when unset. The value must be a JSON object with a ``mode``
-    of "failover" or "round-robin"; ``weights`` (round-robin only) must be a list
-    of positive ints. Raises ``ValueError`` on any malformed input so
-    misconfiguration fails fast at startup rather than silently degrading.
+    of "failover", "round-robin", or "metadata". ``weights`` (round-robin only)
+    must be a list of positive ints. ``routes`` (metadata only) is a list
+    of ``{"key": str, "value": str, "member": non-negative int}`` objects.
+    Raises ``ValueError`` on malformed input so misconfiguration fails fast at
+    startup rather than silently degrading.
     """
     text = (raw or "").strip()
     if not text:
@@ -2151,7 +2166,29 @@ def _parse_llm_strategy(raw: str | None) -> LLMStrategyConfig | None:
         if not isinstance(weights, list) or not weights or not all(isinstance(w, int) and w > 0 for w in weights):
             raise ValueError("LLM strategy 'weights' must be a non-empty list of positive integers.")
 
-    return LLMStrategyConfig(mode=mode, weights=weights)
+    raw_routes = parsed.get("routes")
+    routes: list[LLMMetadataRoute] | None = None
+    if mode == LLM_STRATEGY_METADATA:
+        if not isinstance(raw_routes, list) or not raw_routes:
+            raise ValueError("LLM strategy 'routes' must be a non-empty list in metadata mode.")
+        routes = []
+        for index, route in enumerate(raw_routes):
+            if not isinstance(route, dict):
+                raise ValueError(f"LLM metadata route {index} must be a JSON object.")
+            key = route.get("key")
+            value = route.get("value")
+            member = route.get("member")
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"LLM metadata route {index} 'key' must be a non-empty string.")
+            if not isinstance(value, str):
+                raise ValueError(f"LLM metadata route {index} 'value' must be a string.")
+            if not isinstance(member, int) or isinstance(member, bool) or member < 0:
+                raise ValueError(f"LLM metadata route {index} 'member' must be a non-negative integer.")
+            routes.append(LLMMetadataRoute(key=key, value=value, member=member))
+    elif raw_routes is not None:
+        raise ValueError(f"LLM strategy 'routes' is only valid with mode '{LLM_STRATEGY_METADATA}'.")
+
+    return LLMStrategyConfig(mode=mode, weights=weights, routes=routes)
 
 
 def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
