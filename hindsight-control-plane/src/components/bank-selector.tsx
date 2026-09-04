@@ -228,6 +228,14 @@ function BankSelectorInner() {
     return () => window.removeEventListener("hindsight:logo-spin", spin);
   }, []);
 
+  // The banks overview page has its own "create bank" button; the dialog (with its
+  // template import) lives here, so that button asks for it rather than duplicating it.
+  React.useEffect(() => {
+    const openCreate = () => setCreateDialogOpen(true);
+    window.addEventListener("hindsight:create-bank", openCreate);
+    return () => window.removeEventListener("hindsight:create-bank", openCreate);
+  }, []);
+
   // Banks arrive already ordered by last write descending, one page at a time, so the
   // list is rendered in server order — re-sorting here would only shuffle a later page
   // above an earlier one.
@@ -590,7 +598,14 @@ function BankSelectorInner() {
             freely); the wordmark is the right slice of the full lockup (logo.png)
             shown via a cropped background. Their widths sum to the full logo, so
             the two pieces butt together seamlessly at h-10. */}
-        <div className="flex items-center h-10 select-none" aria-label="Hindsight">
+        {/* The logo is the way back to the banks overview, as it is in most apps. */}
+        <button
+          type="button"
+          className="flex items-center h-10 select-none cursor-pointer"
+          aria-label={tNavBank("allBanks")}
+          title={tNavBank("allBanks")}
+          onClick={() => router.push("/dashboard")}
+        >
           <img
             src={withBasePath("/favicon.png")}
             alt=""
@@ -606,7 +621,7 @@ function BankSelectorInner() {
               backgroundRepeat: "no-repeat",
             }}
           />
-        </div>
+        </button>
 
         {/* Separator */}
         <div className="h-8 w-px bg-border" />

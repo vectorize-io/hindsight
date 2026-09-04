@@ -362,7 +362,13 @@ export interface BankTemplateImportResponse {
 }
 
 export class ControlPlaneClient {
-  private async fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  private async fetchApi<T>(
+    path: string,
+    options?: RequestInit,
+    // Bulk callers loop over many requests and report the failures themselves; one
+    // toast per failed item would bury the screen.
+    { suppressErrorToast = false }: { suppressErrorToast?: boolean } = {}
+  ): Promise<T> {
     try {
       const response = await fetch(withBasePath(path), {
         ...options,
@@ -412,24 +418,26 @@ export class ControlPlaneClient {
         const description = describeErrorDetails(errorDetails) || errorMessage;
         const status = response.status;
 
-        if (isClientError) {
-          // Client errors (4xx) - validation, bad request, etc. - show as warning
-          toast.warning("Client Error", {
-            description,
-            duration: 5000,
-          });
-        } else if (status >= 500) {
-          // Server errors (5xx) - show as error
-          toast.error("Server Error", {
-            description,
-            duration: 5000,
-          });
-        } else {
-          // Other HTTP errors - show as error
-          toast.error("API Error", {
-            description,
-            duration: 5000,
-          });
+        if (!suppressErrorToast) {
+          if (isClientError) {
+            // Client errors (4xx) - validation, bad request, etc. - show as warning
+            toast.warning("Client Error", {
+              description,
+              duration: 5000,
+            });
+          } else if (status >= 500) {
+            // Server errors (5xx) - show as error
+            toast.error("Server Error", {
+              description,
+              duration: 5000,
+            });
+          } else {
+            // Other HTTP errors - show as error
+            toast.error("API Error", {
+              description,
+              duration: 5000,
+            });
+          }
         }
 
         // Still throw error for callers that want to handle it
@@ -442,7 +450,7 @@ export class ControlPlaneClient {
       return response.json();
     } catch (error) {
       // If it's not a response error (network error, etc.), show toast
-      if (!(error as any).status) {
+      if (!(error as any).status && !suppressErrorToast) {
         toast.error("Network Error", {
           description: error instanceof Error ? error.message : "Failed to connect to server",
           duration: 5000,
@@ -1015,14 +1023,18 @@ export class ControlPlaneClient {
   /**
    * Delete an entire memory bank and all its data
    */
-  async deleteBank(bankId: string) {
+  async deleteBank(bankId: string, options?: { suppressErrorToast?: boolean }) {
     return this.fetchApi<{
       success: boolean;
       message: string;
       deleted_count: number;
-    }>(bankApi(bankId), {
-      method: "DELETE",
-    });
+    }>(
+      bankApi(bankId),
+      {
+        method: "DELETE",
+      },
+      { suppressErrorToast: options?.suppressErrorToast }
+    );
   }
 
   /**

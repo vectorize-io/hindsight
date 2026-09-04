@@ -49,6 +49,7 @@
     "lightMode": "ライトモードに切り替え",
     "bank": {
       "select": "メモリバンクを選択...",
+      "allBanks": "すべてのメモリバンク",
       "search": "メモリバンクを検索...",
       "empty": "メモリバンクがありません。",
       "noSearchResults": "検索に一致するバンクはありません。",
@@ -1638,10 +1639,35 @@
     "blockMoveDown": "Move block down",
     "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "Hindsightへようこそ",
-    "selectBank": "上のドロップダウンからメモリバンクを選択して始めましょう。",
-    "sidebarHint": "メモリバンクを選択するとサイドバーが表示されます。"
+  "banksOverview": {
+    "title": "メモリバンク",
+    "subtitle": "メモリバンクはそれぞれ独立した「脳」です。1 人のユーザー、1 つのエージェントまたはプロジェクトが記憶するすべてを隔離して保管します。バンク間で共有されるものはありません。",
+    "welcomeTitle": "Hindsight へようこそ",
+    "welcomeBody": "メモリバンクは独立した「脳」です。1 人のユーザー、1 つのエージェントまたはプロジェクトが記憶するすべてを隔離して保管します。まずは最初のバンクを作成しましょう。",
+    "search": "バンクを検索...",
+    "noSearchResults": "検索条件に一致するバンクはありません。",
+    "columnBank": "バンク",
+    "columnMemories": "メモリ",
+    "columnLastActivity": "最終アクティビティ",
+    "columnCreated": "作成日",
+    "never": "なし",
+    "emptyBank": "空",
+    "selectAll": "読み込み済みのバンクをすべて選択",
+    "selectBank": "{bank} を選択",
+    "selectedCount": "{count} 件選択中",
+    "clearSelection": "クリア",
+    "deleteSelected": "選択項目を削除",
+    "bulkDeleteTitle": "{count} 件のメモリバンクを削除しますか?",
+    "bulkDeletePrompt": "これらのバンクとその中身はすべて完全に削除されます:",
+    "bulkDeleteMore": "他 {count} 件",
+    "bulkDeleteWarning": "この操作は元に戻せません。すべてのメモリ、エンティティ、ドキュメント、およびバンクプロファイルが完全に削除されます。",
+    "bulkDeleteSequentialNote": "バンクは 1 件ずつ削除されるため時間がかかることがあります。完了するまでこのダイアログを開いたままにしてください。",
+    "bulkDeleteConfirmLabel": "確認のため {word} と入力してください",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "{total} 件中 {done} 件を削除中...",
+    "bulkDeleteDone": "{count} 件のバンクを削除しました",
+    "bulkDeletePartial": "{deleted} 件削除、{failed} 件失敗",
+    "bulkDeleteFailures": "これらのバンクは削除できませんでした:"
   },
   "login": {
     "title": "Hindsight コントロールプレーン",
