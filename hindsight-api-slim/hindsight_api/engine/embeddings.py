@@ -879,6 +879,21 @@ class RemoteTEIEmbeddings(Embeddings):
         self.retry_delay = retry_delay
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
+        # One client per THREAD, not one per provider. `encode` is called through
+        # `run_in_executor`, so several threads share this object, and on a free-threaded build
+        # they genuinely run at once. httpcore's sync pool has at least one unguarded
+        # check-then-use on the shared connection state:
+        #
+        #     keepalive_expired = self._expire_at is not None and now > self._expire_at
+        #
+        # Another thread can null `_expire_at` between the two halves, and the comparison then
+        # raises `'>' not supported between instances of 'float' and 'NoneType'` — surfacing as
+        # a 500 from recall. Under the GIL the window is small enough that it effectively never
+        # happens; without it, it does.
+        #
+        # A client per thread removes the sharing rather than trying to serialise around it. The
+        # cost is one connection pool per executor thread, which is bounded by the executor.
+        self._thread_clients = threading.local()
         self._client: httpx.Client | None = None
         self._model_id: str | None = None
         self._dimension: int | None = None
@@ -893,6 +908,17 @@ class RemoteTEIEmbeddings(Embeddings):
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
         return self._dimension
 
+    def _client_for_thread(self) -> httpx.Client:
+        """This thread's client, created on first use."""
+        client = getattr(self._thread_clients, "client", None)
+        if client is None or client.is_closed:
+            client = httpx.Client(
+                timeout=self.timeout,
+                limits=httpx.Limits(keepalive_expiry=min(self.timeout, TEI_KEEPALIVE_EXPIRY_SECONDS)),
+            )
+            self._thread_clients.client = client
+        return client
+
     def _request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
         """Make an HTTP request with automatic retries on transient errors."""
         import time
@@ -903,9 +929,9 @@ class RemoteTEIEmbeddings(Embeddings):
         for attempt in range(self.max_retries + 1):
             try:
                 if method == "GET":
-                    response = self._client.get(url, **kwargs)
+                    response = self._client_for_thread().get(url, **kwargs)
                 else:
-                    response = self._client.post(url, **kwargs)
+                    response = self._client_for_thread().post(url, **kwargs)
                 response.raise_for_status()
                 return response
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout) as e:
@@ -963,10 +989,8 @@ class RemoteTEIEmbeddings(Embeddings):
             return
 
         logger.info(f"Embeddings: initializing TEI provider at {self.base_url}")
-        self._client = httpx.Client(
-            timeout=self.timeout,
-            limits=httpx.Limits(keepalive_expiry=min(self.timeout, TEI_KEEPALIVE_EXPIRY_SECONDS)),
-        )
+        # Doubles as the "initialized" marker that `encode` checks.
+        self._client = self._client_for_thread()
 
         # Verify server is reachable and get model info
         try:
