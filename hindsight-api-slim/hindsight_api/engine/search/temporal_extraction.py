@@ -132,10 +132,13 @@ async def extract_temporal_constraint_async(
     runs. Use this from request paths; the sync form remains for callers that
     are not already async.
 
-    Safe to run off-thread as of the detector rewrite: the analyzer owns its
-    ``_ExactLanguageSearch`` rather than sharing dateparser's module-level
-    singleton (which caches state on itself per call), and the character-table
-    cache is lock-guarded.
+    Safe to run off-thread: the analyzer owns its ``_ExactLanguageSearch`` rather
+    than sharing dateparser's module-level singleton (which caches state on itself
+    per call), and every entry into dateparser is serialised by
+    ``query_analyzer._DATEPARSER_LOCK``. The character-table cache was guarded
+    before that lock existed, but only around its assignment, which left the build
+    itself concurrent — the single-worker pool here hid it, the startup warm-up on
+    the default executor did not.
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(

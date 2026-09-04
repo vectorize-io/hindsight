@@ -87,9 +87,14 @@ def _char_tables(languages: list[Locale], settings: Settings) -> LocaleCharTable
     """Per-locale character sets, and the characters unique to each locale.
 
     This is ``FullTextLanguageDetector.get_unique_characters`` with its result
-    memoised. It is a pure function of the locale set: ``get_wordchars_for_detection``
-    caches on the (singleton) ``Locale``, and the O(n²) difference sweep over
-    those sets is therefore deterministic.
+    memoised. The *result* is a deterministic function of the locale set:
+    ``get_wordchars_for_detection`` caches on the (singleton) ``Locale``, so the
+    O(n²) difference sweep over those sets always produces the same answer.
+
+    It is not, however, side-effect free — this docstring used to call it "a pure
+    function", and that is what made computing it outside the lock look safe. On a
+    cache miss it *builds* the locale dictionaries it then reads. See the lock
+    comment below.
     """
     key = tuple(lang.shortname for lang in languages)
     cached = _char_table_cache.get(key)
