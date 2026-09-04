@@ -5205,14 +5205,29 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions import RetainContext
 
+            attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
             ctx = RetainContext(
                 bank_id=bank_id,
                 contents=contents_copy,
                 request_context=request_context,
                 document_id=document_id,
                 fact_type_override=fact_type_override,
+                attachments=attachment_info,
             )
-            result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
+            try:
+                result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
+            except Exception:
+                # A refused retain must not leave its bytes behind. They are
+                # written at the API ingress, before this hook can run — the
+                # async path cannot carry megabytes of base64 through its
+                # operation row — so the only way a content policy can actually
+                # keep them out of the bank is to take them back out here.
+                # Nothing else would: reclaim is otherwise driven by document
+                # deletion, and a rejected retain never creates a document.
+                await self._discard_unreferenced_attachments(
+                    bank_id, [info.short_id for info in attachment_info], request_context
+                )
+                raise
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
 
@@ -6278,6 +6293,75 @@ class MemoryEngine(MemoryEngineInterface):
             return await self._file_storage.retrieve(storage_key)
         except FileNotFoundError:
             return None
+
+    async def _retain_attachment_info(
+        self,
+        bank_id: str,
+        contents: "list[dict]",
+        request_context: "RequestContext",
+    ) -> "list[RetainAttachmentInfo]":
+        """Describe the inline attachments a retain carries, for the validator.
+
+        Read back from the rows rather than threaded down from the API: the
+        bytes are already stored by the time any retain reaches here, and the
+        async path deliberately carries only placeholder text through its
+        operation row, so there is nothing to thread. The placeholders in each
+        item's text are the authoritative list either way.
+
+        Filenames come from the item, not the row — a filename belongs to the
+        reference, so the same bytes can be attached under another name in a
+        different document.
+        """
+        from hindsight_api.extensions import RetainAttachmentInfo
+
+        from .retain.attachment_content import iter_placeholder_ids
+
+        ordered: list[str] = []
+        filenames: dict[str, str] = {}
+        for item in contents:
+            for short_id in iter_placeholder_ids(str(item.get("content") or "")):
+                if short_id not in ordered:
+                    ordered.append(short_id)
+            filenames.update(item.get("attachment_filenames") or {})
+        if not ordered:
+            return []
+
+        records = await self.resolve_attachments(bank_id, ordered, request_context)
+        return [
+            RetainAttachmentInfo(
+                short_id=short_id,
+                media_type=records[short_id].media_type,
+                byte_size=records[short_id].byte_size,
+                kind=records[short_id].kind,
+                filename=filenames.get(short_id),
+            )
+            for short_id in ordered
+            if short_id in records
+        ]
+
+    async def _discard_unreferenced_attachments(
+        self,
+        bank_id: str,
+        short_ids: "Sequence[str]",
+        request_context: "RequestContext",
+    ) -> None:
+        """Delete attachments no document references — used when a retain is refused.
+
+        Deliberately goes through the same reclaim the document-delete path uses,
+        so an attachment shared with a document that *was* retained survives: the
+        reclaim only drops a blob once no ``document_attachments`` row in the bank
+        still names its hash.
+        """
+        if not short_ids:
+            return
+        records = await self.resolve_attachments(bank_id, list(short_ids), request_context)
+        if not records:
+            return
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            await self._reclaim_orphaned_attachments(
+                conn, bank_id, [record.attachment_hash for record in records.values()]
+            )
 
     async def resolve_attachments(
         self,

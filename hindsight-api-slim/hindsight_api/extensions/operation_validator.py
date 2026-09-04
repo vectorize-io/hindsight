@@ -126,6 +126,28 @@ class PrecheckContext:
 
 
 @dataclass
+class RetainAttachmentInfo:
+    """One inline attachment carried by a retain, described but not decoded.
+
+    A validator sees the *facts about* each attachment — how big it is, what the
+    caller says it is, what it was called — without the bytes, which can be tens
+    of megabytes and are almost never what a policy decision turns on. The
+    ``short_id`` matches the ``⟦hs-att:…⟧`` placeholder in the item's text, so a
+    validator can tell which item an attachment belongs to.
+
+    ``media_type`` is the caller's declaration and nothing more: the accepted
+    type list is deliberately open, so treat it as a claim to be checked, not a
+    fact about the bytes.
+    """
+
+    short_id: str
+    media_type: str
+    byte_size: int
+    kind: str
+    filename: str | None = None
+
+
+@dataclass
 class RetainContext:
     """Context for a retain operation validation (pre-operation).
 
@@ -139,6 +161,15 @@ class RetainContext:
     request_context: "RequestContext"
     document_id: str | None = None
     fact_type_override: str | None = None
+    #: Inline attachments this retain carries, in first-appearance order. Empty
+    #: for a text-only retain. Each item's own text holds the matching
+    #: ``⟦hs-att:<short_id>⟧`` placeholders, so a validator that only needs a
+    #: total (a size quota, say) can read it here rather than parsing them.
+    #:
+    #: Refusing the retain also discards the bytes: they are written to storage
+    #: before this hook runs — the async path cannot carry megabytes of base64
+    #: through its operation row — and are reclaimed when validation rejects.
+    attachments: list[RetainAttachmentInfo] = field(default_factory=list)
 
 
 @dataclass
