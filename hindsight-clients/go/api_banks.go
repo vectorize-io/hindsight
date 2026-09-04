@@ -1219,6 +1219,139 @@ func (a *BanksAPIService) ListBanksExecute(r ApiListBanksRequest) (*BankListResp
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
+type ApiPreviewPromptRequest struct {
+	ctx context.Context
+	ApiService *BanksAPIService
+	bankId string
+	promptPreviewRequest *PromptPreviewRequest
+	authorization *string
+}
+
+func (r ApiPreviewPromptRequest) PromptPreviewRequest(promptPreviewRequest PromptPreviewRequest) ApiPreviewPromptRequest {
+	r.promptPreviewRequest = &promptPreviewRequest
+	return r
+}
+
+func (r ApiPreviewPromptRequest) Authorization(authorization string) ApiPreviewPromptRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiPreviewPromptRequest) Execute() (*PromptPreviewResponse, *http.Response, error) {
+	return r.ApiService.PreviewPromptExecute(r)
+}
+
+/*
+PreviewPrompt Preview an operation's prompts (no LLM call)
+
+Render the exact system and user messages retain, observations or reflect would send for this bank, without calling an LLM, reading memories, or changing anything. Any prompt-affecting setting can be overridden in the body, so a candidate mission can be previewed before it is saved. Both messages are returned: retain and observations keep their system prompt bank-agnostic (one provider-side cache serves every bank) and carry the mission in the user message instead.
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @return ApiPreviewPromptRequest
+*/
+func (a *BanksAPIService) PreviewPrompt(ctx context.Context, bankId string) ApiPreviewPromptRequest {
+	return ApiPreviewPromptRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+	}
+}
+
+// Execute executes the request
+//  @return PromptPreviewResponse
+func (a *BanksAPIService) PreviewPromptExecute(r ApiPreviewPromptRequest) (*PromptPreviewResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodPost
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *PromptPreviewResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "BanksAPIService.PreviewPrompt")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/prompts/preview"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.promptPreviewRequest == nil {
+		return localVarReturnValue, nil, reportError("promptPreviewRequest is required and must be specified")
+	}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	// body params
+	localVarPostBody = r.promptPreviewRequest
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
 type ApiRecoverConsolidationRequest struct {
 	ctx context.Context
 	ApiService *BanksAPIService

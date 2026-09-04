@@ -518,6 +518,7 @@ if TYPE_CHECKING:
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoryScopeWatermark
+    from .prompt_preview import PromptPreview
     from .retain.attachment_content import LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
     from .transfer import BankImportResult, ImportResult
@@ -11451,6 +11452,79 @@ class MemoryEngine(MemoryEngineInterface):
             "llm_output_language",
         }
     )
+
+    _PROMPT_PREVIEW_OVERRIDE_FIELDS = frozenset(
+        _EXTRACTION_OVERRIDE_FIELDS | {"observations_mission", "reflect_mission"}
+    )
+
+    async def preview_prompt(
+        self,
+        bank_id: str,
+        operation: str,
+        *,
+        content: str | None = None,
+        context: str | None = None,
+        event_date: "datetime | None" = None,
+        existing_observations: str | None = None,
+        include_observations: bool = True,
+        has_mental_models: bool = True,
+        budget: str | None = None,
+        overrides: dict | None = None,
+        request_context: "RequestContext",
+    ) -> "PromptPreview":
+        """Render the prompts ``operation`` would send for this bank — no LLM call, no writes.
+
+        The read-only counterpart to :meth:`extract_dry_run`: that one spends a real
+        LLM call to show what a candidate mission would *extract*, this one costs
+        nothing and shows the prompt the mission actually lands in. ``overrides``
+        applies unsaved config edits (a candidate mission, an extraction mode) for
+        this call only. Side-effect-free and idempotent.
+        """
+        from .prompt_preview import render_prompt_preview
+
+        await self._authenticate_tenant(request_context)
+        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+
+        for key, value in (overrides or {}).items():
+            if key not in self._PROMPT_PREVIEW_OVERRIDE_FIELDS:
+                raise ValueError(
+                    f"Unsupported prompt preview override '{key}'. "
+                    f"Allowed: {sorted(self._PROMPT_PREVIEW_OVERRIDE_FIELDS)}"
+                )
+            setattr(resolved_config, key, value)
+
+        # Only reflect reads the profile and the directives — the profile for the bank
+        # name, disposition and legacy mission column that reflect_mission overlays;
+        # the directives because they are injected as hard rules near the top of the
+        # agent's system prompt, so a preview without them is missing the part of the
+        # prompt a bank is most likely to have customised. Fetching either for the
+        # other two operations would add queries they never use.
+        bank_profile: dict[str, Any] = {}
+        directives: list[dict[str, Any]] = []
+        if operation == "reflect":
+            bank_profile = (
+                await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+            ) or {}
+            # Untagged reflect: isolation_mode keeps tag-scoped directives out, which
+            # matches what a reflect call with no tags would load.
+            listed = await self.list_directives(
+                bank_id=bank_id, active_only=True, request_context=request_context, isolation_mode=True
+            )
+            directives = list(listed.items)
+
+        return render_prompt_preview(
+            operation,
+            resolved_config,
+            bank_profile,
+            content=content,
+            context=context,
+            event_date=event_date,
+            existing_observations=existing_observations,
+            include_observations=include_observations,
+            has_mental_models=has_mental_models,
+            budget=budget,
+            directives=directives,
+        )
 
     async def extract_dry_run(
         self,

@@ -4347,6 +4347,242 @@ export type OperationsListResponse = {
 };
 
 /**
+ * PromptBlockModel
+ *
+ * One block of a message: its text, and the setting that decides it.
+ *
+ * The **active** blocks of a message concatenate back to the exact text sent, so a
+ * client can render them separately without showing the reader something the model
+ * never receives. An **inactive** block has no text: it marks a setting that is
+ * switched off, at the point where it would land if it were on, with `note`
+ * explaining what turning it on would do.
+ */
+export type PromptBlockModel = {
+  /**
+   * Label
+   *
+   * Human-readable name for the block.
+   */
+  label: string;
+  /**
+   * Text
+   *
+   * The block's text; empty when the block is inactive.
+   */
+  text: string;
+  /**
+   * Source
+   *
+   * `config` — a setting the reader can change (`field` names it); `builtin` — Hindsight's own fixed wording; `runtime` — a stand-in for the data the operation would be given.
+   */
+  source: "config" | "builtin" | "runtime";
+  /**
+   * Field
+   *
+   * Config field behind this block; empty for pure runtime data.
+   */
+  field?: string;
+  /**
+   * Active
+   *
+   * Whether this block is in the prompt as configured.
+   */
+  active?: boolean;
+  /**
+   * Note
+   *
+   * For an inactive block, what turning the setting on would do.
+   */
+  note?: string | null;
+  /**
+   * Value
+   *
+   * The field's effective value; null when unset.
+   */
+  value?: string | null;
+  /**
+   * Kind
+   *
+   * Shape of the value, so a client can offer the right control. `complex` means the value has structure this flattens for display and must be edited by its own dedicated UI.
+   */
+  kind: "text" | "boolean" | "choice" | "complex";
+  /**
+   * Choices
+   *
+   * Allowed values, when `kind` is `choice`.
+   */
+  choices?: Array<string> | null;
+  /**
+   * Editable
+   *
+   * Whether this bank may override the field via the bank config API. Server-level fields shape the prompt but cannot be set per bank, and offering to edit one would only collect a 400.
+   */
+  editable?: boolean;
+};
+
+/**
+ * PromptMessageModel
+ *
+ * One message of the request, as the blocks it is built from.
+ */
+export type PromptMessageModel = {
+  /**
+   * Role
+   */
+  role: "system" | "user";
+  /**
+   * Blocks
+   */
+  blocks?: Array<PromptBlockModel>;
+};
+
+/**
+ * PromptPreviewRequest
+ *
+ * Request to render the prompts an operation would send, without calling an LLM.
+ *
+ * Every field is optional: with an empty body you get the bank's current prompts with
+ * bracketed placeholders where the runtime data (the chunk, the facts, the question)
+ * would go. The mission/config fields override the bank's stored values for this call
+ * only, so the control plane can preview an unsaved edit.
+ */
+export type PromptPreviewRequest = {
+  /**
+   * Operation
+   *
+   * Which operation's prompts to render.
+   */
+  operation?: "retain" | "observations" | "reflect";
+  /**
+   * Content
+   *
+   * Stands in for the runtime data: the text being retained, the batch of facts being consolidated, or the question being reflected on. A placeholder is used when omitted.
+   */
+  content?: string | null;
+  /**
+   * Context
+   *
+   * Context accompanying the content (retain, reflect).
+   */
+  context?: string | null;
+  /**
+   * Timestamp
+   *
+   * Reference timestamp shown to the model (retain only, ISO 8601). Omit it and the current time is used, which is what retain itself stamps on an item that carries no timestamp.
+   */
+  timestamp?: string | null;
+  /**
+   * Existing Observations
+   *
+   * Stands in for the bank's current observations (observations only).
+   */
+  existing_observations?: string | null;
+  /**
+   * Include Observations
+   *
+   * Whether search_observations is in the reflect tool list (reflect only).
+   */
+  include_observations?: boolean;
+  /**
+   * Has Mental Models
+   *
+   * Whether the bank has mental models to search (reflect only).
+   */
+  has_mental_models?: boolean;
+  /**
+   * Budget
+   *
+   * Reflect search-depth budget: low, mid or high.
+   */
+  budget?: string | null;
+  /**
+   * Retain Mission
+   */
+  retain_mission?: string | null;
+  /**
+   * Retain Extraction Mode
+   */
+  retain_extraction_mode?: string | null;
+  /**
+   * Retain Custom Instructions
+   */
+  retain_custom_instructions?: string | null;
+  /**
+   * Retain Extract Causal Links
+   */
+  retain_extract_causal_links?: boolean | null;
+  /**
+   * Retain Chunk Size
+   */
+  retain_chunk_size?: number | null;
+  /**
+   * Entity Labels
+   *
+   * Controlled vocabulary for entity labels (overrides the bank's config for this call)
+   */
+  entity_labels?: Array<LabelGroupInput> | null;
+  /**
+   * Entities Allow Free Form
+   */
+  entities_allow_free_form?: boolean | null;
+  /**
+   * Observations Mission
+   */
+  observations_mission?: string | null;
+  /**
+   * Reflect Mission
+   */
+  reflect_mission?: string | null;
+  /**
+   * Llm Output Language
+   */
+  llm_output_language?: string | null;
+};
+
+/**
+ * PromptPreviewResponse
+ *
+ * The messages one call of the operation would send.
+ *
+ * `messages` is in send order, system first. Both are always present because a
+ * mission is not necessarily in the system prompt: retain and observations keep
+ * their system prompt bank-agnostic (so one provider-side cache serves every bank)
+ * and carry the mission in the user message instead.
+ *
+ * When `skipped_reason` is set the configuration means no prompt is sent at all —
+ * `chunks` extraction mode stores each chunk verbatim and never calls an LLM — and
+ * `messages` is empty.
+ */
+export type PromptPreviewResponse = {
+  /**
+   * Operation
+   *
+   * The operation these prompts belong to.
+   */
+  operation: string;
+  /**
+   * Messages
+   *
+   * Request messages, in send order. Each is given as the blocks it is built from.
+   */
+  messages?: Array<PromptMessageModel>;
+  /**
+   * Response Schema
+   *
+   * JSON schema the response is constrained to, when the operation constrains it.
+   */
+  response_schema?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Skipped Reason
+   *
+   * Why no prompt is sent, when the configuration means none is.
+   */
+  skipped_reason?: string | null;
+};
+
+/**
  * RecallRequest
  *
  * Request model for recall endpoint.
@@ -6035,6 +6271,42 @@ export type DryRunExtractMemoriesResponses = {
 
 export type DryRunExtractMemoriesResponse =
   DryRunExtractMemoriesResponses[keyof DryRunExtractMemoriesResponses];
+
+export type PreviewPromptData = {
+  body: PromptPreviewRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/prompts/preview";
+};
+
+export type PreviewPromptErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type PreviewPromptError = PreviewPromptErrors[keyof PreviewPromptErrors];
+
+export type PreviewPromptResponses = {
+  /**
+   * Successful Response
+   */
+  200: PromptPreviewResponse;
+};
+
+export type PreviewPromptResponse = PreviewPromptResponses[keyof PreviewPromptResponses];
 
 export type GetMemoryData = {
   body?: never;

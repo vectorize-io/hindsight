@@ -394,6 +394,89 @@ See the [Memory Defense guide](../memory-defense/index.md) for usage examples.
 
 ---
 
+## Previewing Prompts
+
+A mission only means something once you can see the prompt it lands in. `POST /v1/default/banks/{bank_id}/prompts/preview` renders the exact messages `retain`, `observations` or `reflect` would send for a bank — no LLM call, no reads, nothing stored.
+
+Any prompt-affecting setting can be supplied in the body to preview a candidate value before you save it:
+
+```bash
+curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/prompts/preview" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "retain",
+    "retain_mission": "Only retain facts about pricing and contract terms.",
+    "content": "Acme moved to a usage-based plan in March."
+  }'
+```
+
+The response carries the messages in send order, each broken into the blocks it is built from:
+
+```json
+{
+  "operation": "retain",
+  "messages": [
+    {
+      "role": "system",
+      "blocks": [
+        {
+          "label": "Extraction rules",
+          "text": "Extract SIGNIFICANT facts from text...",
+          "source": "builtin",
+          "field": "retain_extraction_mode",
+          "active": true,
+          "value": "concise",
+          "kind": "choice",
+          "choices": ["concise", "verbose", "verbatim", "chunks", "custom"],
+          "editable": true
+        },
+        {
+          "label": "Custom extraction instructions",
+          "text": "",
+          "source": "config",
+          "field": "retain_custom_instructions",
+          "active": false,
+          "note": "Would be sent here instead of the built-in rules above, when the extraction mode is custom.",
+          "kind": "text",
+          "editable": true
+        }
+      ]
+    },
+    { "role": "user", "blocks": [] }
+  ],
+  "response_schema": { "type": "object", "properties": { "facts": {} } }
+}
+```
+
+- **`messages`** — the request, system first, exactly as the model receives it.
+- **`blocks`** — the **active** blocks of a message concatenate back to its text exactly: nothing dropped, duplicated or reordered. `source` says what produced each — `config` is a setting you can change (`field` names it, and `value`/`kind`/`choices` describe it), `builtin` is Hindsight's own wording. The runtime data an operation is given is not a block: it is a hole in the text, marked inline with `«…»`.
+- **Inactive blocks** (`active: false`) have no text. They mark a setting that is switched off, at the point where it *would* land, with `note` explaining what turning it on would do — so a mission you have not written yet is still visible where it would go.
+- **`editable`** — false for server-level fields such as `llm_output_language`, which shape the prompt but cannot be overridden per bank.
+
+**Both messages are returned on purpose.** For `retain` and `observations` the mission travels in the *user* message, not the system prompt: keeping the system prompt identical for every bank lets one provider-side prompt cache serve them all, which is a large cost saving on high-volume ingestion. Only `reflect` puts its mission in the system prompt.
+
+Omit `content` and a bracketed placeholder stands in for the runtime data, so the surrounding instructions stay readable.
+
+### When there is no prompt
+
+`chunks` extraction mode stores each chunk verbatim and never calls an LLM. There is no prompt to show, so `messages` is empty and `skipped_reason` explains why:
+
+```json
+{
+  "operation": "retain",
+  "messages": [],
+  "inputs": [...],
+  "skipped_reason": "Chunks mode stores each chunk verbatim as its own memory and never calls an LLM, so retain sends no prompt at all. ..."
+}
+```
+
+`inputs` is still populated in this case — the extraction mode is exactly what the reader needs to see to understand why nothing is sent.
+
+In the Control Plane, each Mission field on the bank **Configuration** tab has a **Preview prompt** button that renders this against whatever you have typed, before you save.
+
+> **💡 Tip**
+>
+This is the free counterpart to [dry-run extraction](memories.md), which spends a real LLM call to show what a candidate mission would actually *extract*. Preview the prompt first, then dry-run it.
 ## Updating Configuration
 
 Bank configuration fields (retain mission, extraction mode, observations mission, etc.) are managed via a **separate config API**, not the `create_bank` call. This lets you change operational settings independently from the bank's identity and disposition.

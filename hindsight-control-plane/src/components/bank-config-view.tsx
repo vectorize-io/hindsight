@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
 import { client } from "@/lib/api";
+import { PreviewPromptButton } from "@/components/prompt-preview-dialog";
 import {
   deserializeRetainStrategies,
   serializeRetainStrategies,
@@ -779,6 +780,17 @@ export function BankConfigView() {
             }
             placeholder={t("observationsMissionPlaceholder")}
             rows={3}
+            action={
+              <PreviewPromptButton
+                operation="observations"
+                overrides={omitNullish({
+                  observations_mission: observationsEdits.observations_mission,
+                })}
+                onSaved={(field, value) =>
+                  setObservationsEdits((prev) => ({ ...prev, [field]: value }))
+                }
+              />
+            }
           />
           <FieldRow label={t("llmBatchSizeLabel")} description={t("llmBatchSizeDescription")}>
             <Input
@@ -870,6 +882,15 @@ export function BankConfigView() {
             onChange={(v) => setReflectEdits((prev) => ({ ...prev, reflect_mission: v }))}
             placeholder={t("reflectMissionPlaceholder")}
             rows={3}
+            action={
+              <PreviewPromptButton
+                operation="reflect"
+                overrides={omitNullish({ reflect_mission: reflectEdits.reflect_mission })}
+                onSaved={(field, value) =>
+                  setReflectEdits((prev) => ({ ...prev, [field]: value ?? "" }))
+                }
+              />
+            }
           />
           <TraitRow
             label={t("skepticismLabel")}
@@ -1148,6 +1169,16 @@ function getExtractionModes(t: (key: string) => string): { value: string; label:
 }
 const INHERIT_SENTINEL = "__inherit__";
 
+/**
+ * Drop null/undefined/empty entries so a field the user left blank falls back to the
+ * bank's stored value instead of overriding it with "unset".
+ */
+function omitNullish(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(values).filter(([, v]) => v !== null && v !== undefined && v !== "")
+  );
+}
+
 function RetainStrategyForm({
   values,
   onChange,
@@ -1224,6 +1255,26 @@ function RetainStrategyForm({
         onChange={(v) => onChange({ retain_mission: v || null })}
         placeholder={isOverride ? t("inherited") : t("retainMissionPlaceholder")}
         rows={3}
+        action={
+          <PreviewPromptButton
+            operation="retain"
+            // Only the settings that change the prompt — chunk sizes and strategy
+            // metadata do not appear in it. Nulls are dropped so the bank's own
+            // value is used rather than being overridden with "unset".
+            overrides={omitNullish({
+              retain_mission: values.retain_mission,
+              retain_extraction_mode: values.retain_extraction_mode,
+              retain_custom_instructions: values.retain_custom_instructions,
+              entities_allow_free_form: values.entities_allow_free_form,
+              entity_labels: values.entity_labels,
+            })}
+            // A named strategy's settings live inside `retain_strategies`, not at the
+            // bank's top level, so saving one from the preview would write the wrong
+            // key. Only the default form edits in place.
+            editDisabledReason={isOverride ? t("promptPreviewEditStrategy") : undefined}
+            onSaved={(field, value) => onChange({ [field]: value } as Partial<RetainFormValues>)}
+          />
+        }
       />
       {showCustomField && (
         <TextareaRow
@@ -1640,6 +1691,7 @@ function TextareaRow({
   onChange,
   placeholder,
   rows,
+  action,
 }: {
   label: string;
   description?: string;
@@ -1647,13 +1699,18 @@ function TextareaRow({
   onChange: (v: string) => void;
   placeholder?: string;
   rows?: number;
+  /** Rendered opposite the label — used by the mission fields for "Preview prompt". */
+  action?: React.ReactNode;
 }) {
   return (
     <div className="px-6 py-4">
       <div className="space-y-2">
-        <div>
-          <p className="text-sm font-medium">{label}</p>
-          {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium">{label}</p>
+            {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+          </div>
+          {action}
         </div>
         <Textarea
           value={value}
@@ -1994,7 +2051,7 @@ function EntityLabelsEditor({
   };
 
   return (
-    <div className="px-6 py-4 space-y-3">
+    <div className="px-6 py-4 space-y-3" data-config-field="entity_labels">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium">{t("entityLabelsTitle")}</p>
