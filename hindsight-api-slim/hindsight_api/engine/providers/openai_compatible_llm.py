@@ -56,6 +56,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -726,8 +727,9 @@ class OpenAICompatibleLLM(LLMInterface):
             default_headers: Custom headers passed to the AsyncOpenAI client (proxies,
                 request-tracing middleware). None sends no extra headers.
             cache_affinity: Backend prompt-cache pinning mode — "none" (default),
-                "xai_conv_id", "openai_prompt_cache_key", or "auto" (resolved once here
-                from the provider + base-URL host). See ``engine/cache_affinity.py``.
+                "xai_conv_id", "x_session_id", "openai_prompt_cache_key", or "auto"
+                (resolved once here from the provider + base-URL host). See
+                ``engine/cache_affinity.py``.
             ollama_num_ctx: Native Ollama context window override. None lets Ollama use
                 the model/server default.
             **kwargs: Additional provider-specific parameters.
@@ -833,11 +835,14 @@ class OpenAICompatibleLLM(LLMInterface):
         self._cache_affinity: CacheAffinityMode = resolve_cache_affinity(
             parse_cache_affinity(cache_affinity), self.provider, self.base_url
         )
+        self._default_headers = dict(default_headers or {})
 
         # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
-        client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
-        if default_headers:
-            client_kwargs["default_headers"] = default_headers
+        client_kwargs: dict[str, Any] = {
+            "api_key": self.api_key,
+            "max_retries": 0,
+            "default_headers": with_openai_compatible_user_agent(default_headers),
+        }
         if self.base_url:
             parsed = urlparse(self.base_url)
             if parsed.query:
@@ -1168,7 +1173,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # above has already appended the response schema to it. That is
         # deterministic (the schema text is fixed per response_format), so the id
         # stays stable across the calls of one run.
-        apply_cache_affinity(call_params, self._cache_affinity)
+        apply_cache_affinity(call_params, self._cache_affinity, default_headers=self._default_headers)
         apply_opencode_session(call_params, self.provider)
 
         last_exception = None
@@ -1581,7 +1586,7 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["extra_body"] = extra_body
 
         apply_bank_attribution(call_params)
-        apply_cache_affinity(call_params, self._cache_affinity)
+        apply_cache_affinity(call_params, self._cache_affinity, default_headers=self._default_headers)
         apply_opencode_session(call_params, self.provider)
 
         last_exception = None

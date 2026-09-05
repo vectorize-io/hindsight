@@ -9,6 +9,8 @@ cache, and providers expose different mechanisms for that:
   on a cache-cold replica.
 - OpenAI accepts a ``prompt_cache_key`` request field that improves its own
   cache routing.
+- OpenAI-compatible gateways commonly accept an opt-in ``x-session-id`` header
+  for routing related requests to the same backend session.
 
 Hindsight already does provider-specific cache work for its first-class
 providers (``anthropic_llm`` sets ``cache_control`` breakpoints; ``gemini_llm``
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 # xAI's documented cache-pinning header, and OpenAI's cache-routing field.
 XAI_CONV_ID_HEADER = "x-grok-conv-id"
+SESSION_ID_HEADER = "x-session-id"
 OPENAI_PROMPT_CACHE_KEY_PARAM = "prompt_cache_key"
 # OpenCode Go's conversation-grouping header (#4071).
 OPENCODE_SESSION_HEADER = "x-opencode-session"
@@ -58,6 +61,7 @@ class CacheAffinityMode(StrEnum):
 
     NONE = "none"
     XAI_CONV_ID = "xai_conv_id"
+    X_SESSION_ID = "x_session_id"
     OPENAI_PROMPT_CACHE_KEY = "openai_prompt_cache_key"
     AUTO = "auto"
 
@@ -188,17 +192,44 @@ def apply_opencode_session(request: dict[str, Any], provider: str) -> None:
     extra_headers.setdefault(OPENCODE_SESSION_HEADER, session_id)
 
 
-def apply_cache_affinity(request: dict[str, Any], mode: CacheAffinityMode) -> None:
+def _setdefault_header(
+    request: dict[str, Any],
+    name: str,
+    value: str,
+    default_headers: dict[str, str] | None,
+) -> None:
+    """Set a request header unless either header layer already defines it.
+
+    The OpenAI SDK merges client ``default_headers`` with per-call
+    ``extra_headers`` case-insensitively, with the per-call value winning. Check
+    both layers before injecting an affinity value so an operator-configured
+    session remains authoritative regardless of header spelling.
+    """
+    normalized_name = name.lower()
+    extra_headers = request.get("extra_headers")
+    if isinstance(extra_headers, dict) and any(header.lower() == normalized_name for header in extra_headers):
+        return
+    if default_headers and any(header.lower() == normalized_name for header in default_headers):
+        return
+    request.setdefault("extra_headers", {})[name] = value
+
+
+def apply_cache_affinity(
+    request: dict[str, Any],
+    mode: CacheAffinityMode,
+    *,
+    default_headers: dict[str, str] | None = None,
+) -> None:
     """Add this request's cache-affinity hint to ``request`` in place.
 
     ``mode`` must already be resolved (see :func:`resolve_cache_affinity`);
     ``none`` — and an unresolved ``auto`` — add nothing.
 
     User-wins semantics throughout, matching the file's ``setdefault`` precedent
-    in ``_apply_provider_extra_body_defaults``: an ``x-grok-conv-id`` the caller
-    already placed in ``extra_headers`` is kept, and a ``prompt_cache_key`` in
-    the operator's configured ``extra_body`` (the escape hatch for a backend
-    that wants its own value) suppresses ours entirely.
+    in ``_apply_provider_extra_body_defaults``: affinity headers already placed
+    in either the client's ``default_headers`` or the call's ``extra_headers``
+    are kept, and a ``prompt_cache_key`` in the operator's configured
+    ``extra_body`` suppresses ours entirely.
 
     Never raises: when no id can be derived the request is left byte-identical
     to a pre-affinity one.
@@ -208,8 +239,9 @@ def apply_cache_affinity(request: dict[str, Any], mode: CacheAffinityMode) -> No
         return
 
     if mode is CacheAffinityMode.XAI_CONV_ID:
-        extra_headers = request.setdefault("extra_headers", {})
-        extra_headers.setdefault(XAI_CONV_ID_HEADER, affinity_id)
+        _setdefault_header(request, XAI_CONV_ID_HEADER, affinity_id, default_headers)
+    elif mode is CacheAffinityMode.X_SESSION_ID:
+        _setdefault_header(request, SESSION_ID_HEADER, affinity_id, default_headers)
     elif mode is CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY:
         # prompt_cache_key is a first-class named parameter on
         # chat.completions.create() in the resolved openai SDK, so it goes at the

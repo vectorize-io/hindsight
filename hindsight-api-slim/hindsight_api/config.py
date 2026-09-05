@@ -165,7 +165,8 @@ ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 # Backend prompt-cache pinning for the OpenAI-compatible providers and Fireworks. Server-side
 # prompt caches are per backend server, so the same conversation has to reach the same
-# one: "xai_conv_id" sends xAI's documented x-grok-conv-id header, and
+# one: "xai_conv_id" sends xAI's documented x-grok-conv-id header,
+# "x_session_id" sends the generic x-session-id header, and
 # "openai_prompt_cache_key" sends OpenAI's prompt_cache_key field. See
 # engine/cache_affinity.py. Per-operation variants override the global one.
 ENV_LLM_CACHE_AFFINITY = "HINDSIGHT_API_LLM_CACHE_AFFINITY"
@@ -2598,7 +2599,7 @@ class HindsightConfig:
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
     # Backend prompt-cache pinning for the OpenAI-compatible providers and Fireworks:
     # "none" (default),
-    # "xai_conv_id", "openai_prompt_cache_key" or "auto". Static (server-level) like the
+    # "xai_conv_id", "x_session_id", "openai_prompt_cache_key" or "auto". Static (server-level) like the
     # two fields above -- it is a transport detail of the configured endpoint, not a
     # per-bank behaviour. See ENV_LLM_CACHE_AFFINITY and engine/cache_affinity.py.
     llm_cache_affinity: str | None

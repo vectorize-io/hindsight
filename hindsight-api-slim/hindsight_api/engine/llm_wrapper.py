@@ -501,7 +501,7 @@ def create_llm_provider(
         cache_affinity: Backend prompt-cache pinning mode, forwarded to the
             ``OpenAICompatibleLLM`` branch, ``fireworks`` and ``nous`` (all three share the
             OpenAI-compatible wire format): "none" (default), "xai_conv_id",
-            "openai_prompt_cache_key", or "auto". Providers on other branches do their own
+            "x_session_id", "openai_prompt_cache_key", or "auto". Providers on other branches do their own
             cache work or none at all. See ``engine/cache_affinity.py``.
         structured_output_forced_tool: Ask the LiteLLM-backed providers (``litellm``,
             ``litellmrouter``, ``bedrock``) for structured output via a forced tool call
@@ -861,7 +861,7 @@ class LLMProvider:
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware.
             cache_affinity: Backend prompt-cache pinning mode for the OpenAI-compatible and
-                Fireworks providers ("none", "xai_conv_id", "openai_prompt_cache_key",
+                Fireworks providers ("none", "xai_conv_id", "x_session_id", "openai_prompt_cache_key",
                 "auto"). Validated here for every provider so a typo never fails silently;
                 providers on other factory branches ignore it. Used verbatim — callers
                 resolve the per-operation/global fallback.
