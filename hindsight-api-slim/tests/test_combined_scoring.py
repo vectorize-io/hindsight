@@ -242,6 +242,18 @@ class TestRecencyDecayFunction:
         assert compute_recency_decay(-100, "linear") == 1.0
         assert compute_recency_decay(-100, "exponential", halflife_days=90) == 1.0
 
+    def test_far_future_dates_clamp_without_overflowing(self):
+        """The clamp has to run before the power: 0.5 ** a large negative exponent
+        overflows float, so min() never gets to cap it."""
+        assert compute_recency_decay(-92_160, "exponential", halflife_days=90) == 1.0
+        assert compute_recency_decay(-200_000, "exponential", halflife_days=7) == 1.0
+
+    def test_far_future_unit_does_not_fail_scoring(self):
+        """One far-future memory must not take the whole recall down with it."""
+        sr = _make_result(ce_norm=0.5, occurred_start=NOW + timedelta(days=20_000))
+        apply_combined_scoring([sr], now=NOW, recency_decay_function="exponential", recency_decay_halflife_days=7.0)
+        assert sr.recency == 1.0
+
     def test_nonpositive_halflife_falls_back_to_neutral(self):
         """A misconfigured (<=0) half-life degrades to neutral rather than dividing by zero."""
         assert compute_recency_decay(30, "exponential", halflife_days=0) == 0.5

@@ -50,7 +50,10 @@ def compute_recency_decay(
     if function == "exponential":
         if halflife_days <= 0:
             return 0.5
-        return min(1.0, 0.5 ** (days_ago / halflife_days))
+        # Clamp ahead of the power: 0.5 ** a large negative exponent overflows.
+        if days_ago <= 0:
+            return 1.0
+        return 0.5 ** (days_ago / halflife_days)
     # "linear" (default): straight decay to a 0.1 floor over the window.
     window = linear_window_days if linear_window_days > 0 else _RECENCY_DECAY_LINEAR_WINDOW_DAYS
     return max(0.1, min(1.0, 1.0 - (days_ago / window)))
