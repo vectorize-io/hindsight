@@ -29,6 +29,7 @@ from .prompts import (
     build_final_system_prompt,
     build_reduce_prompt,
     build_system_prompt_for_tools,
+    is_no_relevant_evidence_sentinel,
     split_context_history,
 )
 from .structured_doc import (
@@ -64,6 +65,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
+
+# Map calls that return the empty-evidence sentinel on a non-empty chunk are
+# treated as failed extractions and retried once — the same "one retry then
+# give up" budget the agent loop uses for consecutive LLM errors (#4054).
+_SPLIT_MAP_SENTINEL_RETRIES = 1
 
 #: Temperature for split synthesis's map calls. They copy claims and ids out of one
 #: chunk — the mechanical half of the job, like consolidation's extraction passes,
@@ -803,23 +809,56 @@ async def _run_reflect_agent_inner(
                 f"[REFLECT {reflect_id}] Retrieved data exceeds the context budget; "
                 f"split synthesis over {len(chunks)} chunks."
             )
-            # Map: each chunk in parallel.
-            claim_sections = await asyncio.gather(
-                *(
-                    _tracked_llm_call(
-                        build_chunk_claims_prompt(query, chunk),
-                        f"final_map_{i}",
+
+            # Map: each chunk in parallel. A non-empty chunk that returns the
+            # empty-evidence sentinel is a failed extraction — retry within the
+            # map retry budget, and never pass the sentinel into reduce (#4054).
+            async def _map_chunk_claims(index: int, chunk: list[dict]) -> str | None:
+                prompt = build_chunk_claims_prompt(query, chunk)
+                # Empty chunks (defensive) may legitimately return the sentinel;
+                # only non-empty ones get retried when the model falsely empties.
+                attempts = 1 + (_SPLIT_MAP_SENTINEL_RETRIES if chunk else 0)
+                last = ""
+                for attempt in range(attempts):
+                    scope = f"final_map_{index}" if attempt == 0 else f"final_map_{index}_retry{attempt}"
+                    last = await _tracked_llm_call(
+                        prompt,
+                        scope,
                         CLAIMS_SYSTEM_PROMPT,
                         synthesis_max_completion_tokens,
                         temperature=_map_temperature(),
                     )
-                    for i, chunk in enumerate(chunks, 1)
+                    if not is_no_relevant_evidence_sentinel(last):
+                        return last
+                    if not chunk:
+                        return None
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] Split-synthesis map chunk {index} returned "
+                        f"empty-evidence sentinel on non-empty chunk "
+                        f"(attempt {attempt + 1}/{attempts}); "
+                        + ("retrying." if attempt + 1 < attempts else "dropping chunk from reduce.")
+                    )
+                return None
+
+            mapped = await asyncio.gather(*(_map_chunk_claims(i, chunk) for i, chunk in enumerate(chunks, 1)))
+            claim_sections = [section for section in mapped if section]
+            lost_chunks = len(mapped) - len(claim_sections)
+            if lost_chunks:
+                logger.warning(
+                    f"[REFLECT {reflect_id}] Split synthesis lost {lost_chunks}/{len(chunks)} "
+                    f"map chunk(s) after sentinel retries; synthesizing from "
+                    f"{len(claim_sections)} surviving section(s)."
                 )
-            )
-            # Reduce: one synthesis call over every chunk's claims.
+            if not claim_sections:
+                raise ReflectNoAnswerError(
+                    f"Reflect's split synthesis lost every map chunk to the empty-evidence "
+                    f"sentinel after retries ({len(chunks)} chunk(s), "
+                    f"{iterations_completed} iteration(s))."
+                )
+            # Reduce: one synthesis call over every surviving chunk's claims.
             prompt = build_reduce_prompt(
                 query,
-                list(claim_sections),
+                claim_sections,
                 bank_profile,
                 context,
                 max_tokens=max_tokens,

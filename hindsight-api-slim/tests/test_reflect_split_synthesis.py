@@ -20,12 +20,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api.config import get_config
-from hindsight_api.engine.reflect.agent import run_reflect_agent
+from hindsight_api.engine.reflect.agent import ReflectNoAnswerError, run_reflect_agent
 from hindsight_api.engine.reflect.prompts import (
     _MIN_SPLIT_CHUNK_TOKENS,
+    NO_RELEVANT_EVIDENCE_SENTINEL,
     _render_history_block,
     build_chunk_claims_prompt,
     build_reduce_prompt,
+    is_no_relevant_evidence_sentinel,
     split_context_history,
 )
 from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
@@ -129,6 +131,17 @@ class TestSplitSynthesisPrompts:
         assert "claim A" in prompt and "claim B" in prompt
         assert "LATEST mentioned_at" in prompt
         assert "## Question\nwhat happened?" in prompt
+
+    def test_empty_evidence_sentinel_matcher(self):
+        assert is_no_relevant_evidence_sentinel(NO_RELEVANT_EVIDENCE_SENTINEL)
+        assert is_no_relevant_evidence_sentinel(f"  {NO_RELEVANT_EVIDENCE_SENTINEL}\n")
+        assert not is_no_relevant_evidence_sentinel("- claim (mentioned_at: unknown; ...)")
+        assert not is_no_relevant_evidence_sentinel("")
+        assert not is_no_relevant_evidence_sentinel(None)
+        # CLAIMS system prompt must advertise the exact sentinel literal.
+        from hindsight_api.engine.reflect.prompts import CLAIMS_SYSTEM_PROMPT
+
+        assert f"output exactly: {NO_RELEVANT_EVIDENCE_SENTINEL}" in CLAIMS_SYSTEM_PROMPT
 
 
 class TestSplitSynthesisAgentFlow:
@@ -358,6 +371,149 @@ class TestSplitSynthesisAgentFlow:
         for i in range(n):
             holders = [p for p in map_prompts if f'"mem-{i}"' in p]
             assert len(holders) == 1, f"mem-{i} appears in {len(holders)} map prompts"
+
+    @pytest.mark.asyncio
+    async def test_map_sentinel_on_nonempty_chunk_is_retried(self):
+        """A map call that returns the empty-evidence sentinel on a non-empty
+        chunk is retried once; the retry's claims reach reduce, not the sentinel (#4054)."""
+        big = {"memories": [{"id": f"mem-{i}", "text": "fact " + "z" * 600} for i in range(60)]}
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            return_value=LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            )
+        )
+        map_attempts = {"n": 0}
+
+        async def _call(messages, **kwargs):
+            if "extract evidence" in messages[0]["content"]:
+                map_attempts["n"] += 1
+                # First map attempt (any chunk) returns the sentinel; retries succeed.
+                # Count per-call: odd first tries vs retries — simpler: first call per
+                # chunk-sequence fails. Use a counter: first len(chunks) calls fail?
+                # We don't know chunk count up front. Fail only the very first map
+                # call, succeed thereafter — exercises one retry path.
+                if map_attempts["n"] == 1:
+                    return (
+                        NO_RELEVANT_EVIDENCE_SENTINEL,
+                        TokenUsage(input_tokens=10, output_tokens=6, total_tokens=16),
+                    )
+                return (
+                    f"- recovered claim {map_attempts['n']} "
+                    "(mentioned_at: 2026-01-01; occurred: unknown; memory_ids: mem-1)",
+                    TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+                )
+            return ("Reduced from surviving claims.", TokenUsage(input_tokens=20, output_tokens=10, total_tokens=30))
+
+        llm.call = AsyncMock(side_effect=_call)
+
+        result = await run_reflect_agent(
+            llm_config=llm,
+            bank_id="b",
+            query="what do you know?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_context_tokens=int(_MIN_SPLIT_CHUNK_TOKENS / 0.8) + 10,
+            **self._functions(big),
+        )
+
+        scopes = [c.scope for c in result.llm_trace]
+        assert any(s.endswith("_retry1") for s in scopes), f"expected a map retry scope, got {scopes}"
+        assert scopes[-1] == "final"
+        assert result.text == "Reduced from surviving claims."
+        reduce_prompt = llm.call.await_args_list[-1].kwargs["messages"][1]["content"]
+        assert NO_RELEVANT_EVIDENCE_SENTINEL not in reduce_prompt
+        assert "recovered claim" in reduce_prompt
+
+    @pytest.mark.asyncio
+    async def test_map_sentinel_exhausted_drops_chunk_not_fed_to_reduce(self):
+        """After retries are exhausted, a sentinel chunk is omitted from reduce
+        rather than passed through as an empty claims section (#4054)."""
+        big = {"memories": [{"id": f"mem-{i}", "text": "fact " + "z" * 600} for i in range(60)]}
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            return_value=LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            )
+        )
+
+        # Pin the first chunk's attempts to always-sentinel; other chunks succeed.
+        # Map calls run in parallel via gather, so order of llm.call is undefined —
+        # key off prompt content: the chunk that contains mem-0 is the "first"
+        # history block and lands in chunk 1 under greedy packing from the start.
+        async def _call(messages, **kwargs):
+            if "extract evidence" in messages[0]["content"]:
+                user = messages[1]["content"]
+                if '"mem-0"' in user:
+                    return (
+                        NO_RELEVANT_EVIDENCE_SENTINEL,
+                        TokenUsage(input_tokens=10, output_tokens=6, total_tokens=16),
+                    )
+                return (
+                    "- good claim (mentioned_at: 2026-01-01; occurred: unknown; memory_ids: mem-50)",
+                    TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+                )
+            return ("Answer from remaining evidence.", TokenUsage(input_tokens=20, output_tokens=10, total_tokens=30))
+
+        llm.call = AsyncMock(side_effect=_call)
+
+        result = await run_reflect_agent(
+            llm_config=llm,
+            bank_id="b",
+            query="q?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_context_tokens=int(_MIN_SPLIT_CHUNK_TOKENS / 0.8) + 10,
+            **self._functions(big),
+        )
+
+        scopes = [c.scope for c in result.llm_trace]
+        assert any(s.startswith("final_map_") and s.endswith("_retry1") for s in scopes), scopes
+        assert result.text == "Answer from remaining evidence."
+        reduce_prompt = llm.call.await_args_list[-1].kwargs["messages"][1]["content"]
+        assert NO_RELEVANT_EVIDENCE_SENTINEL not in reduce_prompt
+        assert "good claim" in reduce_prompt
+        # Only surviving sections appear — lost chunk must not add an empty pass.
+        assert reduce_prompt.count("### Evidence pass") >= 1
+
+    @pytest.mark.asyncio
+    async def test_all_map_chunks_lost_to_sentinel_raises(self):
+        """If every map chunk stays on the sentinel after retries, fail loudly
+        instead of reducing into a fluent empty/wrong document (#4054)."""
+        big = {"memories": [{"id": f"mem-{i}", "text": "fact " + "z" * 600} for i in range(60)]}
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            return_value=LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            )
+        )
+
+        async def _call(messages, **kwargs):
+            if "extract evidence" in messages[0]["content"]:
+                return (
+                    NO_RELEVANT_EVIDENCE_SENTINEL,
+                    TokenUsage(input_tokens=10, output_tokens=6, total_tokens=16),
+                )
+            return ("should not reach reduce", TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2))
+
+        llm.call = AsyncMock(side_effect=_call)
+
+        with pytest.raises(ReflectNoAnswerError, match="empty-evidence sentinel"):
+            await run_reflect_agent(
+                llm_config=llm,
+                bank_id="b",
+                query="q?",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                max_context_tokens=int(_MIN_SPLIT_CHUNK_TOKENS / 0.8) + 10,
+                **self._functions(big),
+            )
+
+        # Reduce must never have been invoked.
+        reduce_calls = [
+            c for c in llm.call.await_args_list if "extract evidence" not in c.kwargs["messages"][0]["content"]
+        ]
+        assert reduce_calls == []
 
 
 @pytest.mark.hs_llm_core

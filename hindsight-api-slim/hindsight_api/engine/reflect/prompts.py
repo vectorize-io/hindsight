@@ -766,6 +766,17 @@ def build_final_prompt(
     return "\n".join(parts) + output_language_directive(llm_output_language)
 
 
+#: Exact map-call output when a chunk has nothing relevant to the question.
+#: Kept as a module constant so the agent can detect a false-empty map result
+#: without duplicating the literal (#4054).
+NO_RELEVANT_EVIDENCE_SENTINEL = "(no relevant evidence)"
+
+
+def is_no_relevant_evidence_sentinel(text: str | None) -> bool:
+    """True when ``text`` is the map-call empty-evidence sentinel (after strip)."""
+    return (text or "").strip() == NO_RELEVANT_EVIDENCE_SENTINEL
+
+
 #: System prompt for the intermediate (map) calls of split synthesis. They do
 #: NOT answer the question — they compress one chunk of retrieved data into
 #: dated, cited claims that the reduce call can reason over. Dates and ids are
@@ -784,7 +795,7 @@ CLAIMS_SYSTEM_PROMPT = (
     "- Do NOT synthesize, conclude, resolve conflicts, or answer the question — report conflicting "
     "claims as separate bullets with their dates; a later pass reconciles them.\n"
     "- Copy memory ids exactly as they appear in the data.\n"
-    "- If nothing in the data is relevant, output exactly: (no relevant evidence)"
+    f"- If nothing in the data is relevant, output exactly: {NO_RELEVANT_EVIDENCE_SENTINEL}"
 )
 
 
