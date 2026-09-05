@@ -7,11 +7,49 @@ directly so the semantics are checked in isolation from `MemoryEngine`.
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 import pytest
 
 from hindsight_api.engine.bank_stats_cache import BankStatsCache
+
+
+def test_force_refresh_supersedes_in_flight_loader_on_another_loop() -> None:
+    cache = BankStatsCache(ttl_seconds=60, max_entries=100)
+    old_started = threading.Event()
+    release_old = threading.Event()
+    errors: list[BaseException] = []
+
+    async def old_loader() -> dict[str, str]:
+        old_started.set()
+        while not release_old.is_set():
+            await asyncio.sleep(0.001)
+        return {"value": "old"}
+
+    def load_old() -> None:
+        try:
+            asyncio.run(cache.get_or_load("schema", "bank", old_loader))
+        except BaseException as exc:
+            errors.append(exc)
+
+    old_thread = threading.Thread(target=load_old)
+    old_thread.start()
+    assert old_started.wait(timeout=2)
+
+    async def new_loader() -> dict[str, str]:
+        return {"value": "new"}
+
+    assert asyncio.run(cache.get_or_load("schema", "bank", new_loader, force_refresh=True)) == {"value": "new"}
+    release_old.set()
+    old_thread.join(timeout=2)
+    assert not old_thread.is_alive()
+    assert not errors
+
+    async def should_not_run() -> dict[str, str]:
+        raise AssertionError("fresh force-refresh result should remain cached")
+
+    assert asyncio.run(cache.get_or_load("schema", "bank", should_not_run)) == {"value": "new"}
 
 
 def make_loader(return_value: dict[str, Any]) -> tuple[Any, list[int]]:
