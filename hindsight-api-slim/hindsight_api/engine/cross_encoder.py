@@ -45,6 +45,7 @@ from .local_device import (
     resolve_model_device_type,
     select_local_device,
 )
+from .remote_retry import RetryPolicy, acall_with_retry
 from .tei_retry import TEI_KEEPALIVE_EXPIRY_SECONDS, is_retryable_tei_transport_error, tei_retry_delay
 
 logger = logging.getLogger(__name__)
@@ -82,10 +83,19 @@ class CrossEncoderModel(ABC):
         """
         pass
 
-    @abstractmethod
+    # Bounded retry for this member's remote calls, or None to call straight through.
+    # Set by create_cross_encoder for the remote providers; the in-process backends,
+    # the rrf passthrough, TEI (own retry loop) and MultiCrossEncoder (its members
+    # retry individually) leave it None. Living on the base class rather than in each
+    # provider is deliberate: retry then applies to the one method every backend has
+    # to implement, so a new remote reranker inherits it instead of having to
+    # remember — the omission that let a single Cohere 429 fail an entire recall
+    # (#4134).
+    retry_policy: RetryPolicy | None = None
+
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
-        Score query-document pairs for relevance.
+        Score query-document pairs for relevance, retrying transient failures.
 
         Args:
             pairs: List of (query, document) tuples to score
@@ -93,7 +103,30 @@ class CrossEncoderModel(ABC):
         Returns:
             List of relevance scores (higher = more relevant)
         """
-        pass
+        if self.retry_policy is None:
+            return await self._predict(pairs)
+        # One budget per predict(): rerank is one logical call on the synchronous
+        # recall path, so the worst-case added latency has to stay bounded.
+        return await acall_with_retry(
+            lambda: self._predict(pairs),
+            policy=self.retry_policy,
+            budget=self.retry_policy.new_budget(),
+            provider=self.provider_name,
+        )
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Score ``pairs`` without retry — what each backend in this module implements.
+
+        Deliberately not ``@abstractmethod``: ``CrossEncoderModel`` is exported from
+        ``hindsight_api``, and a subclass that overrides ``predict`` directly (the test
+        doubles here, and any downstream implementation) must keep working — it simply
+        opts out of the shared retry. Every backend in this module implements
+        ``_predict`` instead, which ``TestEveryRemoteRerankerRetries`` enforces so the
+        opt-out cannot happen by accident.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _predict() (or override predict() to opt out of retry)"
+        )
 
 
 class LocalSTCrossEncoder(CrossEncoderModel):
@@ -299,7 +332,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         finally:
             release_local_inference_memory(self._device_type)
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs for relevance.
 
@@ -555,7 +588,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
 
         return all_scores
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs using the remote TEI reranker.
 
@@ -725,7 +758,7 @@ class CohereCrossEncoder(CrossEncoderModel):
             self._client = cohere.Client(api_key=self.api_key, timeout=self.timeout)
             logger.info("Reranker: Cohere provider initialized")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs using the Cohere Rerank API.
 
@@ -813,7 +846,7 @@ class ZeroEntropyCrossEncoder(CrossEncoderModel):
         await self._client.initialize()
         logger.info("Reranker: ZeroEntropy provider initialized")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         return await self._client.predict(pairs)
 
 
@@ -855,7 +888,7 @@ class SiliconFlowCrossEncoder(CrossEncoderModel):
         await self._client.initialize()
         logger.info("Reranker: SiliconFlow provider initialized")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         return await self._client.predict(pairs)
 
 
@@ -881,7 +914,7 @@ class RRFPassthroughCrossEncoder(CrossEncoderModel):
         """No initialization needed."""
         logger.info("Reranker: RRF passthrough provider initialized (neural reranking disabled)")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Return neutral scores - actual ranking uses RRF scores from retrieval.
 
@@ -1072,7 +1105,7 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         finally:
             release_local_inference_memory(self._device_type)
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs using FlashRank.
 
@@ -1165,7 +1198,7 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
         self._async_client = httpx.AsyncClient(timeout=self.timeout, headers=headers)
         logger.info("Reranker: LiteLLM provider initialized")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs using the LiteLLM proxy's /rerank endpoint.
 
@@ -1285,7 +1318,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
         self._initialized = True
         logger.info("Reranker: LiteLLM SDK provider initialized")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs using the LiteLLM SDK.
 
@@ -1444,7 +1477,7 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
 
         return all_scores
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         if self._reranker is None:
             raise RuntimeError("Reranker not initialized. Call initialize() first.")
 
@@ -1590,7 +1623,7 @@ class GoogleCrossEncoder(CrossEncoderModel):
 
         return all_scores
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs using Google Discovery Engine Ranking API.
 
@@ -1648,7 +1681,7 @@ class AlibabaCloudCrossEncoder(CrossEncoderModel):
         await self._client.initialize()
         logger.info("Reranker: Alibaba Cloud provider initialized")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         return await self._client.predict(pairs)
 
 
@@ -1661,10 +1694,12 @@ class MultiCrossEncoder(CrossEncoderModel):
     ranking quality (whatever the next member gives) instead of the whole recall.
     Put ``rrf`` last to degrade to the fusion order rather than failing.
 
-    Each member keeps its own retry budget, so we only advance after a member has
-    exhausted its retries and raised. A member that fails to initialize is not
-    fatal — that is the point of the chain — it is retried lazily on the next
-    request that reaches it.
+    Each member keeps its own retry budget (``create_cross_encoder`` gives every
+    remote member a ``retry_policy``), so we only advance after a member has
+    exhausted its retries and raised — an ordinary quota blip does not burn a
+    fallback. This chain holds no policy of its own: retrying here would retry the
+    whole failover sequence rather than the member that stumbled. A member that fails to initialize is not fatal — that is the point of
+    the chain — it is retried lazily on the next request that reaches it.
     """
 
     def __init__(self, members: list[CrossEncoderModel]) -> None:
@@ -1723,7 +1758,7 @@ class MultiCrossEncoder(CrossEncoderModel):
         if not any(self._ready):
             logger.error("Reranker: no member of the failover chain initialized; recall will retry them per request")
 
-    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Score ``pairs`` with the first member that answers usably."""
         last_exc: BaseException | None = None
         for index, member in enumerate(self._members):
@@ -1757,6 +1792,34 @@ class MultiCrossEncoder(CrossEncoderModel):
         raise last_exc
 
 
+# Reranker providers that must NOT be given a retry policy, and why. Everything
+# else is a remote API whose transient failures are worth retrying.
+_RERANKER_PROVIDERS_WITHOUT_RETRY = {
+    # In-process: no round trip to fail transiently, and a local failure (a bad
+    # tensor, an OOM) is not fixed by trying again.
+    "local": "in-process model",
+    "flashrank": "in-process model",
+    "jina-mlx": "in-process model",
+    "rrf": "passthrough, does no work",
+    # Already retries internally, including TEI's 429-as-backpressure handling.
+    # A second layer would multiply its attempts by ours.
+    "tei": "own _async_request_with_retry (see tei_retry.py)",
+}
+
+
+def _reranker_retry_policy() -> RetryPolicy:
+    """Build the reranker retry policy from resolved configuration."""
+    from ..config import get_config
+
+    config = get_config()
+    return RetryPolicy(
+        max_retries=config.reranker_max_retries,
+        initial_backoff=config.reranker_initial_backoff,
+        max_backoff=config.reranker_max_backoff,
+        budget_seconds=config.reranker_retry_budget,
+    )
+
+
 def create_cross_encoder(member: RerankerMemberConfig) -> CrossEncoderModel:
     """
     Create a CrossEncoderModel for one member of the reranker chain.
@@ -1765,12 +1828,24 @@ def create_cross_encoder(member: RerankerMemberConfig) -> CrossEncoderModel:
     config) or an indexed fallback. Missing-setting errors name the member's own
     env var, so a chain misconfiguration points at the exact indexed variable.
 
+    Remote members come back carrying a ``retry_policy``, which the base class's
+    ``predict`` applies; see ``_RERANKER_PROVIDERS_WITHOUT_RETRY`` for the ones that
+    deliberately do not get one.
+
     Args:
         member: Resolved settings for this member
 
     Returns:
         Configured CrossEncoderModel instance
     """
+    encoder = _create_cross_encoder_backend(member)
+    if member.provider.lower() not in _RERANKER_PROVIDERS_WITHOUT_RETRY:
+        encoder.retry_policy = _reranker_retry_policy()
+    return encoder
+
+
+def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderModel:
+    """Construct the provider backend itself, before any retry policy is attached."""
     provider = member.provider.lower()
 
     if provider == "tei":
