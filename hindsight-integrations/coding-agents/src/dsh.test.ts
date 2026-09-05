@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDshHooks, toDshParameters, type Workspace } from "./dsh";
+import { createDshHooks, dshSessionEvents, toDshParameters, type Workspace } from "./dsh";
+import { readDshEvents } from "./core/transcript-dsh";
 import type { ToolSpec } from "./core/knowledge-tools";
 import { z } from "zod";
 
@@ -145,6 +146,76 @@ describe("dsh session start", () => {
 
     expect(core.seedIfCold).toHaveBeenCalledOnce();
     expect(core.seedIfCold).toHaveBeenCalledWith("/repo");
+  });
+});
+
+describe("dshSessionEvents (alpha.4+ transcript source)", () => {
+  const sampleEvents = [
+    {
+      type: "user/message",
+      time: Date.parse("2026-09-05T08:00:00Z"),
+      data: {
+        id: "m-1",
+        role: "user",
+        content: [{ type: "text", text: "why is chatDocs zero?" }],
+        source: { kind: "user" },
+      },
+    },
+    {
+      type: "assistant/message",
+      time: Date.parse("2026-09-05T08:00:01Z"),
+      data: {
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "session.events was removed." }],
+          source: { kind: "model" },
+        },
+      },
+    },
+  ];
+
+  it("reads snapshotEvents when the legacy events property is absent", () => {
+    const session = {
+      header: { id: "s-alpha4", cwd: "/repo" },
+      snapshotEvents: () => sampleEvents,
+    };
+    expect(dshSessionEvents(session)).toEqual(sampleEvents);
+    expect(readDshEvents(dshSessionEvents(session))).toEqual([
+      {
+        role: "user",
+        content: "why is chatDocs zero?",
+        timestamp: "2026-09-05T08:00:00.000Z",
+      },
+      {
+        role: "assistant",
+        content: "session.events was removed.",
+        timestamp: "2026-09-05T08:00:01.000Z",
+      },
+    ]);
+  });
+
+  it("falls back to the legacy events property when snapshotEvents is missing", () => {
+    const session = {
+      header: { id: "s-legacy", cwd: "/repo" },
+      events: sampleEvents,
+    };
+    expect(dshSessionEvents(session)).toBe(sampleEvents);
+    expect(readDshEvents(dshSessionEvents(session))).toHaveLength(2);
+  });
+
+  it("returns an empty log when neither accessor exists (pre-fix alpha.4 breakage)", () => {
+    const session = { header: { id: "s-broken", cwd: "/repo" } };
+    expect(dshSessionEvents(session)).toEqual([]);
+    expect(readDshEvents(dshSessionEvents(session))).toEqual([]);
+  });
+
+  it("prefers snapshotEvents over a stale events property", () => {
+    const session = {
+      header: { id: "s-both", cwd: "/repo" },
+      events: [],
+      snapshotEvents: () => sampleEvents,
+    };
+    expect(dshSessionEvents(session)).toBe(sampleEvents);
   });
 });
 

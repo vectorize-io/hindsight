@@ -42,7 +42,13 @@ export const inject = ["agents"];
 
 interface DshSession {
   readonly header: { readonly id: string; readonly cwd?: string; readonly origin?: string };
-  readonly events: readonly DshSessionEvent[];
+  /**
+   * Legacy in-memory event log. Present on DeepSeek Harness < alpha.4; removed in alpha.4+.
+   * Prefer {@link snapshotEvents} when available.
+   */
+  readonly events?: readonly DshSessionEvent[];
+  /** Public accessor on DeepSeek Harness alpha.4+ (replaces the removed `events` property). */
+  snapshotEvents?(): readonly DshSessionEvent[];
 }
 
 interface DshAgent {
@@ -124,6 +130,20 @@ const workspaces = new Map<string, Workspace | null>();
  */
 const liveAgents = new Map<string, DshAgent>();
 
+/**
+ * Prefer `session.snapshotEvents()` (DeepSeek Harness alpha.4+); fall back to the legacy
+ * `session.events` property so older hosts keep working. Missing both yields an empty log —
+ * which is exactly the alpha.4 breakage when callers still read `events` alone.
+ */
+export function dshSessionEvents(session: {
+  /** Present on real agents; kept optional so unit tests can pass a bare accessor mock. */
+  header?: { readonly id?: string; readonly cwd?: string; readonly origin?: string };
+  snapshotEvents?: () => readonly DshSessionEvent[];
+  events?: readonly DshSessionEvent[];
+}): readonly DshSessionEvent[] {
+  return session.snapshotEvents?.() ?? session.events ?? [];
+}
+
 /** Where a session is working. dsh records it on the session header; a session without one is rare. */
 function workspaceRoot(agent: DshAgent): string {
   return agent.session.header.cwd || process.cwd();
@@ -156,7 +176,8 @@ function workspaceFor(root: string): Workspace | undefined {
   // memory, so unlike opencode there is nothing to refetch over HTTP.
   core.setTranscriptSource(async (sessionId) => {
     const agent = liveAgents.get(sessionId);
-    return agent ? readDshEvents(agent.session.events) : [];
+    // alpha.4+ removed Session.events; snapshotEvents() is the public accessor.
+    return agent ? readDshEvents(dshSessionEvents(agent.session)) : [];
   });
   const workspace: Workspace = { core, root };
   workspaces.set(root, workspace);
