@@ -699,7 +699,7 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Cancel a pending operation
+   * Cancel a pending or processing operation
    */
   async cancelOperation(bankId: string, operationId: string) {
     return this.fetchApi<{

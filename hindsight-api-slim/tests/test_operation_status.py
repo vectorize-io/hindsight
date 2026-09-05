@@ -5,6 +5,8 @@ are correctly exposed through list and get API endpoints.
 Regression tests:
 - Previously the API collapsed 'processing' into 'pending', hiding the real status.
 - Cancel used to delete the operation row; now it sets status to 'cancelled'.
+- Cancel used to refuse anything but 'pending', so a row orphaned in 'processing' by a worker
+  crash could only be cleared with hand-written SQL (#4131).
 - Retry now accepts both 'failed' and 'cancelled' operations.
 """
 
@@ -189,6 +191,61 @@ async def test_cancel_sets_cancelled_status(api_client, memory, test_bank_id):
 
 
 @pytest.mark.asyncio
+async def test_cancel_processing_operation_releases_the_orphaned_claim(api_client, memory, test_bank_id):
+    """A row orphaned in 'processing' by a worker crash must be cancellable through the API.
+
+    Regression for #4131: cancel accepted only 'pending', so the only way out of an orphaned
+    'processing' row was `UPDATE async_operations` by hand. The claim has to be dropped with it —
+    a worker's release path only touches rows whose worker_id still matches, so leaving the dead
+    worker's id on the row is what let it sit there.
+    """
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    op_id = await _insert_operation(pool, test_bank_id, "processing")
+    await pool.execute(
+        "UPDATE async_operations SET worker_id = 'worker-that-died', claimed_at = now() WHERE operation_id = $1",
+        uuid.UUID(op_id),
+    )
+
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+    row = await pool.fetchrow(
+        "SELECT worker_id, claimed_at, completed_at FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(op_id),
+    )
+    assert row["worker_id"] is None
+    assert row["claimed_at"] is None
+    assert row["completed_at"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["completed", "failed", "cancelled"])
+async def test_cancel_rejects_terminal_operations(api_client, memory, test_bank_id, terminal_status):
+    """Only non-terminal work is cancellable — a finished operation still answers 409."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    op_id = await _insert_operation(pool, test_bank_id, terminal_status)
+
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 409
+    assert terminal_status in response.json()["detail"]
+
+    row = await pool.fetchrow(
+        "SELECT status FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(op_id),
+    )
+    assert row["status"] == terminal_status
+
+
+@pytest.mark.asyncio
 async def test_retry_cancelled_operation(api_client, memory, test_bank_id):
     """POST /operations/{id}/retry should accept cancelled operations."""
     pool = memory._pool
@@ -310,18 +367,6 @@ async def test_retry_rejects_batch_retain_parent(api_client, memory, test_bank_i
     # But it remains deletable as the sanctioned cleanup path.
     response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/delete")
     assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_cancel_rejects_non_pending_operations(api_client, memory, test_bank_id):
-    """DELETE /operations/{id} should only cancel pending operations."""
-    pool = memory._pool
-    await _ensure_bank(pool, test_bank_id)
-
-    for status in ("processing", "completed", "failed"):
-        op_id = await _insert_operation(pool, test_bank_id, status)
-        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
-        assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
 
 
 @pytest.mark.asyncio

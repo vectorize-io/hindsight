@@ -320,6 +320,24 @@ class TestWorkerMarkCompleted:
         assert conn.execute_calls
         poller._maybe_update_parent_operation.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_mark_failed_leaves_a_cancelled_row_cancelled(self):
+        """Cancelling a processing operation (#4131) usually makes its task raise in here.
+
+        Relabelling the row 'failed' would erase the operator's cancellation and make it look
+        retryable, so the write has to skip rows that are already cancelled.
+        """
+        poller, conn = self._make_poller("UPDATE 0")
+
+        await poller._mark_failed("op-1", "aborted mid-flight", schema=None)
+
+        query, args = conn.execute_calls[0]
+        assert "status = 'failed'" in query
+        assert "status <> 'cancelled'" in query
+        assert args == ("op-1", "aborted mid-flight")
+        # The parent roll-up still runs: it reads whatever status the child actually committed.
+        poller._maybe_update_parent_operation.assert_awaited_once_with("op-1", None, conn)
+
 
 def test_all_operation_types_have_slot_reservation_config():
     """Every operation_type used in memory_engine must be listed in

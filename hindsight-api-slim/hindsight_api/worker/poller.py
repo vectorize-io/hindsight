@@ -870,11 +870,17 @@ class WorkerPoller:
 
         async with self._backend.acquire() as conn:
             async with conn.transaction():
+                # A cancelled row stays cancelled: cancelling a processing operation is now a
+                # supported API call (#4131), and the task it aborts usually surfaces as an error
+                # here. Relabelling it 'failed' would erase what the operator asked for and make
+                # the row look retryable, so leave the terminal state they chose alone. The parent
+                # roll-up below still runs — it reads the child's committed status either way.
                 await conn.execute(
                     f"""
                     UPDATE {table}
                     SET status = 'failed', error_message = $2, completed_at = now(), updated_at = now()
                     WHERE operation_id = $1
+                      AND status <> 'cancelled'
                     """,
                     operation_id,
                     error_message,

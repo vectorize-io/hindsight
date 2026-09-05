@@ -614,7 +614,10 @@ class MemoryEngineInterface(ABC):
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
-        Cancel a pending async operation.
+        Cancel a pending or processing async operation.
+
+        A processing operation is cancellable so that a row orphaned by a worker crash can be
+        released through the API; the claim is dropped and the task stops at its next checkpoint.
 
         Args:
             bank_id: The memory bank ID.

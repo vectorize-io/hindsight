@@ -794,7 +794,7 @@ enum OperationCommands {
         operation_id: String,
     },
 
-    /// Cancel a pending async operation
+    /// Cancel a pending or processing async operation
     Cancel {
         /// Bank ID
         bank_id: String,

@@ -177,9 +177,9 @@ A few response fields are worth calling out:
 | `total` | Total units of work for the operation, when known. |
 | `detail` | Operation-specific counters (e.g. `observations_created`, `round`, `items_in_sub_batch`). |
 
-### Cancel a pending operation
+### Cancel a pending or processing operation
 
-Returns `409` if the operation is already in `processing`, `completed`, or `failed` state.
+A `pending` operation is dropped from the queue. A `processing` one has its worker claim released and stops at its next checkpoint — this is also how you clear a row left orphaned in `processing` by a worker crash or restart. Returns `409` once the operation has reached a terminal status (`completed`, `failed` or `cancelled`).
 
 <Tabs>
 <TabItem value="python" label="Python">

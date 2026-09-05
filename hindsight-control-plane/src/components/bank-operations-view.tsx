@@ -657,7 +657,9 @@ export function BankOperationsView() {
                         </div>
                       </TableCell>
                       <TableCell className="w-[150px] whitespace-nowrap">
-                        {op.status === "pending" && (
+                        {/* 'processing' is cancellable too — a row orphaned by a worker crash
+                            sits here forever, and this table is where an operator sees it. */}
+                        {(op.status === "pending" || op.status === "processing") && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -869,12 +871,14 @@ export function BankOperationsView() {
 
                   {/* Action buttons */}
                   {(selectedOperation.status === "pending" ||
+                    selectedOperation.status === "processing" ||
                     selectedOperation.status === "failed" ||
                     selectedOperation.status === "cancelled" ||
                     selectedOperation.status === "completed" ||
                     selectedOperation.result_metadata?.document_id) && (
                     <div className="flex flex-wrap gap-2">
-                      {selectedOperation.status === "pending" && (
+                      {(selectedOperation.status === "pending" ||
+                        selectedOperation.status === "processing") && (
                         <Button
                           variant="outline"
                           size="sm"

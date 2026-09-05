@@ -1088,9 +1088,9 @@ export const listOperations = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Cancel a pending async operation
+ * Cancel a pending or processing async operation
  *
- * Cancel a pending async operation by removing it from the queue
+ * Cancel a pending or processing async operation. A pending operation is removed from the queue; a processing one has its worker claim released and stops at its next checkpoint, which is also how a row orphaned by a worker crash is cleared. Returns 409 for operations that already reached a terminal status.
  */
 export const cancelOperation = <ThrowOnError extends boolean = false>(
   options: Options<CancelOperationData, ThrowOnError>
