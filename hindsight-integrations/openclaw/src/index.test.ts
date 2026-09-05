@@ -1317,6 +1317,12 @@ describe("session identity helpers", () => {
     });
   });
 
+  it("parses Control UI Dashboard sessions", () => {
+    expect(parseSessionKey("agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdef")).toEqual({
+      agentId: "main",
+    });
+  });
+
   it("extracts telegram direct sender ids from channel ids", () => {
     expect(extractTelegramDirectSenderId("direct:12345")).toBe("12345");
     expect(extractTelegramDirectSenderId("group:12345")).toBeUndefined();
@@ -1463,6 +1469,38 @@ describe("session identity helpers", () => {
     );
     expect(result.reason).toBeUndefined();
     expect(result.resolvedCtx?.senderId).toBe("agent-user:main");
+  });
+
+  it("allows Dashboard sessions through when a static bankId is configured", () => {
+    const result = resolveAndCacheIdentity({
+      sessionKey: "agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdef",
+      ctx: { sessionKey: "agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdef" },
+      dispatchChannel: "webchat",
+      pluginConfig: { dynamicBankId: false, bankId: "shared-bank" },
+    });
+
+    expect(result.skipReason).toBeUndefined();
+    expect(result.resolvedCtx).toEqual({
+      sessionKey: "agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdef",
+      agentId: "main",
+      messageProvider: "webchat",
+      channelId: undefined,
+      senderId: "agent-user:main",
+    });
+  });
+
+  it("does not synthesize a Dashboard sender when agent and static banking are disabled", () => {
+    const result = resolveAndCacheIdentity({
+      sessionKey: "agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdee",
+      ctx: { sessionKey: "agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdee" },
+      dispatchChannel: "webchat",
+      pluginConfig: { dynamicBankGranularity: ["channel", "user"] },
+    });
+
+    expect(result.skipReason).toEqual({
+      kind: "retryable",
+      detail: "missing stable sender identity",
+    });
   });
 
   it("allows agent:*:main when dynamicBankId is false but bankId is missing (default granularity includes 'agent')", () => {
