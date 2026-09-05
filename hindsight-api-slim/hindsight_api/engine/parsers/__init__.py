@@ -7,6 +7,7 @@ from .base import FileParser, UnsupportedFileTypeError
 from .iris import IrisParser
 from .llama_parse import LlamaParseParser
 from .markitdown import MarkitdownParser
+from .ocr_quality import OcrQualityResult, assess_ocr_output_quality, is_ocr_quality_candidate
 
 __all__ = [
     "FileParser",
@@ -16,6 +17,9 @@ __all__ = [
     "MarkitdownParser",
     "FileParserRegistry",
     "ConvertResult",
+    "assess_ocr_output_quality",
+    "is_ocr_quality_candidate",
+    "OcrQualityResult",
 ]
 
 
@@ -112,10 +116,30 @@ class FileParserRegistry:
             parser = self.get_parser(name, filename, content_type)
             try:
                 content = await parser.convert(file_data, filename)
-                if content and content.strip():
-                    return ConvertResult(content=content, parser_name=name)
-                logger.warning(f"Parser '{name}' returned empty content for '{filename}', trying next")
-                last_error = RuntimeError(f"Parser '{name}' returned no content for '{filename}'")
+                if not content or not content.strip():
+                    logger.warning(f"Parser '{name}' returned empty content for '{filename}', trying next")
+                    last_error = RuntimeError(f"Parser '{name}' returned no content for '{filename}'")
+                    continue
+
+                # OCR admission gate: nonempty refusals / unreadable fragments must
+                # not become memory evidence. Parser-independent; runs after convert
+                # and before success. Reasons + measurements only — never the body.
+                if is_ocr_quality_candidate(filename):
+                    quality = assess_ocr_output_quality(content)
+                    if not quality.accepted:
+                        logger.warning(
+                            "Parser '%s' OCR output rejected for '%s': reasons=%s measurements=%s",
+                            name,
+                            filename,
+                            list(quality.reasons),
+                            quality.measurements,
+                        )
+                        last_error = RuntimeError(
+                            f"Parser '{name}' OCR output rejected for '{filename}': reasons={list(quality.reasons)}"
+                        )
+                        continue
+
+                return ConvertResult(content=content, parser_name=name)
             except UnsupportedFileTypeError as e:
                 logger.warning(f"Parser '{name}' does not support '{filename}', trying next: {e}")
                 last_error = e
