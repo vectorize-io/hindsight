@@ -67,7 +67,8 @@ _OBSERVATION_FIELDS = """- `id`: unique identifier — copy this exactly when is
 - `occurred_start` / `occurred_end`: the span of the events behind the observation — earliest start and latest end across its source facts
 - `mentioned_at`: the latest of the `mentioned_at` values of its source facts — the most recent point at which this observation was stated
 - `source_memories`: the supporting facts behind this observation. May be partial or absent for large observations — the count above remains the true total. Each entry carries the same `text` and temporal fields as a new fact, plus:
-  - `context`: optional surrounding context for that fact"""
+  - `context`: optional surrounding context for that fact
+  - **Placeholder rule**: when a source `text` is highly similar (sequence similarity ≥ 0.75) to the observation `text` above, it is replaced by `[similar to observation text above]` — interpret that entry's text as the observation text above; only its context/timestamps are independent information."""
 
 # Stable description of the input shape. For the cached split path this lives in
 # the system prefix (build_consolidation_system_prompt) so it is not re-sent on
