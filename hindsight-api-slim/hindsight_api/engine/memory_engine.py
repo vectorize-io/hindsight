@@ -8499,6 +8499,11 @@ class MemoryEngine(MemoryEngineInterface):
                     result_dict["mentioned_at"] = (
                         mentioned_at.isoformat() if hasattr(mentioned_at, "isoformat") else mentioned_at
                     )
+                if result_dict.get("updated_at"):
+                    updated_at = result_dict["updated_at"]
+                    result_dict["updated_at"] = (
+                        updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at
+                    )
                 top_results_dicts.append(result_dict)
 
             if tracer:
@@ -8774,6 +8779,7 @@ class MemoryEngine(MemoryEngineInterface):
                         occurred_start=result_dict.get("occurred_start"),
                         occurred_end=result_dict.get("occurred_end"),
                         mentioned_at=result_dict.get("mentioned_at"),
+                        updated_at=result_dict.get("updated_at"),
                         document_id=result_dict.get("document_id"),
                         metadata=result_dict.get("metadata"),
                         chunk_id=result_dict.get("chunk_id"),

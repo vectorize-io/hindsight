@@ -350,6 +350,7 @@ class MemoryFact(BaseModel):
     occurred_start: str | None = Field(None, description="ISO format date when the event started occurring")
     occurred_end: str | None = Field(None, description="ISO format date when the event ended occurring")
     mentioned_at: str | None = Field(None, description="ISO format date when the fact was mentioned/learned")
+    updated_at: str | None = Field(None, description="ISO format date when the memory was last written")
     document_id: str | None = Field(None, description="ID of the document this memory belongs to")
     metadata: dict[str, str] | None = Field(None, description="User-defined metadata")
 

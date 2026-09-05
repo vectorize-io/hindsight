@@ -208,7 +208,7 @@ async def retrieve_semantic_bm25_combined_sql(
     semantic_fetch = max(limit, GRAPH_SEED_LIMIT if graph_seed_threshold is not None else 0)
 
     cols = (
-        "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
+        "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, updated_at, "
         "fact_type, document_id, chunk_id, tags, metadata, proof_count"
     )
     table = fq_table("memory_units")
@@ -559,7 +559,7 @@ async def retrieve_temporal_combined_sql(
     # retrieve_semantic_bm25_combined_sql; this keeps the query free of `unnest`/LATERAL, which the
     # Oracle backend cannot translate.
     pool_cols = (
-        "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
+        "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, updated_at, "
         "fact_type, proof_count, document_id, chunk_id, tags, metadata"
     )
     table = fq_table("memory_units")
@@ -706,7 +706,7 @@ async def retrieve_temporal_combined_sql(
             # bank_id on memory_units lets the planner use idx_memory_units_bank_fact_type.
             neighbors = await conn.fetch(
                 f"""
-                SELECT src.from_unit_id, mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
+                SELECT src.from_unit_id, mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.updated_at, mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                        l.weight, l.link_type,
                        1 - (mu.embedding <=> $1::vector) AS similarity
                 FROM unnest($2::uuid[]) AS src(from_unit_id)
