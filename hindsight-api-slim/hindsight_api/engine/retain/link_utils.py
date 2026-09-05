@@ -744,22 +744,15 @@ def compute_semantic_links_within_batch(
         return []
 
     links = []
-    new_embeddings_matrix = np.asarray(embeddings, dtype=float)
-    norms = np.linalg.norm(new_embeddings_matrix, axis=1)
-    valid_embeddings = np.isfinite(new_embeddings_matrix).all(axis=1) & np.isfinite(norms) & (norms > 0)
-    normalized_embeddings = np.zeros_like(new_embeddings_matrix)
-    normalized_embeddings[valid_embeddings] = (
-        new_embeddings_matrix[valid_embeddings] / norms[valid_embeddings, np.newaxis]
-    )
+    # 1. Use float32 to match PackedEmbedding (4-byte single precision) and boost SGEMM SIMD throughput
+    mat = np.asarray(embeddings, dtype=np.float32)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    valid_embeddings = np.isfinite(mat).all(axis=1) & np.isfinite(norms[:, 0]) & (norms[:, 0] > 0)
 
-    # One matrix product per block of rows, rather than one per unit against a
-    # freshly gathered copy of every other unit. `normalized[others]` is advanced
-    # indexing, so each of the n iterations it used to run allocated and filled an
-    # (n-1, dim) array: at the 36K facts a delta retain can hand over in one batch
-    # that is a 110 MB memcpy done 36,000 times, several minutes of a synchronous
-    # call with the event loop blocked behind it (#3848). The work is the same
-    # O(n^2 * dim) dot products either way; this hands them to BLAS in one call and
-    # keeps the transient at one block of similarity rows.
+    # 2. In-place broadcast normalization for valid embeddings
+    normalized_embeddings = np.zeros_like(mat)
+    normalized_embeddings[valid_embeddings] = mat[valid_embeddings] / norms[valid_embeddings]
+
     block_rows = _SEMANTIC_WITHIN_BATCH_BLOCK_ROWS
     for start in range(0, len(unit_ids), block_rows):
         stop = min(start + block_rows, len(unit_ids))
@@ -767,20 +760,33 @@ def compute_semantic_links_within_batch(
         # A unit with an unusable embedding is neither a source nor a target.
         block_similarities[:, ~valid_embeddings] = -np.inf
 
-        for i in range(start, stop):
-            if not valid_embeddings[i]:
+        # Vectorized self-link masking on the diagonal for this block
+        diag = np.arange(stop - start)
+        block_similarities[diag, start + diag] = -np.inf
+
+        for local_i, global_i in enumerate(range(start, stop)):
+            if not valid_embeddings[global_i]:
                 continue
 
-            similarities = block_similarities[i - start]
-            similarities[i] = -np.inf  # never link a unit to itself
+            sims = block_similarities[local_i]
+            above_threshold = np.where(sims >= threshold)[0]
+            n_above = len(above_threshold)
+            if n_above == 0:
+                continue
 
-            above_threshold = np.where(similarities >= threshold)[0]
-            if len(above_threshold) > 0:
-                sorted_indices = above_threshold[np.argsort(-similarities[above_threshold])][:top_k]
-                for other_idx in sorted_indices:
-                    other_id = unit_ids[other_idx]
-                    similarity = float(min(1.0, max(0.0, similarities[other_idx])))
-                    links.append((unit_ids[i], other_id, "semantic", similarity, None))
+            if n_above > top_k:
+                # O(M) partial selection instead of O(M log M) full argsort
+                top_part = np.argpartition(-sims[above_threshold], top_k)[:top_k]
+                sorted_indices = above_threshold[top_part[np.argsort(-sims[above_threshold[top_part]])]]
+            elif n_above > 1:
+                sorted_indices = above_threshold[np.argsort(-sims[above_threshold])]
+            else:
+                sorted_indices = above_threshold
+
+            u_i = unit_ids[global_i]
+            chosen_sims = np.clip(sims[sorted_indices], 0.0, 1.0).tolist()
+            for other_idx, similarity in zip(sorted_indices, chosen_sims):
+                links.append((u_i, unit_ids[other_idx], "semantic", similarity, None))
 
     return links
 

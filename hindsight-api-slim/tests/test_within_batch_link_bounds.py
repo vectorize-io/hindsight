@@ -66,7 +66,7 @@ def _legacy_semantic_links_within_batch(unit_ids, embeddings, top_k=50, *, thres
         return []
 
     links = []
-    new_embeddings_matrix = np.asarray(embeddings, dtype=float)
+    new_embeddings_matrix = np.asarray(embeddings, dtype=np.float32)
     norms = np.linalg.norm(new_embeddings_matrix, axis=1)
     valid_embeddings = np.isfinite(new_embeddings_matrix).all(axis=1) & np.isfinite(norms) & (norms > 0)
     normalized_embeddings = np.zeros_like(new_embeddings_matrix)
@@ -210,7 +210,7 @@ class TestWithinBatchSemanticLinks:
         legacy = _legacy_semantic_links_within_batch(unit_ids, embeddings, top_k=8, threshold=0.1)
 
         assert [(link[0], link[1], link[2]) for link in new] == [(link[0], link[1], link[2]) for link in legacy]
-        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-12)
+        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-6)
 
     def test_matches_across_block_boundaries(self, monkeypatch):
         """Blocking must not change which units are compared, only when."""
@@ -223,7 +223,7 @@ class TestWithinBatchSemanticLinks:
         legacy = _legacy_semantic_links_within_batch(unit_ids, embeddings, top_k=5, threshold=0.0)
 
         assert [(link[0], link[1]) for link in new] == [(link[0], link[1]) for link in legacy]
-        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-12)
+        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-6)
 
     def test_invalid_embeddings_stay_excluded_across_blocks(self, monkeypatch):
         monkeypatch.setattr(link_utils, "_SEMANTIC_WITHIN_BATCH_BLOCK_ROWS", 2)
