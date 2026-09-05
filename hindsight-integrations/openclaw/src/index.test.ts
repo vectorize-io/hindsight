@@ -32,6 +32,7 @@ import {
   stripRuntimeEnvelope,
   configureSenderPrefixStripping,
   getPluginConfig,
+  scopeClient,
   formatHookPerf,
   DEFAULT_RETAIN_CONTEXT,
 } from "./index.js";
@@ -1859,6 +1860,28 @@ describe("getPluginConfig — preferObservations (#2977)", () => {
     expect(getPluginConfig(makeApi({ preferObservations: false })).preferObservations).toBe(false);
     expect(getPluginConfig(makeApi({ preferObservations: "true" })).preferObservations).toBe(false);
     expect(getPluginConfig(makeApi({ preferObservations: 1 })).preferObservations).toBe(false);
+  });
+});
+
+describe("recallMinScores (#4143)", () => {
+  it("passes configured score floors through plugin config", () => {
+    const recallMinScores = { semantic: 0.2, reranker: 0.3, final: null };
+    expect(getPluginConfig(makeApi({ recallMinScores })).recallMinScores).toEqual(recallMinScores);
+  });
+
+  it("passes score floors to the Hindsight client", async () => {
+    const recall = vi.fn().mockResolvedValue({ results: [] });
+    const scoped = scopeClient({ recall } as never, "test-bank");
+
+    await scoped.recall({ query: "test", minScores: { reranker: 0.3 } });
+
+    expect(recall).toHaveBeenCalledWith("test-bank", "test", {
+      maxTokens: undefined,
+      budget: undefined,
+      types: undefined,
+      preferObservations: undefined,
+      minScores: { reranker: 0.3 },
+    });
   });
 });
 

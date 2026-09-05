@@ -115,6 +115,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 ```
 
 **Options:**
+
 - `apiPort` - Port for the openclaw profile daemon (default: `9077`)
 - `embedVersion` - hindsight-embed version (default: `"latest"`)
 - `llmProvider` - LLM provider for memory extraction (`openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`). Required unless `hindsightApiUrl` is set.
@@ -142,6 +143,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `recallTopK` - Max number of memories to inject per turn (default: unlimited).
 - `recallTypes` - Memory types to recall (default: `["observation"]`). Options: `world`, `experience`, `observation`. Defaults to observations — the consolidated, deduplicated view — to avoid surfacing the same answer multiple times when many raw memories say the same thing.
 - `preferObservations` - When `true`, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones (default: `false`). Pair it with a `recallTypes` that includes raw types (e.g. `["observation", "world", "experience"]`) to surface just-retained facts before consolidation catches up — for example after a `/reset` followed by "what did I just say?" — without duplicating already-consolidated content.
+- `recallMinScores` - Optional score floors for auto-recall, keyed by stage (for example `{"reranker": 0.3}`). Missing fields impose no floor; memories with missing or `null` scores pass. Reranker scores are query-local, so use this as a garbage gate rather than a calibrated relevance dial.
 - `recallContextTurns` - Number of prior user turns to include in the recall query (default: `1`).
 - `recallMaxQueryChars` - Max characters for the composed recall query (default: `800`).
 - `recallPromptPreamble` - Custom preamble text placed above recalled memories. Overrides the built-in guidance text.
@@ -181,6 +183,7 @@ You can customize which fields are used for bank segmentation with `dynamicBankG
 In this example, memories are isolated per provider + user, meaning the same user shares memories across all channels within a provider.
 
 Available isolation fields:
+
 - `agent` - The agent/bot identity
 - `channel` - The channel or conversation ID
 - `user` - The user interacting with the agent
@@ -257,15 +260,15 @@ should be stored as `SecretRef` values so they're resolved from env vars,
 mounted files, or `exec`-style secret managers (Vault, etc.) at runtime
 instead of sitting in plaintext on disk.
 
-| Provider | `llmProvider` | API key |
-|---|---|---|
-| OpenAI | `openai` | required |
-| Anthropic | `anthropic` | required |
-| Gemini | `gemini` | required |
-| Groq | `groq` | required |
-| Ollama | `ollama` | not required (local) |
-| Claude Code | `claude-code` | not required (uses Claude Code CLI) |
-| OpenAI Codex | `openai-codex` | not required (uses Codex CLI auth) |
+| Provider     | `llmProvider`  | API key                             |
+| ------------ | -------------- | ----------------------------------- |
+| OpenAI       | `openai`       | required                            |
+| Anthropic    | `anthropic`    | required                            |
+| Gemini       | `gemini`       | required                            |
+| Groq         | `groq`         | required                            |
+| Ollama       | `ollama`       | not required (local)                |
+| Claude Code  | `claude-code`  | not required (uses Claude Code CLI) |
+| OpenAI Codex | `openai-codex` | not required (uses Codex CLI auth)  |
 
 **Set provider + API key:**
 
@@ -339,6 +342,7 @@ Configure in `~/.openclaw/openclaw.json`:
 ```
 
 **Options:**
+
 - `hindsightApiUrl` - Full URL to external Hindsight API (e.g., `https://mcp.hindsight.example.com`)
 - `hindsightApiToken` - API token for authentication (optional). **Sensitive** — set as a SecretRef:
 
@@ -350,6 +354,7 @@ Configure in `~/.openclaw/openclaw.json`:
 #### Behavior
 
 When external API mode is enabled:
+
 - **No local daemon** is started (no hindsight-embed process)
 - **Health check** runs on startup to verify API connectivity
 - **All memory operations** (retain, recall, reflect) go to the external API
@@ -503,17 +508,17 @@ previously came from shell env vars must now go through OpenClaw's plugin config
 from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / etc. — you must set
 `llmProvider` explicitly.
 
-| Old (0.5.x) | New (0.6.0) |
-|---|---|
-| `OPENAI_API_KEY=…` (auto-detected) | `openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai` <br/> `openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey --ref-source env --ref-id OPENAI_API_KEY` |
-| `HINDSIGHT_API_LLM_PROVIDER=…` | `openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider …` |
-| `HINDSIGHT_API_LLM_MODEL=…` | `openclaw config set plugins.entries.hindsight-openclaw.config.llmModel …` |
-| `HINDSIGHT_API_LLM_API_KEY=…` | `openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey --ref-source env --ref-id …` |
-| `HINDSIGHT_API_LLM_BASE_URL=…` | `openclaw config set plugins.entries.hindsight-openclaw.config.llmBaseUrl …` |
-| `HINDSIGHT_EMBED_API_URL=…` | `openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiUrl …` |
-| `HINDSIGHT_EMBED_API_TOKEN=…` | `openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiToken --ref-source env --ref-id …` |
-| `HINDSIGHT_BANK_ID=…` | `openclaw config set plugins.entries.hindsight-openclaw.config.bankId …` |
-| `llmApiKeyEnv: "MY_KEY"` (plugin config) | `llmApiKey` configured as a SecretRef with `--ref-id MY_KEY` |
+| Old (0.5.x)                              | New (0.6.0)                                                                                                                                                                                                 |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY=…` (auto-detected)       | `openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai` <br/> `openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey --ref-source env --ref-id OPENAI_API_KEY` |
+| `HINDSIGHT_API_LLM_PROVIDER=…`           | `openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider …`                                                                                                                               |
+| `HINDSIGHT_API_LLM_MODEL=…`              | `openclaw config set plugins.entries.hindsight-openclaw.config.llmModel …`                                                                                                                                  |
+| `HINDSIGHT_API_LLM_API_KEY=…`            | `openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey --ref-source env --ref-id …`                                                                                                       |
+| `HINDSIGHT_API_LLM_BASE_URL=…`           | `openclaw config set plugins.entries.hindsight-openclaw.config.llmBaseUrl …`                                                                                                                                |
+| `HINDSIGHT_EMBED_API_URL=…`              | `openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiUrl …`                                                                                                                           |
+| `HINDSIGHT_EMBED_API_TOKEN=…`            | `openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiToken --ref-source env --ref-id …`                                                                                               |
+| `HINDSIGHT_BANK_ID=…`                    | `openclaw config set plugins.entries.hindsight-openclaw.config.bankId …`                                                                                                                                    |
+| `llmApiKeyEnv: "MY_KEY"` (plugin config) | `llmApiKey` configured as a SecretRef with `--ref-id MY_KEY`                                                                                                                                                |
 
 If your shell already exports `OPENAI_API_KEY`, the SecretRef config above
 resolves to the same value at startup — you don't need to change your shell

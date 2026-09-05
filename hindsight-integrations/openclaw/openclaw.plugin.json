@@ -242,6 +242,17 @@
         "description": "When true, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones. Pair with recallTypes including raw types (e.g. ['observation', 'world', 'experience']) to surface just-retained facts before consolidation, without duplicating already-consolidated content. Default: false.",
         "default": false
       },
+      "recallMinScores": {
+        "type": "object",
+        "description": "Optional per-stage score floors for auto-recall. Missing fields impose no floor; memories with a missing or null score for a configured stage pass.",
+        "additionalProperties": false,
+        "properties": {
+          "semantic": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "keyword": { "type": ["number", "null"] },
+          "reranker": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "final": { "type": ["number", "null"] }
+        }
+      },
       "recallRoles": {
         "type": "array",
         "items": {
@@ -513,6 +524,10 @@
     "preferObservations": {
       "label": "Prefer Observations",
       "placeholder": "false (default)"
+    },
+    "recallMinScores": {
+      "label": "Recall Minimum Scores",
+      "placeholder": "e.g. {\"reranker\": 0.3}"
     },
     "recallRoles": {
       "label": "Recall Roles",

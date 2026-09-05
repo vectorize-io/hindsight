@@ -7,7 +7,11 @@ import type {
   RetainRequest,
 } from "./types.js";
 import { HindsightServer, type Logger } from "@vectorize-io/hindsight-all";
-import { HindsightClient, type HindsightClientOptions } from "@vectorize-io/hindsight-client";
+import {
+  HindsightClient,
+  type HindsightClientOptions,
+  type MinScores,
+} from "@vectorize-io/hindsight-client";
 import { RetainQueue } from "./retain-queue.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { createHash, randomUUID } from "crypto";
@@ -129,6 +133,7 @@ export interface BankScopedClient {
       budget?: "low" | "mid" | "high";
       types?: Array<"world" | "experience" | "observation">;
       preferObservations?: boolean;
+      minScores?: MinScores;
     },
     timeoutMs?: number
   ): Promise<RecallResponse>;
@@ -162,6 +167,7 @@ export function scopeClient(c: HindsightClient, bankId: string): BankScopedClien
         budget: req.budget,
         types: req.types,
         preferObservations: req.preferObservations,
+        minScores: req.minScores,
       });
       if (!timeoutMs) return call;
       // The generated client doesn't accept a per-call AbortSignal, so we race
@@ -1912,6 +1918,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     recallMaxTokens: config.recallMaxTokens || 1024,
     recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ["observation"],
     preferObservations: config.preferObservations === true, // Default: false — backward compatible
+    recallMinScores: config.recallMinScores,
     recallRoles: Array.isArray(config.recallRoles) ? config.recallRoles : ["user", "assistant"],
     retainEveryNTurns:
       typeof config.retainEveryNTurns === "number" && config.retainEveryNTurns >= 1
@@ -2561,6 +2568,7 @@ export default function (api: MoltbotPluginAPI) {
               budget: pluginConfig.recallBudget,
               types: pluginConfig.recallTypes,
               preferObservations: pluginConfig.preferObservations,
+              minScores: pluginConfig.recallMinScores,
             },
             recallTimeoutMs
           );
