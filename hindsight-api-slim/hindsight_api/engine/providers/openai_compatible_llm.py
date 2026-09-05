@@ -1489,14 +1489,29 @@ class OpenAICompatibleLLM(LLMInterface):
         request_tool_choice: str | None
         if tool_choice.mode is LLMToolChoiceMode.NAMED:
             forced_name = tool_choice.selected_function_name
-            filtered = [tool for tool in tools if tool.get("function", {}).get("name") == forced_name]
-            if len(filtered) != 1:
+            matching = [tool for tool in tools if tool.get("function", {}).get("name") == forced_name]
+            if len(matching) != 1:
                 raise ValueError(
                     f"Named tool_choice must reference exactly one declared tool; "
-                    f"found {len(filtered)} definitions for {forced_name!r}"
+                    f"found {len(matching)} definitions for {forced_name!r}"
                 )
-            tools = filtered
-            request_tool_choice = LLMToolChoiceMode.REQUIRED.value
+            # Providers that silently drop tool_choice="required" (ollama/lmstudio)
+            # used to narrow tools[] to the forced function so the call stayed
+            # practically forced under auto. That mutates the tools schema every
+            # forced turn and forces hybrid/Ollama models to full-reprefill
+            # (#3865). Keep tools byte-identical and encode the force as a
+            # conversation suffix instead.
+            if self._drops_tool_choice_required():
+                messages = list(messages) + [
+                    {
+                        "role": "user",
+                        "content": f"You must call `{forced_name}` now.",
+                    }
+                ]
+                request_tool_choice = None
+            else:
+                tools = matching
+                request_tool_choice = LLMToolChoiceMode.REQUIRED.value
         elif tool_choice.mode is LLMToolChoiceMode.AUTO:
             request_tool_choice = None
         else:
@@ -1521,9 +1536,9 @@ class OpenAICompatibleLLM(LLMInterface):
         # LM Studio and Ollama silently drop tool_choice="required", returning an
         # empty tool_calls array instead of forcing a call (#1563/#1179).
         # Downgrade to auto (None) so the model still gets to call a tool. Named
-        # tool_choice dicts were already normalized to "required" + a single
-        # filtered tool above, so the call stays practically forced even under
-        # auto. Generic OpenAI-compatible endpoints retain the canonical
+        # tool_choice on these providers already kept the full tools list and
+        # appended a force suffix above (#3865); required-only calls just omit
+        # the field. Generic OpenAI-compatible endpoints retain the canonical
         # ``required`` contract regardless of whether they use a custom base URL.
         if request_tool_choice == LLMToolChoiceMode.REQUIRED.value and self._drops_tool_choice_required():
             request_tool_choice = None

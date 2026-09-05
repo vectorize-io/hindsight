@@ -305,7 +305,9 @@ class TestSplitSynthesisAgentFlow:
 
     @pytest.mark.asyncio
     async def test_fitting_history_stays_single_call(self):
-        """No overflow → exactly the pre-existing single forced-synthesis call."""
+        """No overflow → exactly one prefix-stable forced-synthesis call (#3865)."""
+        from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_NONE
+
         small = {"memories": [{"id": "mem-1", "text": "one small fact"}]}
         llm = self._mock_llm("Direct answer.")
         # First turn recalls; second turn stops with no tool calls → forced synthesis.
@@ -315,6 +317,13 @@ class TestSplitSynthesisAgentFlow:
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(tool_calls=[], finish_reason="stop", content="done"),
+            LLMToolCallResult(
+                tool_calls=[],
+                finish_reason="stop",
+                content="Direct answer.",
+                input_tokens=10,
+                output_tokens=5,
+            ),
         ]
 
         result = await run_reflect_agent(
@@ -328,6 +337,11 @@ class TestSplitSynthesisAgentFlow:
         assert result.text == "Direct answer."
         scopes = [c.scope for c in result.llm_trace]
         assert scopes == ["agent_1", "agent_2", "final"], f"unexpected scopes {scopes}"
+        final_kwargs = llm.call_with_tools.await_args_list[2].kwargs
+        assert final_kwargs["tool_choice"] is LLM_TOOL_CHOICE_NONE
+        assert final_kwargs["tools"]
+        assert "Produce the final answer now" in final_kwargs["messages"][-1]["content"]
+        llm.call.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_map_prompts_partition_the_evidence(self):

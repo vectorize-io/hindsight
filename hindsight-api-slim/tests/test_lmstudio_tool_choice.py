@@ -7,8 +7,10 @@ The reflect agent forces tool selection via named tool_choice dicts on the first
 LM Studio (and Ollama) reject this format with HTTP 400:
   "Tool choice of type 'function' is not supported. Use 'auto', 'none', or 'required'."
 
-The fix should convert named tool_choice to "required" and filter the tools list
-to only the requested tool for providers that don't support named tool_choice.
+For providers that drop tool_choice="required" (lmstudio/ollama), keep the full
+tools list byte-identical and append a user-message suffix forcing the named
+tool (#3865). Other providers still convert named tool_choice to "required" + a
+filtered tools list.
 """
 
 import json
@@ -157,13 +159,17 @@ class TestLMStudioNamedToolChoiceBug:
         assert result.tool_calls[0].name == "search_mental_models"
 
         sent_kwargs = mock_create.call_args.kwargs
-        # The named dict is normalized to "required" + a single filtered tool,
-        # then "required" is downgraded to auto (omitted) because LM Studio
-        # silently drops it (#1563/#1179/#1877). The single filtered tool keeps
-        # the call forced in practice. See test_tool_choice_required_downgrade.py.
+        # "required" is omitted because LM Studio silently drops it
+        # (#1563/#1179/#1877). Tools stay full-schema; a user suffix forces the
+        # named tool (#3865). See test_tool_choice_required_downgrade.py.
         assert "tool_choice" not in sent_kwargs
-        assert len(sent_kwargs["tools"]) == 1
-        assert sent_kwargs["tools"][0]["function"]["name"] == "search_mental_models"
+        assert [t["function"]["name"] for t in sent_kwargs["tools"]] == [
+            "search_mental_models",
+            "search_observations",
+            "recall",
+            "done",
+        ]
+        assert sent_kwargs["messages"][-1]["content"] == "You must call `search_mental_models` now."
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -228,11 +234,9 @@ class TestExpectedFixBehavior:
       {"type": "function", "function": {"name": "search_mental_models"}}
 
     The fix should:
-      1. Convert tool_choice to "required"
-      2. Filter tools to only the requested tool
-
-    These tests currently FAIL (because the fix is not yet implemented).
-    After the fix is applied, they should PASS.
+      1. Omit tool_choice (these servers drop "required")
+      2. Keep the full tools list
+      3. Append a user suffix forcing the named tool
     """
 
     @pytest.mark.asyncio
@@ -260,21 +264,21 @@ class TestExpectedFixBehavior:
         assert result.tool_calls[0].name == "search_mental_models"
 
         sent_kwargs = mock_create.call_args.kwargs
-        # Fix: dict was normalized then "required" downgraded to auto (omitted)
+        # Fix: "required" omitted; tools stay full; suffix forces the named tool
         assert "tool_choice" not in sent_kwargs
-        # Fix: tools filtered to just the requested one (keeps the call forced)
-        assert len(sent_kwargs["tools"]) == 1
-        assert sent_kwargs["tools"][0]["function"]["name"] == "search_mental_models"
+        assert len(sent_kwargs["tools"]) == len(REFLECT_TOOLS)
+        assert sent_kwargs["messages"][-1]["content"] == "You must call `search_mental_models` now."
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "forced_tool_name",
         ["search_mental_models", "search_observations", "recall"],
     )
-    async def test_fix_filters_tools_to_requested_tool(self, forced_tool_name: str):
+    async def test_fix_keeps_full_tools_and_appends_force_suffix(self, forced_tool_name: str):
         """
-        After fix: tools list is filtered to only the forced tool so the model
-        can only call that one tool (equivalent to the named tool_choice behavior).
+        After fix (#3865): tools list stays the full reflect schema and a user
+        suffix asks for the forced tool (equivalent to named tool_choice without
+        mutating tools[]).
         """
         llm = _make_lmstudio_llm()
         named_tool_choice = LLMToolChoice.named(forced_tool_name)
@@ -291,11 +295,10 @@ class TestExpectedFixBehavior:
             )
 
         sent_kwargs = mock_create.call_args.kwargs
-        # "required" is downgraded to auto (omitted) for lmstudio; the single
-        # filtered tool keeps the call forced.
+        # "required" is omitted for lmstudio; tools stay full; suffix forces.
         assert "tool_choice" not in sent_kwargs
-        assert len(sent_kwargs["tools"]) == 1
-        assert sent_kwargs["tools"][0]["function"]["name"] == forced_tool_name
+        assert len(sent_kwargs["tools"]) == len(REFLECT_TOOLS)
+        assert sent_kwargs["messages"][-1]["content"] == f"You must call `{forced_tool_name}` now."
 
     @pytest.mark.asyncio
     async def test_fix_also_applies_to_openai_provider(self):

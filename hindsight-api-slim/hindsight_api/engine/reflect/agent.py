@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...cancellation import OperationCancelledError
 from ...config import get_config
-from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLM_TOOL_CHOICE_NONE, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
@@ -25,9 +25,9 @@ from .prompts import (
     _extract_directive_rules,
     build_agent_user_prompt,
     build_chunk_claims_prompt,
-    build_final_prompt,
     build_final_system_prompt,
     build_reduce_prompt,
+    build_stable_synthesis_nudge,
     build_system_prompt_for_tools,
     split_context_history,
 )
@@ -768,18 +768,25 @@ async def _run_reflect_agent_inner(
         return response.strip()
 
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
-        """Answer without tools from the accumulated tool results.
+        """Answer from the accumulated tool results.
 
-        When the accumulated results fit the prompt budget this is one LLM call,
-        exactly as before. When they exceed it, they are SPLIT — not truncated:
-        each budget-sized chunk is compressed in parallel into dated, cited
-        claims, and one reduce call synthesizes the answer from every chunk's
-        claims. The old behavior dropped any over-budget block whole (plus all
-        older ones), which produced confident "no information" answers carrying
-        hundreds of citations the synthesis model never saw (#3122).
+        When the accumulated results fit the prompt budget this is one LLM call
+        that *extends* the existing agent conversation: same system prompt, same
+        ``tools`` array, plus a user nudge to produce the final answer with no
+        further tool calls (#3865). Swapping the system prompt / dropping tools
+        used to diverge tools-first chat templates at token 3 and force a full
+        prefill on hybrid/Ollama models.
+
+        When results exceed the budget they are SPLIT — not truncated: each
+        budget-sized chunk is compressed in parallel into dated, cited claims,
+        and one reduce call synthesizes the answer from every chunk's claims.
+        The old behavior dropped any over-budget block whole (plus all older
+        ones), which produced confident "no information" answers carrying
+        hundreds of citations the synthesis model never saw (#3122). Split
+        synthesis still uses dedicated prompts because the conversation no
+        longer fits as a prefix extension.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
-        final_system = build_final_system_prompt(bank_profile.get("mission"), llm_output_language, directives)
         chunks = split_context_history(context_history, max_context_tokens)
         # Every call below uses the transport-level cap, never the caller's
         # max_tokens: that is a visible-length target carried as a prompt
@@ -787,17 +794,42 @@ async def _run_reflect_agent_inner(
         # thinking models mid-word — or, on the map calls, starve the evidence
         # extraction.
         if len(chunks) <= 1:
-            prompt = build_final_prompt(
-                query,
-                context_history,
-                bank_profile,
-                context,
-                max_context_tokens=max_context_tokens,
-                max_tokens=max_tokens,
-                llm_output_language=llm_output_language,
+            # Prefix-stable synthesis: keep system + tools, append a nudge.
+            synth_messages = list(messages) + [
+                {
+                    "role": "user",
+                    "content": build_stable_synthesis_nudge(
+                        max_tokens=max_tokens,
+                        llm_output_language=llm_output_language,
+                    ),
+                }
+            ]
+            llm_start = time.time()
+            result = await llm_config.call_with_tools(
+                messages=synth_messages,
+                tools=tools,
+                scope="reflect",
+                tool_choice=LLM_TOOL_CHOICE_NONE,
+                temperature=get_config().llm_temperature_reflect,
+                max_completion_tokens=synthesis_max_completion_tokens,
             )
-            answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
+            llm_duration = int((time.time() - llm_start) * 1000)
+            total_input_tokens += result.input_tokens
+            total_output_tokens += result.output_tokens
+            total_cached_tokens += getattr(result, "cached_tokens", 0) or 0
+            total_thoughts_tokens += getattr(result, "thoughts_tokens", 0) or 0
+            llm_trace.append(
+                {
+                    "scope": "final",
+                    "duration_ms": llm_duration,
+                    "input_tokens": result.input_tokens,
+                    "output_tokens": result.output_tokens,
+                }
+            )
+            answer = (result.content or "").strip()
         else:
+            final_system = build_final_system_prompt(bank_profile.get("mission"), llm_output_language, directives)
+
             log = logger.warning if len(chunks) > _SPLIT_SYNTHESIS_WARN_CHUNKS else logger.info
             log(
                 f"[REFLECT {reflect_id}] Retrieved data exceeds the context budget; "
@@ -828,7 +860,7 @@ async def _run_reflect_agent_inner(
             answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
 
         if not (answer or "").strip():
-            # Tools were disabled for this call and the model still returned nothing.
+            # The synthesis call returned no text.
             # There is no answer to hand back, so the run failed -- see #2959 for why
             # a placeholder here is worse than an exception.
             raise ReflectNoAnswerError(
@@ -875,7 +907,7 @@ async def _run_reflect_agent_inner(
         is_last = iteration == max_iterations - 1
 
         if is_last:
-            # Force text response on last iteration - no tools
+            # Force final synthesis on last iteration (prefix-stable when in budget)
             return await _forced_final_synthesis(iteration + 1)
 
         # Proactive context-window guard: if accumulated messages would exceed the
@@ -1029,7 +1061,7 @@ async def _run_reflect_agent_inner(
                     f"produced no usable tool call (the transport may not support function calling)." + detail
                 )
             # Model tool-called earlier and is now stopping: fall through to a clean
-            # forced final synthesis (tools disabled, prose expected).
+            # forced final synthesis (prefix-stable when in budget; prose expected).
             return await _forced_final_synthesis(iteration + 1)
 
         # The model produced at least one tool call reflect could parse: it can

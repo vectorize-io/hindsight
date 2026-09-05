@@ -970,9 +970,12 @@ class TestReflectAgentMocked:
     @pytest.mark.asyncio
     async def test_stop_after_evidence_uses_forced_final_synthesis(self, mock_llm, mock_functions):
         """A model that tool-called at least once and then stops (no tool call) is a
-        legitimate completion: reflect does a clean forced final-synthesis call (tools
-        disabled) rather than salvaging free text or raising ReflectToolCallError.
+        legitimate completion: reflect does a prefix-stable forced final-synthesis
+        call (same tools, tool_choice=none) rather than salvaging free text or
+        raising ReflectToolCallError (#3865).
         """
+        from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_NONE
+
         mock_functions["search_mental_models_fn"].return_value = {
             "mental_models": [{"id": "mm-1", "name": "Prefs", "content": "Fresh content.", "is_stale": False}]
         }
@@ -981,13 +984,15 @@ class TestReflectAgentMocked:
             self._mm_call(),
             # Turn 1: model stops with plain text and no tool call.
             LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
-        ]
-        mock_llm.call = AsyncMock(
-            return_value=LLMCallResult(
+            # Forced final synthesis (prefix-stable).
+            LLMToolCallResult(
+                tool_calls=[],
                 content="Synthesized final answer.",
-                usage=TokenUsage(input_tokens=40, output_tokens=12, total_tokens=52),
-            )
-        )
+                finish_reason="stop",
+                input_tokens=40,
+                output_tokens=12,
+            ),
+        ]
 
         cap = 64
         result = await run_reflect_agent(
@@ -1003,23 +1008,37 @@ class TestReflectAgentMocked:
 
         # Answer comes from the clean forced-final call, not the turn-1 free text.
         assert result.text == "Synthesized final answer."
-        assert mock_llm.call.await_count == 1
-        # The forced-final synthesis no longer hard-caps the transport at the page
-        # budget (that truncates thinking models mid-word, #3365): the call is
-        # uncapped by default and the page length reaches the model as a prompt
-        # directive instead.
-        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] is None
-        final_prompt = mock_llm.call.await_args.kwargs["messages"][1]["content"]
+        assert mock_llm.call.await_count == 0
+        assert mock_llm.call_with_tools.await_count == 3
+        final_kwargs = mock_llm.call_with_tools.await_args_list[2].kwargs
+        assert final_kwargs["tool_choice"] is LLM_TOOL_CHOICE_NONE
+        assert final_kwargs["tools"]  # tools kept on the wire (#3865)
+        assert final_kwargs["max_completion_tokens"] is None
+        final_prompt = final_kwargs["messages"][-1]["content"]
+        assert "Produce the final answer now" in final_prompt
         assert f"approximately {cap} tokens" in final_prompt
 
     @pytest.mark.asyncio
     async def test_max_iterations_reached(self, mock_llm, mock_functions):
         """Test that agent stops after max iterations even with errors."""
-        # LLM keeps calling unknown tools
-        mock_llm.call_with_tools.return_value = LLMToolCallResult(
-            tool_calls=[LLMToolCall(id="1", name="unknown_tool", arguments={})],
-            finish_reason="tool_calls",
-        )
+        from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_NONE
+
+        # LLM keeps calling unknown tools, then final synthesis returns prose.
+        def _side_effect(**kwargs):
+            if kwargs.get("tool_choice") is LLM_TOOL_CHOICE_NONE:
+                return LLMToolCallResult(
+                    tool_calls=[],
+                    content="Fallback answer from final iteration",
+                    finish_reason="stop",
+                    input_tokens=100,
+                    output_tokens=50,
+                )
+            return LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="unknown_tool", arguments={})],
+                finish_reason="tool_calls",
+            )
+
+        mock_llm.call_with_tools.side_effect = _side_effect
 
         result = await run_reflect_agent(
             llm_config=mock_llm,
@@ -1033,6 +1052,7 @@ class TestReflectAgentMocked:
         # Should have a result even if no memories found
         assert result is not None
         assert result.iterations == 3
+        assert result.text == "Fallback answer from final iteration"
 
     @pytest.mark.asyncio
     async def test_wall_clock_timeout(self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]) -> None:
@@ -1271,7 +1291,17 @@ class TestContextOverflowBehavior:
     async def test_context_overflow_error_skips_retry(self, mock_llm, mock_functions_with_large_output):
         """A context_length_exceeded error from the LLM should NOT be retried —
         it should immediately fall back to final synthesis."""
-        mock_llm.call_with_tools.side_effect = Exception("context_length_exceeded: messages resulted in 150000 tokens.")
+        mock_llm.call_with_tools.side_effect = [
+            Exception("context_length_exceeded: messages resulted in 150000 tokens."),
+            # Empty evidence still uses prefix-stable synthesis (#3865).
+            LLMToolCallResult(
+                tool_calls=[],
+                content="Synthesized answer from gathered evidence.",
+                finish_reason="stop",
+                input_tokens=50,
+                output_tokens=20,
+            ),
+        ]
 
         result = await run_reflect_agent(
             llm_config=mock_llm,
@@ -1283,10 +1313,10 @@ class TestContextOverflowBehavior:
         )
 
         assert result is not None
-        # Should have attempted only 1 iteration (no retry on overflow error)
-        assert mock_llm.call_with_tools.call_count == 1
-        # Final synthesis was called
-        mock_llm.call.assert_called_once()
+        assert result.text == "Synthesized answer from gathered evidence."
+        # One failed tool-loop attempt + one prefix-stable synthesis call.
+        assert mock_llm.call_with_tools.call_count == 2
+        mock_llm.call.assert_not_called()
 
 
 class TestNoAnswerFailsHard:
@@ -1379,11 +1409,7 @@ class TestNoAnswerFailsHard:
 
     @pytest.mark.asyncio
     async def test_empty_final_synthesis_raises(self, mock_llm, mock_functions):
-        """The forced final synthesis (tools disabled) returning nothing also fails."""
-        mock_llm.call.return_value = LLMCallResult(
-            content="   ",
-            usage=TokenUsage(input_tokens=10, output_tokens=0, total_tokens=10),
-        )
+        """The forced final synthesis returning nothing also fails."""
         # Gather evidence, then stop tool-calling: the agent falls through to the
         # forced synthesis, which is where the empty text comes from.
         mock_llm.call_with_tools.side_effect = [
@@ -1392,6 +1418,7 @@ class TestNoAnswerFailsHard:
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(content="", tool_calls=[], finish_reason="stop"),
+            LLMToolCallResult(content="   ", tool_calls=[], finish_reason="stop", input_tokens=10, output_tokens=0),
         ]
 
         with pytest.raises(ReflectNoAnswerError) as exc_info:

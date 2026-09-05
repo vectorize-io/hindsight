@@ -9,10 +9,11 @@ synthesis with no retrieval, and answers "I don't have information" even when th
 bank holds the answer.
 
 The fix downgrades ``"required"`` to auto (omitted) for these providers so the
-model still gets to call a tool. Named ``tool_choice`` dicts are normalized to
-``"required"`` + a single filtered tool first, so forced calls stay practically
-forced even under auto. Generic OpenAI-compatible endpoints, including custom
-base URLs, retain ``"required"`` because URL shape does not declare endpoint
+model still gets to call a tool. Named ``tool_choice`` keeps the full ``tools``
+array byte-identical and appends a user-message suffix ("You must call `name`
+now") so forced calls stay practically forced without mutating the tools schema
+(#3865). Generic OpenAI-compatible endpoints, including custom base URLs, still
+narrow tools + send ``"required"`` because URL shape does not declare endpoint
 capabilities.
 
 These are fast, deterministic unit tests: the OpenAI client's ``create`` is
@@ -159,10 +160,10 @@ async def test_required_preserved_for_cloud_provider():
 async def test_named_tool_choice_forced_call_survives_downgrade():
     """Reflect forces a tool via a named dict; it must still effectively force.
 
-    The dict is normalized to ``required`` + a single filtered tool, then the
-    downgrade drops ``required`` to auto. With only one tool available the call
-    stays practically forced, so the model still emits the tool call instead of
-    the empty-tool_calls failure mode.
+    For ollama/lmstudio the full tools schema stays on the wire and a user-message
+    suffix asks for the named tool (#3865). ``required`` is omitted because these
+    servers drop it. The model still emits the tool call instead of the
+    empty-tool_calls failure mode.
     """
     llm = _make_llm("lmstudio", "http://localhost:1234/v1")
     named = LLMToolChoice.named("recall")
@@ -178,9 +179,12 @@ async def test_named_tool_choice_forced_call_survives_downgrade():
     sent = mock_create.call_args.kwargs
     # required was dropped (the silent-drop trigger is gone) ...
     assert "tool_choice" not in sent
-    # ... but tools were narrowed to just the forced one, keeping the call forced.
-    assert len(sent["tools"]) == 1
-    assert sent["tools"][0]["function"]["name"] == "recall"
+    # ... but tools stay byte-identical; the force is a conversation suffix.
+    assert [tool["function"]["name"] for tool in sent["tools"]] == ["recall", "done"]
+    assert sent["messages"][-1] == {
+        "role": "user",
+        "content": "You must call `recall` now.",
+    }
     # and the model returns the tool call rather than an empty array.
     assert [tc.name for tc in result.tool_calls] == ["recall"]
 

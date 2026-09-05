@@ -85,8 +85,12 @@ def _mock_functions():
     }
 
 
-def _stop_after_evidence(llm):
-    """Turn 0 tool-calls, turn 1 stops with plain text -> forced final synthesis."""
+def _stop_after_evidence(llm, final_answer: str = "Synthesized final answer."):
+    """Turn 0 tool-calls, turn 1 stops with plain text -> forced final synthesis.
+
+    In-budget forced synthesis is a third call_with_tools (same tools,
+    tool_choice=none + nudge), not llm.call (#3865).
+    """
     from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult
 
     llm.call_with_tools = AsyncMock(
@@ -96,12 +100,21 @@ def _stop_after_evidence(llm):
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(tool_calls=[], content="I have enough.", finish_reason="stop"),
+            LLMToolCallResult(
+                tool_calls=[],
+                content=final_answer,
+                finish_reason="stop",
+                input_tokens=40,
+                output_tokens=12,
+            ),
         ]
     )
 
 
 @pytest.mark.asyncio
 async def test_forced_synthesis_uncapped_by_default(monkeypatch):
+    from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_NONE
+
     monkeypatch.delenv("HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS", raising=False)
     clear_config_cache()
     try:
@@ -118,9 +131,13 @@ async def test_forced_synthesis_uncapped_by_default(monkeypatch):
             **_mock_functions(),
         )
         assert result.text == "Synthesized final answer."
-        # Uncapped transport; page length reached the model via the prompt.
-        assert llm.call.await_args.kwargs["max_completion_tokens"] is None
-        assert "approximately 64 tokens" in llm.call.await_args.kwargs["messages"][1]["content"]
+        assert llm.call.await_count == 0
+        assert llm.call_with_tools.await_count == 3
+        # Uncapped transport; page length reached the model via the synthesis nudge.
+        final_kwargs = llm.call_with_tools.await_args_list[2].kwargs
+        assert final_kwargs["tool_choice"] is LLM_TOOL_CHOICE_NONE
+        assert final_kwargs["max_completion_tokens"] is None
+        assert "approximately 64 tokens" in final_kwargs["messages"][-1]["content"]
     finally:
         clear_config_cache()
 
@@ -143,8 +160,10 @@ async def test_forced_synthesis_uses_config_cap_when_set(monkeypatch):
             **_mock_functions(),
         )
         # The transport cap is the operator-set ceiling, still independent of the
-        # page budget (64).
-        assert llm.call.await_args.kwargs["max_completion_tokens"] == 12345
+        # page budget (64). Synthesis is call_with_tools now (#3865).
+        assert llm.call.await_count == 0
+        final_kwargs = llm.call_with_tools.await_args_list[2].kwargs
+        assert final_kwargs["max_completion_tokens"] == 12345
     finally:
         clear_config_cache()
 

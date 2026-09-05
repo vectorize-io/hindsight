@@ -706,6 +706,29 @@ def _length_directive(max_tokens: int | None) -> str | None:
     )
 
 
+def build_stable_synthesis_nudge(
+    max_tokens: int | None = None,
+    llm_output_language: str | None = None,
+) -> str:
+    """User-message suffix for prefix-stable final synthesis (#3865).
+
+    Keeps the agent system prompt and ``tools`` array unchanged so synthesis is
+    a pure extension of the conversation. Hybrid / Ollama templates that render
+    tools before system text can then resume from a prior checkpoint instead of
+    full-reprefilling when the old path swapped the system prompt and dropped tools.
+    """
+    parts = [
+        "Produce the final answer now. Do not make any further tool calls.",
+        "",
+        "## Instructions",
+        _FINAL_INSTRUCTIONS,
+    ]
+    length_directive = _length_directive(max_tokens)
+    if length_directive is not None:
+        parts.append(length_directive)
+    return "\n".join(parts) + output_language_directive(llm_output_language)
+
+
 def build_final_prompt(
     query: str,
     context_history: list[dict],
