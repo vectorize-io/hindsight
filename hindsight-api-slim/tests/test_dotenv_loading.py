@@ -70,3 +70,37 @@ def test_entrypoint_dotenv_loading_is_authoritative(tmp_path: Path, monkeypatch)
     # Don't leak the .env-loaded key into the rest of the session; monkeypatch
     # cannot undo it because load_dotenv set it directly.
     monkeypatch.delenv("HINDSIGHT_TEST_FILLED", raising=False)
+
+
+def test_server_entrypoint_loads_dotenv_before_engine_semaphores(tmp_path: Path) -> None:
+    """Importing hindsight_api.server (the uvicorn ASGI entrypoint) must load .env
+    before engine modules initialize import-time semaphores."""
+    (tmp_path / ".env").write_text(
+        "HINDSIGHT_API_LLM_PROVIDER=none\n"
+        "HINDSIGHT_API_LLM_MAX_CONCURRENT=7\n"
+        "HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT=3\n"
+    )
+
+    env = os.environ.copy()
+    env.pop("HINDSIGHT_API_LLM_MAX_CONCURRENT", None)
+    env.pop("HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT", None)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (API_SOURCE, env.get("PYTHONPATH"))))
+
+    code = (
+        "import hindsight_api.server; "
+        "import hindsight_api.engine.llm_wrapper as llm_wrapper; "
+        "print(f'VAL:{llm_wrapper._llm_max_concurrent}'); "
+        "print(f'VAL:{llm_wrapper._global_llm_semaphore._value}'); "
+        "print(f'VAL:{llm_wrapper._per_op_llm_semaphores[\"retain\"]._value}')"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    lines = [line.removeprefix("VAL:") for line in result.stdout.splitlines() if line.startswith("VAL:")]
+    assert lines == ["7", "7", "3"]
