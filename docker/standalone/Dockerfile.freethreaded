@@ -103,9 +103,9 @@ RUN apt-get update && apt-get upgrade -y \
 
 # The venv's interpreter lives in /opt/pythons, so it has to come along.
 COPY --from=api-builder-freethreaded /opt/pythons /opt/pythons
-COPY --from=api-builder-freethreaded /app/api /app/api
-COPY docker/standalone/start-all.sh /app/start-all.sh
-RUN chmod +x /app/start-all.sh && chown -R hindsight:hindsight /app
+COPY --chown=hindsight:hindsight --from=api-builder-freethreaded /app/api /app/api
+COPY --chown=hindsight:hindsight docker/standalone/start-all.sh /app/start-all.sh
+RUN chmod +x /app/start-all.sh
 
 USER hindsight
 

@@ -182,13 +182,11 @@ RUN apt-get update && apt-get upgrade -y \
 RUN useradd -m -s /bin/bash hindsight
 
 # Copy API with virtual environment from builder
-COPY --from=api-builder /app/api /app/api
+COPY --chown=hindsight:hindsight --from=api-builder /app/api /app/api
 
 # Copy startup script
-COPY docker/standalone/start-all.sh /app/start-all.sh
+COPY --chown=hindsight:hindsight docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
-
-RUN chown -R hindsight:hindsight /app
 
 USER hindsight
 
@@ -347,24 +345,22 @@ RUN apt-get update && apt-get upgrade -y \
 RUN useradd -m -s /bin/bash hindsight
 
 # Copy API with virtual environment from builder
-COPY --from=api-builder /app/api /app/api
+COPY --chown=hindsight:hindsight --from=api-builder /app/api /app/api
 
 # Copy built SDK
-COPY --from=sdk-builder /app/hindsight-clients/typescript /app/sdk
+COPY --chown=hindsight:hindsight --from=sdk-builder /app/hindsight-clients/typescript /app/sdk
 
 # Copy Control Plane standalone build
 WORKDIR /app/control-plane
-COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/standalone ./
-COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/.next/static ./.next/static
-COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/public ./public
+COPY --chown=hindsight:hindsight --from=cp-builder /app/memory-poc/hindsight-control-plane/standalone ./
+COPY --chown=hindsight:hindsight --from=cp-builder /app/memory-poc/hindsight-control-plane/.next/static ./.next/static
+COPY --chown=hindsight:hindsight --from=cp-builder /app/memory-poc/hindsight-control-plane/public ./public
 
 WORKDIR /app
 
 # Copy startup script
-COPY docker/standalone/start-all.sh /app/start-all.sh
+COPY --chown=hindsight:hindsight docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
-
-RUN chown -R hindsight:hindsight /app
 
 USER hindsight
 
