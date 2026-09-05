@@ -141,6 +141,17 @@ export class RateLimitedError extends Error {
   }
 }
 
+/** An HTTP response that the API rejected after any credential refresh was attempted. */
+export class HttpResponseError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "HttpResponseError";
+  }
+}
+
 /** Parse a `Retry-After` header (delta-seconds or HTTP-date) into ms; 0 when absent or unusable. */
 export function retryAfterMs(header: string | null | undefined): number {
   if (!header) return 0;
@@ -284,7 +295,8 @@ export class HindsightClient {
     if (r.status === 429 && !tolerate.includes(429))
       throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
-      throw new Error(
+      throw new HttpResponseError(
+        r.status,
         `${method} ${url} -> ${r.status} ${await r.text()}${this.authHint(r.status)}`
       );
     return r;

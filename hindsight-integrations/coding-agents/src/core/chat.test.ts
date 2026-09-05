@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RateLimitedError, type HindsightClient } from "./hindsight";
+import { HttpResponseError, RateLimitedError, type HindsightClient } from "./hindsight";
 import { ingestChats, renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
 import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
@@ -432,6 +432,36 @@ describe("retainLiveSession — incremental write-back", () => {
 
     await expect(write(client, turns(3), memoryCursorStore())).rejects.toThrow("500 boom");
     expect(retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores the acknowledged cursor after a definitive rejection", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    const initial = turns(2);
+    await write(client, initial, cursors);
+    const acknowledged = cursors.read("s1");
+    retain.mockRejectedValueOnce(new HttpResponseError(401, "unauthorized"));
+
+    await expect(write(client, turns(3), cursors)).rejects.toBeInstanceOf(HttpResponseError);
+
+    expect(cursors.read("s1")).toEqual(acknowledged);
+    retain.mockResolvedValueOnce(undefined);
+    await write(client, turns(4), cursors);
+    expect(retain.mock.calls.at(-1)?.[5].updateMode).toBe("append");
+    expect(retain.mock.calls.at(-1)?.[0]).toBe(
+      JSON.stringify(turns(4)[2]) + "\n" + JSON.stringify(turns(4)[3])
+    );
+  });
+
+  it("keeps the cursor dirty when the failure outcome is indeterminate", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    await write(client, turns(2), cursors);
+    retain.mockRejectedValueOnce(new HttpResponseError(500, "server error"));
+
+    await expect(write(client, turns(3), cursors)).rejects.toBeInstanceOf(HttpResponseError);
+
+    expect(cursors.read("s1")?.dirty).toBe(true);
   });
 
   it("keeps the write-back when the capability probe itself fails", async () => {

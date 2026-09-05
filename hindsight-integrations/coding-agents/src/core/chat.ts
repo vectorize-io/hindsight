@@ -3,7 +3,7 @@
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
-import { RateLimitedError, type HindsightClient } from "./hindsight";
+import { HttpResponseError, RateLimitedError, type HindsightClient } from "./hindsight";
 import { fingerprintTurns, planRetain, type RetainCursorStore } from "./retain-cursor";
 import type { RetainStamp } from "./retain-stamp";
 import type { ChatSession } from "./types";
@@ -240,7 +240,8 @@ async function writeSession(
 ): Promise<void> {
   const refId = `conversation:${sessionId}`;
   const appendSupported = Boolean(cursors) && (await supportsAppend(client));
-  const plan = planRetain(turns, cursors?.read(sessionId), { appendSupported, bank: client.bank });
+  const acknowledged = cursors?.read(sessionId);
+  const plan = planRetain(turns, acknowledged, { appendSupported, bank: client.bank });
   if (plan.mode === "skip") return;
 
   const content =
@@ -261,44 +262,60 @@ async function writeSession(
   cursors?.write(sessionId, { ...next, dirty: true });
 
   const claimed = { ...next, dirty: true };
-  await submitWithRetry(
-    () =>
-      client.retain(
-        content,
-        "coding agent session",
-        refId,
-        // Configured tags first, built-ins last and deduped: `source:chat` and `harness:<id>` are what
-        // the documents list filters and draws its agent logo from, so a template cannot displace them.
-        [
-          ...new Set([
-            ...(stamp?.tags ?? []),
-            "source:chat",
-            ...(harness ? [`harness:${harness}`] : []),
-          ]),
-        ],
-        "conversation",
-        {
-          timestamp: startTs,
-          updateMode: plan.mode === "append" ? "append" : undefined,
-          // Identity of THIS payload: a resubmission of the same bytes is collapsed server-side into
-          // the original operation instead of extracting (or appending) twice.
-          operationId: uuidV5(`${client.bank}\n${refId}\n${plan.mode}\n${content}`),
-          metadata: {
-            ...stamp?.metadata, // configured first: the built-ins below win on any key collision
-            source: "chat",
-            session_id: sessionId,
-            ref_id: refId,
-            ...(harness ? { harness } : {}),
-          },
-        }
-      ),
-    // Still ours to retry only while the cursor holds the claim we wrote above.
-    () => {
-      if (!cursors) return true;
-      const now = cursors.read(sessionId);
-      return now?.turns === claimed.turns && now?.fingerprint === claimed.fingerprint;
-    },
-    retryUntil
-  );
+  try {
+    await submitWithRetry(
+      () =>
+        client.retain(
+          content,
+          "coding agent session",
+          refId,
+          // Configured tags first, built-ins last and deduped: `source:chat` and `harness:<id>` are what
+          // the documents list filters and draws its agent logo from, so a template cannot displace them.
+          [
+            ...new Set([
+              ...(stamp?.tags ?? []),
+              "source:chat",
+              ...(harness ? [`harness:${harness}`] : []),
+            ]),
+          ],
+          "conversation",
+          {
+            timestamp: startTs,
+            updateMode: plan.mode === "append" ? "append" : undefined,
+            // Identity of THIS payload: a resubmission of the same bytes is collapsed server-side into
+            // the original operation instead of extracting (or appending) twice.
+            operationId: uuidV5(`${client.bank}\n${refId}\n${plan.mode}\n${content}`),
+            metadata: {
+              ...stamp?.metadata, // configured first: the built-ins below win on any key collision
+              source: "chat",
+              session_id: sessionId,
+              ref_id: refId,
+              ...(harness ? { harness } : {}),
+            },
+          }
+        ),
+      // Still ours to retry only while the cursor holds the claim we wrote above.
+      () => {
+        if (!cursors) return true;
+        const now = cursors.read(sessionId);
+        return now?.turns === claimed.turns && now?.fingerprint === claimed.fingerprint;
+      },
+      retryUntil
+    );
+  } catch (error) {
+    // These responses prove the API rejected the request before accepting it. Restore the last
+    // server-confirmed cursor so an auth/validation failure does not force full replacement for
+    // the rest of the session. Ambiguous client statuses, timeouts and server failures remain
+    // dirty because their commit outcome is unknown.
+    const definitivelyRejected =
+      error instanceof HttpResponseError &&
+      [400, 401, 403, 405, 413, 415, 422].includes(error.status);
+    const current = cursors?.read(sessionId);
+    const stillOurs =
+      current?.turns === claimed.turns && current?.fingerprint === claimed.fingerprint;
+    if (definitivelyRejected && acknowledged && cursors && stillOurs)
+      cursors.write(sessionId, acknowledged);
+    throw error;
+  }
   cursors?.write(sessionId, next);
 }
