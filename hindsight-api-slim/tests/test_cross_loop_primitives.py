@@ -148,3 +148,83 @@ async def test_uncontended_acquire_does_not_yield():
         async with sem:
             pass
     assert time.perf_counter() - start < 0.5
+
+
+@pytest.mark.asyncio
+async def test_holder_that_re_acquires_without_suspending_does_not_starve_a_waiter():
+    """A permit released and retaken in the same step must still reach the queue first."""
+    sem = CrossLoopSemaphore(1)
+    hold = 0.01
+    stop = asyncio.Event()
+    sections = 0
+
+    async def holder():
+        nonlocal sections
+        while not stop.is_set():
+            async with sem:
+                await asyncio.sleep(hold)
+                sections += 1
+
+    task = asyncio.create_task(holder())
+    try:
+        await asyncio.sleep(5 * hold)
+        start = time.perf_counter()
+        await asyncio.wait_for(sem.acquire(), timeout=2.0)
+        waited = time.perf_counter() - start
+        sem.release()
+    finally:
+        stop.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert waited < 20 * hold, f"waited {waited * 1000:.0f} ms behind {sections} critical sections"
+
+
+@pytest.mark.asyncio
+async def test_waiters_are_served_in_arrival_order():
+    """Handoff order is the arrival order, not whichever waiter happens to poll first."""
+    sem = CrossLoopSemaphore(1)
+    served: list[str] = []
+    await sem.acquire()
+
+    async def waiter(tag: str):
+        async with sem:
+            served.append(tag)
+
+    tasks = []
+    for tag in "abcde":
+        tasks.append(asyncio.create_task(waiter(tag)))
+        # Stagger arrivals so each waiter sits at a different point on the backoff ladder.
+        await asyncio.sleep(0.005)
+
+    sem.release()
+    await asyncio.gather(*tasks)
+
+    assert served == list("abcde")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiters_neither_strand_a_permit_nor_block_the_queue():
+    """Cancellation must pass on a handed-over permit and drop a still-queued waiter."""
+    sem = CrossLoopSemaphore(1)
+    await sem.acquire()
+
+    first = asyncio.create_task(sem.acquire())
+    await asyncio.sleep(0.005)
+    second = asyncio.create_task(sem.acquire())
+    await asyncio.sleep(0.005)
+    queued = asyncio.create_task(sem.acquire())
+    await asyncio.sleep(0.005)
+
+    # Cancelled behind a held permit, so it leaves the queue owning nothing.
+    queued.cancel()
+    await asyncio.gather(queued, return_exceptions=True)
+
+    # Cancelled before it can wake, so it is holding the permit just handed to it.
+    sem.release()
+    first.cancel()
+    await asyncio.gather(first, return_exceptions=True)
+
+    await asyncio.wait_for(second, timeout=2.0)
+    sem.release()
+    await asyncio.wait_for(sem.acquire(), timeout=0.5)

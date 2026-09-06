@@ -23,6 +23,7 @@ per loop instead.
 from __future__ import annotations
 
 import asyncio
+import collections
 import threading
 
 __all__ = ["CrossLoopSemaphore", "CrossLoopLock"]
@@ -33,17 +34,30 @@ _MIN_DELAY = 0.001
 _MAX_DELAY = 0.02
 
 
+class _Ticket:
+    """One waiter's place in the queue, and where its permit is handed to it."""
+
+    __slots__ = ("granted",)
+
+    def __init__(self) -> None:
+        self.granted = False
+
+
 class CrossLoopSemaphore:
     """A concurrency cap shared by every event loop in the process.
 
     Drop-in for ``asyncio.Semaphore`` as an async context manager. The cap stays
     process-wide, which is the contract the surrounding config already implies:
     running ``--workers N`` has always meant N independent caps, one per process.
+
+    Waiters are served in arrival order, as ``asyncio.Semaphore`` serves them.
     """
 
     def __init__(self, value: int) -> None:
         self._capacity = value
-        self._sem = threading.Semaphore(value)
+        self._lock = threading.Lock()
+        self._free = value
+        self._waiters: collections.deque[_Ticket] = collections.deque()
 
     @property
     def capacity(self) -> int:
@@ -51,17 +65,45 @@ class CrossLoopSemaphore:
         return self._capacity
 
     async def acquire(self) -> None:
-        # Fast path: uncontended acquire never yields, so the common case costs one
-        # atomic operation and no scheduler round-trip.
-        if self._sem.acquire(blocking=False):
-            return
+        with self._lock:
+            # Fast path: uncontended acquire never yields. Gated on an empty queue,
+            # so an arriving task cannot take a permit an earlier waiter is owed.
+            if not self._waiters and self._free:
+                self._free -= 1
+                return
+            ticket = _Ticket()
+            self._waiters.append(ticket)
+
         delay = _MIN_DELAY
-        while not self._sem.acquire(blocking=False):
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, _MAX_DELAY)
+        try:
+            while True:
+                with self._lock:
+                    if ticket.granted:
+                        return
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _MAX_DELAY)
+        except BaseException:
+            with self._lock:
+                if ticket.granted:
+                    self._hand_on()
+                else:
+                    self._waiters.remove(ticket)
+            raise
 
     def release(self) -> None:
-        self._sem.release()
+        with self._lock:
+            self._hand_on()
+
+    def _hand_on(self) -> None:
+        """Give the permit to the longest-waiting task, or return it to the pool.
+
+        Handing it over directly is what stops a holder that re-acquires without
+        suspending from taking its own permit back before any waiter can see it free.
+        """
+        if self._waiters:
+            self._waiters.popleft().granted = True
+        else:
+            self._free += 1
 
     async def __aenter__(self) -> "CrossLoopSemaphore":
         await self.acquire()
