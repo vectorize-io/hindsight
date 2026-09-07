@@ -17,6 +17,7 @@ Hindsight that copies the extension in — see [Packaging](#packaging-an-extensi
 | Extension | Slot | What it does |
 | --- | --- | --- |
 | [`supabase-tenant`](./supabase-tenant) | `TENANT` | Validates [Supabase](https://supabase.com) Auth JWTs and gives each user their own Postgres schema |
+| [`static-keys-tenant`](./static-keys-tenant) | `TENANT` | Authenticates static API keys from env vars and gives each user their own Postgres schema |
 
 Extensions maintained outside this repository can be listed here too — open a PR
 adding a row that links to yours.

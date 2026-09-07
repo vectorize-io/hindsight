@@ -27,6 +27,14 @@ Validates [Supabase](https://supabase.com) JWTs and gives each authenticated use
 Up to 0.9.2 this extension was built in, at `hindsight_api.extensions.builtin.supabase_tenant`. That path no longer exists, so an install still pointing at it fails at startup with `ModuleNotFoundError`. Add the extension to your image and set `HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_supabase_tenant:SupabaseTenantExtension`. All `HINDSIGHT_API_TENANT_*` settings and the schema naming are unchanged.
 :::
 
+**External: StaticKeysTenantExtension**
+
+A fully self-hosted multi-user mode: users and their API keys are declared in environment variables (no external identity provider, no users table). Each user maps to their own PostgreSQL schema (`{prefix}_{user_id}`), provisioned lazily on first access, giving database-level memory isolation between users. Multiple API keys may map to the same user and schema.
+
+User IDs are case-insensitive: they are lowercased (and dashes normalized to underscores) before building the schema name, so `Rafael`, `rafael` and `RAFAEL` all resolve to the same tenant schema.
+
+It lives in the [extensions registry](https://github.com/vectorize-io/hindsight/tree/main/hindsight-extensions/static-keys-tenant), which documents its configuration and ships a Dockerfile that builds an image with it.
+
 For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT-based auth), implement a custom `TenantExtension`.
 
 ---
