@@ -23,7 +23,8 @@ Configuration via environment variables:
     HINDSIGHT_API_TENANT_EXTENSION=hindsight_ext_static_keys_tenant:StaticKeysTenantExtension
     HINDSIGHT_API_TENANT_USERS=user1:key1,user1:key2,user2:key3   # required, comma-separated user:key pairs
     HINDSIGHT_API_TENANT_SCHEMA_PREFIX=user            # optional, default: "user" (creates user_<user_id> schemas)
-    HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED=true        # optional, disable auth for MCP endpoints
+    # Note: HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED is rejected at startup — MCP
+    # clients always authenticate with a user's key (no isolation bypass).
 
 Usage:
     Clients pass their API key in the Authorization header:
@@ -43,7 +44,6 @@ import logging
 import re
 from dataclasses import dataclass
 
-from hindsight_api.config import get_config
 from hindsight_api.extensions.tenant import AuthenticationError, Tenant, TenantContext, TenantExtension
 from hindsight_api.models import RequestContext
 
@@ -224,7 +224,18 @@ class StaticKeysTenantExtension(TenantExtension):
         # Track initialized schemas to avoid redundant migrations
         self._initialized_schemas: set[str] = set()
 
-        self.mcp_auth_disabled = config.get("mcp_auth_disabled", "").lower() in ("true", "1", "yes")
+        # HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED is deliberately unsupported.
+        # On ApiKeyTenantExtension (one shared key) the flag downgrades a shared
+        # secret to none — a local convenience. Here it would hand any
+        # unauthenticated MCP client the base schema in a deployment whose
+        # entire purpose is per-user isolation, so refuse at startup rather
+        # than ship that footgun (review round 2: refuse-at-init over parity).
+        if config.get("mcp_auth_disabled", "").lower() in ("true", "1", "yes"):
+            raise ValueError(
+                "HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED is not supported by StaticKeysTenantExtension: "
+                "it would let unauthenticated MCP clients into the base schema of a multi-user "
+                "deployment. Remove the variable; MCP clients authenticate with a user's API key."
+            )
 
     # ------------------------------------------------------------------
     # Authentication
@@ -286,15 +297,7 @@ class StaticKeysTenantExtension(TenantExtension):
         return TenantContext(schema_name=schema_name)
 
     async def authenticate_mcp(self, context: RequestContext) -> TenantContext:
-        """
-        Authenticate MCP requests.
-
-        If mcp_auth_disabled is set, skip authentication and land in the base
-        schema (parity with ApiKeyTenantExtension). Otherwise, delegate to
-        authenticate().
-        """
-        if self.mcp_auth_disabled:
-            return TenantContext(schema_name=get_config().database_schema)
+        """Authenticate MCP requests — same isolation as HTTP, no bypass."""
         return await self.authenticate(context)
 
     # ------------------------------------------------------------------

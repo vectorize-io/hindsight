@@ -46,13 +46,19 @@ HINDSIGHT_API_TENANT_USERS=user1:key1,user1:key2,user2:key3
 | --- | --- | --- | --- |
 | `HINDSIGHT_API_TENANT_USERS` | yes | — | Comma-separated `user_id:api_key` pairs. Multiple keys may map to the same user |
 | `HINDSIGHT_API_TENANT_SCHEMA_PREFIX` | no | `user` | Schema name prefix; must be a valid Postgres identifier |
-| `HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED` | no | `false` | Skip authentication for MCP endpoints (MCP clients land in the base schema) |
+| `HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED` | no | — | **Not supported.** Setting it to a truthy value fails at startup: MCP clients always authenticate with a user's API key, so they get the same isolation as HTTP |
 
 User IDs are **case-insensitive** and normalized before building the schema name:
 they are lowercased and dashes become underscores (`Rafael`, `rafael` and `RAFAEL`
 all resolve to `user_rafael`), matching how PostgreSQL folds unquoted identifiers.
 Two distinct users whose ids collide after normalization (e.g. `jane-doe` vs
 `jane_doe`, or ids longer than the 63-byte identifier limit) are rejected at startup.
+
+API keys have two format constraints (**keys must be ASCII and must not contain a
+comma**): the comma is the pair separator, and a non-ASCII key could never
+authenticate anyway — HTTP header values arrive latin-1-decoded while environment
+variables are utf-8-decoded, so the byte sequences would never match and the key
+would silently 401 forever.
 
 Give the API and the worker the **same** variables: the worker calls `list_tenants()`
 to decide which schemas to consolidate, so a worker without the extension leaves every

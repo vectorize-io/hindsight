@@ -41,7 +41,6 @@ class TestStaticKeysTenantExtensionInit:
             ),
         }
         assert ext._users == {"rafael": "user_rafael", "sophie": "user_sophie"}
-        assert ext.mcp_auth_disabled is False
 
     def test_init_missing_users(self):
         with pytest.raises(ValueError, match="HINDSIGHT_API_TENANT_USERS is required"):
@@ -362,12 +361,20 @@ class TestStaticKeysTenantExtensionMcp:
         assert result.schema_name == "user_rafael"
 
     @pytest.mark.asyncio
-    async def test_authenticate_mcp_disabled_skips_auth(self):
-        ext = _make_extension(mcp_auth_disabled="true")
-        with patch.object(ext, "authenticate") as mock_authenticate:
-            result = await ext.authenticate_mcp(RequestContext(api_key="anything"))
-            mock_authenticate.assert_not_awaited()
-        assert result.schema_name == "public"
+    async def test_authenticate_mcp_disabled_is_refused_at_init(self):
+        # The flag would let unauthenticated MCP clients into the base schema
+        # of a deployment whose whole purpose is per-user isolation — refuse
+        # at startup (fail-fast contract) instead of silently downgrading auth.
+        with pytest.raises(ValueError, match="not supported by StaticKeysTenantExtension"):
+            _make_extension(mcp_auth_disabled="true")
+
+    @pytest.mark.asyncio
+    async def test_authenticate_mcp_requires_auth(self):
+        # Without the flag there is no MCP bypass: a bad key is rejected on the
+        # MCP path exactly as on HTTP.
+        ext = _make_extension()
+        with pytest.raises(AuthenticationError, match="Invalid API key"):
+            await ext.authenticate_mcp(RequestContext(api_key="wrong-key"))
 
 
 class TestStaticKeysTenantExtensionListTenants:
