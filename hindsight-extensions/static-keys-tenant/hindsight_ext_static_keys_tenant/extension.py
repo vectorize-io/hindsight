@@ -87,6 +87,20 @@ class _KeyEntry:
     user_id: str
     schema_name: str
     key_id: str
+    # The key pre-encoded for compare_digest (utf-8/surrogateescape): computed
+    # once at init so authenticate() never re-encodes every configured key on
+    # every request.
+    key_bytes: bytes
+
+
+def _encode_key(api_key: str) -> bytes:
+    """Encode a configured key the same way bearer-token bytes are recovered.
+
+    Header values arrive latin-1-decoded and are re-encoded with
+    "surrogateescape" (see authenticate), so the same codec here makes the two
+    sides byte-comparable.
+    """
+    return api_key.encode("utf-8", "surrogateescape")
 
 
 class StaticKeysTenantExtension(TenantExtension):
@@ -218,7 +232,7 @@ class StaticKeysTenantExtension(TenantExtension):
                 )
 
             self._key_to_user[api_key] = _KeyEntry(
-                user_id=user_id, schema_name=schema_name, key_id=_derive_key_id(api_key)
+                user_id=user_id, schema_name=schema_name, key_id=_derive_key_id(api_key), key_bytes=_encode_key(api_key)
             )
             self._users[user_id] = schema_name
 
@@ -270,15 +284,15 @@ class StaticKeysTenantExtension(TenantExtension):
         # (we stop at the first match); that reveals nothing to an attacker
         # holding only invalid keys, and an attacker holding a valid key
         # already knows where it sits in the list. Configured keys are
-        # re-encoded per comparison (cheap; see the per-request encoding nit —
-        # they are pre-encoded at init in _KeyEntry when large maps matter).
-        # Header values arrive latin-1-decoded, so encode with "surrogateescape"
-        # so any byte sequence round-trips losslessly instead of raising
-        # TypeError (a 500, not a 401) for non-ASCII bearer tokens.
+        # pre-encoded to bytes at init (_KeyEntry.key_bytes), so each request
+        # only encodes the incoming key. Header values arrive latin-1-decoded,
+        # so encode with "surrogateescape" so any byte sequence round-trips
+        # losslessly instead of raising TypeError (a 500, not a 401) for
+        # non-ASCII bearer tokens.
         key_bytes = key.encode("utf-8", "surrogateescape")
         match: _KeyEntry | None = None
-        for configured_key, entry in self._key_to_user.items():
-            if hmac.compare_digest(key_bytes, configured_key.encode("utf-8", "surrogateescape")):
+        for entry in self._key_to_user.values():
+            if hmac.compare_digest(key_bytes, entry.key_bytes):
                 match = entry
                 break
 

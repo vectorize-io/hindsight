@@ -27,6 +27,16 @@ def _make_extension(**overrides) -> StaticKeysTenantExtension:
     return StaticKeysTenantExtension(_make_config(**overrides))
 
 
+def _expected_entry(user_id: str, key: str, schema_prefix: str = "user") -> _KeyEntry:
+    """Build the _KeyEntry the extension must produce for one configured pair."""
+    return _KeyEntry(
+        user_id=user_id.lower(),
+        schema_name=f"{schema_prefix}_{user_id.lower().replace('-', '_')}",
+        key_id=hashlib.sha256(key.encode("utf-8", "surrogateescape")).hexdigest()[:16],
+        key_bytes=key.encode("utf-8", "surrogateescape"),
+    )
+
+
 class TestStaticKeysTenantExtensionInit:
     """Tests for initialization and configuration parsing."""
 
@@ -34,12 +44,8 @@ class TestStaticKeysTenantExtensionInit:
         ext = _make_extension()
         assert ext.schema_prefix == "user"
         assert ext._key_to_user == {
-            "key-a": _KeyEntry(
-                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-a").hexdigest()[:16]
-            ),
-            "key-b": _KeyEntry(
-                user_id="sophie", schema_name="user_sophie", key_id=hashlib.sha256(b"key-b").hexdigest()[:16]
-            ),
+            "key-a": _expected_entry("rafael", "key-a"),
+            "key-b": _expected_entry("sophie", "key-b"),
         }
         assert ext._users == {"rafael": "user_rafael", "sophie": "user_sophie"}
 
@@ -147,11 +153,7 @@ class TestStaticKeysTenantExtensionInit:
         # isolation guarantee.
         ext = _make_extension(users="Rafael:key-a")
         assert ext._users == {"rafael": "user_rafael"}
-        assert ext._key_to_user == {
-            "key-a": _KeyEntry(
-                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-a").hexdigest()[:16]
-            )
-        }
+        assert ext._key_to_user == {"key-a": _expected_entry("rafael", "key-a")}
 
     def test_init_normalizes_mixed_case_prefix_and_dashes(self):
         # Mixed case + dashes must normalize to a single stable lowercased schema.
@@ -171,19 +173,15 @@ class TestStaticKeysTenantExtensionInit:
         ext = _make_extension(users="Rafael:k1,rafael:k2")
         assert ext._users == {"rafael": "user_rafael"}
         assert ext._key_to_user == {
-            "k1": _KeyEntry(user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"k1").hexdigest()[:16]),
-            "k2": _KeyEntry(user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"k2").hexdigest()[:16]),
+            "k1": _expected_entry("Rafael", "k1"),
+            "k2": _expected_entry("rafael", "k2"),
         }
 
     def test_init_multiple_keys_same_user(self):
         ext = _make_extension(users="rafael:key-a,rafael:key-b")
         assert ext._key_to_user == {
-            "key-a": _KeyEntry(
-                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-a").hexdigest()[:16]
-            ),
-            "key-b": _KeyEntry(
-                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-b").hexdigest()[:16]
-            ),
+            "key-a": _expected_entry("rafael", "key-a"),
+            "key-b": _expected_entry("rafael", "key-b"),
         }
         assert ext._users == {"rafael": "user_rafael"}
 
@@ -272,6 +270,22 @@ class TestStaticKeysTenantExtensionAuthenticate:
         assert len(compared) == len(ext._key_to_user), "every configured key must be compared"
         assert compared, "compare_digest must always run over all keys (no fast path)"
         assert all(isinstance(a, bytes) and isinstance(b, bytes) for a, b in compared)
+        # Configured keys are pre-encoded at init: the compared bytes equal the
+        # utf-8/surrogateescape encoding of the stored keys.
+        expected = {entry.key_bytes for entry in ext._key_to_user.values()}
+        assert {b for _, b in compared} == expected
+
+    @pytest.mark.asyncio
+    async def test_authenticate_valid_key_matches_preencoded_bytes(self):
+        # A valid key authenticates through the pre-encoded-bytes comparison.
+        ext = _make_extension()
+        mock_context = AsyncMock(spec=ExtensionContext)
+        mock_context.run_migration = AsyncMock()
+        ext._context = mock_context
+
+        result = await ext.authenticate(RequestContext(api_key="key-a"))
+        assert result.schema_name == "user_rafael"
+        assert ext._key_to_user["key-a"].key_bytes == b"key-a"
 
     @pytest.mark.asyncio
     async def test_authenticate_sets_usage_metering_fields(self):
