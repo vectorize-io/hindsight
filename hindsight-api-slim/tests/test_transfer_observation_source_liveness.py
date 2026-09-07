@@ -60,9 +60,8 @@ async def _imported_observation_sources(backend, bank_id):
 async def test_observation_with_a_missing_source_is_skipped(memory, request_context):
     """A ref that resolves to an id no longer in the bank must not be written."""
     bank = _unique_bank("obs_liveness_missing")
-    await _retain(memory, bank, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
-    units = await memory.list_memory_units(bank, fact_type="world", request_context=request_context)
-    live_id = str(units["items"][0]["id"])
+    created = await _retain(memory, bank, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+    live_id = str(created[0])
     ghost_id = str(uuid.uuid4())  # resolves, but no such row exists
 
     outcome = await _import_one(
@@ -81,10 +80,9 @@ async def test_observation_with_a_missing_source_is_skipped(memory, request_cont
 async def test_observation_with_live_sources_is_imported(memory, request_context):
     """The guard must not reject the ordinary case it is wrapped around."""
     bank = _unique_bank("obs_liveness_ok")
-    await _retain(memory, bank, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
-    units = await memory.list_memory_units(bank, fact_type="world", request_context=request_context)
-    live_ids = [str(u["id"]) for u in units["items"][:2]]
-    assert len(live_ids) == 2
+    created = await _retain(memory, bank, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+    assert len(created) >= 2
+    live_ids = [str(i) for i in created[:2]]
 
     outcome = await _import_one(
         memory,
@@ -116,10 +114,9 @@ async def test_retain_replacing_the_document_mid_import_is_not_cited(memory, req
     src = _unique_bank(f"race_src_{uuid.uuid4().hex[:6]}")
     dst = _unique_bank(f"race_dst_{uuid.uuid4().hex[:6]}")
 
-    await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
-    units = await memory.list_memory_units(src, fact_type="world", request_context=request_context)
-    src_ids = [uuid.UUID(str(u["id"])) for u in units["items"][:2]]
-    assert len(src_ids) == 2
+    created = await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+    assert len(created) >= 2
+    src_ids = [uuid.UUID(str(i)) for i in created[:2]]
     await _seed_observation(
         pool=backend,
         memory=memory,
