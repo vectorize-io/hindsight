@@ -5773,6 +5773,31 @@ class MemoryEngine(MemoryEngineInterface):
             _session_config = await self._resolve_retain_config(bank_id, request_context, strategy)
             retain_session = await _store.begin_retain(bank_id=bank_id, config=_session_config)
 
+        pending_outbox_callbacks: list[RetainOutboxCallback] = []
+        if retain_session is not None:
+            # A session may buffer all memories until commit. Running the outbox in the
+            # pipeline's SQL transaction used to publish a pre-commit document count (#4189).
+            # Record only callbacks the pipeline actually reaches (including per-document
+            # factories), and run them after the owning session has committed successfully.
+            # Stores without sessions and the SQL path keep their existing transaction boundary.
+            def defer_outbox(callback: RetainOutboxCallback | None) -> RetainOutboxCallback | None:
+                if callback is None:
+                    return None
+
+                async def enqueue(_conn: asyncpg.Connection) -> None:
+                    pending_outbox_callbacks.append(callback)
+
+                return enqueue
+
+            outbox_callback = defer_outbox(outbox_callback)
+            if outbox_callback_factory is not None:
+                original_factory = outbox_callback_factory
+
+                def deferred_factory(callback_contents: list[RetainContentDict]) -> RetainOutboxCallback | None:
+                    return defer_outbox(original_factory(callback_contents))
+
+                outbox_callback_factory = deferred_factory
+
         # A store that owns persistence does NOT sub-batch. Splitting exists to bound what one
         # unit of work holds and to give the sub-batches something to run concurrently over — and
         # neither survives the session: the session buffers until commit either way, so slicing no
@@ -6102,6 +6127,15 @@ class MemoryEngine(MemoryEngineInterface):
             total_processed_content_tokens = sub_batch_outcome.processed_content_tokens
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
+
+        if pending_outbox_callbacks:
+            # Do not hold a SQL connection while committing an external store. The outbox
+            # still lives in SQL, but cannot share a transaction with that store's commit.
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    for callback in pending_outbox_callbacks:
+                        await callback(conn)
 
         return _RetainExecutionResult(
             unit_ids=result,
