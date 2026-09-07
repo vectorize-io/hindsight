@@ -1,5 +1,6 @@
 """Tests for StaticKeysTenantExtension (env-configured per-user API keys)."""
 
+import hashlib
 import hmac
 from unittest.mock import AsyncMock, patch
 
@@ -32,8 +33,12 @@ class TestStaticKeysTenantExtensionInit:
         ext = _make_extension()
         assert ext.schema_prefix == "user"
         assert ext._key_to_user == {
-            "key-a": _KeyEntry(user_id="rafael", schema_name="user_rafael"),
-            "key-b": _KeyEntry(user_id="sophie", schema_name="user_sophie"),
+            "key-a": _KeyEntry(
+                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-a").hexdigest()[:16]
+            ),
+            "key-b": _KeyEntry(
+                user_id="sophie", schema_name="user_sophie", key_id=hashlib.sha256(b"key-b").hexdigest()[:16]
+            ),
         }
         assert ext._users == {"rafael": "user_rafael", "sophie": "user_sophie"}
         assert ext.mcp_auth_disabled is False
@@ -62,25 +67,73 @@ class TestStaticKeysTenantExtensionInit:
         ext = _make_extension(schema_prefix="my_user")
         assert ext.schema_prefix == "my_user"
 
+    def test_init_rejects_duplicate_api_key(self):
+        # The error must name the colliding users via the derived key_id, never
+        # the key itself — it may end up pasted into an issue or a chat.
+        with pytest.raises(ValueError, match=r"Duplicate API key \(key_id '[0-9a-f]{16}'\)"):
+            _make_extension(users="alice:k1,bob:k1")
+
+    def test_init_duplicate_api_key_error_does_not_leak_key(self):
+        with pytest.raises(ValueError) as excinfo:
+            _make_extension(users="alice:k1,bob:k1")
+        assert "k1" not in str(excinfo.value)
+
+    def test_init_duplicate_api_key_error_names_both_users(self):
+        with pytest.raises(ValueError, match="alice") as first:
+            _make_extension(users="alice:k1,bob:k1")
+        with pytest.raises(ValueError, match="bob") as second:
+            _make_extension(users="alice:k1,bob:k1")
+        assert "alice" in str(first.value) and "bob" in str(second.value)
+
+    def test_init_rejects_entry_without_colon_does_not_leak_key(self):
+        # `entry` is the raw user_id:api_key pair; quoting it in the error would
+        # disclose the key of a malformed entry. Only the index may be reported.
+        with pytest.raises(ValueError, match="entry at index 1") as excinfo:
+            _make_extension(users="rafael:key-a,sophie")  # missing colon → whole entry malformed
+        assert "sophie" not in str(excinfo.value)  # cannot report user_id without ':'; index only
+
+    def test_init_rejects_empty_api_key_does_not_leak_entry(self):
+        # HINDSIGHT_API_TENANT_USERS=rafael: — the malformed entry contains no
+        # key here, but the same message path is shared with entries that do,
+        # so assert the message stays free of entry/key material.
+        with pytest.raises(ValueError, match="api_key must be non-empty"):
+            _make_extension(users="rafael:")
+
     def test_init_rejects_entry_without_colon(self):
         with pytest.raises(ValueError, match="Invalid HINDSIGHT_API_TENANT_USERS entry"):
             _make_extension(users="rafael")
-
-    def test_init_rejects_empty_user_id(self):
-        with pytest.raises(ValueError, match="user_id and api_key must be non-empty"):
-            _make_extension(users=":key-a")
-
-    def test_init_rejects_empty_api_key(self):
-        with pytest.raises(ValueError, match="user_id and api_key must be non-empty"):
-            _make_extension(users="rafael:")
 
     def test_init_rejects_sql_injection_user_id(self):
         with pytest.raises(ValueError, match="Invalid user_id"):
             _make_extension(users='rafael"; DROP TABLE memory_units;--:key-a')
 
+    def test_init_rejects_empty_user_id(self):
+        with pytest.raises(ValueError, match="user_id must be non-empty"):
+            _make_extension(users=":key-a")
+
+    def test_init_rejects_empty_api_key(self):
+        with pytest.raises(ValueError, match="api_key must be non-empty"):
+            _make_extension(users="rafael:")
+
     def test_init_rejects_user_id_starting_with_digit(self):
         with pytest.raises(ValueError, match="Invalid user_id"):
             _make_extension(users="1rafael:key-a")
+
+    def test_key_id_is_stable_and_derived_from_key(self):
+        # key_id is the truncated sha256 of the key bytes — stable across
+        # restarts (so metering can attribute usage to a key long-term) and
+        # short enough to quote in error messages.
+        ext = _make_extension(users="rafael:key-a")
+        entry = ext._key_to_user["key-a"]
+        assert entry.key_id == hashlib.sha256(b"key-a").hexdigest()[:16]
+        assert len(entry.key_id) == 16
+        assert entry.key_id != "key-a"  # not the secret itself
+        ext2 = _make_extension(users="rafael:key-a")
+        assert ext2._key_to_user["key-a"].key_id == entry.key_id  # deterministic
+
+    def test_key_id_differs_between_keys(self):
+        ext = _make_extension(users="rafael:key-a,rafael:key-b")
+        assert ext._key_to_user["key-a"].key_id != ext._key_to_user["key-b"].key_id
 
     def test_init_normalizes_dashes_in_user_id(self):
         ext = _make_extension(users="my-user-1:key-a")
@@ -94,7 +147,11 @@ class TestStaticKeysTenantExtensionInit:
         # isolation guarantee.
         ext = _make_extension(users="Rafael:key-a")
         assert ext._users == {"rafael": "user_rafael"}
-        assert ext._key_to_user == {"key-a": _KeyEntry(user_id="rafael", schema_name="user_rafael")}
+        assert ext._key_to_user == {
+            "key-a": _KeyEntry(
+                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-a").hexdigest()[:16]
+            )
+        }
 
     def test_init_normalizes_mixed_case_prefix_and_dashes(self):
         # Mixed case + dashes must normalize to a single stable lowercased schema.
@@ -114,15 +171,19 @@ class TestStaticKeysTenantExtensionInit:
         ext = _make_extension(users="Rafael:k1,rafael:k2")
         assert ext._users == {"rafael": "user_rafael"}
         assert ext._key_to_user == {
-            "k1": _KeyEntry(user_id="rafael", schema_name="user_rafael"),
-            "k2": _KeyEntry(user_id="rafael", schema_name="user_rafael"),
+            "k1": _KeyEntry(user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"k1").hexdigest()[:16]),
+            "k2": _KeyEntry(user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"k2").hexdigest()[:16]),
         }
 
     def test_init_multiple_keys_same_user(self):
         ext = _make_extension(users="rafael:key-a,rafael:key-b")
         assert ext._key_to_user == {
-            "key-a": _KeyEntry(user_id="rafael", schema_name="user_rafael"),
-            "key-b": _KeyEntry(user_id="rafael", schema_name="user_rafael"),
+            "key-a": _KeyEntry(
+                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-a").hexdigest()[:16]
+            ),
+            "key-b": _KeyEntry(
+                user_id="rafael", schema_name="user_rafael", key_id=hashlib.sha256(b"key-b").hexdigest()[:16]
+            ),
         }
         assert ext._users == {"rafael": "user_rafael"}
 
@@ -223,7 +284,27 @@ class TestStaticKeysTenantExtensionAuthenticate:
         await ext.authenticate(ctx)
 
         assert ctx.tenant_id == "rafael"
-        assert ctx.api_key_id == "rafael"
+        # api_key_id identifies *the key*, not the user — with multiple keys
+        # per user, metering must be able to tell which key was used. It is
+        # the derived, non-secret key_id (never the key itself).
+        assert ctx.api_key_id == hashlib.sha256(b"key-a").hexdigest()[:16]
+        assert ctx.api_key_id != ctx.tenant_id
+
+    @pytest.mark.asyncio
+    async def test_authenticate_metering_distinguishes_keys_for_same_user(self):
+        ext = _make_extension(users="rafael:key-a,rafael:key-b")
+        mock_context = AsyncMock(spec=ExtensionContext)
+        mock_context.run_migration = AsyncMock()
+        ext._context = mock_context
+
+        ctx_a = RequestContext(api_key="key-a")
+        await ext.authenticate(ctx_a)
+        ctx_b = RequestContext(api_key="key-b")
+        await ext.authenticate(ctx_b)
+
+        # Same user/tenant, different keys → different api_key_id.
+        assert ctx_a.tenant_id == ctx_b.tenant_id == "rafael"
+        assert ctx_a.api_key_id != ctx_b.api_key_id
 
     @pytest.mark.asyncio
     async def test_authenticate_mixed_case_key_maps_to_lowercase_schema(self):

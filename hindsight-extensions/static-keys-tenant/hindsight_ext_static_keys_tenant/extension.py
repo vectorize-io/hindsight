@@ -37,6 +37,7 @@ License: MIT
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import re
@@ -66,12 +67,25 @@ _USER_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 _MAX_SCHEMA_LENGTH = 63
 
 
+def _derive_key_id(api_key: str) -> str:
+    """Derive a stable, non-secret identifier for an API key.
+
+    ``RequestContext.api_key_id`` is documented as identifying *the key* (and
+    multiple keys per user is a selling point of this extension), but metering
+    must never log or store the key itself. A truncated sha256 digest is
+    deterministic, short, and safe to paste into an issue or a chat — it is
+    also the name used to refer to a key in configuration error messages.
+    """
+    return hashlib.sha256(api_key.encode("utf-8", "surrogateescape")).hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class _KeyEntry:
     """A configured API key's mapping: the owning user and its isolated schema."""
 
     user_id: str
     schema_name: str
+    key_id: str
 
 
 class StaticKeysTenantExtension(TenantExtension):
@@ -130,20 +144,28 @@ class StaticKeysTenantExtension(TenantExtension):
         self._key_to_user: dict[str, _KeyEntry] = {}
         self._users: dict[str, str] = {}  # user_id -> schema_name
 
-        for entry in users_raw.split(","):
+        for index, entry in enumerate(users_raw.split(",")):
             entry = entry.strip()
             if not entry:
                 continue
+            # Error messages below must never quote `entry` or `api_key`: an
+            # operator who misconfigures HINDSIGHT_API_TENANT_USERS pastes the
+            # startup error into an issue or a chat, and would disclose the
+            # key. Report the entry's index (and the user id, once it is known
+            # and validated) instead — the key is named by its sha256-derived
+            # key_id, see _derive_key_id.
             if ":" not in entry:
                 raise ValueError(
-                    f"Invalid HINDSIGHT_API_TENANT_USERS entry '{entry}'. Expected format \"user_id:api_key\"."
+                    f'Invalid HINDSIGHT_API_TENANT_USERS entry at index {index}. Expected format "user_id:api_key".'
                 )
             user_id, api_key = entry.split(":", 1)
             user_id = user_id.strip()
             api_key = api_key.strip()
             if not user_id or not api_key:
                 raise ValueError(
-                    f"Invalid HINDSIGHT_API_TENANT_USERS entry '{entry}'. user_id and api_key must be non-empty."
+                    f"Invalid HINDSIGHT_API_TENANT_USERS entry at index {index}: "
+                    + ("user_id" if not user_id else "api_key")
+                    + " must be non-empty."
                 )
             if not _USER_ID_RE.match(user_id):
                 raise ValueError(
@@ -189,10 +211,14 @@ class StaticKeysTenantExtension(TenantExtension):
                 )
             if api_key in self._key_to_user:
                 raise ValueError(
-                    f"Duplicate API key '{api_key}' in HINDSIGHT_API_TENANT_USERS. Each key must be unique."
+                    f"Duplicate API key (key_id '{_derive_key_id(api_key)}') in HINDSIGHT_API_TENANT_USERS "
+                    f"is configured for both user_id '{self._key_to_user[api_key].user_id}' "
+                    f"and user_id '{user_id}'. Each key must be unique."
                 )
 
-            self._key_to_user[api_key] = _KeyEntry(user_id=user_id, schema_name=schema_name)
+            self._key_to_user[api_key] = _KeyEntry(
+                user_id=user_id, schema_name=schema_name, key_id=_derive_key_id(api_key)
+            )
             self._users[user_id] = schema_name
 
         # Track initialized schemas to avoid redundant migrations
@@ -221,14 +247,18 @@ class StaticKeysTenantExtension(TenantExtension):
         if not key:
             raise AuthenticationError("Missing Authorization header. Expected: Bearer <api_key>")
 
-        # Compare against every configured key in constant time. The dict fast
-        # path is deliberately absent: an exact-equality lookup would leak the
-        # key's position/size via timing AND mean unknown keys never ran the
-        # constant-time loop — compare_digest must always run over all entries.
-        # Keys (and header values) arrive latin-1-decoded, so encode with
-        # "surrogateescape" so any byte sequence round-trips losslessly
-        # instead of raising TypeError (which would surface as a 500, not a 401)
-        # for non-ASCII bearer tokens.
+        # Compare with hmac.compare_digest over every configured key — never an
+        # exact-equality fast path, which would let unknown keys skip the
+        # constant-time loop entirely and leak key size/shape via timing. The
+        # number of comparisons still depends on the matching key's position
+        # (we stop at the first match); that reveals nothing to an attacker
+        # holding only invalid keys, and an attacker holding a valid key
+        # already knows where it sits in the list. Configured keys are
+        # re-encoded per comparison (cheap; see the per-request encoding nit —
+        # they are pre-encoded at init in _KeyEntry when large maps matter).
+        # Header values arrive latin-1-decoded, so encode with "surrogateescape"
+        # so any byte sequence round-trips losslessly instead of raising
+        # TypeError (a 500, not a 401) for non-ASCII bearer tokens.
         key_bytes = key.encode("utf-8", "surrogateescape")
         match: _KeyEntry | None = None
         for configured_key, entry in self._key_to_user.items():
@@ -246,9 +276,12 @@ class StaticKeysTenantExtension(TenantExtension):
             await self._initialize_schema(schema_name)
 
         # Usage metering: the HTTP/MCP layers read these fields back after auth
-        # to attribute operations to a tenant / API key.
+        # to attribute operations to a tenant / API key. api_key_id identifies
+        # *the key* (see RequestContext), not the user — with multiple keys per
+        # user it must distinguish which key authenticated. It is the derived,
+        # non-secret key_id, never the key itself.
         context.tenant_id = user_id
-        context.api_key_id = user_id
+        context.api_key_id = match.key_id
 
         return TenantContext(schema_name=schema_name)
 
