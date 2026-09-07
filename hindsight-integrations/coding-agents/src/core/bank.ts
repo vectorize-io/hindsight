@@ -268,6 +268,20 @@ export function isOptedIn(config: BankConfig, directory: string): boolean {
   return Boolean(pathMap && directories.some((candidate) => mapLookup(pathMap, candidate)));
 }
 
+/** The `mapPathToBank` destination for a directory, if any — resolution step 1, shared by
+ *  `deriveBankId` and `bankProjectName` so the two cannot disagree about which step applied. */
+function mappedBank(
+  config: BankConfig,
+  directory: string,
+  sessionRoot?: string
+): string | undefined {
+  const pathMap = config.mapPathToBank;
+  if (!directory || !pathMap) return undefined;
+  return lookupDirectories(config, directory, sessionRoot)
+    .map((candidate) => mapLookup(pathMap, candidate))
+    .find((bank) => bank !== undefined);
+}
+
 /** Derive the bank id for a working directory (see module doc for the resolution order). */
 export function deriveBankId(
   config: BankConfig,
@@ -279,13 +293,7 @@ export function deriveBankId(
    *  entry this directory inherits (lookupDirectories). */
   sessionRoot?: string
 ): string {
-  const pathMap = config.mapPathToBank;
-  const mapped =
-    directory && pathMap
-      ? lookupDirectories(config, directory, sessionRoot)
-          .map((candidate) => mapLookup(pathMap, candidate))
-          .find((bank) => bank !== undefined)
-      : undefined;
+  const mapped = mappedBank(config, directory, sessionRoot);
   if (mapped) return mapped;
 
   // dynamic by default — but an explicit bankId (without dynamicBankId: true) means "static".
@@ -300,6 +308,48 @@ export function deriveBankId(
     user: () => process.env.HINDSIGHT_USER_ID || "anonymous",
   };
   return applyTemplate(config.bankIdTemplate || DEFAULT_TEMPLATE, resolvers, "bankIdTemplate");
+}
+
+/**
+ * The repository a BANK is about, or undefined when no single repository is.
+ *
+ * Distinct from `deriveBankId`'s `{gitProject}` in what it is a property OF. Both read the session's
+ * working directory, but a bank id derived from `{gitProject}` moves with the directory in lockstep
+ * with this name, so the two can never disagree; a bank id that does NOT come from the directory —
+ * a static `bankId`, a `mapPathToBank` destination, a template keyed on `{channel}` — can collect
+ * several repositories, and naming one of them after whichever session happened to run last is how
+ * the seeded knowledge pages ended up flipping their scope sentence between repos on every session
+ * start (#4146). Callers write this into per-BANK state, so it may only be answered when the bank
+ * and the repository are the same unit; `undefined` means "this bank is not one repo's" and leaves
+ * the caller to name it some other way.
+ *
+ * Deliberately failure-tolerant where `deriveBankId` refuses to guess: a probe that cannot name the
+ * repository yields `undefined` rather than throwing, because the strict rule protects bank
+ * IDENTITY (#3950) and nothing here decides which bank is written to.
+ */
+export function bankProjectName(
+  config: BankConfig,
+  directory: string,
+  sessionRoot?: string
+): string | undefined {
+  if (mappedBank(config, directory, sessionRoot)) return undefined;
+
+  const dynamic = config.dynamicBankId ?? !config.bankId;
+  if (!dynamic) return undefined;
+
+  // Only `{gitProject}` ties the id to the repository. `{project}` is the live directory basename
+  // and names a subdirectory as readily as a repo, so it does not qualify.
+  const template = config.bankIdTemplate || DEFAULT_TEMPLATE;
+  if (!template.includes("{gitProject}")) return undefined;
+
+  try {
+    // The IDENTICAL call `deriveBankId` makes for the placeholder, `resolveWorktrees` and
+    // `sessionRoot` included — a second, subtly different derivation is the bug being fixed.
+    return gitProjectName(directory, config.resolveWorktrees ?? true, sessionRoot);
+  } catch (error) {
+    if (error instanceof BankResolutionError) return undefined;
+    throw error;
+  }
 }
 
 /**
