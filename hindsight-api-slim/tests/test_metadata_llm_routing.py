@@ -75,17 +75,24 @@ def test_routes_rejected_outside_metadata_mode(mode: str) -> None:
 @pytest.mark.parametrize(
     "route,message",
     [
-        ('{"key": "", "value": "v", "member": 1}', "'key' must be a non-empty string"),
-        ('{"value": "v", "member": 1}', "'key' must be a non-empty string"),
-        ('{"key": "k", "value": 3, "member": 1}', "'value' must be a string"),
-        ('{"key": "k", "value": "v"}', "'member' must be a non-negative integer"),
-        ('{"key": "k", "value": "v", "member": -1}', "'member' must be a non-negative integer"),
-        # bool is an int subclass; {"member": true} is a typo, not member 1.
-        ('{"key": "k", "value": "v", "member": true}', "'member' must be a non-negative integer"),
-        ('"not-an-object"', "must be a JSON object"),
+        ('{"key": "", "value": "v", "member": 1}', r"routes\.0\.key: String should have at least 1 character"),
+        ('{"value": "v", "member": 1}', r"routes\.0\.key: Field required"),
+        ('{"key": "k", "value": 3, "member": 1}', r"routes\.0\.value: Input should be a valid string"),
+        ('{"key": "k", "value": "v"}', r"routes\.0\.member: Field required"),
+        (
+            '{"key": "k", "value": "v", "member": -1}',
+            r"routes\.0\.member: Input should be greater than or equal to 0",
+        ),
+        # bool is an int subclass, so only strict mode rejects {"member": true},
+        # which is a typo rather than a request for member 1.
+        ('{"key": "k", "value": "v", "member": true}', r"routes\.0\.member: Input should be a valid integer"),
+        # extra="forbid": a misspelled key must fail, not leave the route on the default member.
+        ('{"key": "k", "value": "v", "member": 1, "membr": 2}', r"routes\.0\.membr: Extra inputs are not permitted"),
+        ('"not-an-object"', r"routes\.0: Input should be a valid dictionary"),
     ],
 )
 def test_malformed_route_fails_fast(route: str, message: str) -> None:
+    """Route shape is enforced by the model, so the error names the offending field."""
     with pytest.raises(ValueError, match=message):
         _parse_llm_strategy('{"mode": "metadata", "routes": [%s]}' % route)
 
