@@ -21,7 +21,7 @@ import asyncio
 import subprocess
 import sys
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import pytest
 
@@ -143,6 +143,90 @@ def test_llm_concurrency_permits_are_usable_from_several_loops():
 
     errors = _across_loops(lambda: [hold] * PER_LOOP)
     assert not errors, f"LLM permits failed across loops: {errors[:1]}"
+
+
+def test_multi_llm_cooldown_probe_is_usable_from_independent_event_loops():
+    """One process-wide router grants one probe lease across event-loop threads."""
+    from hindsight_api.config import LLMStrategyConfig
+    from hindsight_api.engine.llm_interface import LLMCooldownFailure, LLMFailureClassification
+    from hindsight_api.engine.multi_llm import MultiLLMProvider
+
+    class QuotaError(RuntimeError):
+        pass
+
+    class Member:
+        def __init__(self, name: str, *, quota_once: bool = False) -> None:
+            self.provider = "test"
+            self.model = name
+            self.member_label = name
+            self.max_backoff = 1.0
+            self.quota_once = quota_once
+            self.calls = 0
+            self.call = self._invoke
+
+        def classify_failure(self, exc: BaseException) -> LLMFailureClassification | None:
+            if isinstance(exc, QuotaError):
+                return LLMCooldownFailure(retry_after_seconds=0.0)
+            return None
+
+        async def _invoke(self, **kwargs: Any) -> str:
+            del kwargs
+            with calls_lock:
+                self.calls += 1
+                call_number = self.calls
+            if self.quota_once and call_number == 1:
+                raise QuotaError("cool down")
+            if self.quota_once:
+                probe_entered.set()
+                while not release_probe.is_set():
+                    await asyncio.sleep(0.001)
+                return "recovered"
+            return "fallback"
+
+    calls_lock = threading.Lock()
+    probe_entered = threading.Event()
+    release_probe = threading.Event()
+    primary = Member("primary", quota_once=True)
+    fallback = Member("fallback")
+    router = MultiLLMProvider(cast(Any, [primary, fallback]), LLMStrategyConfig(mode="failover"))
+
+    assert asyncio.run(router.call(messages=[])) == "fallback"
+
+    results: list[str] = []
+    errors: list[BaseException] = []
+    result_lock = threading.Lock()
+
+    def run_call() -> None:
+        try:
+            result = asyncio.run(router.call(messages=[]))
+            with result_lock:
+                results.append(result)
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    owner = threading.Thread(target=run_call)
+    owner.start()
+    followers: list[threading.Thread] = []
+    try:
+        assert probe_entered.wait(timeout=2.0), "the half-open owner never entered its probe"
+
+        followers = [threading.Thread(target=run_call) for _ in range(3)]
+        for follower in followers:
+            follower.start()
+        for follower in followers:
+            follower.join(timeout=2.0)
+            assert not follower.is_alive(), "a follower waited behind the in-flight probe"
+    finally:
+        release_probe.set()
+        for follower in followers:
+            follower.join(timeout=2.0)
+        owner.join(timeout=2.0)
+
+    assert not owner.is_alive(), "the half-open owner did not finish"
+    assert not errors, f"multi-LLM router failed across loops: {errors[:1]}"
+    assert sorted(results) == ["fallback", "fallback", "fallback", "recovered"]
+    assert primary.calls == 2
 
 
 def test_temporal_language_detection_is_usable_from_several_threads():

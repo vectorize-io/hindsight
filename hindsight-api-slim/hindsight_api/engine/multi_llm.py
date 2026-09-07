@@ -28,12 +28,18 @@ batch lifecycle stays on that member and does not fail over. Every other direct
 paths.
 """
 
+import asyncio
 import logging
+import math
 import threading
 import uuid
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from time import monotonic
+from typing import TYPE_CHECKING, Any, cast
 
 from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
+from .llm_interface import LLMCooldownFailure, LLMTerminalFailure, ProviderRateLimitResetError
 from .llm_wrapper import LLMProvider, OutputTooLongError
 
 if TYPE_CHECKING:
@@ -41,6 +47,17 @@ if TYPE_CHECKING:
     from .llm_wrapper import ConfiguredLLMProvider, LLMToolCallResult
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_COOLDOWN_SECONDS = 60.0
+_PROBE_POLL_SECONDS = 0.05
+
+
+@dataclass
+class _MemberState:
+    cooldown_until: float | None = None
+    cooldown_exception: BaseException | None = None
+    probing: bool = False
+    generation: int = 0
 
 
 def _should_failover(exc: BaseException) -> bool:
@@ -110,6 +127,10 @@ class MultiLLMProvider:
             raise ValueError("MultiLLMProvider requires at least one member")
         self._members = members
         self._strategy = strategy
+        # State belongs to this router instance. A second operation/router using
+        # the same provider objects gets an independent cooldown history.
+        self._states = [_MemberState() for _ in members]
+        self._state_lock = threading.Lock()
 
         weights = strategy.weights or [1] * len(members)
         if len(weights) != len(members):
@@ -162,28 +183,215 @@ class MultiLLMProvider:
 
     async def _dispatch(self, method_name: str, **kwargs: Any) -> Any:
         last_exc: BaseException | None = None
+        # Keep the request's original ordering across the one bounded inline
+        # wait. Re-running _member_order() would rotate round-robin mid-request.
         order = self._member_order()
-        for position, idx in enumerate(order):
-            member = self._members[idx]
-            try:
-                return await getattr(member, method_name)(**kwargs)
-            except BaseException as e:  # noqa: BLE001 - re-raised unless it should fail over
-                if not _should_failover(e):
-                    raise
-                last_exc = e
-                remaining = len(order) - position - 1
-                logger.warning(
-                    "LLM member %d (%s/%s) failed on %s: %s%s",
-                    idx,
-                    member.provider,
-                    member.model,
-                    method_name,
-                    e,
-                    f"; trying next member ({remaining} left)" if remaining else "; no members left",
+        inline_retry_used = False
+        request_saved_failure: BaseException | None = None
+
+        while True:
+            attempted_member = False
+            skipped_failure: BaseException | None = None
+            for position, idx in enumerate(order):
+                member = self._members[idx]
+                label = getattr(member, "member_label", None) or ("primary" if idx == 0 else f"member-{idx}")
+                with self._state_lock:
+                    state = self._states[idx]
+                    if state.probing:
+                        if skipped_failure is None and state.cooldown_exception is not None:
+                            skipped_failure = state.cooldown_exception
+                        logger.debug(
+                            "LLM member %d (%s/%s, label=%s) skipped: state=probing",
+                            idx,
+                            member.provider,
+                            member.model,
+                            label,
+                        )
+                        continue
+                    if state.cooldown_until is not None:
+                        remaining_seconds = state.cooldown_until - monotonic()
+                        if remaining_seconds > 0:
+                            if skipped_failure is None and state.cooldown_exception is not None:
+                                skipped_failure = state.cooldown_exception
+                            logger.debug(
+                                "LLM member %d (%s/%s, label=%s) skipped: state=cooldown remaining=%.3fs",
+                                idx,
+                                member.provider,
+                                member.model,
+                                label,
+                                remaining_seconds,
+                            )
+                            continue
+                    probing = state.cooldown_until is not None
+                    generation = state.generation
+                    if probing:
+                        state.probing = True
+
+                attempted_member = True
+                if probing:
+                    logger.info(
+                        "LLM member %d (%s/%s, label=%s) state=probing",
+                        idx,
+                        member.provider,
+                        member.model,
+                        label,
+                    )
+                try:
+                    result = await getattr(member, method_name)(**kwargs)
+                    with self._state_lock:
+                        # A success that predates a newer quota observation must
+                        # not erase it; only the matching generation may reopen.
+                        if probing and state.generation == generation:
+                            state.cooldown_until = None
+                            state.cooldown_exception = None
+                            logger.info(
+                                "LLM member %d (%s/%s, label=%s) state=eligible after successful probe",
+                                idx,
+                                member.provider,
+                                member.model,
+                                label,
+                            )
+                    return result
+                except BaseException as exc:  # noqa: BLE001 - exact object may be re-raised
+                    if not isinstance(exc, Exception):
+                        raise
+                    classify_failure = getattr(member, "classify_failure", None)
+                    failure = classify_failure(exc) if classify_failure is not None else None
+                    if isinstance(failure, LLMTerminalFailure):
+                        logger.warning(
+                            "LLM member %d (%s/%s, label=%s) category=reauthentication_required; stopping operation",
+                            idx,
+                            member.provider,
+                            member.model,
+                            label,
+                        )
+                        # Identity, traceback, and provider remediation text are
+                        # part of the existing exception contract.
+                        raise
+
+                    if isinstance(failure, LLMCooldownFailure) or probing:
+                        delay = failure.retry_after_seconds if isinstance(failure, LLMCooldownFailure) else None
+                        cooldown_source = "provider_retry_after"
+                        if delay is None or not math.isfinite(delay) or delay < 0:
+                            delay = _DEFAULT_COOLDOWN_SECONDS
+                            cooldown_source = "default"
+                        with self._state_lock:
+                            state.cooldown_until = max(state.cooldown_until or 0.0, monotonic() + delay)
+                            # Followers which find every member unavailable need
+                            # the member's own nonterminal cause.  Keep the
+                            # latest one with the lease it created so they can
+                            # fail promptly after their one bounded wait.
+                            state.cooldown_exception = exc
+                            state.generation += 1
+                        if probing:
+                            # A half-open call is already this member's one
+                            # recovery attempt.  If it fails, do not sleep and
+                            # acquire another probe lease in the same request.
+                            inline_retry_used = True
+                        logger.warning(
+                            "LLM member %d (%s/%s, label=%s) state=cooldown category=%s "
+                            "cooldown_source=%s retry_after=%.3fs",
+                            idx,
+                            member.provider,
+                            member.model,
+                            label,
+                            failure.category.value if failure is not None else "probe_failed",
+                            cooldown_source,
+                            delay,
+                        )
+
+                    if not _should_failover(exc):
+                        raise
+                    last_exc = exc
+                    remaining = len(order) - position - 1
+                    logger.warning(
+                        "LLM member %d (%s/%s, label=%s) failed on %s: %s%s",
+                        idx,
+                        member.provider,
+                        member.model,
+                        label,
+                        method_name,
+                        failure.category.value if failure is not None else exc,
+                        f"; trying next member ({remaining} left)" if remaining else "; no members left",
+                    )
+                finally:
+                    if probing:
+                        with self._state_lock:
+                            state.probing = False
+
+            if skipped_failure is not None:
+                request_saved_failure = skipped_failure
+            with self._state_lock:
+                now = monotonic()
+                unavailable = all(state.probing or state.cooldown_until is not None for state in self._states)
+                waits = [
+                    (
+                        _PROBE_POLL_SECONDS if state.probing else max(0.0, (state.cooldown_until or now) - now),
+                        idx,
+                    )
+                    for idx, state in enumerate(self._states)
+                    if state.probing or state.cooldown_until is not None
+                ]
+
+            if unavailable and waits:
+                wait_seconds, earliest_idx = min(waits)
+                earliest_member = self._members[earliest_idx]
+                explicit_max_backoff = kwargs.get("max_backoff")
+                configured_max_backoff = getattr(earliest_member, "max_backoff", None)
+                effective_max_backoff = (
+                    explicit_max_backoff
+                    if explicit_max_backoff is not None
+                    else configured_max_backoff
+                    if configured_max_backoff is not None
+                    else 30.0
+                    if method_name == "call_with_tools"
+                    else 60.0
                 )
-        # All members failed; surface the last error (loop ran at least once).
-        assert last_exc is not None
-        raise last_exc
+
+                if wait_seconds > effective_max_backoff:
+                    wall_now = datetime.now(UTC)
+                    # Saturate only the external timestamp; the monotonic
+                    # eligibility deadline retains the provider's full delay.
+                    max_delay = (datetime.max.replace(tzinfo=UTC) - wall_now).total_seconds() - 1.0
+                    retry_at = wall_now + timedelta(seconds=min(wait_seconds, max_delay))
+                    raise ProviderRateLimitResetError(
+                        retry_at=retry_at,
+                        message=f"All LLM members are cooling down; retry at {retry_at.isoformat()}.",
+                    ) from None
+
+                if not inline_retry_used:
+                    inline_retry_used = True
+                    await asyncio.sleep(wait_seconds)
+                    continue
+
+                # A concurrent half-open probe owns the only request lease. Do
+                # not poll it: after the single bounded wait, fail with this
+                # request's last error, or the nearest member's saved cooldown
+                # cause.  A later request may probe again once it is eligible.
+                if last_exc is not None:
+                    raise last_exc
+                if request_saved_failure is not None:
+                    raise request_saved_failure
+
+            # A probe owner may recover after this request observed and skipped
+            # it but before the post-loop snapshot above.  With no member
+            # attempted, spend the one inline budget on an immediate reroute;
+            # after that budget is spent, surface the native cause captured at
+            # the skip rather than polling or synthesizing an exhaustion error.
+            if not attempted_member:
+                if not inline_retry_used:
+                    inline_retry_used = True
+                    continue
+                if request_saved_failure is not None:
+                    raise request_saved_failure
+
+            # One inline retry is the bound: a provider that immediately reports
+            # another short reset does not cause an unbounded router retry loop.
+            if last_exc is not None:
+                raise last_exc
+            if request_saved_failure is not None:
+                raise request_saved_failure
+            raise RuntimeError("MultiLLMProvider exhausted member routing without a result")
 
     async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         return await self._dispatch("call", messages=messages, **kwargs)
@@ -297,7 +505,7 @@ class MultiLLMProvider:
                 trace_id=str(uuid.uuid4()),
                 operation_span_id=str(uuid.uuid4()),
             )
-        return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings, trace_ctx)
+        return ConfiguredLLMProvider(cast(LLMProvider, self), config.llm_gemini_safety_settings, trace_ctx)
 
     # ── attribute passthrough ────────────────────────────────────────────────────
 

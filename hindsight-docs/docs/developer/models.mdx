@@ -422,11 +422,21 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 ```
 
 Token refresh is coordinated per auth-file path, so the two profiles refresh
-independently and never overwrite each other's tokens. Failover is the generic
-multi-LLM behaviour: a member is tried after the previous one has exhausted its
-own retries and raised — there is no separate quota classifier or cooldown, so a
-rate-limited primary is re-tried (and fails) at the head of each request before
-the fallback serves it.
+independently and never overwrite each other's tokens. Add non-secret
+`HINDSIGHT_API_LLM_MEMBER_LABEL` / `HINDSIGHT_API_LLM_1_MEMBER_LABEL` values such
+as `preferred` and `secondary` to distinguish members in routing diagnostics.
+Those are the only label forms; every operation primary shares the global label.
+
+An explicit Codex HTTP 429 after its own retries puts that member into router-local
+cooldown for `Retry-After`, or 60 seconds when the header is invalid or absent. One
+request probes it after expiry. State is not shared across router instances, worker
+processes, or restarts. Short all-member waits are handled once inline; longer waits
+defer asynchronous worker operations to the sanitized retry time without consuming
+their retry count. Synchronous recall and reflect cannot defer and retain the existing
+generic HTTP 500 conversion with the sanitized retry-time message. Confirmed invalid,
+expired, or reused refresh credentials raise the original exception unchanged, without
+fallback or cooldown. Other auth errors, timeouts, and 5xx responses retain generic
+retry/failover behavior. Batch retain remains bound to its submitting member.
 
 ---
 
