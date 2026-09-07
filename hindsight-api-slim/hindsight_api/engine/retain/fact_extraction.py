@@ -2240,8 +2240,7 @@ async def _extract_facts_with_auto_split(
         llm_config: LLM configuration to use
         config: Resolved HindsightConfig for this bank
         agent_name: Optional agent name (memory owner)
-        metadata: Optional document metadata key-value pairs. Also selects the
-            chain member when the retain LLM uses the "metadata" strategy.
+        metadata: Optional document metadata key-value pairs
         attachment_loader: Resolves the chunk's image placeholders back to bytes, or None
             when the caller has no images to resolve. Carried through the split
             recursion so a half-chunk keeps the images it still references.
@@ -2360,7 +2359,8 @@ async def extract_facts_from_text(
         llm_config: LLM configuration to use
         config: Resolved HindsightConfig for this bank
         context: Context about the conversation/document
-        metadata: Optional document metadata key-value pairs
+        metadata: Optional document metadata key-value pairs. Also selects the
+            chain member when the retain LLM uses the "metadata" strategy.
         agent_name: Optional narrator to prime the prompt with ("Narrator: {name}").
             Retain never sets it — see the caller in retain/orchestrator.py — and the
             dry-run endpoint's field that does is deprecated in favour of ``context``.
