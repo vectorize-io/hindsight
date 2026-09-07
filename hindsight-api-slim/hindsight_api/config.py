@@ -2209,30 +2209,50 @@ class LLMMemberConfig:
 # Valid multi-LLM strategy modes.
 LLM_STRATEGY_FAILOVER = "failover"
 LLM_STRATEGY_ROUND_ROBIN = "round-robin"
-_VALID_LLM_STRATEGY_MODES = (LLM_STRATEGY_FAILOVER, LLM_STRATEGY_ROUND_ROBIN)
+LLM_STRATEGY_METADATA = "metadata"
+_VALID_LLM_STRATEGY_MODES = (LLM_STRATEGY_FAILOVER, LLM_STRATEGY_ROUND_ROBIN, LLM_STRATEGY_METADATA)
+
+
+@dataclass(frozen=True)
+class LLMMetadataRoute:
+    """Send a retain item whose ``metadata[key] == value`` to member ``member``.
+
+    Matching is on the string form of the item's value, because retain metadata
+    is free-form JSON and a route read from an env var is always a string.
+    """
+
+    key: str
+    value: str
+    member: int
 
 
 @dataclass
 class LLMStrategyConfig:
     """How to route a request across the members of a multi-LLM chain.
 
-    ``mode`` is "failover" (try members in order) or "round-robin" (rotate the
-    starting member per request, then fall through the rest on error). ``weights``
-    is round-robin only: positive integers, one per member (primary first), giving
-    an unbalanced rotation; ``None`` means uniform.
+    ``mode`` is "failover" (try members in order), "round-robin" (rotate the
+    starting member per request, then fall through the rest on error) or
+    "metadata" (pick the member from the retained item's own metadata).
+    ``weights`` is round-robin only: positive integers, one per member (primary
+    first), giving an unbalanced rotation; ``None`` means uniform. ``routes`` is
+    metadata only: the first route matching an item wins, and an item matching
+    none uses the primary.
     """
 
     mode: str
     weights: list[int] | None = None
+    routes: list[LLMMetadataRoute] | None = None
 
 
 def _parse_llm_strategy(raw: str | None) -> LLMStrategyConfig | None:
     """Parse a multi-LLM strategy from a JSON env var.
 
     Returns ``None`` when unset. The value must be a JSON object with a ``mode``
-    of "failover" or "round-robin"; ``weights`` (round-robin only) must be a list
-    of positive ints. Raises ``ValueError`` on any malformed input so
-    misconfiguration fails fast at startup rather than silently degrading.
+    of "failover", "round-robin" or "metadata"; ``weights`` (round-robin only)
+    must be a list of positive ints, and ``routes`` (metadata only) a non-empty
+    list of ``{"key": str, "value": str, "member": non-negative int}`` objects.
+    Raises ``ValueError`` on any malformed input so misconfiguration fails fast
+    at startup rather than silently degrading.
     """
     text = (raw or "").strip()
     if not text:
@@ -2255,7 +2275,33 @@ def _parse_llm_strategy(raw: str | None) -> LLMStrategyConfig | None:
         if not isinstance(weights, list) or not weights or not all(isinstance(w, int) and w > 0 for w in weights):
             raise ValueError("LLM strategy 'weights' must be a non-empty list of positive integers.")
 
-    return LLMStrategyConfig(mode=mode, weights=weights)
+    raw_routes = parsed.get("routes")
+    routes: list[LLMMetadataRoute] | None = None
+    if mode == LLM_STRATEGY_METADATA:
+        if not isinstance(raw_routes, list) or not raw_routes:
+            raise ValueError(f"LLM strategy 'routes' must be a non-empty list with mode '{LLM_STRATEGY_METADATA}'.")
+        routes = [_parse_llm_metadata_route(index, route) for index, route in enumerate(raw_routes)]
+    elif raw_routes is not None:
+        raise ValueError(f"LLM strategy 'routes' is only valid with mode '{LLM_STRATEGY_METADATA}'.")
+
+    return LLMStrategyConfig(mode=mode, weights=weights, routes=routes)
+
+
+def _parse_llm_metadata_route(index: int, route: object) -> LLMMetadataRoute:
+    """Validate one entry of a metadata strategy's ``routes`` list."""
+    if not isinstance(route, dict):
+        raise ValueError(f"LLM metadata route {index} must be a JSON object.")
+    key = route.get("key")
+    value = route.get("value")
+    member = route.get("member")
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"LLM metadata route {index} 'key' must be a non-empty string.")
+    if not isinstance(value, str):
+        raise ValueError(f"LLM metadata route {index} 'value' must be a string.")
+    # bool is an int subclass, and {"member": true} is a typo, not member 1.
+    if not isinstance(member, int) or isinstance(member, bool) or member < 0:
+        raise ValueError(f"LLM metadata route {index} 'member' must be a non-negative integer.")
+    return LLMMetadataRoute(key=key, value=value, member=member)
 
 
 def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:

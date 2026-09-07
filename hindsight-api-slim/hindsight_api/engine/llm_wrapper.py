@@ -1828,6 +1828,28 @@ class ConfiguredLLMProvider:
             _safety_settings_ctx.reset(token)
             self._reset_trace_context(trace_token)
 
+    def route_for(self, metadata: dict[str, Any] | None) -> "ConfiguredLLMProvider":
+        """Re-bind to the member a metadata-routed chain selects for *metadata*.
+
+        Returns ``self`` unless the underlying provider is a multi-LLM chain in
+        ``metadata`` mode with a route matching *metadata*. The re-bound wrapper
+        keeps this one's bank config and trace context, so a routed call is
+        attributed to the same operation and trace as its siblings — only the
+        member changes.
+        """
+        provider = object.__getattribute__(self, "_provider")
+        member_for_metadata = getattr(provider, "member_for_metadata", None)
+        if member_for_metadata is None:
+            return self
+        member = member_for_metadata(metadata)
+        if member is None:
+            return self
+        return ConfiguredLLMProvider(
+            member,
+            object.__getattribute__(self, "_gemini_safety_settings"),
+            object.__getattribute__(self, "_trace_ctx"),
+        )
+
     def trace_context(self) -> Any | None:
         """The operation-level LLM trace context (or None when untraced).
 

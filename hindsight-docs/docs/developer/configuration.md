@@ -566,10 +566,11 @@ The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra 
 | `HINDSIGHT_API_LLM_<n>_LITELLMROUTER_CONFIG` | Per-member LiteLLM Router config JSON (for a `litellmrouter` member). Falls back to the global `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` when unset. | - |
 | `HINDSIGHT_API_LLM_STRATEGY` | JSON routing strategy across the chain. Unset = single primary LLM (no change). | - |
 
-The strategy JSON supports two modes:
+The strategy JSON supports three modes:
 
 - `{"mode": "failover"}` — try members in order (primary first); on a member's failure (after its own retries) advance to the next.
 - `{"mode": "round-robin"}` — rotate the starting member per request to spread load, then fall through the rest on failure. Add `"weights": [3, 1, ...]` (positive ints, one per member, primary first) for an **unbalanced** rotation.
+- `{"mode": "metadata", "routes": [...]}` — **retain only**: pick the member from each retained item's own `metadata`. See [Metadata routing](#metadata-routing) below.
 
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic
@@ -584,6 +585,35 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 # Weighted round-robin: serve the primary 3x as often as member 1
 export HINDSIGHT_API_LLM_STRATEGY='{"mode": "round-robin", "weights": [3, 1]}'
 ```
+
+#### Metadata routing
+
+`{"mode": "metadata"}` sends each retained item to the chain member its own metadata selects, so one deployment can extract different documents with different models:
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_API_KEY=sk-...
+export HINDSIGHT_API_LLM_1_PROVIDER=ollama
+export HINDSIGHT_API_LLM_1_MODEL=qwen3:8b
+export HINDSIGHT_API_LLM_STRATEGY='{
+  "mode": "metadata",
+  "routes": [{"key": "classification", "value": "sensitive", "member": 1}]
+}'
+```
+
+Retaining `{"content": "...", "metadata": {"classification": "sensitive"}}` extracts facts on the local `qwen3:8b`; everything else uses the primary.
+
+- **Routes are matched per item, in declared order — the first match wins.** An item that matches no route uses member `0` (the primary).
+- **Values are compared as strings**, because retain metadata is free-form JSON and route values come from an env var: `"member": 1` matches metadata `1` and `"1"`. A list value matches if any entry does, so `{"labels": ["pii", "eu"]}` matches a route on `labels` = `pii`.
+- **Nothing is stored.** The selection is made when the item's extraction prompt is built and is not persisted, so changing the routes changes only future retains. Reprocessing a document replays its original metadata and therefore re-routes the same way.
+- **Each retain item is one extraction prompt**, so a batch mixing differently routed items is fine — every item goes to its own member.
+
+**What this does not do.** Metadata routing chooses *which model extracts a document*. It is not a data boundary: the facts extracted from a routed document are stored in the same bank as everything else, and recall, reflect, consolidation, mental-model refresh and dry-run extraction all continue to use the primary LLM. If you need a document's content kept away from a provider entirely, use a separate bank with a per-bank LLM configuration instead.
+
+Two further limits:
+
+- **`update_mode: "append"` routes on the metadata supplied with the append call**, not the stored document's. An append re-extracts the stored body together with the new text, so resupply the same metadata to keep it on the same member.
+- **Batch retain is not supported** with this mode. `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` submits every item of an operation as a single job to a single member, which cannot honour per-item routes, so the combination is rejected at startup.
 
 **Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
 

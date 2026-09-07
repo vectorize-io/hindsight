@@ -1,4 +1,4 @@
-"""Multi-LLM routing: failover and (weighted) round-robin across N providers.
+"""Multi-LLM routing: failover, (weighted) round-robin and metadata across N providers.
 
 ``MultiLLMProvider`` wraps an ordered list of :class:`LLMProvider` members and a
 :class:`~hindsight_api.config.LLMStrategyConfig`, exposing the same public surface
@@ -14,6 +14,11 @@ Strategies:
 - ``failover``: try members in declared order ``[0..N]``.
 - ``round-robin``: rotate the starting member per request (optionally weighted),
   then fall through the remaining members on error.
+- ``metadata``: retain only. Each retained item picks its member from its own
+  ``metadata`` (see ``member_for_metadata``); an item matching no route uses the
+  primary. Selection happens per item at fact-extraction time, so nothing about
+  it is stored and no other operation is affected — see ``config.py`` and the
+  configuration docs for what this does and does not promise.
 
 Batch retain runs on the **first batch-capable member** in declared order (see
 ``batch_provider_impl``), which need not be the primary; once selected, the whole
@@ -28,7 +33,7 @@ import threading
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from ..config import LLM_STRATEGY_FAILOVER, LLMStrategyConfig
+from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
 from .llm_wrapper import LLMProvider, OutputTooLongError
 
 if TYPE_CHECKING:
@@ -50,6 +55,23 @@ def _should_failover(exc: BaseException) -> bool:
     if isinstance(exc, OutputTooLongError):
         return False
     return isinstance(exc, Exception)
+
+
+def _metadata_matches(actual: Any, expected: str) -> bool:
+    """Whether a retain item's metadata value matches a route's value.
+
+    Retain metadata is free-form JSON while a route value is always a string, so
+    compare on the string form. A list/tuple/set value matches when any of its
+    entries does, which is what makes ``{"labels": ["pii", "eu"]}`` routable.
+    """
+    if isinstance(actual, (list, tuple, set, frozenset)):
+        return any(_metadata_matches(entry, expected) for entry in actual)
+    if actual is None or isinstance(actual, dict):
+        return False
+    if isinstance(actual, bool):
+        # str(True) is "True"; JSON booleans should match "true"/"false".
+        return str(actual).lower() == expected.lower()
+    return str(actual) == expected
 
 
 class _WeightedRoundRobin:
@@ -81,7 +103,7 @@ class _WeightedRoundRobin:
 
 
 class MultiLLMProvider:
-    """Route LLM calls across multiple members per a failover / round-robin strategy."""
+    """Route LLM calls across multiple members per the configured strategy."""
 
     def __init__(self, members: list[LLMProvider], strategy: LLMStrategyConfig) -> None:
         if not members:
@@ -97,15 +119,46 @@ class MultiLLMProvider:
             )
         self._scheduler = _WeightedRoundRobin(weights)
 
+        if strategy.mode == LLM_STRATEGY_METADATA:
+            for route in strategy.routes or []:
+                if route.member >= len(members):
+                    raise ValueError(
+                        f"LLM metadata route {route.key}={route.value!r} selects member {route.member}, "
+                        f"but the chain has members 0..{len(members) - 1}."
+                    )
+
     # ── routing ────────────────────────────────────────────────────────────────
 
     def _member_order(self) -> list[int]:
         """Indices to try, in order, for one request."""
         n = len(self._members)
+        if self._strategy.mode == LLM_STRATEGY_METADATA:
+            # A metadata member is chosen per item by the retain path, which then
+            # calls that member directly. Anything reaching the chain itself has
+            # no item to route on, so it stays on the primary and does not fail
+            # over into another member's lane.
+            return [0]
         if self._strategy.mode == LLM_STRATEGY_FAILOVER:
             return list(range(n))
         start = self._scheduler.next()
         return [(start + i) % n for i in range(n)]
+
+    def member_for_metadata(self, metadata: dict[str, Any] | None) -> LLMProvider | None:
+        """The member selected by a retained item's metadata, or ``None``.
+
+        ``None`` means "nothing to re-bind": either the chain is not in metadata
+        mode, or no route matched and the caller's existing primary binding is
+        already the right one. The first matching route in declared order wins,
+        so overlapping routes are resolved by configuration order rather than
+        rejected — one item is one prompt, so there is never more than one item
+        to satisfy.
+        """
+        if self._strategy.mode != LLM_STRATEGY_METADATA or not metadata:
+            return None
+        for route in self._strategy.routes or []:
+            if _metadata_matches(metadata.get(route.key), route.value):
+                return self._members[route.member]
+        return None
 
     async def _dispatch(self, method_name: str, **kwargs: Any) -> Any:
         last_exc: BaseException | None = None
@@ -251,6 +304,10 @@ class MultiLLMProvider:
     @property
     def members(self) -> list[LLMProvider]:
         return self._members
+
+    @property
+    def strategy(self) -> LLMStrategyConfig:
+        return self._strategy
 
     def __getattr__(self, name: str) -> Any:
         # Anything not defined here (provider, model, api_key, base_url,
