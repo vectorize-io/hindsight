@@ -9,7 +9,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**opencode**, **opencode 2**, **Kilo CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**, **Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **Antigravity CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Devin CLI**, **Grok Build**). Ingestion is fully
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
