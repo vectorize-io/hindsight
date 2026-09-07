@@ -1436,7 +1436,11 @@ async def _rewrite_to_length_budget(
         )
     return LengthRewrite(
         applied=True,
-        markdown=rewritten.strip(),
+        # An empty rewrite must not empty the answer -- same rule the document
+        # branch enforces in _document_from_rewrite. Returning "" here would hand
+        # back a blank answer from past the ReflectNoAnswerError guard, throwing
+        # away a complete synthesis over a model hiccup (#2959).
+        markdown=rewritten.strip() or answer,
         duration_ms=int((time.time() - rewrite_start) * 1000),
         input_tokens=rewrite_usage.input_tokens,
         output_tokens=rewrite_usage.output_tokens,

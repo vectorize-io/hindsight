@@ -498,6 +498,53 @@ class TestReflectAgentMocked:
         assert not any(call.scope == "final_rewrite" for call in result.llm_trace)
 
     @pytest.mark.asyncio
+    async def test_empty_rewrite_keeps_the_original_answer(self, mock_llm, mock_functions):
+        """A blank rewrite must not blank the answer.
+
+        The rewrite runs *past* the ReflectNoAnswerError guard, so returning the
+        model's empty string would hand back a blank result from a run that had a
+        complete synthesis -- the exact failure #2959 made loud. The document
+        branch already falls back in _document_from_rewrite; prose must too.
+        """
+        mock_functions["search_mental_models_fn"].return_value = {
+            "mental_models": [{"id": "mm-1", "name": "Prefs", "content": "Fresh content.", "is_stale": False}]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
+        ]
+        long_answer = "important detail " * 100
+        mock_llm.call = AsyncMock(
+            side_effect=[
+                LLMCallResult(
+                    content=long_answer,
+                    usage=TokenUsage(input_tokens=40, output_tokens=12, total_tokens=52),
+                ),
+                # The rewrite model returns nothing usable.
+                LLMCallResult(
+                    content="   ",
+                    usage=TokenUsage(input_tokens=30, output_tokens=0, total_tokens=30),
+                ),
+            ]
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_tokens=8,
+            **mock_functions,
+        )
+
+        # Over budget, but a real answer beats a blank one. (The synthesis call
+        # strips its response, so compare against the stripped form.)
+        assert result.text == long_answer.strip()
+        assert mock_llm.call.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_no_tool_call_ever_raises_tool_call_error(self, mock_llm, mock_functions):
         """A transport that strips tool support (never yields a tool call) fails loudly.
 
