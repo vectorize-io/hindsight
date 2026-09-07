@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from hindsight_api.config import LLMStrategyConfig
+from hindsight_api.config import LLMMetadataRoute, LLMStrategyConfig
 from hindsight_api.engine.llm_interface import (
     LLMCooldownFailure,
     LLMFailureClassification,
@@ -85,6 +85,84 @@ class Member:
 
 def _router(*members: Member, mode: str = "failover") -> MultiLLMProvider:
     return MultiLLMProvider(cast(Any, list(members)), LLMStrategyConfig(mode=mode))
+
+
+def _metadata_router(*members: Member) -> MultiLLMProvider:
+    strategy = LLMStrategyConfig(
+        mode="metadata",
+        routes=[LLMMetadataRoute(key="classification", value="sensitive", member=1)],
+    )
+    return MultiLLMProvider(cast(Any, list(members)), strategy)
+
+
+async def test_metadata_primary_short_cooldown_waits_inline_without_secondary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = Clock()
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.monotonic", clock.monotonic)
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.asyncio.sleep", clock.sleep)
+    primary = Member("primary", QuotaError("primary quota"), "recovered", delay=1.0)
+    secondary = Member("metadata-secondary", "forbidden")
+    router = _metadata_router(primary, secondary)
+
+    assert await router.call(messages=[], max_backoff=5.0) == "recovered"
+    assert clock.sleeps == [1.0]
+    assert primary.calls == 2
+    assert secondary.calls == 0
+
+
+async def test_metadata_primary_long_cooldown_defers_without_secondary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = Clock()
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.monotonic", clock.monotonic)
+    primary = Member("primary", QuotaError("primary quota"), delay=10.0)
+    secondary = Member("metadata-secondary", "forbidden")
+    router = _metadata_router(primary, secondary)
+
+    with pytest.raises(ProviderRateLimitResetError):
+        await router.call(messages=[], max_backoff=5.0)
+
+    assert primary.calls == 1
+    assert secondary.calls == 0
+
+
+async def test_metadata_primary_pending_probe_has_one_owner_and_bounded_follower(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = Clock()
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.monotonic", clock.monotonic)
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.asyncio.sleep", clock.sleep)
+    initial = QuotaError("primary quota")
+    primary = Member("primary", initial, delay=1.0)
+    secondary = Member("metadata-secondary", "forbidden")
+    router = _metadata_router(primary, secondary)
+
+    with pytest.raises(ProviderRateLimitResetError):
+        await router.call(messages=[], max_backoff=0.5)
+    clock.now = 101.0
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def pending_probe() -> str:
+        entered.set()
+        await release.wait()
+        return "recovered"
+
+    primary.pending = pending_probe
+    owner = asyncio.create_task(router.call(messages=[]))
+    await entered.wait()
+    try:
+        with pytest.raises(QuotaError) as caught:
+            await router.call(messages=[], max_backoff=1.0)
+        assert caught.value is initial
+        assert clock.sleeps == [0.05]
+        assert primary.calls == 2
+        assert secondary.calls == 0
+    finally:
+        release.set()
+        assert await owner == "recovered"
 
 
 @pytest.mark.parametrize("method", ["call", "call_with_tools"])

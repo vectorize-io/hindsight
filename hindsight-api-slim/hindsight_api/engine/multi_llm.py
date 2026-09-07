@@ -323,13 +323,19 @@ class MultiLLMProvider:
                 request_saved_failure = skipped_failure
             with self._state_lock:
                 now = monotonic()
-                unavailable = all(state.probing or state.cooldown_until is not None for state in self._states)
+                # Only members in this request's immutable route order can make
+                # it available.  In metadata mode, direct chain calls are
+                # primary-only; a healthy secondary belongs to an explicitly
+                # selected metadata lane and must not suppress the primary's
+                # bounded wait or deferral.
+                ordered_states = [(idx, self._states[idx]) for idx in order]
+                unavailable = all(state.probing or state.cooldown_until is not None for _idx, state in ordered_states)
                 waits = [
                     (
                         _PROBE_POLL_SECONDS if state.probing else max(0.0, (state.cooldown_until or now) - now),
                         idx,
                     )
-                    for idx, state in enumerate(self._states)
+                    for idx, state in ordered_states
                     if state.probing or state.cooldown_until is not None
                 ]
 
