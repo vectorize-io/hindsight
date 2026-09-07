@@ -64,6 +64,15 @@ Give the API and the worker the **same** variables: the worker calls `list_tenan
 to decide which schemas to consolidate, so a worker without the extension leaves every
 tenant's background processing stopped.
 
+`list_tenants()` returns every configured user, so the worker can poll schemas that do
+not exist yet (an idle-cycle probe against a missing schema is skipped harmlessly).
+To avoid that and provision all tenant schemas up front, run the admin sweep once
+after changing `HINDSIGHT_API_TENANT_USERS`:
+
+```bash
+uv run hindsight-admin run-db-migration
+```
+
 ## Use
 
 Clients pass their configured API key as a bearer token:
