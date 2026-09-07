@@ -247,3 +247,65 @@ async def test_metadata_routing_is_fine_when_batch_retain_is_off() -> None:
     config = HindsightConfig.from_env()
     config.retain_batch_enabled = False
     await validate_retain_batch_support(_chain(("classification", "sensitive", 1)), config)
+
+
+# ── only retain can select this strategy ──────────────────────────────────────
+
+
+def _build_config(**overrides: Any) -> HindsightConfig:
+    from hindsight_api.config import LLMMemberConfig
+
+    config = HindsightConfig.from_env()
+    member = LLMMemberConfig(
+        provider="mock",
+        api_key="sk-test",
+        model="member-1",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+    )
+    config.llm_members = [member]
+    config.llm_strategy = None
+    for prefix in ("retain_", "reflect_", "consolidation_"):
+        setattr(config, f"{prefix}llm_members", [])
+        setattr(config, f"{prefix}llm_strategy", None)
+    for key, value in overrides.items():
+        setattr(config, key, value)
+    return config
+
+
+def _metadata_strategy() -> LLMStrategyConfig:
+    return LLMStrategyConfig(mode=LLM_STRATEGY_METADATA, routes=_routes(("classification", "sensitive", 1)))
+
+
+def _build(prefix: str, config: HindsightConfig) -> Any:
+    from hindsight_api.engine.memory_engine import _build_llm, _LLMCallDefaults
+
+    base = LLMProvider(provider="mock", api_key="sk-test", base_url=None, model="model-0")
+    defaults = _LLMCallDefaults(timeout=None, max_retries=1, initial_backoff=0.1, max_backoff=1.0)
+    return _build_llm(base, config, prefix, defaults)
+
+
+@pytest.mark.parametrize("prefix", ["reflect_", "consolidation_"])
+def test_explicit_metadata_strategy_is_rejected_for_non_retain_operations(prefix: str) -> None:
+    """Accepting it would pin the chain to the primary and look like broken routes."""
+    config = _build_config(**{f"{prefix}llm_strategy": _metadata_strategy()})
+    with pytest.raises(ValueError, match="only supported for retain"):
+        _build(prefix, config)
+
+
+def test_retain_may_select_metadata_explicitly() -> None:
+    config = _build_config(retain_llm_strategy=_metadata_strategy())
+    assert _build("retain_", config).strategy.mode == LLM_STRATEGY_METADATA
+
+
+def test_global_metadata_strategy_is_inherited_and_pins_other_operations_to_the_primary() -> None:
+    """The documented setup is a single global strategy; other operations keep the primary."""
+    config = _build_config(llm_strategy=_metadata_strategy())
+    for prefix in ("", "retain_", "reflect_", "consolidation_"):
+        chain = _build(prefix, config)
+        assert chain.strategy.mode == LLM_STRATEGY_METADATA
+        assert chain._member_order() == [0]
