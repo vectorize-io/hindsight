@@ -733,7 +733,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
-| `HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS` | Applies to **every** provider. If set, truncate each text to this many tokens (counted with `HINDSIGHT_API_TOKENIZER_ENCODING`, approximate) before embedding. Set it to the model's real input limit (e.g. `8192` for Bedrock Titan V2, or a llama.cpp server's context, with a little headroom) so oversized content is truncated instead of failing the embed call permanently. Off by default. (Deprecated alias: `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS`.) | - |
+| `HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS` | Applies to **every** provider: truncate each text to this many tokens (counted with `HINDSIGHT_API_TOKENIZER_ENCODING`, approximate) before embedding, so oversized content is truncated instead of failing the embed call permanently. The budget covers the whole payload, including any client-side prefix an asymmetric model needs. The default matches the input limit of essentially every remote embedding model (OpenAI `text-embedding-3-*`, Bedrock Titan V2, Cohere v3, a stock llama.cpp context) — set it to your model's real limit if it differs, or to `0` to send text uncapped. (Deprecated alias: `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS`.) | `8192` |
 | `HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX` | Text prepended to every search before it is embedded. Set it when your endpoint serves an asymmetric model that expects a search instruction — e.g. `task: search result \| query: ` for `google/embeddinggemma-300m`, or `query: ` for E5. Applies to the providers that only accept plain text (`tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `litellm`, `litellm-sdk`); see the note below for the ones that don't need it. Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX` | Text prepended to every stored memory/document before it is embedded — e.g. `title: none \| text: ` for `google/embeddinggemma-300m`, or `passage: ` for E5. Same providers as above. Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider. Models that ship their own search-text and stored-text instructions (e.g. the Qwen3-Embedding family) have them applied automatically — see the note below. | `BAAI/bge-small-en-v1.5` |
@@ -1019,8 +1019,8 @@ export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY=your-provider-api-key
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=cohere/embed-english-v3.0
 # Optional: request a specific output dimension when the provider supports it
 # export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS=768
-# Optional (any provider): truncate oversized inputs to the model's input-token limit
-# (e.g. Bedrock Titan V2, or a llama.cpp server's context)
+# Optional (any provider): the input-token limit inputs are truncated to.
+# Defaults to 8192; set it to your model's real limit, or 0 to send text uncapped
 # export HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS=8192
 
 # Supported LiteLLM SDK embedding providers:

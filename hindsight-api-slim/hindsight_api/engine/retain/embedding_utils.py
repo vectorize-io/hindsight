@@ -8,7 +8,7 @@ import logging
 from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
-from ..token_encoding import truncate_many_to_tokens
+from ..token_encoding import count_tokens, truncate_many_to_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,26 @@ class EmbeddingsBackend(Protocol):
     def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
 
 
-def _truncate_inputs(texts: list[str], max_input_tokens: int, backend: EmbeddingsBackend) -> list[str]:
+def _prefix_tokens(backend: EmbeddingsBackend, input_type: EmbeddingInputType) -> int:
+    """Tokens the backend will prepend to every text after this cap is applied.
+
+    Asymmetric models (E5, embeddinggemma, ...) carry their instruction as a literal
+    prefix that `Embeddings._encode_prefixed` glues on *after* truncation, so a text cut
+    to exactly the model's limit still arrives a few tokens over it. Charge the prefix
+    against the budget here. Providers with a native mechanism (SentenceTransformers'
+    prompts, ZeroEntropy's input_type) carry no prefix and cost nothing.
+    """
+    # `EmbeddingsBackend` is a duck-typed Protocol and does not declare the prefixes —
+    # they are an optional capability of the concrete `Embeddings` ABC — so getattr can
+    # hand back anything at all. Only a real, non-empty string costs budget.
+    attr = "query_prefix" if input_type == "query" else "passage_prefix"
+    prefix = getattr(backend, attr, "")
+    return count_tokens(prefix) if isinstance(prefix, str) and prefix else 0
+
+
+def _truncate_inputs(
+    texts: list[str], max_input_tokens: int, backend: EmbeddingsBackend, input_type: EmbeddingInputType
+) -> list[str]:
     """Cap each input at ``max_input_tokens`` tokens before it reaches the provider.
 
     Remote providers with a fixed input-token limit (e.g. Bedrock Titan V2's hard 8192
@@ -35,18 +54,25 @@ def _truncate_inputs(texts: list[str], max_input_tokens: int, backend: Embedding
     permanent 4xx rather than truncating server-side the way SentenceTransformers does.
     One oversized memory then fails the whole retain/recall batch. This is provider-
     agnostic on purpose: the cap is applied here, once, before any backend's `encode()`.
+
+    The budget covers the *whole* string that will go over the wire, not just the
+    caller's payload: an asymmetric model's prefix is subtracted up front (see
+    :func:`_prefix_tokens`), and callers that decorate their text — a knowledge page
+    embeds ``f"{name} {content}"`` — pass the joined string, so the join is inside the
+    cap rather than one token past it (#4165).
     """
-    results = truncate_many_to_tokens(texts, max_input_tokens)
+    budget = max(max_input_tokens - _prefix_tokens(backend, input_type), 0)
+    results = truncate_many_to_tokens(texts, budget)
     truncated = [result.text for result in results]
-    original_token_counts = [r.original_tokens for r in results if r.original_tokens > max_input_tokens]
+    original_token_counts = [r.original_tokens for r in results if r.original_tokens > budget]
     if original_token_counts:
         logger.warning(
             "Embeddings: truncated %d of %d input(s) to %d tokens for provider %s "
-            "(largest was ~%d tokens); embedded content is incomplete. Raise or unset "
+            "(largest was ~%d tokens); embedded content is incomplete. Raise or disable "
             "%s if this is unexpected.",
             len(original_token_counts),
             len(texts),
-            max_input_tokens,
+            budget,
             getattr(backend, "provider_name", "?"),
             max(original_token_counts),
             ENV_EMBEDDINGS_MAX_INPUT_TOKENS,
@@ -93,7 +119,7 @@ async def generate_embeddings_batch(
     # recall queries, consolidation, import) gets identical, model-agnostic truncation.
     max_input_tokens = get_config().embeddings_max_input_tokens
     if max_input_tokens is not None and texts:
-        texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend)
+        texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend, input_type)
 
     try:
         loop = asyncio.get_event_loop()

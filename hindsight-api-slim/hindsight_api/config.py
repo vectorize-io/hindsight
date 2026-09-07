@@ -1367,11 +1367,14 @@ DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC: int | None = None
 # LiteLLM SDK defaults
 DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL = "cohere/embed-english-v3.0"
 DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "float"
-# Opt-in per-text input truncation (tokens, see ENV_TOKENIZER_ENCODING). Off by default;
-# set to the embedding model's real input limit (e.g. 8192 for Bedrock Titan V2, or a
-# llama.cpp server's context) to keep oversized content from permanently failing the
-# embed call. Applies to every embeddings provider. See #2501.
-DEFAULT_EMBEDDINGS_MAX_INPUT_TOKENS: int | None = None
+# Per-text input truncation (tokens, see ENV_TOKENIZER_ENCODING), applied to every
+# embeddings provider before the text leaves the process. 8192 is the input limit of
+# essentially every remote embedding model in use (OpenAI text-embedding-3-*, Bedrock
+# Titan V2, Cohere v3, a stock llama.cpp context), and those reject an oversized input
+# with a permanent 400 instead of truncating it server-side the way SentenceTransformers
+# does — which failed the owning task for good (#2501, #4165). Set the env var to the
+# model's real limit if it differs, or to 0 to send text uncapped.
+DEFAULT_EMBEDDINGS_MAX_INPUT_TOKENS: int | None = 8192
 DEFAULT_RERANKER_LITELLM_SDK_MODEL = "cohere/rerank-english-v3.0"
 
 # Vocabulary used for every token count and chunk boundary in the engine. Server-level:
@@ -3879,7 +3882,9 @@ class HindsightConfig:
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
             # Generic name, falling back to the deprecated LiteLLM-SDK-specific alias.
-            embeddings_max_input_tokens=int(v)
+            # 0 (or any non-positive value) means "no cap" — the only way to opt out
+            # now that the default is a real limit rather than None.
+            embeddings_max_input_tokens=(int(v) if int(v) > 0 else None)
             if (
                 v := os.getenv(ENV_EMBEDDINGS_MAX_INPUT_TOKENS)
                 or os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS)
