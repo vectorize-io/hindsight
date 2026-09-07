@@ -228,3 +228,53 @@ async def test_cancelled_waiters_neither_strand_a_permit_nor_block_the_queue():
     await asyncio.wait_for(second, timeout=2.0)
     sem.release()
     await asyncio.wait_for(sem.acquire(), timeout=0.5)
+
+
+def test_handoff_reaches_a_waiter_on_another_loop():
+    """The starvation fix must hold across loops, which is the only reason this class exists.
+
+    The single-loop starvation test above cannot see this: there the holder's release and
+    the waiter's wake-up run on the same scheduler. Here the permit is granted by a
+    release on one loop to a ticket owned by a thread running a different one.
+    """
+    sem = CrossLoopSemaphore(1)
+    stop = threading.Event()
+    sections = 0
+    guard = threading.Lock()
+    errors: list[BaseException] = []
+    results: list[object] = []
+    waited: list[float] = []
+
+    async def holder():
+        # Re-acquires with no suspension point between release and the next acquire,
+        # so a bare counter would hand the permit straight back to this task forever.
+        nonlocal sections
+        while not stop.is_set():
+            async with sem:
+                await asyncio.sleep(0.01)
+                with guard:
+                    sections += 1
+        return True
+
+    async def waiter():
+        # Let the holder saturate the cap first, so this is a genuinely contended wait.
+        await asyncio.sleep(0.05)
+        start = time.perf_counter()
+        async with sem:
+            waited.append(time.perf_counter() - start)
+        stop.set()
+        return True
+
+    threads = [
+        _run_in_own_loop(lambda: [holder], results, errors),
+        _run_in_own_loop(lambda: [waiter], results, errors),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    stop.set()
+    assert not errors, f"cross-loop handoff raised: {errors[:1]}"
+    assert waited, "waiter never acquired across the loop boundary"
+    assert waited[0] < 0.2, f"waited {waited[0] * 1000:.0f} ms behind {sections} critical sections on another loop"
