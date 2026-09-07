@@ -1,5 +1,6 @@
 """Tests for StaticKeysTenantExtension (env-configured per-user API keys)."""
 
+import asyncio
 import hashlib
 import hmac
 from unittest.mock import AsyncMock, patch
@@ -328,6 +329,23 @@ class TestStaticKeysTenantExtensionAuthenticate:
 
         await ext.authenticate(RequestContext(api_key="key-a"))
         await ext.authenticate(RequestContext(api_key="key-a"))
+
+        mock_context.run_migration.assert_called_once_with("user_rafael")
+
+    @pytest.mark.asyncio
+    async def test_authenticate_concurrent_first_requests_provision_once(self):
+        # Two first requests for the same user racing each other must not both
+        # run migrations: the per-schema lock serializes them and the loser
+        # skips the (now cached) migration on re-check.
+        ext = _make_extension()
+        mock_context = AsyncMock(spec=ExtensionContext)
+        mock_context.run_migration = AsyncMock()
+        ext._context = mock_context
+
+        await asyncio.gather(
+            ext.authenticate(RequestContext(api_key="key-a")),
+            ext.authenticate(RequestContext(api_key="key-a")),
+        )
 
         mock_context.run_migration.assert_called_once_with("user_rafael")
 

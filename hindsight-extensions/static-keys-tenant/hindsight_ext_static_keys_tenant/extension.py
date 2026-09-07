@@ -38,6 +38,7 @@ License: MIT
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -221,8 +222,12 @@ class StaticKeysTenantExtension(TenantExtension):
             )
             self._users[user_id] = schema_name
 
-        # Track initialized schemas to avoid redundant migrations
+        # Track initialized schemas to avoid redundant migrations. Two
+        # concurrent first requests for the same user would both see the
+        # schema missing and both run migrations without the per-schema lock
+        # below serializing them.
         self._initialized_schemas: set[str] = set()
+        self._schema_locks: dict[str, asyncio.Lock] = {}
 
         # HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED is deliberately unsupported.
         # On ApiKeyTenantExtension (one shared key) the flag downgrades a shared
@@ -282,9 +287,14 @@ class StaticKeysTenantExtension(TenantExtension):
 
         user_id, schema_name = match.user_id, match.schema_name
 
-        # Initialize schema on first access
+        # Initialize schema on first access. The per-schema lock serializes
+        # concurrent first requests (two requests racing here would otherwise
+        # both call run_migration for the same schema); inside the lock the
+        # check runs again so the loser of the lock skips a redundant migration.
         if schema_name not in self._initialized_schemas:
-            await self._initialize_schema(schema_name)
+            async with self._schema_lock(schema_name):
+                if schema_name not in self._initialized_schemas:
+                    await self._initialize_schema(schema_name)
 
         # Usage metering: the HTTP/MCP layers read these fields back after auth
         # to attribute operations to a tenant / API key. api_key_id identifies
@@ -303,6 +313,14 @@ class StaticKeysTenantExtension(TenantExtension):
     # ------------------------------------------------------------------
     # Schema management
     # ------------------------------------------------------------------
+
+    def _schema_lock(self, schema_name: str) -> asyncio.Lock:
+        """Return (creating if needed) the init lock for one tenant schema."""
+        lock = self._schema_locks.get(schema_name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._schema_locks[schema_name] = lock
+        return lock
 
     async def _initialize_schema(self, schema_name: str) -> None:
         """Run migrations for a new tenant schema and cache the result."""
