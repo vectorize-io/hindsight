@@ -272,8 +272,13 @@ WORKDIR /app
 COPY docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
 
-# Install curl for health checks. `apk upgrade` first, for the same reason the
-# Debian stages run `apt-get upgrade` - see the comment on the api-only stage.
+# Install bash for the shared startup script. No curl: this image performs no
+# health check. start-all.sh probes only the API (gated on ENABLE_API, which
+# this stage sets to false) and the LLM under the opt-in HINDSIGHT_WAIT_FOR_DEPS,
+# which a control-plane-only container has no reason to set; the control-plane
+# branch launches `node server.js` and waits on nothing. There is no HEALTHCHECK
+# instruction either. `apk upgrade` runs first for the same reason the Debian
+# stages run `apt-get upgrade` - see the comment on the api-only stage.
 # npm is removed for the same reason the Debian stages remove pip's build
 # tooling: nothing invokes it at runtime - start-all.sh launches the pre-built
 # Next standalone bundle with `node server.js` - and dropping it leaves no
@@ -284,7 +289,7 @@ RUN chmod +x /app/start-all.sh
 # The `[ -e ]` guard is deliberate: a bare `rm -rf` on a path a future base
 # image no longer uses succeeds silently and npm quietly ships again. Fail the
 # build instead, so the path assumption has to be revisited on a base bump.
-RUN apk upgrade --no-cache && apk add --no-cache curl bash \
+RUN apk upgrade --no-cache && apk add --no-cache bash \
     && [ -e /usr/local/lib/node_modules/npm ] \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
     && ! command -v npm
