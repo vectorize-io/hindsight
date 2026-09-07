@@ -18,9 +18,8 @@ import logging
 import os
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
+from functools import lru_cache
 from typing import Any, Callable
-
-from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.llm_interface import (
@@ -37,6 +36,35 @@ from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult,
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
+
+from ..response_models import LLMCallResult
+
+
+@lru_cache(maxsize=1)
+def _litellm_timeout_exc() -> type[BaseException]:
+    """LiteLLM's ``Timeout``, imported on first use rather than at module scope.
+
+    This module was importing the whole of LiteLLM for one exception type used in two
+    ``except`` clauses, and it is imported unconditionally -- so every process paid
+    ~1.3s of LiteLLM import whether or not LiteLLM was the configured provider. That
+    cost lands on each ``--workers`` child and each spawned worker, not once.
+
+    ``except`` tuples are evaluated when an exception propagates, not at definition, so
+    resolving the class lazily here is behaviour-preserving.
+
+    Falls back to a private sentinel when LiteLLM is not installed, so the ``except``
+    tuples below stay valid rather than raising ImportError while handling an error.
+    """
+    try:
+        from litellm.exceptions import Timeout
+    except ImportError:  # pragma: no cover - only when litellm is absent
+
+        class _NeverRaised(Exception):
+            pass
+
+        return _NeverRaised
+    return Timeout
+
 
 logger = logging.getLogger(__name__)
 
@@ -270,9 +298,8 @@ class LiteLLMLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         start_time = time.time()
 
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
@@ -416,14 +443,12 @@ class LiteLLMLLM(LLMInterface):
                         f"time={duration:.3f}s"
                     )
 
-                if return_usage:
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=total_tokens,
-                    )
-                    return result, token_usage
-                return result
+                token_usage = TokenUsage(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                )
+                return LLMCallResult(content=result, usage=token_usage)
 
             except OutputTooLongError:
                 raise
@@ -439,7 +464,7 @@ class LiteLLMLLM(LLMInterface):
                     logger.error(f"LiteLLM returned invalid JSON after {max_retries + 1} attempts")
                     raise
 
-            except (TimeoutError, asyncio.TimeoutError, LiteLLMTimeout) as e:
+            except (TimeoutError, asyncio.TimeoutError, _litellm_timeout_exc()) as e:
                 # litellm/httpx don't always honor their own ``timeout=`` (e.g. a connection held
                 # open with no token progress), so ``wait_for`` is the hard cap that cancels a hung
                 # call regardless — otherwise one straggler pins a worker slot and stalls its gather.
@@ -600,7 +625,7 @@ class LiteLLMLLM(LLMInterface):
                     output_tokens=output_tokens,
                 )
 
-            except (TimeoutError, asyncio.TimeoutError, LiteLLMTimeout) as e:
+            except (TimeoutError, asyncio.TimeoutError, _litellm_timeout_exc()) as e:
                 # See ``call`` — hard cap so a hung completion cannot block
                 # forever and pin a worker slot / concurrency permit.
                 last_exception = e

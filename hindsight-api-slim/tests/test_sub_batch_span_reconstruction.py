@@ -33,6 +33,9 @@ from hindsight_api.engine.memory_engine import (
 from hindsight_api.engine.retain.fact_extraction import chunk_text
 
 CHUNK_SIZE = 1500
+# The image cap the splitter now requires from every caller. These bodies are
+# text-only, so it never binds — the value only has to be stated.
+IMAGE_BUDGET = {"max_attachments_per_chunk": 8}
 TOKENS_PER_BATCH = 10_000
 # Small enough that the repeated fixture exceeds it, which is what reaches the packing branch.
 PACKED_TOKENS = 800
@@ -67,7 +70,7 @@ def test_the_rejoin_cannot_reproduce_this_split():
         "fixture no longer triggers the fallback: the guessed join now reproduces the split, "
         "so this file would pass without testing anything"
     )
-    assert _rejoin_native_chunks(chunks, CHUNK_SIZE, None) is None
+    assert _rejoin_native_chunks(chunks, CHUNK_SIZE, None, **IMAGE_BUDGET) is None
 
 
 def test_a_run_survives_as_one_sub_batch_via_its_original_span():
@@ -142,7 +145,7 @@ def test_the_splitter_packs_runs_instead_of_fragmenting_per_chunk():
     # and each one the guessed rejoin genuinely fails on.
     assert len(runs) > 1
     assert all(len(r) > 1 for r in runs), "every run must be multi-chunk for the packing to matter"
-    assert all(_rejoin_native_chunks(r, CHUNK_SIZE, None) is None for r in runs), (
+    assert all(_rejoin_native_chunks(r, CHUNK_SIZE, None, **IMAGE_BUDGET) is None for r in runs), (
         "fixture must exercise the fallback the span reconstruction replaces"
     )
 
@@ -152,6 +155,7 @@ def test_the_splitter_packs_runs_instead_of_fragmenting_per_chunk():
             PACKED_TOKENS,
             chunk_size=CHUNK_SIZE,
             structured_chunk_size=None,
+            **IMAGE_BUDGET,
         )
     )
 
@@ -209,6 +213,7 @@ def test_the_span_is_attempted_once_on_a_body_whose_chunks_are_not_substrings(mo
             PACKED_TOKENS,
             chunk_size=CHUNK_SIZE,
             structured_chunk_size=None,
+            **IMAGE_BUDGET,
         )
     )
 

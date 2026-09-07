@@ -137,10 +137,10 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
 |-------|---------|-------------|
 | `key` | — | Label group identifier. Becomes the prefix in `key:value` entities (or `key:field:value` for `"map"`). |
 | `description` | `""` | Shown to the LLM to guide label assignment. |
-| `type` | `"value"` | `"value"` → pick one enum value; `"multi-values"` → pick multiple; `"text"` → free-form string; `"map"` → structured group with named fields. |
-| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"` and `"map"`. |
-| `fields` | `{}` | Field definitions for `"map"` types. Each field is itself typed (`"text"`, `"value"`, `"multi-values"`, or nested `"map"`). Ignored for non-map types. |
-| `optional` | `true` | When `true` the LLM may skip the label if not applicable. When `false` the LLM must always assign a value. Has no effect on `"multi-values"` groups (always optional). |
+| `type` | `"value"` | `"value"` → pick one enum value; `"multi-values"` → pick multiple; `"text"` → free-form string; `"multi-text"` → any number of free-form strings; `"map"` → structured group with named fields. |
+| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"`, `"multi-text"` and `"map"`. |
+| `fields` | `{}` | Field definitions for `"map"` types. Each field is itself typed (`"text"`, `"multi-text"`, `"value"`, `"multi-values"`, or nested `"map"`). Ignored for non-map types. |
+| `optional` | `true` | When `true` the LLM may skip the label if not applicable. When `false` the LLM must always assign a value. Has no effect on `"multi-values"` or `"multi-text"` groups (always optional). |
 | `tag` | `false` | When `true`, extracted `key:value` labels are also written as tags on the memory unit, enabling filtering via `tags`/`tags_match` in recall/reflect. |
 
 **Enum groups** (`type: "value"` or `type: "multi-values"`): the LLM picks from the predefined `values` list; anything outside the list is silently dropped. Vocabulary stays stable and graph links stay tight. Use `"multi-values"` when a fact can belong to several values at once.
@@ -157,7 +157,20 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
 }
 ```
 
-**Map groups** (`type: "map"`): defines a structured entity type with named fields. Each field is itself typed (`"text"`, `"value"`, `"multi-values"`, or nested `"map"`) so you can describe rich entities like a person with name, role, and organization. Each extracted field is stored as a flat `key:field:value` entity string (e.g. `person:name:Alice`), reusing the existing entity storage with no schema changes — so map fields participate in the knowledge graph and retrieval the same way single-value labels do.
+**Open-vocabulary groups** (`type: "multi-text"`): like `"text"`, but the LLM writes a *list* of strings instead of one — so a single fact can carry several values that nobody enumerated in the bank config. Use it when the interesting values only exist in the content: the names a thing is known by (canonical name plus abbreviations, acronyms and alternative spellings), ticket references a fact cites, product codes or SKUs. Each value becomes its own `key:value` entity, and with `tag: true` each is written as a tag, so a bank can derive a classification from content and then filter on it at recall without the caller supplying the vocabulary.
+
+```json
+{
+  "key": "name",
+  "description": "Every name the subject of this fact is known by — canonical name plus abbreviations, acronyms, short forms and alternative spellings.",
+  "type": "multi-text",
+  "tag": true
+}
+```
+
+Retaining *"We deploy services to a Kubernetes cluster on EKS — the team usually just says k8s, or kube"* yields the entities and tags `name:kubernetes`, `name:k8s` and `name:kube`, so `{"tags": ["name:k8s"], "tags_match": "any_strict"}` finds the fact. A `"text"` group would keep only one of the three.
+
+**Map groups** (`type: "map"`): defines a structured entity type with named fields. Each field is itself typed (`"text"`, `"multi-text"`, `"value"`, `"multi-values"`, or nested `"map"`) so you can describe rich entities like a person with name, role, and organization. Each extracted field is stored as a flat `key:field:value` entity string (e.g. `person:name:Alice`), reusing the existing entity storage with no schema changes — so map fields participate in the knowledge graph and retrieval the same way single-value labels do.
 
 ```json
 {

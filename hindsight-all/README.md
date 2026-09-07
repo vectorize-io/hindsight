@@ -1,6 +1,6 @@
 # hindsight-all
 
-All-in-one package for Hindsight - Agent Memory That Works Like Human Memory
+All-in-one package for Hindsight - Agent Memory That Learns
 
 ## Quick Start
 

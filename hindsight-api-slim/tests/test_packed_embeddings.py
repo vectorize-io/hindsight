@@ -11,6 +11,7 @@ Postgres accepts, and to the same value the unpacked one would have produced.
 """
 
 import math
+import random
 from array import array
 
 import numpy as np
@@ -114,6 +115,24 @@ def test_pgvector_literal_handles_mixed_and_edge_inputs():
     # Non-'f' typecode array fallthrough to _repr_literal
     double_array = array("d", [0.1, -0.25, 3.5])
     assert embedding_to_pgvector(double_array) == "[0.1,-0.25,3.5]"
+
+
+def test_float64_input_narrows_to_float32_without_double_rounding():
+    """A plain float list must land on the same float32 the column would have stored.
+
+    ``%.9g`` round-trips a float32 exactly, but applied straight to a float64 it rounds
+    twice — once to nine digits, once to float32 — and the two roundings disagree on
+    ~0.8% of values, landing a neighbouring float32. Narrowing to float32 *before*
+    formatting is what keeps the stored bytes identical, so sample enough values that a
+    regression cannot hide: at that rate 4,096 elements miss by ~31.
+    """
+    rng = random.Random(5)
+    vector = [rng.uniform(-1.0, 1.0) for _ in range(4096)]
+
+    rendered = embedding_to_pgvector(vector)
+    parsed = array("f", [float(part) for part in rendered.strip("[]").split(",")])
+
+    assert parsed == array("f", vector)
 
 
 def test_processed_fact_packs_what_it_is_given():

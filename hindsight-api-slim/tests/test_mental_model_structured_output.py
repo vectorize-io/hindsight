@@ -18,7 +18,7 @@ from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.memory_engine import MentalModelRefreshError
 from hindsight_api.engine.reflect import agent as reflect_agent
 from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
-from hindsight_api.engine.response_models import ReflectResult
+from hindsight_api.engine.response_models import LLMCallResult, ReflectResult, TokenUsage
 from tests.conftest import stub_refresh_has_sources
 
 _SCHEMA = {
@@ -157,7 +157,7 @@ class TestMentalModelStructuredOutput:
         # Delta-ops call returns no operations → the document is preserved and
         # re-rendered, so final_content is the merged doc (here: the original).
         async def fake_delta_call(**kwargs):
-            return DeltaOperationList(operations=[])
+            return LLMCallResult(content=DeltaOperationList(operations=[]), usage=TokenUsage())
 
         monkeypatch.setattr(memory._reflect_llm_config, "call", fake_delta_call)
         so_calls = _patch_structured_output(monkeypatch, {"summary": "whole document"})

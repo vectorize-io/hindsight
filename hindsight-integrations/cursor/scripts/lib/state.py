@@ -72,6 +72,15 @@ def write_state(name: str, data):
             pass
 
 
+def _prune(mapping: dict) -> dict:
+    """Bound an unbounded session-keyed map, dropping the oldest half."""
+    if len(mapping) > 10000:
+        sorted_keys = sorted(mapping.keys())
+        for k in sorted_keys[: len(sorted_keys) // 2]:
+            del mapping[k]
+    return mapping
+
+
 def increment_turn_count(session_id: str) -> int:
     """Increment and return the turn count for a session.
 
@@ -86,11 +95,7 @@ def increment_turn_count(session_id: str) -> int:
             try:
                 turns = read_state("turns.json", {})
                 turns[session_id] = turns.get(session_id, 0) + 1
-                if len(turns) > 10000:
-                    sorted_keys = sorted(turns.keys())
-                    for k in sorted_keys[: len(sorted_keys) // 2]:
-                        del turns[k]
-                write_state("turns.json", turns)
+                write_state("turns.json", _prune(turns))
                 return turns[session_id]
             finally:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -100,9 +105,22 @@ def increment_turn_count(session_id: str) -> int:
 
     turns = read_state("turns.json", {})
     turns[session_id] = turns.get(session_id, 0) + 1
-    if len(turns) > 10000:
-        sorted_keys = sorted(turns.keys())
-        for k in sorted_keys[: len(sorted_keys) // 2]:
-            del turns[k]
-    write_state("turns.json", turns)
+    write_state("turns.json", _prune(turns))
     return turns[session_id]
+
+
+def get_retained_message_count(session_id: str) -> int:
+    """Messages already retained for *session_id* (0 if never retained).
+
+    retain.py runs from both the ``stop`` and ``sessionEnd`` hooks, which
+    overlap at the end of a conversation. This watermark is what keeps the
+    overlap from storing the same transcript twice.
+    """
+    return read_state("retained.json", {}).get(session_id, 0)
+
+
+def set_retained_message_count(session_id: str, count: int) -> None:
+    """Record how many transcript messages have been retained for a session."""
+    retained = read_state("retained.json", {})
+    retained[session_id] = count
+    write_state("retained.json", _prune(retained))

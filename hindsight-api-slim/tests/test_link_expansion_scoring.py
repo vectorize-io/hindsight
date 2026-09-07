@@ -47,20 +47,22 @@ async def test_activation_preserves_additive_score_across_fact_types(monkeypatch
     monkeypatch.setattr(retriever, "_expand_combined", fake_expand_combined)
     pool = SimpleNamespace(ops=object())
 
-    world_results, _ = await retriever.retrieve(
+    retrieved = await retriever.retrieve(
         pool,
         query_embedding_str="unused",
         bank_id="bank",
         fact_type="world",
         budget=2,
     )
-    experience_results, _ = await retriever.retrieve(
+    world_results = retrieved.results
+    retrieved = await retriever.retrieve(
         pool,
         query_embedding_str="unused",
         bank_id="bank",
         fact_type="experience",
         budget=2,
     )
+    experience_results = retrieved.results
 
     combined = world_results + experience_results
     combined.sort(key=lambda result: result.activation or 0.0, reverse=True)
@@ -89,7 +91,7 @@ async def test_preselected_semantic_seeds_skip_seed_query(monkeypatch):
     monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fail_find_semantic_seeds)
     monkeypatch.setattr(retriever, "_expand_combined", fake_expand_combined)
 
-    results, timings = await retriever.retrieve(
+    retrieved = await retriever.retrieve(
         SimpleNamespace(ops=object()),
         query_embedding_str="unused",
         bank_id="bank",
@@ -100,6 +102,8 @@ async def test_preselected_semantic_seeds_skip_seed_query(monkeypatch):
             RetrievalResult(id="seed-b", text="seed", fact_type="world"),
         ],
     )
+    results = retrieved.results
+    timings = retrieved.timings
 
     assert [result.id for result in results] == ["result"]
     assert timings is not None
@@ -120,7 +124,7 @@ async def test_empty_preselected_semantic_seeds_do_not_fall_back(monkeypatch):
     monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
     monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fail_find_semantic_seeds)
 
-    results, timings = await retriever.retrieve(
+    retrieved = await retriever.retrieve(
         SimpleNamespace(ops=object()),
         query_embedding_str="unused",
         bank_id="bank",
@@ -128,6 +132,8 @@ async def test_empty_preselected_semantic_seeds_do_not_fall_back(monkeypatch):
         budget=2,
         preselected_semantic_seeds=[],
     )
+    results = retrieved.results
+    timings = retrieved.timings
 
     assert results == []
     assert timings is not None

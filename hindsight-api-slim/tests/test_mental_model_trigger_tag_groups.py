@@ -18,11 +18,13 @@ def test_mental_model_trigger_model_dump_preserves_or_tag_group():
 
     dumped = trigger.model_dump()
 
+    # Leaves carry `resolve` since #4026 and it serializes with them. A stored trigger is
+    # always "exact" — it is part of the dumped shape this test exists to pin.
     assert dumped["tag_groups"] == [
         {
             "or": [
-                {"tags": ["ns:a"], "match": "all_strict"},
-                {"tags": ["ns:b"], "match": "all_strict"},
+                {"tags": ["ns:a"], "match": "all_strict", "resolve": "exact"},
+                {"tags": ["ns:b"], "match": "all_strict", "resolve": "exact"},
             ]
         }
     ]

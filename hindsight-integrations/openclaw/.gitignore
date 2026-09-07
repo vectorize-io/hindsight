@@ -3,3 +3,4 @@ dist/
 *.log
 .DS_Store
 .tmp/
+package.json.pack-backup

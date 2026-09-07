@@ -33,6 +33,7 @@ from hindsight_api.engine.cache_affinity import (
 from hindsight_api.engine.llm_trace import LLMTraceContext, reset_trace_context, set_trace_context
 from hindsight_api.engine.llm_wrapper import LLMProvider, create_llm_provider
 from hindsight_api.engine.providers.nous_auth import NousAuthManager
+from hindsight_api.engine.providers.openai_compatible_headers import OPENAI_COMPATIBLE_USER_AGENT
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 _HEX32 = re.compile(r"\A[0-9a-f]{32}\Z")
@@ -340,6 +341,17 @@ def test_default_headers_reach_the_openai_compatible_client():
         default_headers={"x-test": "1"},
     )
     assert llm._client.default_headers["x-test"] == "1"
+
+
+def test_openai_compatible_client_identifies_hindsight():
+    llm = _llm()
+    assert llm._client.default_headers["User-Agent"] == OPENAI_COMPATIBLE_USER_AGENT
+
+
+def test_configured_user_agent_wins_case_insensitively():
+    llm = _llm(default_headers={"user-agent": "operator-client/1.0"})
+    assert llm._client.default_headers["user-agent"] == "operator-client/1.0"
+    assert OPENAI_COMPATIBLE_USER_AGENT not in llm._client.default_headers.values()
 
 
 def test_default_headers_reach_the_fireworks_client():

@@ -863,22 +863,31 @@ class WorkerPoller:
                     await self._maybe_update_parent_operation(operation_id, schema, conn)
 
     async def _mark_failed(self, operation_id: str, error_message: str, schema: str | None):
-        """Mark a task as failed with error message, then propagate to parent if applicable."""
+        """Mark a task as failed with error message, then propagate to parent if applicable.
+
+        Guarded against 'cancelled' (issue #4131): cancellation is cooperative, so
+        a task can still raise after an operator cancelled it — stamping 'failed'
+        over the cancellation would lose the operator's decision. When the row is
+        already cancelled the parent rollup is skipped too, since nothing changed.
+        """
         table = fq_table("async_operations", schema)
         # Truncate error message if too long (max 5000 chars in schema)
         error_message = error_message[:5000] if len(error_message) > 5000 else error_message
 
         async with self._backend.acquire() as conn:
             async with conn.transaction():
-                await conn.execute(
+                result = await conn.execute(
                     f"""
                     UPDATE {table}
                     SET status = 'failed', error_message = $2, completed_at = now(), updated_at = now()
-                    WHERE operation_id = $1
+                    WHERE operation_id = $1 AND status <> 'cancelled'
                     """,
                     operation_id,
                     error_message,
                 )
+                if not _updated_row_count(result):
+                    logger.info(f"Operation {operation_id} was cancelled or deleted, skipping mark-failed")
+                    return
                 await self._maybe_update_parent_operation(operation_id, schema, conn)
 
     async def _maybe_update_parent_operation(self, child_operation_id: str, schema: str | None, conn) -> None:
@@ -912,9 +921,12 @@ class WorkerPoller:
 
             bank_id = row["bank_id"]
 
-            # Lock parent to prevent concurrent sibling updates
+            # Lock parent to prevent concurrent sibling updates. A cancelled parent
+            # is left alone: the operator cancelled the whole batch, and a child
+            # that finished afterwards must not flip it back to completed/failed.
             parent_row = await conn.fetchrow(
-                f"SELECT operation_id FROM {table} WHERE operation_id = $1 AND bank_id = $2 FOR UPDATE",
+                f"SELECT operation_id FROM {table} WHERE operation_id = $1 AND bank_id = $2 "
+                f"AND status <> 'cancelled' FOR UPDATE",
                 uuid.UUID(parent_operation_id),
                 bank_id,
             )
@@ -935,11 +947,17 @@ class WorkerPoller:
                 bank_id,
                 json.dumps({"parent_operation_id": parent_operation_id}),
             )
-            if not siblings or not all(s["status"] in ("completed", "failed") for s in siblings):
+            # 'cancelled' counts as done (issue #4131): an operator can cancel an
+            # individual child, and leaving it out of this set strands the parent in
+            # 'processing' forever. Mirrors MemoryEngine._maybe_update_parent_operation.
+            if not siblings or not all(s["status"] in ("completed", "failed", "cancelled") for s in siblings):
                 return
 
             any_failed = any(s["status"] == "failed" for s in siblings)
+            any_cancelled = any(s["status"] == "cancelled" for s in siblings)
             if any_failed:
+                # A real failure outranks a cancellation: it carries a cause to surface.
+                parent_status = "failed"
                 await conn.execute(
                     f"""
                     UPDATE {table}
@@ -949,7 +967,19 @@ class WorkerPoller:
                     uuid.UUID(parent_operation_id),
                     _summarise_child_error_messages(siblings),
                 )
+            elif any_cancelled:
+                # No completed_at: the batch was stopped, not finished.
+                parent_status = "cancelled"
+                await conn.execute(
+                    f"""
+                    UPDATE {table}
+                    SET status = 'cancelled', updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(parent_operation_id),
+                )
             else:
+                parent_status = "completed"
                 await conn.execute(
                     f"""
                     UPDATE {table}
@@ -958,10 +988,7 @@ class WorkerPoller:
                     """,
                     uuid.UUID(parent_operation_id),
                 )
-            logger.info(
-                f"Poller updated parent operation {parent_operation_id} to "
-                f"{'failed' if any_failed else 'completed'} (all siblings done)"
-            )
+            logger.info(f"Poller updated parent operation {parent_operation_id} to {parent_status} (all siblings done)")
         except Exception as e:
             # Log but don't re-raise — the child has already been marked failed,
             # which is the critical state change. A stuck parent will be caught on
@@ -969,21 +996,29 @@ class WorkerPoller:
             logger.error(f"Failed to update parent operation for child {child_operation_id}: {e}")
 
     async def _schedule_retry(self, operation_id: str, retry_at: "Any", error_message: str, schema: str | None):
-        """Reset task to pending with a future retry timestamp."""
+        """Reset task to pending with a future retry timestamp.
+
+        Guarded against 'cancelled' (issue #4131) — this is the write that would
+        actually resurrect cancelled work: without the guard a task that fails
+        after being cancelled goes back to 'pending' and gets re-claimed.
+        """
         table = fq_table("async_operations", schema)
         error_message = error_message[:5000] if len(error_message) > 5000 else error_message
         async with self._backend.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 f"""
                 UPDATE {table}
                 SET status = 'pending', next_retry_at = $2, worker_id = NULL, claimed_at = NULL,
                     retry_count = retry_count + 1, error_message = $3, updated_at = now()
-                WHERE operation_id = $1
+                WHERE operation_id = $1 AND status <> 'cancelled'
                 """,
                 operation_id,
                 retry_at,
                 error_message,
             )
+        if not _updated_row_count(result):
+            logger.info(f"Task {operation_id} was cancelled or deleted, not scheduling a retry")
+            return
         logger.warning(f"Task {operation_id} scheduled for retry at {retry_at}: {error_message}")
 
     async def _defer_operation(self, operation_id: str, exec_date: "Any", reason: str, schema: str | None):
@@ -994,16 +1029,19 @@ class WorkerPoller:
         """
         table = fq_table("async_operations", schema)
         async with self._backend.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 f"""
                 UPDATE {table}
                 SET status = 'pending', next_retry_at = $2, worker_id = NULL, claimed_at = NULL,
                     updated_at = now()
-                WHERE operation_id = $1
+                WHERE operation_id = $1 AND status <> 'cancelled'
                 """,
                 operation_id,
                 exec_date,
             )
+        if not _updated_row_count(result):
+            logger.info(f"Task {operation_id} was cancelled or deleted, not deferring")
+            return
         logger.info(f"Task {operation_id} deferred until {exec_date}: {reason}")
 
     async def execute_task(self, task: ClaimedTask):

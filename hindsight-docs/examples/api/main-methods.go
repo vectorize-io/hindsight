@@ -25,7 +25,7 @@ func main() {
 	client.MemoryAPI.RetainMemories(ctx, "my-bank").
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
-				{Content: "Alice joined Google in March 2024 as a Senior ML Engineer"},
+				{Content: hindsight.TextContent("Alice joined Google in March 2024 as a Senior ML Engineer")},
 			},
 		}).Execute()
 	// [/docs:main-retain]

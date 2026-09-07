@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Auto-retain hook for Cursor's stop event.
+"""Auto-retain hook for Cursor's ``stop`` and ``sessionEnd`` events.
+
+Registered on both because ``stop`` alone silently drops short sessions:
+
+* ``stop`` fires each time an agent loop ends -- the right granularity for
+  periodic retains, but every firing is subject to the turn window. At the
+  default ``retainEveryNTurns`` of 10, a conversation that ends at turn 7
+  fires ``stop`` seven times, is gated seven times, and is never stored.
+* ``sessionEnd`` fires once when the conversation ends. It is treated as a
+  *final flush*: it bypasses the turn window so the tail of a session is
+  retained no matter where in the window it ended.
+
+The two overlap at the end of a conversation. A watermark of the messages
+already retained per session (``retained.json``) makes a run with nothing
+new a no-op, so the overlap cannot double-store.
 
 Flow:
   1. Read hook input from stdin (conversation_id, transcript_path, status)
@@ -29,7 +43,12 @@ from lib.content import (
     slice_last_turns_by_user_boundary,
 )
 from lib.daemon import get_api_url
-from lib.state import increment_turn_count, write_state
+from lib.state import (
+    get_retained_message_count,
+    increment_turn_count,
+    set_retained_message_count,
+    write_state,
+)
 
 LAST_RETAIN_STATE = "last_retain.json"
 
@@ -166,21 +185,42 @@ def main():
 
     debug_log(config, f"Read {len(all_messages)} messages from transcript")
 
+    # sessionEnd is the last chance to store this conversation, so it flushes
+    # whatever the turn window has not retained yet.
+    is_session_end = hook_input.get("hook_event_name") == "sessionEnd"
+
+    # Nothing new since the last retain: the other hook already stored this
+    # transcript. Checked before the turn counter so an overlapping sessionEnd
+    # does not consume a turn either.
+    already_retained = get_retained_message_count(session_id)
+    if len(all_messages) <= already_retained:
+        debug_log(config, f"No new messages since last retain ({already_retained}), skipping")
+        _write_retain_status("skipped", reason="no_new_messages", message_count=len(all_messages))
+        return
+
     # Retention mode: full session (default) or chunked
     retain_mode = config.get("retainMode", "full-session")
     retain_every_n = max(1, config.get("retainEveryNTurns", 10))
     retain_full_window = False
     messages_to_retain = all_messages
 
-    if retain_every_n > 1:
+    if retain_every_n > 1 and not is_session_end:
         turn_count = increment_turn_count(session_id)
         if turn_count % retain_every_n != 0:
             next_at = ((turn_count // retain_every_n) + 1) * retain_every_n
             debug_log(config, f"Turn {turn_count}/{retain_every_n}, skipping retain (next at turn {next_at})")
             _write_retain_status("skipped", reason="turn_window", turn=turn_count, next_at=next_at)
             return
+    elif is_session_end:
+        debug_log(config, "sessionEnd: flushing regardless of turn window")
 
-    if retain_mode == "chunked" and retain_every_n > 1:
+    if retain_mode == "chunked" and is_session_end:
+        # A flush has no turn window to slice against; store exactly the tail
+        # the periodic retains never got to, so chunks stay non-overlapping.
+        messages_to_retain = all_messages[already_retained:]
+        retain_full_window = True
+        debug_log(config, f"Chunked sessionEnd flush ({len(messages_to_retain)} new messages)")
+    elif retain_mode == "chunked" and retain_every_n > 1:
         overlap_turns = config.get("retainOverlapTurns", 0)
         window_turns = retain_every_n + overlap_turns
         messages_to_retain = slice_last_turns_by_user_boundary(all_messages, window_turns)
@@ -275,7 +315,10 @@ def main():
             tags=tags,
             timeout=15,
         )
-        debug_log(config, f"Retain response: {json.dumps(response)[:200]}")
+        # Watermark first: the content is stored, so a later sessionEnd must
+        # not re-store it even if something below this line raises.
+        set_retained_message_count(session_id, len(all_messages))
+        debug_log(config, f"Retain response: {response}")
         _write_retain_status(
             "success",
             bank_id=bank_id,

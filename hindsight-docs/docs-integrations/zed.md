@@ -8,6 +8,8 @@ description: "Add long-term memory to the Zed editor's AI assistant with Hindsig
 
 Long-term memory for the [Zed](https://zed.dev) editor's AI assistant, powered by [Hindsight](https://vectorize.io/hindsight). One command connects Zed's Agent Panel to the Hindsight MCP server and adds a rule telling the agent to use it — so it recalls relevant memory at the start of a task and retains durable facts as it goes. Recall happens at query time against your actual message, and from your seat it's automatic.
 
+[View Changelog →](/changelog/integrations/zed)
+
 ## How It Works
 
 Zed has no pre-prompt hook, but it supports two things this integration uses:

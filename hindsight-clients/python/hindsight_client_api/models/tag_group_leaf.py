@@ -28,7 +28,8 @@ class TagGroupLeaf(BaseModel):
     """ # noqa: E501
     tags: List[StrictStr]
     match: Optional[StrictStr] = 'any_strict'
-    __properties: ClassVar[List[str]] = ["tags", "match"]
+    resolve: Optional[StrictStr] = 'exact'
+    __properties: ClassVar[List[str]] = ["tags", "match", "resolve"]
 
     @field_validator('match')
     def match_validate_enum(cls, value):
@@ -38,6 +39,16 @@ class TagGroupLeaf(BaseModel):
 
         if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
             raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
+        return value
+
+    @field_validator('resolve')
+    def resolve_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['exact', 'fuzzy']):
+            raise ValueError("must be one of enum values ('exact', 'fuzzy')")
         return value
 
     model_config = ConfigDict(
@@ -92,7 +103,8 @@ class TagGroupLeaf(BaseModel):
 
         _obj = cls.model_validate({
             "tags": obj.get("tags"),
-            "match": obj.get("match") if obj.get("match") is not None else 'any_strict'
+            "match": obj.get("match") if obj.get("match") is not None else 'any_strict',
+            "resolve": obj.get("resolve") if obj.get("resolve") is not None else 'exact'
         })
         return _obj
 

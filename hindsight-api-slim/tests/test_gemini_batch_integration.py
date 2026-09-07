@@ -105,7 +105,7 @@ async def test_real_gemini_batch_end_to_end(gemini_env):
     ]
 
     logger.info("Submitting a real Gemini batch (this can take several minutes)...")
-    facts, chunks, usage = await extract_facts_from_contents_batch_api(
+    extraction = await extract_facts_from_contents_batch_api(
         contents=contents,
         llm_config=llm_config,
         config=config,
@@ -113,6 +113,9 @@ async def test_real_gemini_batch_end_to_end(gemini_env):
         operation_id=None,
         schema=None,
     )
+    facts = extraction.facts
+    chunks = extraction.chunks
+    usage = extraction.usage
 
     # The end-to-end proof: if the real output shape doesn't match the normalizer,
     # the consumer extracts nothing and this is empty.

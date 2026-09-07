@@ -43,8 +43,8 @@ class LabelGroupOutput(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['value', 'multi-values', 'text', 'map']):
-            raise ValueError("must be one of enum values ('value', 'multi-values', 'text', 'map')")
+        if value not in set(['value', 'multi-values', 'text', 'multi-text', 'map']):
+            raise ValueError("must be one of enum values ('value', 'multi-values', 'text', 'multi-text', 'map')")
         return value
 
     model_config = ConfigDict(

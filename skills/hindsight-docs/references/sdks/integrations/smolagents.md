@@ -3,6 +3,8 @@
 
 Persistent memory tools for [SmolAgents](https://github.com/huggingface/smolagents) agents via Hindsight. Give your agents long-term memory with retain, recall, and reflect — using SmolAgents' native Tool pattern.
 
+[View Changelog →](../../changelog/integrations/smolagents.md)
+
 ## Features
 
 - **Native Tool Subclasses** - Each tool extends SmolAgents' `Tool` base class

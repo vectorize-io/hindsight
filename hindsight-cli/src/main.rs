@@ -275,20 +275,6 @@ enum BankCommands {
         mission: String,
     },
 
-    /// Set or merge bank background (deprecated: use mission instead)
-    #[command(hide = true)]
-    Background {
-        /// Bank ID
-        bank_id: String,
-
-        /// Background content
-        content: String,
-
-        /// Skip automatic disposition inference
-        #[arg(long)]
-        no_update_disposition: bool,
-    },
-
     /// Get memory graph data
     Graph {
         /// Bank ID
@@ -415,7 +401,7 @@ enum BankCommands {
         yes: bool,
     },
 
-    /// Set disposition traits directly (1-5 each, via PUT /profile)
+    /// Set disposition traits directly (1-5 each, stored as bank config)
     SetDisposition {
         /// Bank ID
         bank_id: String,
@@ -808,7 +794,7 @@ enum OperationCommands {
         operation_id: String,
     },
 
-    /// Cancel a pending async operation
+    /// Cancel a pending or in-flight async operation
     Cancel {
         /// Bank ID
         bank_id: String,
@@ -1357,6 +1343,22 @@ enum DirectiveCommands {
 }
 
 fn main() {
+    // Rust ignores SIGPIPE at startup so that `println!`/`print!` surface a
+    // closed stdout pipe as an `EPIPE` error rather than a signal. But the
+    // release profile sets `panic = "abort"`, so that write error becomes a
+    // silent SIGABRT — a spurious "fatal error" with no message — whenever
+    // the reader closes early (e.g. `hindsight ... | head`).
+    //
+    // Restore the default SIGPIPE disposition on Unix so the CLI terminates
+    // cleanly on a broken pipe, like other Unix CLI tools. Note this also
+    // applies to socket writes: on Linux a peer closing a connection mid-write
+    // surfaces as SIGPIPE rather than an `Err(EPIPE)`. ripgrep and fd accept
+    // the same trade-off, and it is the correct behavior here too.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     if let Err(e) = run() {
         ui::print_error(&format!("{:#}", e));
         std::process::exit(1);
@@ -1469,18 +1471,6 @@ fn run() -> Result<()> {
             BankCommands::Mission { bank_id, mission } => {
                 commands::bank::mission(&client, &bank_id, &mission, verbose, output_format)
             }
-            BankCommands::Background {
-                bank_id,
-                content,
-                no_update_disposition,
-            } => commands::bank::update_background(
-                &client,
-                &bank_id,
-                &content,
-                no_update_disposition,
-                verbose,
-                output_format,
-            ),
             BankCommands::Graph {
                 bank_id,
                 fact_type,

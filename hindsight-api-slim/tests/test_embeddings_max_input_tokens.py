@@ -21,7 +21,7 @@ from hindsight_api.config import (
     HindsightConfig,
 )
 from hindsight_api.engine.retain import embedding_utils
-from hindsight_api.engine.token_encoding import get_token_encoding
+from hindsight_api.engine.token_encoding import count_tokens
 
 
 class _FakeBackend:
@@ -60,7 +60,7 @@ class TestTruncateInputs:
         with caplog.at_level(logging.WARNING):
             result = embedding_utils._truncate_inputs([long_text], 50, backend)
 
-        assert len(get_token_encoding().encode(result[0])) <= 50
+        assert count_tokens(result[0]) <= 50
         assert result[0] != long_text
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "truncated" in r.message]
         assert warnings, "expected a truncation warning"
@@ -87,7 +87,7 @@ class TestGenerateEmbeddingsBatch:
             await embedding_utils.generate_embeddings_batch(backend, [long_text])
 
         assert backend.received, "backend was never called"
-        assert len(get_token_encoding().encode(backend.received[0])) <= 50
+        assert count_tokens(backend.received[0]) <= 50
         assert backend.received[0] != long_text
 
     async def test_no_cap_passes_verbatim(self):

@@ -52,14 +52,16 @@ async def test_malformed_json_repaired_after_retries_exhausted(monkeypatch):
 
     monkeypatch.setattr(provider, "_acompletion", _fake)
 
-    result = await provider.call(
-        messages=[{"role": "user", "content": "hi"}],
-        response_format=_Facts,
-        skip_validation=True,
-        max_retries=1,
-        initial_backoff=0.01,
-        max_backoff=0.01,
-    )
+    result = (
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            response_format=_Facts,
+            skip_validation=True,
+            max_retries=1,
+            initial_backoff=0.01,
+            max_backoff=0.01,
+        )
+    ).content
 
     # A clean re-roll is preferred first: attempt 0 raises, attempt 1 repairs.
     assert calls == 2
@@ -76,14 +78,16 @@ async def test_clean_reroll_preferred_over_repair(monkeypatch):
 
     monkeypatch.setattr(provider, "_acompletion", _fake)
 
-    result = await provider.call(
-        messages=[{"role": "user", "content": "hi"}],
-        response_format=_Facts,
-        skip_validation=True,
-        max_retries=1,
-        initial_backoff=0.01,
-        max_backoff=0.01,
-    )
+    result = (
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            response_format=_Facts,
+            skip_validation=True,
+            max_retries=1,
+            initial_backoff=0.01,
+            max_backoff=0.01,
+        )
+    ).content
 
     assert result == {"a": 2}  # the clean re-roll, not a repair of the first
 

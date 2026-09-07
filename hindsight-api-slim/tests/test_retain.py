@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from hindsight_api import RequestContext
 from hindsight_api.engine.memory_engine import Budget, MemoryEngine
 from tests.llm_judge import assert_meets_criteria
 
@@ -2403,6 +2402,9 @@ def test_recall_result_model_empty_construction():
 
 
 @pytest.mark.asyncio
+# Calls a real provider for extraction, so it needs a key and cannot run in a suite that has
+# none: without the marker it raises rather than skipping, costing a whole run to discover.
+@pytest.mark.hs_llm_core
 async def test_custom_extraction_mode():
     """
     Test that custom extraction mode uses custom guidelines from env variable.
@@ -2643,13 +2645,16 @@ def test_chunks_extraction_mode():
             RetainContent(content="Bob fixed the critical bug in the payment service."),
         ]
 
-        facts, chunks, usage = asyncio.get_event_loop().run_until_complete(
+        extraction = asyncio.run(
             extract_facts_from_contents(
                 contents=contents,
                 llm_config=None,  # Must not be called
                 config=_get_raw_config(),
             )
         )
+        facts = extraction.facts
+        chunks = extraction.chunks
+        usage = extraction.usage
 
         # One fact per chunk (both contents fit in one chunk each)
         assert len(facts) == len(chunks) == 2
@@ -2676,6 +2681,9 @@ def test_chunks_extraction_mode():
 
 
 @pytest.mark.asyncio
+# Calls a real provider for extraction, so it needs a key and cannot run in a suite that has
+# none: without the marker it raises rather than skipping, costing a whole run to discover.
+@pytest.mark.hs_llm_core
 async def test_verbatim_extraction_mode():
     """
     Integration test for verbatim extraction mode.
@@ -2710,11 +2718,13 @@ async def test_verbatim_extraction_mode():
                 content=text, event_date=datetime(2024, 3, 10, tzinfo=timezone.utc), context="onboarding notes"
             )
         ]
-        facts, chunks, _ = await extract_facts_from_contents(
+        extraction = await extract_facts_from_contents(
             contents=contents,
             llm_config=llm_config,
             config=_get_raw_config(),
         )
+        facts = extraction.facts
+        chunks = extraction.chunks
 
         logger.info(f"Verbatim mode extracted {len(facts)} facts from {len(chunks)} chunks")
         for i, f in enumerate(facts):
@@ -2961,13 +2971,15 @@ def test_strategy_overrides_extraction_mode_for_chunks():
         RetainContent(content="Bob reviewed the pull request."),
     ]
 
-    facts, chunks, usage = asyncio.get_event_loop().run_until_complete(
+    extraction = asyncio.run(
         extract_facts_from_contents(
             contents=contents,
             llm_config=None,  # chunks must not call the LLM
             config=strategy_config,
         )
     )
+    facts = extraction.facts
+    usage = extraction.usage
 
     assert len(facts) == 2
     assert facts[0].fact_text == contents[0].content
@@ -3010,6 +3022,9 @@ def test_retain_request_per_item_strategy_field():
 
 
 @pytest.mark.asyncio
+# Calls a real provider for extraction, so it needs a key and cannot run in a suite that has
+# none: without the marker it raises rather than skipping, costing a whole run to discover.
+@pytest.mark.hs_llm_core
 async def test_named_strategy_applied_end_to_end(memory, request_context):
     """
     Integration test: a named strategy stored in bank config is actually applied
@@ -3019,7 +3034,6 @@ async def test_named_strategy_applied_end_to_end(memory, request_context):
     but the extraction mode override was silently ignored, always using the bank
     default (e.g. 'concise') instead of the strategy's override (e.g. 'chunks').
     """
-    from hindsight_api.config_resolver import ConfigResolver
 
     bank_id = f"test_strategy_e2e_{datetime.now(timezone.utc).timestamp()}"
 
@@ -3244,8 +3258,8 @@ from unittest.mock import patch
 
 import pytest_asyncio
 
-from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
 
@@ -3256,10 +3270,10 @@ def _make_mock_llm_call():
         from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
 
         if kwargs.get("scope") == "consolidation":
-            return_usage = kwargs.get("return_usage", False)
-            if return_usage:
-                return _ConsolidationBatchResponse(), TokenUsage(input_tokens=0, output_tokens=0)
-            return _ConsolidationBatchResponse()
+            return LLMCallResult(
+                content=_ConsolidationBatchResponse(),
+                usage=TokenUsage(input_tokens=0, output_tokens=0),
+            )
 
         messages = kwargs.get("messages", args[0] if args else [])
         user_msg = messages[-1]["content"] if messages else ""
@@ -3285,14 +3299,13 @@ def _make_mock_llm_call():
             )
 
         response_dict = {"facts": facts}
-        return_usage = kwargs.get("return_usage", False)
-        if return_usage:
-            usage = TokenUsage(
+        return LLMCallResult(
+            content=response_dict,
+            usage=TokenUsage(
                 input_tokens=len(user_msg) // 4,
                 output_tokens=len(json.dumps(response_dict)) // 4,
-            )
-            return response_dict, usage
-        return response_dict
+            ),
+        )
 
     return mock_llm_call
 

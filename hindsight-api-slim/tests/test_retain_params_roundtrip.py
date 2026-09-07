@@ -88,7 +88,13 @@ def test_api_retain_puts_the_strategy_on_the_content_dict():
     cannot see this: a strategy that is never assigned simply drops out of the set
     it compares."""
     src = API_HTTP.read_text()
-    block = src[src.index("# Group items by strategy") :][:2500]
+    # Bounded by the end of the loop that builds the dict, not by a character
+    # count: a fixed window silently stops covering the assignment as soon as
+    # anything is added above it, which is a test that fails for the wrong
+    # reason (adding `attachment_filenames` pushed the assignment past 2500).
+    start = src.index("# Group items by strategy")
+    end = src.index("strategy_groups[effective].append", start)
+    block = src[start:end]
     assert 'content_dict["strategy"] = item.strategy' in block
 
 

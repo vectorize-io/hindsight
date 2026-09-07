@@ -8,6 +8,8 @@ description: "Add persistent long-term memory to any Dify workflow with Hindsigh
 
 Persistent memory for [Dify](https://dify.ai) workflows via [Hindsight](https://hindsight.vectorize.io). The Hindsight Dify plugin adds three tools — **Retain**, **Recall**, **Reflect** — that work alongside any other Dify node in workflows, chatflows, and agent apps.
 
+[View Changelog →](/changelog/integrations/dify)
+
 ## Why this matters
 
 Dify is one of the most popular open-source LLM app platforms — visual workflow builder, prompt management, and a growing tool/plugin ecosystem. Until now, Dify workflows have been **stateless across runs**. With Hindsight tools you can:

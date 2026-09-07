@@ -91,6 +91,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "retain_default_strategy": "meetings",
     "retain_strategies": {"meetings": {"retain_chunk_size": 1200, "retain_extraction_mode": "verbose"}},
     "retain_chunk_batch_size": 7,
+    "retain_max_attachments_per_chunk": 3,
     "mcp_enabled_tools": ["recall", "retain"],
     "consolidation_llm_batch_size": 11,
     "consolidation_source_facts_max_tokens": 2048,

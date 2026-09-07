@@ -172,7 +172,10 @@ class TestTagsWhereClauseBuilder:
     def test_tags_where_clause_exact_empty_scope_keeps_param_offset(self, tags):
         """The parameterized builder must not consume a bind index for the empty scope,
         so following clauses stay aligned with their params."""
-        clause, params, next_offset = build_tags_where_clause(tags, param_offset=4, match="exact")
+        built = build_tags_where_clause(tags, param_offset=4, match="exact")
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert clause == "AND (tags IS NULL OR tags = '{}')"
         assert params == []
         assert next_offset == 4
@@ -379,14 +382,20 @@ class TestBuildTagGroupsWhereClause:
 
     def test_none_returns_empty(self):
         """None tag_groups returns empty clause."""
-        clause, params, next_offset = build_tag_groups_where_clause(None, 3)
+        built = build_tag_groups_where_clause(None, 3)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert clause == ""
         assert params == []
         assert next_offset == 3
 
     def test_empty_list_returns_empty(self):
         """Empty tag_groups list returns empty clause."""
-        clause, params, next_offset = build_tag_groups_where_clause([], 3)
+        built = build_tag_groups_where_clause([], 3)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert clause == ""
         assert params == []
         assert next_offset == 3
@@ -394,7 +403,10 @@ class TestBuildTagGroupsWhereClause:
     def test_single_leaf_any_strict(self):
         """Single any_strict leaf generates correct SQL."""
         groups = [TagGroupLeaf(tags=["step:5", "step:8"], match="any_strict")]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 3)
+        built = build_tag_groups_where_clause(groups, 3)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert clause.startswith("AND ")
         assert "$3" in clause
         assert "IS NOT NULL" in clause
@@ -406,7 +418,10 @@ class TestBuildTagGroupsWhereClause:
     def test_single_leaf_all_strict(self):
         """Single all_strict leaf generates @> operator."""
         groups = [TagGroupLeaf(tags=["user:alice"], match="all_strict")]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 1)
+        built = build_tag_groups_where_clause(groups, 1)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "@>" in clause
         assert "IS NOT NULL" in clause
         assert params == [["user:alice"]]
@@ -415,7 +430,10 @@ class TestBuildTagGroupsWhereClause:
     def test_single_leaf_any_includes_untagged(self):
         """Single any (non-strict) leaf generates NULL-inclusive clause."""
         groups = [TagGroupLeaf(tags=["user:alice"], match="any")]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 1)
+        built = build_tag_groups_where_clause(groups, 1)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "IS NULL" in clause
         assert "= '{}'" in clause
         assert "&&" in clause
@@ -434,7 +452,10 @@ class TestBuildTagGroupsWhereClause:
                 }
             )
         ]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 3)
+        built = build_tag_groups_where_clause(groups, 3)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "AND" in clause
         assert "$3" in clause
         assert "$4" in clause
@@ -455,7 +476,10 @@ class TestBuildTagGroupsWhereClause:
                 }
             )
         ]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 1)
+        built = build_tag_groups_where_clause(groups, 1)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "OR" in clause
         assert "$1" in clause
         assert "$2" in clause
@@ -465,7 +489,10 @@ class TestBuildTagGroupsWhereClause:
     def test_not_wraps_with_not(self):
         """NOT group wraps child clause with NOT."""
         groups = [TagGroupNot.model_validate({"not": {"tags": ["archived"], "match": "any_strict"}})]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 2)
+        built = build_tag_groups_where_clause(groups, 2)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "NOT" in clause
         assert "$2" in clause
         assert len(params) == 1
@@ -488,7 +515,10 @@ class TestBuildTagGroupsWhereClause:
                 }
             )
         ]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 1)
+        built = build_tag_groups_where_clause(groups, 1)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "AND" in clause
         assert "OR" in clause
         assert len(params) == 3
@@ -507,7 +537,10 @@ class TestBuildTagGroupsWhereClause:
                 }
             )
         ]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 5)
+        built = build_tag_groups_where_clause(groups, 5)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "$5" in clause
         assert "$6" in clause
         assert "$7" in clause
@@ -517,7 +550,10 @@ class TestBuildTagGroupsWhereClause:
     def test_table_alias_applied_to_leaves(self):
         """Table alias is prefixed to column name in all leaf clauses."""
         groups = [TagGroupLeaf(tags=["user:alice"], match="any_strict")]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 1, table_alias="mu.")
+        built = build_tag_groups_where_clause(groups, 1, table_alias="mu.")
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "mu.tags" in clause
 
     def test_table_alias_propagates_to_nested(self):
@@ -532,7 +568,10 @@ class TestBuildTagGroupsWhereClause:
                 }
             )
         ]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 1, table_alias="mu.")
+        built = build_tag_groups_where_clause(groups, 1, table_alias="mu.")
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         # Each leaf of type any_strict references mu.tags three times (IS NOT NULL, != '{}', &&)
         # We verify that 'tags' without alias is NOT present, proving the alias is always used
         assert "mu.tags" in clause
@@ -548,7 +587,10 @@ class TestBuildTagGroupsWhereClause:
             TagGroupLeaf(tags=["step:5"], match="any_strict"),
             TagGroupLeaf(tags=["user:ep_42"], match="all_strict"),
         ]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 1)
+        built = build_tag_groups_where_clause(groups, 1)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         # Should start with AND and have two param refs joined by AND
         assert clause.startswith("AND ")
         assert " AND " in clause[4:]  # after the leading "AND "
@@ -560,7 +602,10 @@ class TestBuildTagGroupsWhereClause:
     def test_exact_leaf_empty_scope_matches_untagged_only(self):
         """An exact leaf with [] becomes an untagged-only clause with no bind param."""
         groups = [TagGroupLeaf(tags=[], match="exact")]
-        clause, params, next_offset = build_tag_groups_where_clause(groups, 5)
+        built = build_tag_groups_where_clause(groups, 5)
+        clause = built.sql
+        params = built.params
+        next_offset = built.next_param_offset
         assert "IS NULL" in clause
         assert "= '{}'" in clause
         assert "$5" not in clause  # param-free
@@ -1978,3 +2023,129 @@ async def test_reflect_with_tag_groups_propagates_to_internal_recall(memory, req
     assert "MacBook" not in tool_payload, (
         f"Untagged 'MacBook' memory must NOT appear in the agent's tool results; got: {tool_payload[:1000]!r}"
     )
+
+
+# ============================================================================
+# Integration Tests for fuzzy tag resolution (#4026)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_tag_group_reaches_a_misspelled_tag(api_client):
+    """
+    A caller filtering by a token the query misspelled still reaches the memory.
+
+    Without resolution the exact filter removes the memory before ranking is consulted and
+    the recall comes back empty — the failure this feature exists to fix.
+    """
+    bank_id = f"tg_fuzzy_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": "The parser is written in TypeScript and ships as an npm package.", "tags": ["typescript"]},
+                {"content": "The cluster runs on Kubernetes across three regions.", "tags": ["kubernetes"]},
+            ]
+        },
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "what language is the parser written in",
+            "budget": "mid",
+            "tag_groups": [{"tags": ["typsecript"], "match": "any_strict", "resolve": "fuzzy"}],
+        },
+    )
+    assert response.status_code == 200
+
+    texts = [r["text"] for r in response.json()["results"]]
+    assert texts, "Fuzzy resolution should have reached the typescript-tagged memory"
+    assert not any("cluster" in t for t in texts), "Should not reach memories outside the resolved tag"
+
+
+@pytest.mark.asyncio
+async def test_exact_resolution_is_the_default_and_still_filters_out_typos(api_client):
+    """The default is unchanged: a misspelled tag matches nothing."""
+    bank_id = f"tg_exact_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": [{"content": "The parser is written in TypeScript.", "tags": ["typescript"]}]},
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "what language is the parser written in",
+            "budget": "mid",
+            "tag_groups": [{"tags": ["typsecript"], "match": "any_strict"}],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["results"] == []
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_token_matching_nothing_does_not_widen_the_recall(api_client):
+    """
+    A token that resolves to nothing must leave the filter unsatisfiable, not drop it.
+
+    This is the dangerous failure mode: an empty expansion would read as "no tag filtering"
+    and return the whole bank to a caller who asked for one tag.
+    """
+    bank_id = f"tg_fuzzy_miss_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": [{"content": "The parser is written in TypeScript.", "tags": ["typescript"]}]},
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "what language is the parser written in",
+            "budget": "mid",
+            "tag_groups": [{"tags": ["postgresql"], "match": "any_strict", "resolve": "fuzzy"}],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["results"] == [], "An unresolved token must not widen the recall to the whole bank"
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_all_requires_one_spelling_of_every_token(api_client):
+    """`all_strict` still means AND across tokens; each side is independently tolerant."""
+    bank_id = f"tg_fuzzy_all_{datetime.now().timestamp()}"
+
+    retain = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "The events service streams into the search index.",
+                    "tags": ["kubernetes", "typescript"],
+                },
+                {"content": "The billing service writes invoices nightly.", "tags": ["kubernetes"]},
+            ]
+        },
+    )
+    assert retain.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={
+            "query": "which service streams events",
+            "budget": "mid",
+            "tag_groups": [
+                {"tags": ["kubernets", "typsecript"], "match": "all_strict", "resolve": "fuzzy"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    texts = [r["text"] for r in response.json()["results"]]
+    assert not any("billing" in t for t in texts), "A memory carrying only one of the two tokens must not match"

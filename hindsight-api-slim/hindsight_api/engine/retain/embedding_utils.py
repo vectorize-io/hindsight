@@ -8,7 +8,7 @@ import logging
 from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
-from ..token_encoding import truncate_to_tokens
+from ..token_encoding import truncate_many_to_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +36,9 @@ def _truncate_inputs(texts: list[str], max_input_tokens: int, backend: Embedding
     One oversized memory then fails the whole retain/recall batch. This is provider-
     agnostic on purpose: the cap is applied here, once, before any backend's `encode()`.
     """
-    truncated: list[str] = []
-    original_token_counts: list[int] = []
-    for text in texts:
-        result = truncate_to_tokens(text, max_input_tokens)
-        truncated.append(result.text)
-        if result.original_tokens > max_input_tokens:
-            original_token_counts.append(result.original_tokens)
+    results = truncate_many_to_tokens(texts, max_input_tokens)
+    truncated = [result.text for result in results]
+    original_token_counts = [r.original_tokens for r in results if r.original_tokens > max_input_tokens]
     if original_token_counts:
         logger.warning(
             "Embeddings: truncated %d of %d input(s) to %d tokens for provider %s "

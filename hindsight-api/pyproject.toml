@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hindsight-api"
 version = "0.9.2"
-description = "Hindsight: Agent Memory That Works Like Human Memory"
+description = "Hindsight: Agent Memory That Learns"
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"

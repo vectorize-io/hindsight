@@ -8,6 +8,8 @@ description: "Give Aider persistent long-term memory with Hindsight. hindsight-a
 
 Persistent long-term memory for [Aider](https://aider.chat), powered by [Hindsight](https://vectorize.io/hindsight). `hindsight-aider` is a drop-in wrapper for the `aider` command: it **recalls relevant project memory before each session** (injected into Aider's context via a read-only file) and **retains the session transcript after** — so each Aider session starts with what you've learned and saves what it learns. Memory is scoped **per git repo**.
 
+[View Changelog →](/changelog/integrations/aider)
+
 ## How It Works
 
 Aider has no MCP client or per-prompt hook, but it loads **read-only context files** and writes a **chat-history file**. The wrapper uses both:

@@ -72,7 +72,7 @@ type StrategiesEdits = {
 
 type LabelValue = { value: string; description: string };
 type MapField = {
-  type: "text" | "value" | "multi-values" | "map";
+  type: "text" | "multi-text" | "value" | "multi-values" | "map";
   description: string;
   values?: LabelValue[];
   fields?: Record<string, MapField>;
@@ -80,7 +80,7 @@ type MapField = {
 type LabelGroup = {
   key: string;
   description: string;
-  type: "value" | "multi-values" | "text" | "map";
+  type: "value" | "multi-values" | "text" | "multi-text" | "map";
   optional: boolean;
   tag: boolean;
   values: LabelValue[];
@@ -458,19 +458,16 @@ export function BankConfigView() {
     if (!bankId) return;
     setLoading(true);
     try {
-      const [configResp, profileResp] = await Promise.all([
-        client.getBankConfig(bankId),
-        client.getBankProfile(bankId),
-      ]);
+      const configResp = await client.getBankConfig(bankId);
       const cfg = configResp.config;
       const overrides = configResp.overrides ?? {};
+      // Disposition and the reflect mission are ordinary config keys — the separate
+      // profile read they used to be merged with no longer exists.
       const prof: ProfileData = {
-        reflect_mission: profileResp.mission ?? "",
-        disposition_skepticism:
-          cfg.disposition_skepticism ?? profileResp.disposition?.skepticism ?? 3,
-        disposition_literalism:
-          cfg.disposition_literalism ?? profileResp.disposition?.literalism ?? 3,
-        disposition_empathy: cfg.disposition_empathy ?? profileResp.disposition?.empathy ?? 3,
+        reflect_mission: cfg.reflect_mission ?? "",
+        disposition_skepticism: cfg.disposition_skepticism ?? 3,
+        disposition_literalism: cfg.disposition_literalism ?? 3,
+        disposition_empathy: cfg.disposition_empathy ?? 3,
       };
       setBaseConfig(cfg);
       setBaseOverrides(overrides);
@@ -1735,6 +1732,7 @@ function exampleBadge(
       .map((f) => `${key}:${f}:<value>`)
       .join(", ")}`;
   if (attr.type === "text") return `e.g. ${key}:<any text>`;
+  if (attr.type === "multi-text") return `e.g. ${key}:<any text>, ${key}:<any text>`;
   if ((attr.values?.length ?? 0) > 0) return `e.g. ${key}:${attr.values![0].value || "<value>"}`;
   return `e.g. ${key}:<value>`;
 }
@@ -1755,6 +1753,7 @@ function MapFieldsEditor({
   const t = useTranslations("bankConfig");
   const FIELD_TYPE_LABELS: Record<MapField["type"], string> = {
     text: t("fieldTypeText"),
+    "multi-text": t("fieldTypeMultiText"),
     value: t("fieldTypeValue"),
     "multi-values": t("fieldTypeMultiValues"),
     map: t("fieldTypeMap"),
@@ -1841,7 +1840,9 @@ function MapFieldsEditor({
                   updateField(fieldName, {
                     type: v,
                     ...(v === "map" ? { fields: field.fields ?? {}, values: undefined } : {}),
-                    ...(v === "text" ? { fields: undefined, values: undefined } : {}),
+                    ...(v === "text" || v === "multi-text"
+                      ? { fields: undefined, values: undefined }
+                      : {}),
                     ...(v === "value" || v === "multi-values"
                       ? { fields: undefined, values: field.values ?? [] }
                       : {}),

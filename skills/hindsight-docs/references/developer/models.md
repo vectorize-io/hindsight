@@ -34,6 +34,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - z.ai
 - opencode-go
 - Atlas Cloud
+- Meta Model API
 - Volcano Engine
 - OpenRouter
 - Requesty
@@ -117,6 +118,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | z.ai (`zai`) | — | — |
 | opencode-go (`opencode-go`) | — | — |
 | Atlas Cloud (`atlas`) | — | — |
+| Meta Model API (`meta`) | — | — |
 | Volcano Engine (`volcano`) | — | — |
 | OpenRouter (`openrouter`) | — | — |
 | Requesty (`requesty`) | — | — |
@@ -161,6 +163,7 @@ The following models have been tested and verified to work correctly with Hindsi
 | **Gemini** | `gemini-3.1-flash-lite` |
 | **Groq** | `openai/gpt-oss-120b` |
 | **Groq** | `openai/gpt-oss-20b` |
+| **Meta** | `muse-spark-1.3` |
 
 ### Provider Default Models
 
@@ -183,6 +186,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `zai` | `glm-4.5-flash` |
 | `opencode-go` | `deepseek-v4-flash` |
 | `atlas` | `deepseek-ai/deepseek-v4-pro` |
+| `meta` | `muse-spark-1.3` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `requesty` | `openai/gpt-4o-mini` |
@@ -309,6 +313,14 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 export HINDSIGHT_API_LLM_PROVIDER=atlas
 export HINDSIGHT_API_LLM_API_KEY=your-atlascloud-api-key  # base_url defaults to https://api.atlascloud.ai/v1
 export HINDSIGHT_API_LLM_MODEL=deepseek-ai/deepseek-v4-pro  # reasoning model; also Qwen / GLM / Kimi / MiniMax, etc.
+
+# Meta Model API (OpenAI-compatible, https://ai.developer.meta.com)
+export HINDSIGHT_API_LLM_PROVIDER=meta
+export HINDSIGHT_API_LLM_API_KEY=your-meta-model-api-key  # base_url defaults to https://api.meta.ai/v1
+export HINDSIGHT_API_LLM_MODEL=muse-spark-1.3  # or muse-spark-1.2 / -contributor variants
+# Muse Spark always reasons — raise the deadlines (see "Meta Model API Setup" below)
+export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=300
+export HINDSIGHT_API_LLM_TIMEOUT=300
 
 # Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
 export HINDSIGHT_API_LLM_PROVIDER=nous
@@ -482,16 +494,61 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 Token refresh is coordinated per auth-file path, so the two profiles refresh
 independently and never overwrite each other's tokens. Add non-secret
 `HINDSIGHT_API_LLM_MEMBER_LABEL` / `HINDSIGHT_API_LLM_1_MEMBER_LABEL` values such
-as `preferred` and `secondary` to make routing diagnostics distinguish the
-members without exposing auth-home paths. A Codex 429 after its own retries puts
-that member into a per-router cooldown for `Retry-After` or 60 seconds, then one
-request probes it after expiry. Cooldown state is process-local to each
-`MultiLLMProvider` instance: restarting clears it, and each instance admits its
-own probe. A confirmed invalid, expired, or reused refresh
-credential is terminal for the operation: Hindsight neither falls back to another
-member nor retries the enclosing operation. Other 401s, timeouts, and 5xx errors
-retain generic retry/failover behavior. Batch retain remains bound to the member
-that submitted it and is never rerouted by cooldown state.
+as `preferred` and `secondary` to distinguish members in routing diagnostics.
+Those are the only label forms; every operation primary shares the global label.
+
+An explicit Codex HTTP 429 after its own retries puts that member into router-local
+cooldown for `Retry-After`, or 60 seconds when the header is invalid or absent. One
+request probes it after expiry. State is not shared across router instances, worker
+processes, or restarts. Short all-member waits are handled once inline; longer waits
+defer asynchronous worker operations to the sanitized retry time without consuming
+their retry count. Synchronous recall and reflect cannot defer and retain the existing
+generic HTTP 500 conversion with the sanitized retry-time message. Confirmed invalid,
+expired, or reused refresh credentials raise the original exception unchanged, without
+fallback or cooldown. Other auth errors, timeouts, and 5xx responses retain generic
+retry/failover behavior. Batch retain remains bound to its submitting member.
+
+---
+
+### Meta Model API Setup
+
+[Meta Model API](https://ai.developer.meta.com) serves the Muse Spark models over an
+OpenAI-compatible endpoint. Get a key from the Model API dashboard, then:
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=meta
+export HINDSIGHT_API_LLM_API_KEY=your-meta-model-api-key
+export HINDSIGHT_API_LLM_MODEL=muse-spark-1.3
+```
+
+The base URL defaults to `https://api.meta.ai/v1`. Available models are
+`muse-spark-1.3` (recommended), `muse-spark-1.2`, `muse-spark-1.1`, and the
+discounted `-contributor` variants of 1.3 and 1.2, which permit training on your
+prompts and completions. All share a 1,048,576-token context window.
+
+#### Required knobs
+
+Muse Spark **always reasons** before it replies. That single property drives every
+setting below, so treat these as required rather than optional tuning:
+
+| Variable | Set it to | Why |
+|----------|-----------|-----|
+| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | `300` | Reflect's default is 30s. Muse Spark's final synthesis exceeds that, and the call fails after its retries rather than degrading — reflect returns nothing. |
+| `HINDSIGHT_API_LLM_TIMEOUT` | `300` | The global deadline (default 120s) covers retain and consolidation, which are slower here than on a non-reasoning model. |
+| `HINDSIGHT_API_LLM_REASONING_EFFORT` | unset, or `minimal`/`low`/`medium`/`high`/`xhigh` | `none` is rejected with `HTTP 400`. Leave it unset to let the model choose its own depth. |
+| `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | leave at the `64000` default | Reasoning tokens are billed against the **output** budget. Lower this too far and a reply comes back with no content at all. |
+
+#### Good to know
+
+- **Prompt caching is automatic.** There is no key, flag, or breakpoint to set — Meta
+  reuses a matching prompt prefix on its own, so the capability table below lists no
+  explicit prompt-caching support even though the benefit applies.
+- **No batch API and no embeddings endpoint.** Embeddings continue to come from
+  whichever `HINDSIGHT_API_EMBEDDINGS_PROVIDER` you configure.
+- **Recursive JSON schemas are rejected** with `HTTP 400`. No Hindsight code path
+  sends one, so this only matters if you add a self-referencing response model.
+- **Expect slower calls.** A trivial prompt can spend more tokens reasoning than it
+  returns as output.
 
 ---
 
@@ -935,7 +992,28 @@ export HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL=text-embedding-3-small
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=openai/text-embedding-3-small
+
+# AWS Bedrock (via LiteLLM SDK; credentials come from the environment or an IAM role)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=bedrock/amazon.titan-embed-text-v2:0
 ```
+
+> **💡 AWS Bedrock application inference profiles**
+>
+
+If your org's Service Control Policy denies `bedrock:InvokeModel` on the bare model id once an [application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html) exists, keep `..._MODEL` as-is and add the profile ARN separately:
+
+```bash
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
+# Stays a recognizable model id — this is what picks the request format
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=bedrock/amazon.titan-embed-text-v2:0
+# The profile actually invoked
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL_ID=arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc123
+```
+
+The two are separate because Bedrock's embedding request and response formats differ per model family (Titan, Cohere, TwelveLabs, Nova), and the family is read off the model id. A profile ARN is opaque and account-scoped, so it can't be used for that — put it in `..._MODEL_ID` and leave `..._MODEL` naming the real model.
+
+Chat models don't need this: set `HINDSIGHT_API_LLM_MODEL=bedrock/converse/<arn>`, since the Converse API takes one format for every model.
 
 See [Configuration](./configuration#embeddings) for all options including Azure OpenAI and custom endpoints.
 

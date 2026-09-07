@@ -720,31 +720,21 @@ class DaemonEmbedManager(EmbedManager):
         merged_config = {**profile_config, **config}
         config = merged_config
 
-        # Build environment with LLM config
-        # Support both formats: simple keys ("llm_api_key") and env var format ("HINDSIGHT_API_LLM_API_KEY")
+        # Build the daemon environment: every HINDSIGHT_* key in the merged
+        # profile/explicit config, forwarded verbatim under its own name.
+        #
+        # There is deliberately no whitelist of known settings. There used to be
+        # one — LLM/log/idle_timeout, keyed by lowercase aliases — and a setting
+        # missing from it (HINDSIGHT_API_LLM_BASE_URL, issue #4094) was reported
+        # as silently ignored while KEY/MODEL applied. hindsight-api owns the
+        # set of settings that exist and adds to it every release; mirroring
+        # that set here can only ever drift behind it.
+        #
+        # An explicit "" is forwarded, not skipped: that is how a caller clears
+        # an inherited setting — e.g. blanking the API key for a local LLM
+        # service that has no authentication (issue #3253). Only None means
+        # "not specified".
         env = os.environ.copy()
-
-        # Map of simple key -> env var key
-        key_mapping = {
-            "llm_api_key": "HINDSIGHT_API_LLM_API_KEY",
-            "llm_provider": "HINDSIGHT_API_LLM_PROVIDER",
-            "llm_model": "HINDSIGHT_API_LLM_MODEL",
-            "llm_base_url": "HINDSIGHT_API_LLM_BASE_URL",
-            "log_level": "HINDSIGHT_API_LOG_LEVEL",
-            "idle_timeout": "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT",
-        }
-
-        for simple_key, env_key in key_mapping.items():
-            # Check both simple format and env var format
-            value = config.get(simple_key) or config.get(env_key)
-            if value:
-                env[env_key] = str(value)
-
-        # Propagate any other HINDSIGHT_* keys from the merged profile/explicit
-        # config into the daemon env. Without this, arbitrary settings in the
-        # profile's .env file (e.g. HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU,
-        # HINDSIGHT_API_EMBEDDINGS_PROVIDER) are silently dropped because the
-        # whitelist above only covers LLM/log/idle_timeout keys.
         for key, value in config.items():
             if key.startswith("HINDSIGHT_") and value is not None:
                 env[key] = str(value)
@@ -948,12 +938,17 @@ class DaemonEmbedManager(EmbedManager):
             api_config = {k: v for k, v in config.items() if k.startswith("HINDSIGHT_API_")}
             if not api_config:
                 return
-            # Merge onto the existing .env so persisted keys (UI port, idle
-            # timeout, etc.) survive — create_profile overwrites the file, so we
-            # must carry the existing non-alias keys forward.
+            # Additive: seed keys the profile doesn't have yet, never overwrite
+            # ones it does. create_profile rewrites the whole file, so the
+            # existing keys have to be carried forward regardless (UI port, idle
+            # timeout, ...), and `config` here is the merged profile + this
+            # invocation's ambient HINDSIGHT_* environment — letting it win would
+            # make a one-off `HINDSIGHT_API_LLM_MODEL=... hindsight-embed recall`
+            # permanently rewrite the user's profile. The profile file is owned
+            # by `configure` and the control center; a daemon start only fills
+            # in what is missing.
             existing = self._profile_manager.load_profile_config(profile)
-            merged = {k: v for k, v in existing.items() if not k.islower()}
-            merged.update(api_config)
+            merged = {**api_config, **existing}
             self._profile_manager.create_profile(profile, port, merged)
         except Exception as e:
             logger.debug(f"Failed to register profile '{profile}' in metadata: {e}")
@@ -1203,7 +1198,7 @@ class DaemonEmbedManager(EmbedManager):
         Ensure daemon is running, starting it if needed.
 
         Args:
-            config: Environment configuration dict (HINDSIGHT_API_* vars)
+            config: Environment configuration dict (HINDSIGHT_* vars)
             profile: Profile name for isolation
             extra_args: Extra CLI arguments to pass to hindsight-api (e.g. ["--offline"])
 

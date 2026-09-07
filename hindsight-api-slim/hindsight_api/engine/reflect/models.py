@@ -108,6 +108,26 @@ class StructuredOutputResult(BaseModel):
     thoughts_tokens: int = Field(default=0, description="Reasoning/thinking tokens, when reported by the provider")
 
 
+class LengthRewrite(BaseModel):
+    """Outcome of the post-hoc ``max_tokens`` rewrite of a final answer.
+
+    ``applied`` is False when the answer was already inside the budget (or there
+    was no budget), in which case ``markdown``/``structure`` are the inputs
+    unchanged and every token count is zero.
+    """
+
+    applied: bool = Field(description="Whether a rewrite call was actually made")
+    markdown: str = Field(description="The answer text after the rewrite")
+    structure: StructuredDocument | None = Field(
+        default=None, description="The document ``markdown`` renders from, when the answer is a document"
+    )
+    duration_ms: int = Field(default=0, description="Rewrite call duration in milliseconds")
+    input_tokens: int = Field(default=0, description="Input tokens used by the rewrite call")
+    output_tokens: int = Field(default=0, description="Visible output tokens used by the rewrite call")
+    cached_tokens: int = Field(default=0, description="Cached prefix tokens. Subset of input_tokens.")
+    thoughts_tokens: int = Field(default=0, description="Reasoning/thinking tokens, when reported by the provider")
+
+
 class ReflectAgentResult(BaseModel):
     """Result from the reflect agent."""
 

@@ -15,6 +15,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
+from hindsight_api._pg_extensions import create_extension
 from hindsight_api._pg_search import (
     PG_SEARCH_TOKENIZER_ENV,
     normalize_pg_search_tokenizer,
@@ -110,7 +111,7 @@ def _detect_text_search_extension() -> str:
     if text_search_extension == "vchord":
         # Create vchord_bm25 extension if not exists
         try:
-            op.execute("CREATE EXTENSION IF NOT EXISTS vchord_bm25 CASCADE")
+            create_extension(op.get_bind(), "vchord_bm25", cascade=True)
         except Exception:
             # Extension might already exist or user lacks permissions - verify it exists
             conn = op.get_bind()
@@ -122,7 +123,7 @@ def _detect_text_search_extension() -> str:
     elif text_search_extension == "pg_textsearch":
         # Create pg_textsearch extension if not exists
         try:
-            op.execute("CREATE EXTENSION IF NOT EXISTS pg_textsearch CASCADE")
+            create_extension(op.get_bind(), "pg_textsearch", cascade=True)
         except Exception:
             # Extension might already exist or user lacks permissions - verify it exists
             conn = op.get_bind()
@@ -134,7 +135,7 @@ def _detect_text_search_extension() -> str:
     elif text_search_extension == "pg_search":
         # ParadeDB pg_search — true BM25 over base columns, Citus-compatible.
         try:
-            op.execute("CREATE EXTENSION IF NOT EXISTS pg_search CASCADE")
+            create_extension(op.get_bind(), "pg_search", cascade=True)
         except Exception:
             # Extension might already exist or user lacks permissions - verify it exists
             conn = op.get_bind()
@@ -170,7 +171,7 @@ def _pg_upgrade() -> None:
     # We keep this here as a fallback for backwards compatibility
     # This may fail if user lacks permissions, which is fine if extension already exists
     try:
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        create_extension(op.get_bind(), "vector")
     except Exception:
         # Extension might already exist or user lacks permissions - verify it exists
         conn = op.get_bind()

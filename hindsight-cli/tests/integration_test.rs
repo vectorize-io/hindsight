@@ -126,7 +126,7 @@ fn test_memory_item_timestamp_serializes_as_plain_string() {
     // spec-massage step now collapses string-only anyOf unions into a plain
     // `{type: string}`, so the field is just `Option<String>`. Assert that.
     let item = hindsight_client::types::MemoryItem {
-        content: "Bob went hiking yesterday".to_string(),
+        content: hindsight_client::types::Content::Variant0("Bob went hiking yesterday".to_string()),
         context: None,
         metadata: None,
         timestamp: Some("2026-05-31T10:00:00Z".to_string()),
@@ -196,4 +196,50 @@ fn test_configure_command() {
 
     // Cleanup
     std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+/// Regression test for the SIGPIPE crash.
+///
+/// Release builds set `panic = "abort"`, and Rust ignores SIGPIPE at startup,
+/// so a write to a closed stdout pipe surfaces as an `EPIPE` panic that becomes
+/// a silent SIGABRT. The fix restores the default SIGPIPE disposition so the
+/// CLI instead terminates with SIGPIPE (signal 13), like other Unix tools.
+///
+/// This test is deterministic: it hands the child a stdout pipe whose read end
+/// is already closed, so the very first write triggers SIGPIPE regardless of
+/// how much output the child produces (no reliance on overflowing the 64 KiB
+/// pipe buffer, which is what makes a plain `--help | head` flaky).
+#[cfg(unix)]
+#[test]
+fn test_sigpipe_terminates_with_signal_not_abort() {
+    use std::os::unix::io::FromRawFd;
+    use std::os::unix::process::ExitStatusExt;
+
+    // Create a pipe and immediately close its read end. There is no reader, so
+    // the child's first write to stdout must hit SIGPIPE (if its default
+    // disposition was restored) rather than an EPIPE panic/abort.
+    let mut fds = [0i32; 2];
+    let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    assert_eq!(rc, 0, "pipe() failed");
+    unsafe {
+        libc::close(fds[0]);
+    }
+
+    let stdout = unsafe { std::process::Stdio::from_raw_fd(fds[1]) };
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_hindsight"))
+        .arg("--help")
+        .stdout(stdout)
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("failed to spawn hindsight");
+
+    let status = child.wait().expect("failed to wait on hindsight");
+    // signal 13 == SIGPIPE. A panic/abort would instead report signal 6 (ABRT)
+    // or a non-zero exit code, neither of which is the desired clean
+    // termination.
+    assert_eq!(
+        status.signal(),
+        Some(13),
+        "expected SIGPIPE termination, got status {status:?}"
+    );
 }

@@ -11,7 +11,7 @@ is what OOM'd a worker before a single fact existed.
 a time and paid for it in accuracy: a fixed character cut can split a token, so the
 answer could over-count by one token per window boundary.
 
-The tokenizer swap removed the reason for the workaround. ``quicktok.count()``
+The tokenizer swap removed the reason for the workaround. ``Tokenizer.count()``
 returns an ``int`` without ever building the list, so the plain ``count_tokens`` is
 now both allocation-free and exact, and the windowed variant is gone. These tests
 pin the property that made #3756 worth fixing — the cost does not track the input —
@@ -22,7 +22,7 @@ import tracemalloc
 
 import pytest
 
-from hindsight_api.engine.token_encoding import count_tokens, get_token_encoding
+from hindsight_api.engine.token_encoding import _load_encoding, count_tokens
 
 _SENTENCE = "The quick brown fox jumps over the lazy dog near the river bank in 2023. "
 
@@ -61,7 +61,7 @@ def test_counting_is_exact(text: str):
     The windowed counter traded accuracy for memory; this one trades nothing, so the
     count must equal what encoding the text produces, on every input.
     """
-    assert count_tokens(text) == len(get_token_encoding().encode(text))
+    assert count_tokens(text) == len(_load_encoding().encode_ordinary(text))
 
 
 def test_allocation_does_not_track_the_input():

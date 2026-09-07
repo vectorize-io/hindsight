@@ -287,10 +287,13 @@ def test_create_operation_span_enabled(mock_tracer):
     """Test that create_operation_span creates a span when tracing is enabled."""
     # Mock the tracer
     mock_span = MagicMock()
-    mock_tracer.start_as_current_span.return_value = mock_span
+    mock_context = MagicMock()
+    mock_context.__enter__.return_value = mock_span
+    mock_tracer.start_as_current_span.return_value = mock_context
 
     # Create operation span
-    span = create_operation_span("retain", "bank123")
+    with create_operation_span("retain", "bank123") as span:
+        assert span is mock_span
 
     # Verify span was created with correct name
     mock_tracer.start_as_current_span.assert_called_once_with("hindsight.retain")
@@ -305,10 +308,13 @@ def test_create_operation_span_enabled(mock_tracer):
 def test_create_operation_span_no_bank_id(mock_tracer):
     """Test that create_operation_span works without bank_id."""
     mock_span = MagicMock()
-    mock_tracer.start_as_current_span.return_value = mock_span
+    mock_context = MagicMock()
+    mock_context.__enter__.return_value = mock_span
+    mock_tracer.start_as_current_span.return_value = mock_context
 
     # Create operation span without bank_id
-    span = create_operation_span("consolidation")
+    with create_operation_span("consolidation"):
+        pass
 
     # Verify span was created
     mock_tracer.start_as_current_span.assert_called_once_with("hindsight.consolidation")
@@ -323,7 +329,9 @@ def test_create_operation_span_no_bank_id(mock_tracer):
 def test_create_operation_span_all_operations(mock_tracer):
     """Test that all 4 operations can create parent spans."""
     mock_span = MagicMock()
-    mock_tracer.start_as_current_span.return_value = mock_span
+    mock_context = MagicMock()
+    mock_context.__enter__.return_value = mock_span
+    mock_tracer.start_as_current_span.return_value = mock_context
 
     operations = ["retain", "consolidation", "reflect", "mental_model_refresh"]
 
@@ -331,7 +339,8 @@ def test_create_operation_span_all_operations(mock_tracer):
         mock_tracer.reset_mock()
         mock_span.reset_mock()
 
-        span = create_operation_span(operation, "test_bank")
+        with create_operation_span(operation, "test_bank"):
+            pass
 
         # Verify span was created with correct name
         mock_tracer.start_as_current_span.assert_called_once_with(f"hindsight.{operation}")

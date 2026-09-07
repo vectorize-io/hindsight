@@ -178,3 +178,147 @@ def test_create_bank_omits_recall_pipeline_toggles_when_unset(monkeypatch):
     body = captured["body"]
     for name in ("enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking"):
         assert name not in body
+
+
+def test_update_bank_config_forwards_entity_labels(monkeypatch):
+    """Entity-label groups must reach the request body unflattened.
+
+    The wrapper enumerates config fields, so a label group that never lands in
+    `updates` is silently dropped — the bank keeps extracting nothing. The
+    TypeScript wrapper has the mirror of this test in
+    tests/bank_config_entity_labels_mapping.test.ts; the two must stay in step.
+    """
+    captured: dict[str, object] = {}
+
+    async def fake_update(self, bank_id, updates):
+        captured["updates"] = updates
+        return {"bank_id": bank_id, "config": {}, "overrides": updates}
+
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", fake_update)
+
+    labels = [
+        {
+            "key": "name",
+            "type": "multi-text",
+            "tag": True,
+            "description": "Every name the subject of this fact is known by.",
+        },
+        {"key": "topic", "type": "value", "values": [{"value": "infra"}]},
+    ]
+
+    client = Hindsight(base_url="http://example.invalid")
+    client.update_bank_config("test-bank", entity_labels=labels, entities_allow_free_form=False)
+
+    assert captured["updates"] == {
+        "entity_labels": labels,
+        "entities_allow_free_form": False,
+    }
+
+
+def test_update_bank_config_omits_entity_labels_when_unset(monkeypatch):
+    """An unset entity_labels must not clear the bank's existing vocabulary."""
+    captured: dict[str, object] = {}
+
+    async def fake_update(self, bank_id, updates):
+        captured["updates"] = updates
+        return {"bank_id": bank_id, "config": {}, "overrides": updates}
+
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", fake_update)
+
+    client = Hindsight(base_url="http://example.invalid")
+    client.update_bank_config("test-bank", retain_chunk_size=1000)
+
+    assert "entity_labels" not in captured["updates"]
+    assert "entities_allow_free_form" not in captured["updates"]
+
+
+def test_update_bank_config_forwards_the_full_configurable_surface(monkeypatch):
+    """Every server-configurable field must reach the request body.
+
+    The wrapper enumerates config fields, so one accepted as a keyword but never
+    written into `updates` is silently dropped — the caller sees a 200 and no
+    change. This covers the groups that were unreachable before #4029: the recall
+    budget, auto-consolidation, memory defense and audit settings. The TypeScript
+    wrapper has the mirror of this test in
+    tests/bank_config_full_surface_mapping.test.ts; the two must stay in step.
+    """
+    captured: dict[str, object] = {}
+
+    async def fake_update(self, bank_id, updates):
+        captured["updates"] = updates
+        return {"bank_id": bank_id, "config": {}, "overrides": updates}
+
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", fake_update)
+
+    client = Hindsight(base_url="http://example.invalid")
+    client.update_bank_config(
+        "test-bank",
+        recall_max_tokens=4096,
+        recall_include_chunks=False,
+        recall_chunks_max_tokens=500,
+        recall_budget_function="adaptive",
+        recall_budget_fixed_low=50,
+        recall_budget_fixed_mid=150,
+        recall_budget_fixed_high=500,
+        recall_budget_adaptive_low=0.01,
+        recall_budget_adaptive_mid=0.05,
+        recall_budget_adaptive_high=0.2,
+        recall_budget_min=10,
+        recall_budget_max=1000,
+        enable_auto_consolidation=False,
+        consolidation_llm_parallelism=2,
+        consolidation_max_memories_per_round=50,
+        mental_model_min_refresh_interval_seconds=3600,
+        max_observations_per_scope=25,
+        observation_scope_limits=[{"scope": "team", "limit": 10}],
+        retain_chunk_batch_size=64,
+        store_document_text=False,
+        memory_defense={"redact_secrets": True},
+        audit_log_enabled=True,
+    )
+
+    assert captured["updates"] == {
+        "recall_max_tokens": 4096,
+        "recall_include_chunks": False,
+        "recall_chunks_max_tokens": 500,
+        "recall_budget_function": "adaptive",
+        "recall_budget_fixed_low": 50,
+        "recall_budget_fixed_mid": 150,
+        "recall_budget_fixed_high": 500,
+        "recall_budget_adaptive_low": 0.01,
+        "recall_budget_adaptive_mid": 0.05,
+        "recall_budget_adaptive_high": 0.2,
+        "recall_budget_min": 10,
+        "recall_budget_max": 1000,
+        "enable_auto_consolidation": False,
+        "consolidation_llm_parallelism": 2,
+        "consolidation_max_memories_per_round": 50,
+        "mental_model_min_refresh_interval_seconds": 3600,
+        "max_observations_per_scope": 25,
+        "observation_scope_limits": [{"scope": "team", "limit": 10}],
+        "retain_chunk_batch_size": 64,
+        "store_document_text": False,
+        "memory_defense": {"redact_secrets": True},
+        "audit_log_enabled": True,
+    }
+
+
+def test_update_bank_config_gemini_safety_settings_is_a_list(monkeypatch):
+    """The provider takes a list of {category, threshold}, not a category->threshold map.
+
+    The wrapper used to type this `dict[str, str]`; a caller following that hint
+    sent a shape the Gemini provider rejects.
+    """
+    captured: dict[str, object] = {}
+
+    async def fake_update(self, bank_id, updates):
+        captured["updates"] = updates
+        return {"bank_id": bank_id, "config": {}, "overrides": updates}
+
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", fake_update)
+
+    settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}]
+    client = Hindsight(base_url="http://example.invalid")
+    client.update_bank_config("test-bank", llm_gemini_safety_settings=settings)
+
+    assert captured["updates"] == {"llm_gemini_safety_settings": settings}

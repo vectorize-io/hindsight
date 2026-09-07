@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from typing import Any, ClassVar, Dict, List
 from hindsight_client_api.models.observation_scope import ObservationScope
 from typing import Optional, Set
@@ -28,7 +28,10 @@ class ObservationScopesResponse(BaseModel):
     Response model for the observation scopes enumeration endpoint.
     """ # noqa: E501
     scopes: List[ObservationScope] = Field(description="Distinct observation scopes, most populous first")
-    __properties: ClassVar[List[str]] = ["scopes"]
+    total: StrictInt = Field(description="Total number of distinct scopes in the bank (ignores limit/offset)")
+    limit: StrictInt = Field(description="Maximum number of scopes returned in this page")
+    offset: StrictInt = Field(description="Offset this page started at")
+    __properties: ClassVar[List[str]] = ["scopes", "total", "limit", "offset"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -88,7 +91,10 @@ class ObservationScopesResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "scopes": [ObservationScope.from_dict(_item) for _item in obj["scopes"]] if obj.get("scopes") is not None else None
+            "scopes": [ObservationScope.from_dict(_item) for _item in obj["scopes"]] if obj.get("scopes") is not None else None,
+            "total": obj.get("total"),
+            "limit": obj.get("limit"),
+            "offset": obj.get("offset")
         })
         return _obj
 

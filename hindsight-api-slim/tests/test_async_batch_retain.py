@@ -598,11 +598,10 @@ async def test_retain_outcome_metadata_records_zero_counts(memory, request_conte
     """Completed retain operations expose explicit zero outcome counters."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import ExtractionResult
 
-    async def empty_extract_facts_from_contents(
-        *args: object, **kwargs: object
-    ) -> tuple[list[object], list[object], TokenUsage]:
-        return [], [], TokenUsage()
+    async def empty_extract_facts_from_contents(*args: object, **kwargs: object) -> ExtractionResult:
+        return ExtractionResult([], [], TokenUsage())
 
     monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", empty_extract_facts_from_contents)
 
@@ -634,10 +633,10 @@ async def test_all_degenerate_facts_still_persist_document_chunks(memory, reques
     """Filtering every extracted fact must not turn an extracted chunk into the zero-extraction fast path."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
-    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, ExtractionResult
 
     async def degenerate_extract_facts_from_contents(contents, *_args, **_kwargs):
-        return (
+        return ExtractionResult(
             [ExtractedFact(fact_text="...", fact_type="world", content_index=0, chunk_index=0)],
             [ChunkMetadata(chunk_text=contents[0].content, fact_count=1, content_index=0, chunk_index=0)],
             TokenUsage(),
@@ -669,7 +668,7 @@ async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request
     """Causal targets from independently extracted chunks must stay within their source chunk."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
-    from hindsight_api.engine.retain.types import CausalRelation, ChunkMetadata, ExtractedFact
+    from hindsight_api.engine.retain.types import CausalRelation, ChunkMetadata, ExtractedFact, ExtractionResult
 
     chunks = ["first-streaming-chunk", "second-streaming-chunk"]
     # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
@@ -678,7 +677,7 @@ async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request
 
     async def extract_chunk_facts(contents, *_args, **_kwargs):
         chunk_text = contents[0].content
-        return (
+        return ExtractionResult(
             [
                 ExtractedFact(fact_text=f"{chunk_text} cause", fact_type="world", chunk_index=0),
                 ExtractedFact(
@@ -738,7 +737,7 @@ async def test_degenerate_fact_preserves_later_chunk_provenance(memory, request_
     """
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain import fact_extraction
-    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, ExtractionResult
 
     chunks = ["chunk-zero-source", "chunk-one-source"]
     # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
@@ -753,7 +752,7 @@ async def test_degenerate_fact_preserves_later_chunk_provenance(memory, request_
             ExtractedFact(fact_text=real_fact_by_chunk[chunk_text], fact_type="world", chunk_index=0),
             ExtractedFact(fact_text="...", fact_type="world", chunk_index=0),
         ]
-        return (
+        return ExtractionResult(
             facts,
             [ChunkMetadata(chunk_text=chunk_text, fact_count=len(facts), content_index=0, chunk_index=0)],
             TokenUsage(),
@@ -1707,3 +1706,77 @@ async def test_multi_document_batch_does_not_misattribute_document_id(memory, re
     # parent nor the child resolves to a single document_id.
     assert ops, "expected operations for the batch"
     assert all(op["document_id"] is None for op in ops)
+
+
+# --- NUL / lone surrogate in a queued item (PR #3908) ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_retain_survives_nul_and_surrogate_in_any_field(memory, request_context, monkeypatch):
+    """A queued item carrying U+0000 must be stored, not 500 on the jsonb INSERT.
+
+    ``submit_async_retain`` serializes the whole item into
+    ``async_operations.task_payload::jsonb``. PostgreSQL stores U+0000 in neither
+    ``text`` nor ``jsonb`` and asyncpg cannot UTF-8-encode a lone surrogate, so
+    before the ingress scrub one such character *anywhere* in the item — content,
+    a tag, a nested metadata value, even a metadata key — aborted that INSERT with
+    ``UntranslatableCharacterError``. The request returned 500 and the memory was
+    never queued; the failure is deterministic for that payload, so a retrying
+    client re-sent it forever.
+    """
+    nul = "\u0000"
+    surrogate = "\ud83d"
+
+    bank_id = f"test_nul_payload_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Structural assertion on the committed rows — no need to drive the pipeline.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    document_id = f"doc-{uuid.uuid4().hex[:8]}"
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": f"Alice{nul} joined the {surrogate}team.",
+                "context": f"team{nul} meeting",
+                "document_id": f"{document_id}{nul}",
+                "metadata": {f"so{nul}urce": f"sl{nul}ack", "nested": [f"a{nul}b"]},
+                "tags": [f"te{nul}am"],
+            }
+        ],
+        document_tags=[f"batch{nul}"],
+        request_context=request_context,
+    )
+
+    assert result["operation_id"]
+
+    # Read the committed row directly: the assertion is about what reached the
+    # jsonb column, which no engine read method exposes (the surrounding tests in
+    # this file inspect task_payload the same way).
+    children = await pool.fetch(
+        """
+        SELECT task_payload
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        """,
+        bank_id,
+    )
+    assert len(children) == 1
+    payload = children[0]["task_payload"]
+    payload = json.loads(payload) if isinstance(payload, str) else payload
+
+    item = payload["contents"][0]
+    assert item["content"] == "Alice joined the team."
+    assert item["context"] == "team meeting"
+    assert item["document_id"] == document_id
+    assert item["metadata"] == {"source": "slack", "nested": ["ab"]}
+    assert item["tags"] == ["team"]
+    assert payload["document_tags"] == ["batch"]
+    # Nothing hostile may remain anywhere in the round-tripped payload.
+    assert nul not in json.dumps(payload)
+    assert surrogate not in json.dumps(payload)

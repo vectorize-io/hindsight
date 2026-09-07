@@ -23,6 +23,7 @@ from hindsight_api.config import (
     normalize_config_dict,
     validate_retain_chunking_config,
     validate_retain_completion_token_budget,
+    validate_retain_image_chunking_config,
 )
 from hindsight_api.engine.memory_engine import fq_table
 from hindsight_api.extensions.tenant import TenantExtension
@@ -97,6 +98,9 @@ def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies:
                 resolved.retain_chunk_size,
                 resolved.retain_structured_chunk_size,
             )
+            validate_retain_image_chunking_config(
+                resolved.retain_max_attachments_per_chunk,
+            )
             validate_retain_completion_token_budget(
                 llm_provider=resolved.llm_provider,
                 retain_max_completion_tokens=resolved.retain_max_completion_tokens,
@@ -134,6 +138,9 @@ def _validate_projected_bank_config(
     validate_retain_chunking_config(
         base_config.retain_chunk_size,
         base_config.retain_structured_chunk_size,
+    )
+    validate_retain_image_chunking_config(
+        base_config.retain_max_attachments_per_chunk,
     )
     _validate_retain_strategy_chunking(base_config, base_config.retain_strategies)
     _validate_recall_budget_bounds(base_config.recall_budget_min, base_config.recall_budget_max)
@@ -227,6 +234,9 @@ class ConfigResolver:
         validate_retain_chunking_config(
             resolved_config.retain_chunk_size,
             resolved_config.retain_structured_chunk_size,
+        )
+        validate_retain_image_chunking_config(
+            resolved_config.retain_max_attachments_per_chunk,
         )
         return resolved_config
 
@@ -941,6 +951,9 @@ def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConf
     validate_retain_chunking_config(
         resolved.retain_chunk_size,
         resolved.retain_structured_chunk_size,
+    )
+    validate_retain_image_chunking_config(
+        resolved.retain_max_attachments_per_chunk,
     )
     validate_retain_completion_token_budget(
         llm_provider=resolved.llm_provider,

@@ -8,6 +8,8 @@ description: "Add persistent long-term memory to any n8n workflow with Hindsight
 
 Persistent memory for [n8n](https://n8n.io) workflows via [Hindsight](https://hindsight.vectorize.io). The `@vectorize-io/n8n-nodes-hindsight` community node package adds three operations — **Retain**, **Recall**, **Reflect** — that work alongside any other n8n node.
 
+[View Changelog →](/changelog/integrations/n8n)
+
 ## Why this matters
 
 n8n is the connective tissue of automation: triggers from Gmail, Slack, Sheets, Stripe, Notion; actions across 400+ apps. Until now it has been **stateless** — every workflow run starts fresh. With Hindsight nodes you can:

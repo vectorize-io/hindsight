@@ -8,6 +8,8 @@ description: "Add persistent long-term memory to Vapi voice AI calls via Hindsig
 
 Persistent long-term memory for [Vapi](https://vapi.ai) voice AI calls via [Hindsight](https://vectorize.io/hindsight). A single webhook handler recalls relevant memories at call start (injected as `assistantOverrides`) and retains the full transcript when the call ends.
 
+[View Changelog →](/changelog/integrations/vapi)
+
 ## Quick Start
 
 :::tip Hindsight Cloud (recommended)

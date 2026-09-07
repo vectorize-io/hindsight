@@ -83,7 +83,7 @@ func (dst *Not) UnmarshalJSON(data []byte) error {
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src *Not) MarshalJSON() ([]byte, error) {
+func (src Not) MarshalJSON() ([]byte, error) {
 	if src.TagGroupAndInput != nil {
 		return json.Marshal(&src.TagGroupAndInput)
 	}

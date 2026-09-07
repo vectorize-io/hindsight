@@ -1,6 +1,6 @@
 """Unit tests for in-batch new-entity name clustering (issue #3107).
 
-Covers the pure halves of the in-batch dedup fix: `_trigram_similarity` (an in-memory
+Covers the pure halves of the in-batch dedup fix: `trigram_similarity` (an in-memory
 reimplementation of Postgres pg_trgm) and `_cluster_new_entity_names` (union-find + canonical
 selection). No DB, no LLM — deterministic.
 """
@@ -11,7 +11,7 @@ from hindsight_api.engine.entity_resolver import (
     _cluster_new_entity_names,
     _find_intrabatch_similar_pairs,
     _SimilarNamePair,
-    _trigram_similarity,
+    trigram_similarity,
 )
 
 
@@ -33,13 +33,13 @@ from hindsight_api.engine.entity_resolver import (
     ],
 )
 def test_trigram_similarity_matches_pg_trgm(a, b, expected):
-    assert _trigram_similarity(a, b) == pytest.approx(expected)
+    assert trigram_similarity(a, b) == pytest.approx(expected)
 
 
 def test_trigram_similarity_is_symmetric_and_bounded():
-    assert _trigram_similarity("Corvin", "Corvyn") == _trigram_similarity("Corvyn", "Corvin")
-    assert _trigram_similarity("", "") == 0.0
-    assert _trigram_similarity("Aster", "Aster") == 1.0
+    assert trigram_similarity("Corvin", "Corvyn") == trigram_similarity("Corvyn", "Corvin")
+    assert trigram_similarity("", "") == 0.0
+    assert trigram_similarity("Aster", "Aster") == 1.0
 
 
 def test_find_pairs_applies_threshold():

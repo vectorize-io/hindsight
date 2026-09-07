@@ -179,6 +179,88 @@ See [Retain API](./api/retain) for code examples and [Recall API](./api/recall) 
 
 ---
 
+## Images and Files in Your Content
+
+A lot of what a document actually says lives in its pictures: the screenshot of
+the button an instruction refers to, the diagram holding an escalation path, the
+chart that *is* the data. `content` accepts an ordered list of blocks so those sit
+where they belong, instead of being summarised into a caption beforehand:
+
+```json
+{
+  "content": [
+    {"type": "text",  "text": "To reset the VPN, click the button shown:"},
+    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+    {"type": "text",  "text": "...then reconnect."}
+  ]
+}
+```
+
+A plain string still works exactly as before — nothing about text-only retain
+changes.
+
+The point is **position**. Extraction sends the text and the pictures together,
+in order, so the model reads the screenshot beside the sentence that introduces
+it. "Click the button shown below" is meaningless on its own; next to the
+picture it becomes a fact that names the button.
+
+### What comes back
+
+Facts read naturally — `[image: image/png]` marks where an attachment was, never
+a content hash — and each memory carries the attachments **it was drawn from**,
+with a URL you can fetch:
+
+```json
+{
+  "text": "The escalation path for a stuck sync begins by contacting Tier 3 Platform.",
+  "attachments": [
+    {"id": "c414cd0e204d", "kind": "image", "media_type": "image/png",
+     "url": "/v1/default/banks/my-bank/attachments/c414cd0e204d"}
+  ]
+}
+```
+
+Facts that came from the prose have no `attachments`, even when the same document
+is full of pictures. So an attachment shown next to a memory means the model
+looked at it to produce that memory — it is evidence, not decoration.
+
+### What to expect from charts and tables
+
+An attachment carrying structured data is transcribed rather than summarised:
+each row, bar or labelled value becomes its own fact, carrying its label, its
+figure, and how it is drawn. A chart therefore produces many more memories than a
+screenshot does — that is deliberate, since a summary of a twenty-bar chart keeps
+three values and silently drops seventeen, and later questions ask about the ones
+it dropped.
+
+Very dense pages are still sampled rather than exhausted: a single extraction pass
+over an infographic listing a hundred entries will capture a large share of them,
+not all of them.
+
+### Requirements
+
+- A model that can read images. By default that is the bank's retain model, but
+  it does not have to be: `HINDSIGHT_API_VLM_MODEL` names a **vision slot** used
+  only for the chunks that actually carry an attachment, leaving every text-only
+  chunk on the retain LLM. So a bank whose documents are mostly prose can keep a
+  cheap text model and pay for vision only where there is something to look at.
+- If that model cannot read images — or if Hindsight cannot tell, which is the
+  case for gateway backends serving mixed catalogues — the retain is refused
+  with `422` rather than dropping the attachment silently. See
+  [`HINDSIGHT_API_LLM_VISION`](configuration.md#llm-configuration).
+- Batch retain (`HINDSIGHT_API_RETAIN_BATCH_ENABLED`) cannot carry attachments,
+  and also refuses with `422`.
+
+This is different from [`POST /files/retain`](configuration.md#file-conversion),
+which converts a whole file to markdown as its **own** document. That is still the
+right tool for a scanned report you want parsed — but it separates the file from
+the prose that referred to it, which is exactly what inline attachments avoid.
+
+For storage, size limits and accepted media types, see
+[Inline attachments in retain](configuration.md#inline-attachments-in-retain).
+
+---
+
 ## What You Get
 
 After `retain()` completes:

@@ -11,9 +11,22 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
-from ..response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from ..response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 
 logger = logging.getLogger(__name__)
+
+
+def _user_text_of(content: Any) -> str:
+    """The text of a user message, whether it is a string or content parts.
+
+    A multimodal retain hands the provider an interleaved list of text and image
+    parts. The mock has no vision, so it synthesizes from the text alone — the
+    tests that care about the image assert on the message the mock recorded, not
+    on what it invented from it.
+    """
+    if not isinstance(content, list):
+        return content
+    return " ".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
 
 
 class MockLLM(LLMInterface):
@@ -31,10 +44,11 @@ class MockLLM(LLMInterface):
         mock_llm.set_mock_response({"answer": "test"})
 
         # Make calls
-        result = await mock_llm.call(
+        call_result = await mock_llm.call(
             messages=[{"role": "user", "content": "test"}],
             response_format=MyResponseModel
         )
+        result = call_result.content
 
         # Verify calls
         calls = mock_llm.get_mock_calls()
@@ -70,6 +84,14 @@ class MockLLM(LLMInterface):
         self._mock_exception: Exception | None = None
         self._response_callback: Callable[[list[dict], str], Any] | None = None
 
+    def supports_vision(self) -> bool:
+        """True, so tests can drive the multimodal extraction path.
+
+        The mock records whatever message parts it is handed, which is exactly
+        what the prompt-assembly tests assert against.
+        """
+        return True
+
     async def verify_connection(self) -> None:
         """
         Verify mock provider (always succeeds).
@@ -91,9 +113,8 @@ class MockLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make a mock LLM API call.
 
@@ -110,11 +131,8 @@ class MockLLM(LLMInterface):
             max_backoff: Not used in mock.
             skip_validation: Return raw JSON without Pydantic validation.
             strict_schema: Not used in mock.
-            return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
-            If return_usage=False: Parsed response if response_format is provided, otherwise text content.
-            If return_usage=True: Tuple of (result, TokenUsage) with mock token counts.
         """
         # Record the call for test verification
         call_record = {
@@ -187,10 +205,8 @@ class MockLLM(LLMInterface):
         else:
             result = "mock response"
 
-        if return_usage:
-            token_usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
-            return result, token_usage
-        return result
+        token_usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
+        return LLMCallResult(content=result, usage=token_usage)
 
     async def call_with_tools(
         self,
@@ -369,7 +385,7 @@ class MockLLM(LLMInterface):
         user_text = ""
         for m in messages:
             if m.get("role") == "user":
-                user_text = m.get("content", "")
+                user_text = _user_text_of(m.get("content", ""))
                 break
 
         # Split on sentence boundaries: period followed by space/EOL (not mid-number), or newlines
@@ -413,7 +429,7 @@ class MockLLM(LLMInterface):
         user_text = ""
         for m in messages:
             if m.get("role") == "user":
-                user_text = m.get("content", "")
+                user_text = _user_text_of(m.get("content", ""))
                 break
 
         # Extract fact UUIDs from the prompt (format: "[<uuid>] <text>")

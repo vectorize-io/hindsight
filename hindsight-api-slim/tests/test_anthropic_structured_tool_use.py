@@ -50,13 +50,15 @@ async def test_strict_schema_uses_forced_tool_choice():
     provider = _make_anthropic_provider()
     provider._client.messages.create = AsyncMock(return_value=_tool_use_response({"action": "skip", "reason": "dup"}))
     with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
-        result = await provider.call(
-            messages=[{"role": "user", "content": "decide"}],
-            response_format=_Decision,
-            strict_schema=True,
-            scope="test",
-            max_retries=0,
-        )
+        result = (
+            await provider.call(
+                messages=[{"role": "user", "content": "decide"}],
+                response_format=_Decision,
+                strict_schema=True,
+                scope="test",
+                max_retries=0,
+            )
+        ).content
     kwargs = provider._client.messages.create.call_args.kwargs
     # forced tool_use requested
     assert "tools" in kwargs and len(kwargs["tools"]) == 1
@@ -98,13 +100,15 @@ async def test_non_strict_keeps_text_injection_fallback():
     resp.stop_reason = "end_turn"
     provider._client.messages.create = AsyncMock(return_value=resp)
     with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
-        result = await provider.call(
-            messages=[{"role": "user", "content": "decide"}],
-            response_format=_Decision,
-            strict_schema=False,
-            scope="test",
-            max_retries=0,
-        )
+        result = (
+            await provider.call(
+                messages=[{"role": "user", "content": "decide"}],
+                response_format=_Decision,
+                strict_schema=False,
+                scope="test",
+                max_retries=0,
+            )
+        ).content
     kwargs = provider._client.messages.create.call_args.kwargs
     assert "tools" not in kwargs  # no forced tool when not strict
     # system is a cache_control-marked block list; the schema text-injection

@@ -116,6 +116,10 @@ whenever a tag scope is supplied, including with a strict or exact match.
 | Non-empty `tags`, `exact` | Data with exactly the requested tag set | Models with exactly the requested tag set | Exactly matching tagged directives plus untagged/global directives |
 | Non-empty `tag_groups`, default top-level `tags_match` | Data matching the compound expression | Models matching the compound expression | Matching tagged directives plus untagged/global directives |
 
+A `tag_groups` leaf may set `resolve: "fuzzy"`, as in
+[recall](./recall#fuzzy-leaves); reflect resolves it once, before the agentic
+loop starts, so every tool it runs filters on the same tags.
+
 The first row is intentionally asymmetric: an unscoped reflect can search all
 memories, but it does not load tagged directives. To create a directive that
 applies to every reflect call, leave its `tags` empty. To create a scoped

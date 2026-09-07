@@ -42,7 +42,7 @@ func TestRetainSingle(t *testing.T) {
 
 	req := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "Alice loves artificial intelligence and machine learning"},
+			{Content: TextContent("Alice loves artificial intelligence and machine learning")},
 		},
 	}
 
@@ -66,7 +66,7 @@ func TestRetainWithContext(t *testing.T) {
 	req := RetainRequest{
 		Items: []MemoryItem{
 			{
-				Content:   "Bob went hiking in the mountains",
+				Content:   TextContent("Bob went hiking in the mountains"),
 				Timestamp: *NewNullableTimestamp(&Timestamp{TimeTime: &timestamp}),
 				Context:   *NewNullableString(PtrString("outdoor activities")),
 			},
@@ -91,9 +91,9 @@ func TestRetainBatch(t *testing.T) {
 
 	req := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "Charlie enjoys reading science fiction books"},
-			{Content: "Diana is learning to play the guitar"},
-			{Content: "Eve completed a marathon last month"},
+			{Content: TextContent("Charlie enjoys reading science fiction books")},
+			{Content: TextContent("Diana is learning to play the guitar")},
+			{Content: TextContent("Eve completed a marathon last month")},
 		},
 	}
 
@@ -119,7 +119,7 @@ func TestRetainWithTags(t *testing.T) {
 	req := RetainRequest{
 		Items: []MemoryItem{
 			{
-				Content: "New feature implementation for project Z",
+				Content: TextContent("New feature implementation for project Z"),
 				Tags:    []string{"project_z", "features"},
 			},
 		},
@@ -143,8 +143,8 @@ func TestRetainBatchWithDocumentTags(t *testing.T) {
 
 	req := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "Document with tags test 1"},
-			{Content: "Document with tags test 2"},
+			{Content: TextContent("Document with tags test 1")},
+			{Content: TextContent("Document with tags test 2")},
 		},
 		DocumentTags: []string{"test_doc", "batch"},
 	}
@@ -168,9 +168,9 @@ func setupRecallBank(t *testing.T, client *APIClient, bankID string) {
 
 	req := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "Alice enjoys hiking in the mountains"},
-			{Content: "Bob loves to read science fiction novels"},
-			{Content: "Charlie is learning to play the piano"},
+			{Content: TextContent("Alice enjoys hiking in the mountains")},
+			{Content: TextContent("Bob loves to read science fiction novels")},
+			{Content: TextContent("Charlie is learning to play the piano")},
 		},
 	}
 
@@ -273,8 +273,8 @@ func setupReflectBank(t *testing.T, client *APIClient, bankID string) {
 	// Add memories
 	retainReq := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "Quantum computing uses quantum bits (qubits) for processing"},
-			{Content: "Neural networks are inspired by biological neurons"},
+			{Content: TextContent("Quantum computing uses quantum bits (qubits) for processing")},
+			{Content: TextContent("Neural networks are inspired by biological neurons")},
 		},
 	}
 	_, _, err = client.MemoryAPI.RetainMemories(ctx, bankID).RetainRequest(retainReq).Execute()
@@ -437,8 +437,8 @@ func TestCompleteWorkflow(t *testing.T) {
 	// 2. Retain memories
 	retainReq := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "Paris is the capital of France"},
-			{Content: "The Eiffel Tower is in Paris"},
+			{Content: TextContent("Paris is the capital of France")},
+			{Content: TextContent("The Eiffel Tower is in Paris")},
 		},
 	}
 	retainResp, _, err := client.MemoryAPI.RetainMemories(ctx, bankID).RetainRequest(retainReq).Execute()

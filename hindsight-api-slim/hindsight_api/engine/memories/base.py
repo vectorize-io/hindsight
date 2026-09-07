@@ -714,7 +714,7 @@ class MemoriesExtension(Extension, ABC):
     #:
     #: True is a store that keeps memories elsewhere. It owns a dedicated document store (bodies go
     #: through ``put_document`` / ``get_document_record`` / ``get_chunk_text`` / ``list_chunk_texts``
-    #: / ``count_chunks`` / ``document_content_hash``), resolves entity NAMES itself, and commits the
+    #: / ``document_content_hash``), resolves entity NAMES itself, and commits the
     #: entire retain — resolution, upserts and the document replace — as ONE atomic server-side call
     #: (``retain``). The orchestrator then needs no Postgres connection phase for it.
     #:
@@ -1197,10 +1197,6 @@ class MemoriesExtension(Extension, ABC):
         """Every chunk's text in order, or ``None`` if the document does not exist."""
         raise NotImplementedError
 
-    async def count_chunks(self, *, bank_id: str, document_id: str) -> int:
-        """How many chunks a document has (0 if it does not exist)."""
-        raise NotImplementedError
-
     async def set_document_tags(self, *, bank_id: str, document_id: str, tags: "list[str]") -> None:
         """Replace a document RECORD's tags, leaving its bodies alone.
 
@@ -1613,11 +1609,18 @@ class MemoriesExtension(Extension, ABC):
         """
         raise NotImplementedError
 
-    async def observation_scope_counts(self, *, conn, fq_table, bank_id: str) -> list[dict[str, Any]]:
-        """``[{"tags": list[str], "count": int}]`` — observations grouped by scope.
+    async def observation_scope_counts(
+        self, *, conn, fq_table, bank_id: str, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
+        """One page of the observation scope histogram, paged by the store.
 
-        A scope is the sorted set of tags an observation was consolidated with;
-        ``[]`` is the global (untagged) scope. Most-populous first.
+        Returns ``{"scopes": [{"tags": list[str], "count": int}], "total",
+        "limit", "offset"}``. A scope is the sorted set of tags an observation
+        was consolidated with; ``[]`` is the global (untagged) scope.
+        Most-populous first, then scope ascending. ``total`` counts every
+        distinct scope, not just the page — a bank has as many scopes as it has
+        distinct tag sets, so the store must not ship them all for the caller
+        to trim.
         """
         raise NotImplementedError
 

@@ -386,24 +386,42 @@ jobs:
           - target: api-only
             image_name: hindsight-api
             tag_suffix: ""
+            dockerfile: docker/standalone/Dockerfile
             build_args: ""
           - target: api-only
             image_name: hindsight-api
             tag_suffix: "-slim"
+            dockerfile: docker/standalone/Dockerfile
             build_args: |
               INCLUDE_LOCAL_MODELS=false
               PRELOAD_ML_MODELS=false
+          # Free-threaded CPython 3.14. Its own Dockerfile rather than a target of the
+          # one above: different interpreter, different dependency resolution, no
+          # control plane, and no local ML (importing sentence_transformers re-enables
+          # the GIL, so this tag cannot ship it — embeddings and reranking must be
+          # remote). amd64 only for now: the build installs the interpreter and
+          # compiles psycopg2 from source, so emulated arm64 is slow enough to be
+          # worth adding deliberately rather than by default.
+          - target: api-only-freethreaded
+            image_name: hindsight-api
+            tag_suffix: "-py3.14t"
+            dockerfile: docker/standalone/Dockerfile.freethreaded
+            platforms: linux/amd64
+            build_args: ""
           - target: cp-only
             image_name: hindsight-control-plane
             tag_suffix: ""
+            dockerfile: docker/standalone/Dockerfile
             build_args: ""
           - target: standalone
             image_name: hindsight
             tag_suffix: ""
+            dockerfile: docker/standalone/Dockerfile
             build_args: ""
           - target: standalone
             image_name: hindsight
             tag_suffix: "-slim"
+            dockerfile: docker/standalone/Dockerfile
             build_args: |
               INCLUDE_LOCAL_MODELS=false
               PRELOAD_ML_MODELS=false
@@ -445,7 +463,7 @@ jobs:
       with:
         images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
         flavor: |
-          latest=auto
+          latest=${{ matrix.tag_suffix == '-py3.14t' && 'false' || 'auto' }}
           suffix=${{ matrix.tag_suffix }}
         tags: |
           type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
@@ -480,11 +498,11 @@ jobs:
       uses: docker/build-push-action@v7
       with:
         context: .
-        file: docker/standalone/Dockerfile
+        file: ${{ matrix.dockerfile }}
         target: ${{ matrix.target }}
         build-args: ${{ matrix.build_args }}
         push: true
-        platforms: linux/amd64,linux/arm64
+        platforms: ${{ matrix.platforms || 'linux/amd64,linux/arm64' }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
 

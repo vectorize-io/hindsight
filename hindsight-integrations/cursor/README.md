@@ -42,10 +42,13 @@ hindsight-cursor init --api-url http://localhost:8888
 ### What `init` does
 
 - Copies plugin files into `.cursor-plugin/hindsight-memory/`
+- Writes/merges project `.cursor/hooks.json` so Cursor registers `sessionStart` / `stop` / `sessionEnd` (workspace-relative commands — plugin-dir hooks alone are not loaded by the IDE). Hooks you already had are preserved, and re-running `init` replaces only Hindsight's own entries.
 - Creates `~/.hindsight/cursor.json` with your connection settings (if the file does not already exist)
 - Writes `.cursor/mcp.json` with the Hindsight MCP endpoint for on-demand recall/retain/reflect tools
 - Use `--force` to overwrite an existing installation
 - Use `--no-mcp` to skip the MCP configuration
+
+`hindsight-cursor uninstall` reverses all of it: the plugin directory, Hindsight's `.cursor/hooks.json` entries, the MCP server entry, the generated session rules file, and its `.gitignore` line.
 
 After installing, **fully quit and reopen Cursor**. The plugin activates automatically.
 
@@ -69,10 +72,17 @@ The plugin uses two complementary mechanisms:
 |------|-------|---------|
 | `session_start.py` | `sessionStart` | **Session recall** — query memories, write `<workspace>/.cursor/rules/hindsight-session.mdc` so the agent gets memory in its system context, *and* emit `additionalContext` JSON (forward-compat). |
 | `retain.py` | `stop` | **Auto-retain** — extract transcript, POST to Hindsight |
+| `retain.py` | `sessionEnd` | **Final flush** — retain whatever the turn window never got to |
 
 The `sessionStart` hook fires when the agent processes the first prompt of each new chat. It performs a broad project-level recall and surfaces the result two ways — see ["How session memory reaches the agent"](#how-session-memory-reaches-the-agent) below for why both.
 
 The `stop` hook fires when the agent completes a task. It reads the conversation transcript and retains it to Hindsight for future recall.
+
+`retain.py` is also registered on `sessionEnd`, which fires once when the conversation ends and acts as a **final flush**.
+
+Without it, every conversation shorter than `retainEveryNTurns` is lost outright. At the default of 10, a seven-turn chat fires `stop` seven times, the turn gate rejects all seven, and the session is never stored. `sessionEnd` bypasses the turn window so the tail of a session is always retained.
+
+The two events overlap at the end of a conversation. The plugin records how many transcript messages it has already retained per session, so a run with nothing new is a no-op — the overlap cannot double-store.
 
 ### How session memory reaches the agent
 
@@ -109,6 +119,7 @@ The agent can use these tools mid-session when it needs memory beyond what was i
 | `lib/bank.py` | Bank ID derivation + mission management |
 | `lib/content.py` | Content processing (transcript parsing, memory formatting, tag stripping) |
 | `lib/state.py` | File-based state persistence with `fcntl` locking |
+| `lib/rules_file.py` | Writes `.cursor/rules/hindsight-session.mdc` (sessionStart additionalContext workaround) |
 | `lib/llm.py` | LLM provider auto-detection for daemon mode |
 
 ## Connection Modes

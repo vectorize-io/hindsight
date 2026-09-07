@@ -99,13 +99,15 @@ async def test_null_content_recovers_on_retry():
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
         mock_create.side_effect = responses
 
-        result = await llm.call(
-            messages=[{"role": "user", "content": "extract facts"}],
-            response_format=_Response,
-            max_retries=2,
-            initial_backoff=0.0,
-            max_backoff=0.0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "extract facts"}],
+                response_format=_Response,
+                max_retries=2,
+                initial_backoff=0.0,
+                max_backoff=0.0,
+            )
+        ).content
 
     assert isinstance(result, _Response)
     assert result.answer == "ok"

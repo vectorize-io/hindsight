@@ -84,6 +84,7 @@ Browse all supported integrations in the Integrations Hub.
 - z.ai
 - opencode-go
 - Atlas Cloud
+- Meta Model API
 - Volcano Engine
 - OpenRouter
 - Requesty

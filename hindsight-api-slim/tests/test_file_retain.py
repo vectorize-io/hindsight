@@ -493,7 +493,11 @@ def test_markitdown_converter_does_not_enable_ocr_by_default(monkeypatch):
 
     monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
 
-    MarkitdownParser()
+    parser = MarkitdownParser()
+    # markitdown is imported and MarkItDown built on first use, not at construction,
+    # to keep bs4/lxml off the startup path (#4031).
+    assert calls == []
+    parser._get_markitdown()
 
     assert calls == [{}]
 
@@ -542,12 +546,15 @@ def test_markitdown_converter_can_enable_ocr(monkeypatch):
     monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
     monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
 
-    MarkitdownParser(
+    parser = MarkitdownParser(
         ocr_enabled=True,
         ocr_api_key="parser-key",
         ocr_base_url="https://vision.example/v1",
         ocr_model="vision-model",
     )
+    # The OpenAI client is built with MarkItDown on first use, not at construction (#4031).
+    assert openai_calls == []
+    parser._get_markitdown()
 
     assert openai_calls == [
         {
@@ -583,13 +590,14 @@ def test_markitdown_converter_passes_default_headers_when_configured(monkeypatch
     monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
 
     headers = {"X-Component-Id": "hindsight-ocr", "X-Request-Source": "markitdown"}
-    MarkitdownParser(
+    parser = MarkitdownParser(
         ocr_enabled=True,
         ocr_api_key="parser-key",
         ocr_base_url="https://vision.example/v1",
         ocr_model="vision-model",
         ocr_default_headers=headers,
     )
+    parser._get_markitdown()
 
     assert openai_calls == [
         {
@@ -653,13 +661,16 @@ def test_markitdown_converter_reports_missing_openai_when_ocr_enabled(monkeypatc
     monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
+    # Construction validates the settings but does not import the SDK, so the
+    # missing-package error surfaces on first use.
+    parser = MarkitdownParser(
+        ocr_enabled=True,
+        ocr_api_key="parser-key",
+        ocr_base_url="https://vision.example/v1",
+        ocr_model="vision-model",
+    )
     with pytest.raises(RuntimeError, match="openai package is required"):
-        MarkitdownParser(
-            ocr_enabled=True,
-            ocr_api_key="parser-key",
-            ocr_base_url="https://vision.example/v1",
-            ocr_model="vision-model",
-        )
+        parser._get_markitdown()
 
 
 @pytest.mark.asyncio

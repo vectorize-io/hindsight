@@ -11,7 +11,7 @@ const ANNOUNCEMENT_BAR = 'Hindsight is State-of-the-Art on Memory for AI Agents 
 
 const config: Config = {
   title: 'Hindsight',
-  tagline: 'Hindsight: Agent Memory That Works Like Human Memory',
+  tagline: 'Hindsight: Agent Memory That Learns',
   favicon: 'img/favicon.png',
 
   future: {
@@ -193,6 +193,9 @@ const config: Config = {
   ],
 
   plugins: [
+    // Indexes src/pages/changelog/integrations/*.md at build time so the
+    // Integrations Hub knows which integrations have a changelog page.
+    './plugins/integration-changelogs',
     [
       '@docusaurus/plugin-content-docs',
       {

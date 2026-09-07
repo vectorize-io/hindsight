@@ -11,6 +11,8 @@ Persistent long-term memory for [LlamaIndex](https://docs.llamaindex.ai/) agents
 - **`HindsightToolSpec`** — Agent-driven memory tools (retain/recall/reflect)
 - **`HindsightMemory`** — Automatic memory via LlamaIndex's `BaseMemory` interface
 
+[View Changelog →](/changelog/integrations/llamaindex)
+
 ## Installation
 
 ```bash

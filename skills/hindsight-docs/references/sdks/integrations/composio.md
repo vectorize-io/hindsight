@@ -8,6 +8,8 @@ can call directly.
 The Hindsight memory bank for each call is the Composio session's `user_id`, so a single
 registered tool set isolates memory per user automatically.
 
+[View Changelog →](../../changelog/integrations/composio.md)
+
 ## Features
 
 - **Composio Custom Tools** — registered via `composio.experimental.tool()` and bound to a session

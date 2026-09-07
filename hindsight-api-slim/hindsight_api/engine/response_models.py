@@ -130,6 +130,35 @@ class TokenUsage(BaseModel):
         )
 
 
+class LLMCallResult(BaseModel):
+    """What one ``LLMInterface.call`` produced: the response, and what it cost.
+
+    ``call`` used to return either the bare response or a ``(response, usage)``
+    tuple depending on a ``return_usage: bool`` argument — a boolean that changed
+    the return type, which is why all fourteen implementations were annotated
+    ``-> Any`` and neither shape was ever checked. Callers that wanted the cost
+    unpacked two names; callers that did not got the response directly, and
+    nothing could tell you at the call site which you were looking at.
+
+    Returning this unconditionally mirrors ``call_with_tools``, which has always
+    returned a named ``LLMToolCallResult``. Usage is always available, so a caller
+    that wants to record cost no longer has to change the call's return type to
+    get it.
+    """
+
+    content: Any = Field(
+        default=None,
+        description=(
+            "The parsed response when a response_format was given, otherwise the text content. "
+            "Typed Any because the parsed shape is the caller's own response_format model."
+        ),
+    )
+    usage: TokenUsage = Field(
+        default_factory=TokenUsage,
+        description="Tokens this call consumed. Zero-valued when the provider reports none.",
+    )
+
+
 class ExtractedFact(BaseModel):
     """A single candidate fact produced by dry-run extraction (no resolution/links/persistence).
 

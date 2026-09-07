@@ -594,6 +594,16 @@ that is AND-ed with the compound expression.
 
 `match` accepts the same values as `tags_match`: `any`, `all`, `any_strict`, `all_strict`, `exact`. Defaults to `any_strict`.
 
+#### Fuzzy leaves
+
+A leaf may set `resolve: "fuzzy"` (default `"exact"`) to match its tags against the bank's tags by trigram similarity instead of literally, so a filter on `typsecript` still reaches memories tagged `typescript`:
+
+```json
+{ "tags": ["typsecript"], "match": "any_strict", "resolve": "fuzzy" }
+```
+
+Each tag resolves to the bank tags scoring at least 0.45, and the leaf then matches those exactly — so `resolve` composes with every `match` mode. Similarity is length-sensitive: `kubernets` reaches `kubernetes`, but a short tag has too few trigrams to survive an edit (`kakfa` does not reach `kafka`). A tag that resolves to nothing matches nothing; the filter is never dropped. A 422 is returned if the bank has more than 5000 distinct tags, or if a `resolve: "fuzzy"` leaf with `match: "exact"` expands past 32 candidate scopes.
+
 #### Compound nodes
 
 ```json

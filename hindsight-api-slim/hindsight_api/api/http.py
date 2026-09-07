@@ -6,15 +6,19 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import os
 import re
+import traceback
 import uuid
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -175,6 +179,7 @@ from hindsight_api.engine.memory_engine import (
     KEEP_PARENT,
     Budget,
     RetainOperationConflictError,
+    VisionNotSupportedError,
     _current_schema,
 )
 from hindsight_api.engine.mental_model_refresh import (
@@ -192,9 +197,23 @@ from hindsight_api.engine.response_models import (
     TemporalWindow,
     TokenUsage,
 )
+from hindsight_api.engine.retain.attachment_content import (
+    CanonicalContent,
+    RetainAttachment,
+    RetainText,
+    canonicalize,
+    compute_attachment_hash,
+    contains_placeholder_like,
+    iter_placeholder_ids,
+    neutralize_placeholders,
+    short_attachment_id,
+)
+from hindsight_api.engine.retain.attachment_content import ContentBlock as CanonicalBlock
+from hindsight_api.engine.retain.attachment_store import StoredAttachment
+from hindsight_api.engine.search.tag_resolution import needs_resolution
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.structured_output import validate_response_schema
-from hindsight_api.engine.token_encoding import get_token_encoding
+from hindsight_api.engine.token_encoding import count_tokens
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.liveness import LivenessResponse, liveness_response
 from hindsight_api.metrics import (
@@ -207,6 +226,28 @@ from hindsight_api.metrics import (
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
+
+
+def _internal_error(exc: Exception, where: str) -> HTTPException:
+    """Log an unhandled handler exception with its traceback, and map it to a 500.
+
+    Every route's catch-all used to do this inline — 72 byte-identical copies of
+    the same four lines, plus seven near-copies that logged the traceback without
+    the message. The duplication is why the policy had already drifted: what gets
+    logged, and the fact that the client sees ``detail=str(exc)`` rather than a
+    traceback, was re-decided per route instead of once.
+
+    ``traceback.format_exc()`` reads the *currently handled* exception, so this
+    must be called from inside an ``except`` block — which is where every call
+    site is.
+
+    Returns the exception rather than raising it, so call sites read
+    ``raise _internal_error(e, ...)`` and keep the ``raise`` visible at the
+    handler instead of hidden behind a call.
+    """
+    logger.error(f"Error in {where}: {exc}\n\nTraceback:\n{traceback.format_exc()}")
+    return HTTPException(status_code=500, detail=str(exc))
+
 
 # 499 is the de facto reverse-proxy status for "client closed request".
 _CLIENT_CLOSED_REQUEST_STATUS_CODE = 499
@@ -351,7 +392,8 @@ class RecallRequest(BaseModel):
     tag_groups: list[TagGroup] | None = Field(
         default=None,
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
-        "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
+        "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. "
+        "A leaf may set resolve='fuzzy' to match its tags against the bank's tags by trigram similarity instead of literally, so a query that says 'typsecript' still reaches memories tagged 'typescript'.",
     )
     min_scores: MinScores | None = Field(
         default=None,
@@ -563,6 +605,18 @@ class EntityDetailResponse(BaseModel):
     observations: list[EntityObservationResponse]
 
 
+class ChunkAttachment(BaseModel):
+    """An attachment referenced by retained text, and where to fetch it."""
+
+    id: str = Field(description="The id inside the text's placeholder; a prefix of the bytes' sha256.")
+    hash: str = Field(description="Full sha256 of the attachment bytes.")
+    kind: str = Field(description="'image' or 'file', as the caller sent it.")
+    media_type: str = Field(description="MIME type of the attachment.")
+    byte_size: int = Field(description="Size of the attachment in bytes.")
+    filename: str | None = Field(default=None, description="Original filename, when the caller supplied one.")
+    url: str = Field(description="Bank-scoped API path serving the bytes. Requires the same authorization as the bank.")
+
+
 class ChunkData(BaseModel):
     """Chunk data for a single chunk."""
 
@@ -570,6 +624,15 @@ class ChunkData(BaseModel):
     text: str
     chunk_index: int
     truncated: bool = Field(default=False, description="Whether the chunk text was truncated due to token limits")
+    attachments: list[ChunkAttachment] | None = Field(
+        default=None,
+        description=(
+            "Attachments this chunk's text references, in order of first appearance, when it was "
+            "retained with inline content. The text keeps each attachment's placeholder token "
+            "(⟦hs-att:...⟧) where it sat, so a multimodal agent can render or reason over the "
+            "original at the position it occupied in the source document. Omitted when there are none."
+        ),
+    )
 
 
 class RecallResponse(BaseModel):
@@ -641,6 +704,247 @@ class EntityInput(BaseModel):
     type: str | None = Field(default=None, description="Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')")
 
 
+#: A syntactically well-formed MIME type. Deliberately the ONLY constraint on what
+#: may be attached: vision models keep gaining formats (PDF, audio, video), and an
+#: allowlist here would refuse content the provider would happily have read. An
+#: unsupported type is rejected by the provider, and that rejection fails the
+#: retain with the provider's own message — see `_require_vision_capable_retain_llm`.
+_MEDIA_TYPE_RE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
+
+#: Image types the recall/UI path renders inline. Everything else is still stored
+#: and still sent to the model; this only decides what a browser is asked to draw.
+RENDERABLE_IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+
+
+class Base64AttachmentSource(BaseModel):
+    """Inline attachment bytes, base64-encoded.
+
+    The only source type in this version. ``url`` (server-side fetch) and
+    ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
+    is modelled as a discriminated union on ``type`` rather than as bare fields.
+    """
+
+    type: Literal["base64"] = "base64"
+    media_type: str = Field(
+        description=(
+            "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed "
+            "type is accepted; whether the model can read it is the model's answer to give, and a "
+            "provider that rejects it fails the retain with its own error."
+        )
+    )
+    data: str = Field(description="Base64-encoded bytes (no data: URI prefix).")
+
+    @field_validator("media_type")
+    @classmethod
+    def validate_media_type(cls, v: str) -> str:
+        if not _MEDIA_TYPE_RE.match(v):
+            raise ValueError(f"media_type must look like 'type/subtype', got {v!r}")
+        return v
+
+    def decode(self) -> bytes:
+        """Decode the payload, raising ``ValueError`` on malformed base64.
+
+        Not a validator: decoding a large attachment is expensive enough that it
+        should happen once, at the point the bytes are actually needed, rather
+        than on every model construction. The retain handler calls this inside its
+        request-validation block so a bad payload is still a 400, not a 500.
+        """
+        try:
+            return base64.b64decode(self.data, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise ValueError(f"attachment source data is not valid base64: {e}") from e
+
+
+class TextContentBlock(BaseModel):
+    """A run of text within a multimodal item, in the position the caller wrote it."""
+
+    type: Literal["text"]
+    text: str
+
+
+class ImageContentBlock(BaseModel):
+    """An image within a multimodal item, in the position the caller wrote it."""
+
+    type: Literal["image"]
+    source: Base64AttachmentSource
+
+
+class FileContentBlock(BaseModel):
+    """A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+
+    Split from ``image`` rather than folded into one type because the providers
+    split it: Anthropic has distinct image and document blocks, OpenAI has
+    image_url and file parts. Carrying the caller's own distinction through means
+    the per-provider conversion never has to guess from the media type alone.
+    """
+
+    type: Literal["file"]
+    source: Base64AttachmentSource
+    filename: str | None = Field(
+        default=None,
+        description="Original filename, passed to providers that show one to the model (e.g. OpenAI).",
+    )
+
+
+#: One element of a multimodal ``content`` array. Discriminated on ``type`` so a
+#: malformed block reports which variant it failed against instead of dumping
+#: every variant's errors.
+ContentBlock = Annotated[TextContentBlock | ImageContentBlock | FileContentBlock, Field(discriminator="type")]
+
+
+def bank_attachment_url(bank_id: str, attachment_id: str) -> str:
+    """The API path serving one of a bank's retained attachments, by its short id."""
+    return f"/v1/default/banks/{quote(bank_id, safe='')}/attachments/{attachment_id}"
+
+
+def chunk_attachments_of(
+    bank_id: str,
+    text: str,
+    records: "dict[str, StoredAttachment]",
+) -> list[ChunkAttachment] | None:
+    """The attachments ``text`` references, deduplicated, in first-appearance order.
+
+    Returns None rather than an empty list when there are none, so the field is
+    simply absent from a response instead of adding a null to every read.
+    """
+    seen: dict[str, ChunkAttachment] = {}
+    for attachment_id in iter_placeholder_ids(text):
+        if attachment_id in seen:
+            continue
+        record = records.get(attachment_id)
+        if record is None:
+            # The bytes are gone (reclaimed, or a storage backend swapped under an
+            # old document). The placeholder stays in the text, honestly saying an
+            # attachment was here; there is just nothing to fetch.
+            continue
+        seen[attachment_id] = ChunkAttachment(
+            id=attachment_id,
+            hash=record.attachment_hash,
+            kind=record.kind,
+            media_type=record.media_type,
+            byte_size=record.byte_size,
+            filename=record.filename,
+            url=bank_attachment_url(bank_id, attachment_id),
+        )
+    return list(seen.values()) or None
+
+
+def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict[str, Any]:
+    """One attachment, in the shape every read surface returns."""
+    return ChunkAttachment(
+        id=record.short_id,
+        hash=record.attachment_hash,
+        kind=record.kind,
+        media_type=record.media_type,
+        byte_size=record.byte_size,
+        filename=record.filename,
+        url=bank_attachment_url(bank_id, record.short_id),
+    ).model_dump()
+
+
+async def _attach_to_memories(
+    memory_app: "MemoryEngine",
+    bank_id: str,
+    items: "list[dict[str, Any]]",
+    request_context: RequestContext,
+) -> None:
+    """Add ``attachments`` to memory dicts, in place — the ones each fact came from.
+
+    A fact's own text carries no placeholder (it would surface a content hash as
+    knowledge), so the edge is the one the extractor attributed at retain time.
+    It is per fact, not per chunk: a chunk carrying a screenshot also carries the
+    prose around it, and showing the screenshot against every fact from that one
+    LLM call attributes the diagram to the paragraph that never mentioned it.
+
+    One lookup for the whole page, not one per memory.
+    """
+    unit_ids = [item.get("id") for item in items if isinstance(item, dict) and item.get("id")]
+    if not unit_ids:
+        return
+    by_unit = await memory_app.attachments_for_memories(bank_id, unit_ids, request_context)
+    if not by_unit:
+        return
+    for item in items:
+        records = by_unit.get(str(item.get("id"))) if isinstance(item, dict) else None
+        if records:
+            item["attachments"] = [_attachment_payload(bank_id, record) for record in records]
+
+
+def canonicalize_item_content(
+    content: str | list[ContentBlock],
+    *,
+    item_index: int,
+    config: HindsightConfig,
+    allowed_attachment_ids: "set[str] | None" = None,
+) -> CanonicalContent:
+    """Flatten a retain item's content to the canonical text the pipeline stores.
+
+    A plain string passes through untouched, so nothing about the text-only path
+    changes. A block list becomes one body with an atomic placeholder standing in
+    for each attachment, plus the decoded attachments themselves — which the
+    caller persists content-addressed before the retain is submitted.
+
+    Raises ``HTTPException(400)`` for anything wrong with the caller's
+    attachments: these are request errors, and the caller needs to know which item
+    and which block to fix. What the *model* can read is deliberately not checked
+    here — any well-formed media type is accepted and the provider's rejection is
+    what fails the retain.
+    """
+    if isinstance(content, str):
+        # Scrubbed exactly like a text block. Only the canonicalizer may mint a
+        # placeholder: without this, a caller could hand-write the token in plain
+        # string content and have extraction resolve it to an attachment the
+        # document never carried — anything already retained in the same bank.
+        return CanonicalContent(text=neutralize_placeholders(content, allowed_attachment_ids), attachments=())
+
+    blocks: list[CanonicalBlock] = []
+    attachment_count = 0
+    for block_index, block in enumerate(content):
+        if isinstance(block, TextContentBlock):
+            blocks.append(RetainText(block.text))
+            continue
+
+        attachment_count += 1
+        if attachment_count > config.retain_attachment_max_count:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"items[{item_index}] carries more than {config.retain_attachment_max_count} attachments. "
+                    f"Split the content across several items."
+                ),
+            )
+        try:
+            data = block.source.decode()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"items[{item_index}].content[{block_index}]: {e}") from e
+        if not data:
+            raise HTTPException(
+                status_code=400,
+                detail=f"items[{item_index}].content[{block_index}]: attachment source data is empty",
+            )
+        if len(data) > config.retain_attachment_max_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"items[{item_index}].content[{block_index}]: attachment is "
+                    f"{len(data) / (1024 * 1024):.1f}MB, exceeding the "
+                    f"{config.retain_attachment_max_size_mb}MB limit for a single attachment."
+                ),
+            )
+        blocks.append(
+            RetainAttachment(
+                attachment_hash=compute_attachment_hash(data),
+                media_type=block.source.media_type,
+                data=data,
+                block_index=block_index,
+                kind=block.type,
+                filename=getattr(block, "filename", None),
+            )
+        )
+
+    return canonicalize(blocks, allowed_attachment_ids)
+
+
 class MemoryItem(BaseModel):
     """Single memory item for retain."""
 
@@ -658,7 +962,18 @@ class MemoryItem(BaseModel):
         },
     )
 
-    content: str
+    content: str | list[ContentBlock] = Field(
+        description=(
+            "The raw content to retain. Either a plain string, or an ordered list of "
+            "content blocks so images sit inline where they actually appear:\n\n"
+            '  [{"type": "text", "text": "click the button shown:"},\n'
+            '   {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},\n'
+            '   {"type": "text", "text": "...then reconnect."}]\n\n'
+            "The block form requires a vision-capable retain LLM; a retain carrying images "
+            "against a text-only model is rejected rather than silently dropping them. "
+            "A single text block is equivalent to the plain string form."
+        )
+    )
     timestamp: datetime | str | None = Field(
         default=None,
         description=(
@@ -697,8 +1012,19 @@ class MemoryItem(BaseModel):
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v: str) -> str:
-        if not v.strip():
+    def validate_content(cls, v: str | list[ContentBlock]) -> str | list[ContentBlock]:
+        if isinstance(v, str):
+            if not v.strip():
+                raise ValueError("content cannot be empty")
+            return v
+
+        if not v:
+            raise ValueError("content cannot be empty")
+        # An all-text block list must clear the same bar as the string form. A list
+        # carrying an attachment is never empty, whatever its text blocks say.
+        if not any(isinstance(block, (ImageContentBlock, FileContentBlock)) for block in v) and not any(
+            block.text.strip() for block in v if isinstance(block, TextContentBlock)
+        ):
             raise ValueError("content cannot be empty")
         return v
 
@@ -1026,7 +1352,8 @@ class ReflectRequest(BaseModel):
         default=None,
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
         "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. "
-        "Mutually exclusive with tags.",
+        "Mutually exclusive with tags. "
+        "A leaf may set resolve='fuzzy' to match its tags against the bank's tags by trigram similarity instead of literally, so a query that says 'typsecript' still reaches memories tagged 'typescript'.",
     )
     apply_all_directives: bool = Field(
         default=False,
@@ -1414,6 +1741,14 @@ class CreateBankRequest(BaseModel):
             "Defaults to retain_chunk_size when unset."
         ),
     )
+    retain_max_attachments_per_chunk: int | None = Field(
+        default=None,
+        description=(
+            "Maximum inline attachments one extraction chunk may carry. retain_chunk_size budgets "
+            "text only — a placeholder costs the characters it occupies and nothing more — so this "
+            "is what bounds attachments. Match it to the provider's per-request limit."
+        ),
+    )
     enable_observations: bool | None = Field(
         default=None,
         description="Toggle automatic observation consolidation after retain().",
@@ -1482,6 +1817,7 @@ class CreateBankRequest(BaseModel):
             "retain_custom_instructions",
             "retain_chunk_size",
             "retain_structured_chunk_size",
+            "retain_max_attachments_per_chunk",
             "enable_observations",
             "observations_mission",
             "enable_text_search",
@@ -1593,12 +1929,18 @@ class ObservationScopesResponse(BaseModel):
                     {"tags": ["user:alice"], "count": 12},
                     {"tags": ["user:alice", "project:apollo"], "count": 4},
                     {"tags": [], "count": 2},
-                ]
+                ],
+                "total": 3,
+                "limit": 100,
+                "offset": 0,
             }
         }
     )
 
     scopes: list[ObservationScope] = Field(description="Distinct observation scopes, most populous first")
+    total: int = Field(description="Total number of distinct scopes in the bank (ignores limit/offset)")
+    limit: int = Field(description="Maximum number of scopes returned in this page")
+    offset: int = Field(description="Offset this page started at")
 
 
 class ListMemoryUnitsResponse(BaseModel):
@@ -1777,6 +2119,13 @@ class DocumentResponse(BaseModel):
         "'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set "
         "(default 'combined' scoping) or for documents retained before this was captured.",
     )
+    attachments: list[ChunkAttachment] | None = Field(
+        default=None,
+        description=(
+            "Attachments referenced by this document, when it was retained with inline content. "
+            "Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
+        ),
+    )
 
 
 class UpdateDocumentRequest(BaseModel):
@@ -1935,6 +2284,13 @@ class ChunkResponse(BaseModel):
     chunk_index: int
     chunk_text: str
     created_at: str
+    attachments: list[ChunkAttachment] | None = Field(
+        default=None,
+        description=(
+            "Attachments referenced by this chunk's text, when it was retained with inline content. "
+            "Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
+        ),
+    )
 
 
 class ListChunksResponse(BaseModel):
@@ -2326,6 +2682,22 @@ class MentalModelTrigger(BaseModel):
     def validate_fact_types(cls, v: list[str] | None) -> list[str] | None:
         if v is not None and len(v) == 0:
             raise ValueError("fact_types must not be empty. Use null to include all fact types.")
+        return v
+
+    @field_validator("tag_groups")
+    @classmethod
+    def validate_tag_groups_are_exact(cls, v: "list[TagGroup] | None") -> "list[TagGroup] | None":
+        # A trigger's scope is read by two paths that resolve differently: the refresh runs
+        # through reflect, which resolves fuzzy leaves, while the staleness check and the
+        # scope watermark build SQL straight from the stored groups and do not. A stored
+        # fuzzy leaf would therefore build content from the resolved tags while never being
+        # marked stale by them, and would drift as the bank's tag vocabulary changes.
+        # Resolution is a request-time step; stored scopes stay exact.
+        if v is not None and needs_resolution(v):
+            raise ValueError(
+                "resolve='fuzzy' is not supported in a trigger's tag_groups. A stored scope must "
+                "be exact; use it on a recall or reflect request instead."
+            )
         return v
 
     @field_validator("response_schema")
@@ -2764,6 +3136,9 @@ class BankTemplateConfig(BaseModel):
     )
     retain_chunk_batch_size: int | None = Field(
         default=None, description="Max chunks per streaming batch (0 disables batching)"
+    )
+    retain_max_attachments_per_chunk: int | None = Field(
+        default=None, description="Hard cap on inline images in a single extraction chunk"
     )
     mcp_enabled_tools: list[str] | None = Field(
         default=None, description="MCP tool allowlist for this bank (None = all tools)"
@@ -3720,6 +4095,9 @@ class WebhookListResponse(BaseModel):
     """Response model for listing webhooks."""
 
     items: list[WebhookResponse]
+    total: int = Field(description="Total number of webhooks on the bank (ignores limit/offset)")
+    limit: int = Field(description="Maximum number of webhooks returned in this page")
+    offset: int = Field(description="Offset this page started at")
 
 
 class WebhookDeliveryResponse(BaseModel):
@@ -3861,6 +4239,7 @@ def create_app(
     memory: MemoryEngine,
     initialize_memory: bool = True,
     http_extension: HttpExtension | None = None,
+    run_background_tasks: bool = True,
 ) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -3871,6 +4250,10 @@ def create_app(
         initialize_memory: Whether to initialize memory system on startup (default: True)
         http_extension: Optional HTTP extension to mount custom endpoints under /extension/.
                        If None, attempts to load from HINDSIGHT_API_HTTP_EXTENSION env var.
+        run_background_tasks: Whether this app starts the worker poller (default: True).
+                       Set False for the extra event loops of the multi-loop launcher: the
+                       worker id identifies the *process*, so a second poller under the same
+                       id would claim the same tasks rather than add capacity.
 
     Returns:
         Configured FastAPI application
@@ -3943,7 +4326,7 @@ def create_app(
 
         # Start worker poller if the backend supports it.
         # All current backends (PostgreSQL, Oracle) support async worker/poller.
-        if config.worker_enabled and memory._backend.supports_worker_poller:
+        if run_background_tasks and config.worker_enabled and memory._backend.supports_worker_poller:
             from ..config import DEFAULT_DATABASE_SCHEMA
             from ..utils import warn_if_container_default_worker_id
 
@@ -3967,7 +4350,7 @@ def create_app(
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
-        elif config.worker_enabled and not memory._backend.supports_worker_poller:
+        elif run_background_tasks and config.worker_enabled and not memory._backend.supports_worker_poller:
             logging.warning(
                 "Worker poller disabled — backend does not support async operations. "
                 "Tasks (mental model refresh, consolidation) will run synchronously."
@@ -4549,11 +4932,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/graph: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/graph")
 
     @app.get(
         "/v1/default/banks/{bank_id}/memories/list",
@@ -4615,6 +4994,7 @@ def _register_routes(app: FastAPI):
                 offset=offset,
                 request_context=request_context,
             )
+            await _attach_to_memories(app.state.memory, bank_id, data.get("items") or [], request_context)
             return data
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -4623,11 +5003,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/list: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/list")
 
     async def _require_dry_run_enabled() -> None:
         """Feature-flag gate for dry-run extraction.
@@ -4696,11 +5072,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/dry-run-extract: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/dry-run-extract")
 
     @app.get(
         "/v1/default/banks/{bank_id}/memories/{memory_id}",
@@ -4723,6 +5095,7 @@ def _register_routes(app: FastAPI):
             )
             if data is None:
                 raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            await _attach_to_memories(app.state.memory, bank_id, [data], request_context)
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -4731,11 +5104,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/{memory_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/memories/{memory_id}",
@@ -4782,6 +5151,7 @@ def _register_routes(app: FastAPI):
             )
             if data is None:
                 raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            await _attach_to_memories(app.state.memory, bank_id, [data], request_context)
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -4790,11 +5160,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/memories/{memory_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/memories/{memory_id}/history",
@@ -4825,11 +5191,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}/history: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories/{memory_id}/history")
 
     @app.post(
         "/v1/default/banks/{bank_id}/memories/recall",
@@ -4860,7 +5222,7 @@ def _register_routes(app: FastAPI):
 
         # Validate query length to prevent expensive operations on oversized queries
         max_query_tokens = get_config().recall_max_query_tokens
-        query_tokens = get_token_encoding().count(request.query)
+        query_tokens = count_tokens(request.query)
         if query_tokens > max_query_tokens:
             raise HTTPException(
                 status_code=400,
@@ -4960,6 +5322,16 @@ def _register_routes(app: FastAPI):
             # Convert chunks from engine to HTTP API format
             chunks_response = None
             if core_result.chunks:
+                # A chunk's images are named by the placeholders in its own text,
+                # so one lookup for the whole response resolves them all — no
+                # per-chunk query, and no second copy of the document→image edge.
+                referenced = [
+                    attachment_id
+                    for chunk_info in core_result.chunks.values()
+                    for attachment_id in iter_placeholder_ids(chunk_info.chunk_text or "")
+                ]
+                attachment_records = await app.state.memory.resolve_attachments(bank_id, referenced, request_context)
+
                 chunks_response = {}
                 for chunk_id, chunk_info in core_result.chunks.items():
                     chunks_response[chunk_id] = ChunkData(
@@ -4967,6 +5339,7 @@ def _register_routes(app: FastAPI):
                         text=chunk_info.chunk_text,
                         chunk_index=chunk_info.chunk_index,
                         truncated=chunk_info.truncated,
+                        attachments=chunk_attachments_of(bank_id, chunk_info.chunk_text or "", attachment_records),
                     )
 
             # Convert core EntityState objects to API EntityStateResponse objects
@@ -5197,11 +5570,7 @@ def _register_routes(app: FastAPI):
                 detail=str(e) or "Reflect operation timed out. Consider reducing the budget or simplifying the query.",
             )
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/reflect: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/reflect")
 
     @app.get(
         "/v1/default/banks",
@@ -5229,11 +5598,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, "/v1/default/banks")
 
     @app.get(
         "/v1/default/banks/{bank_id}/stats",
@@ -5290,11 +5655,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/stats: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/stats")
 
     @app.post(
         "/v1/default/banks/{bank_id}/health/llm",
@@ -5329,11 +5690,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/health/llm: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/health/llm")
 
     @app.get(
         "/v1/default/banks/{bank_id}/stats/memories-timeseries",
@@ -5367,11 +5724,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/stats/memories-timeseries: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/stats/memories-timeseries")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities",
@@ -5403,11 +5756,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/entities: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities/graph",
@@ -5433,11 +5782,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/entities/graph: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities/graph")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities/{entity_id}",
@@ -5476,11 +5821,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/entities/{entity_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities/{entity_id}")
 
     @app.post(
         "/v1/default/banks/{bank_id}/entities/{entity_id}/regenerate",
@@ -5550,11 +5891,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/mental-models")
 
     @app.get(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
@@ -5592,11 +5929,7 @@ def _register_routes(app: FastAPI):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history",
@@ -5627,13 +5960,7 @@ def _register_routes(app: FastAPI):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history")
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models",
@@ -5680,11 +6007,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/mental-models: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/mental-models")
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh",
@@ -5718,13 +6041,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh")
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh",
@@ -5772,14 +6089,9 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/"
-                f"dry-run-refresh: {error_detail}"
+            raise _internal_error(
+                e, f"POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh"
             )
-            raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear",
@@ -5815,13 +6127,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
@@ -5864,11 +6170,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
@@ -5900,11 +6202,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
 
     # =========================================================================
     # KNOWLEDGE BASE ENDPOINTS (folders + pages, markdown)
@@ -5937,11 +6235,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/tree: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/tree")
 
     @app.post(
         "/v1/default/banks/{bank_id}/knowledge-base/folders",
@@ -5973,11 +6267,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/knowledge-base/folders: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/knowledge-base/folders")
 
     @app.post(
         "/v1/default/banks/{bank_id}/knowledge-base/pages",
@@ -6030,11 +6320,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/knowledge-base/pages: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/knowledge-base/pages")
 
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/export",
@@ -6076,11 +6362,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/export: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/export")
 
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/search",
@@ -6113,11 +6395,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/search: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/search")
 
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}",
@@ -6145,11 +6423,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
@@ -6218,11 +6492,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
@@ -6249,11 +6519,7 @@ def _register_routes(app: FastAPI):
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}")
 
     # =========================================================================
     # DIRECTIVES ENDPOINTS
@@ -6305,11 +6571,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/directives: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/directives")
 
     @app.get(
         "/v1/default/banks/{bank_id}/directives/{directive_id}",
@@ -6339,11 +6601,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/directives/{directive_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/directives/{directive_id}")
 
     @app.post(
         "/v1/default/banks/{bank_id}/directives",
@@ -6378,11 +6636,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/directives: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/directives")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/directives/{directive_id}",
@@ -6419,11 +6673,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/directives/{directive_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/directives/{directive_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/directives/{directive_id}",
@@ -6453,11 +6703,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/directives/{directive_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/directives/{directive_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/documents",
@@ -6507,11 +6753,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents")
 
     @app.get(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}/chunks",
@@ -6547,17 +6789,21 @@ def _register_routes(app: FastAPI):
             )
             if result is None:
                 raise HTTPException(status_code=404, detail="Document not found")
+            items = result.get("items") or []
+            by_chunk = await app.state.memory.attachments_for_chunks(
+                bank_id, [c["chunk_id"] for c in items if c.get("chunk_id")], request_context
+            )
+            for chunk in items:
+                records = by_chunk.get(chunk.get("chunk_id"))
+                if records:
+                    chunk["attachments"] = [_attachment_payload(bank_id, record) for record in records]
             return result
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}/chunks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/chunks")
 
     @app.post(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}/reprocess",
@@ -6600,11 +6846,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}/reprocess: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/reprocess")
 
     @app.get(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}",
@@ -6628,17 +6870,16 @@ def _register_routes(app: FastAPI):
             document = await app.state.memory.get_document(document_id, bank_id, request_context=request_context)
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
+            by_document = await app.state.memory.attachments_for_documents(bank_id, [document_id], request_context)
+            if by_document.get(document_id):
+                document["attachments"] = [_attachment_payload(bank_id, record) for record in by_document[document_id]]
             return document
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/tags",
@@ -6704,11 +6945,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/tags: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/tags")
 
     @app.get(
         "/v1/default/chunks/{chunk_id:path}",
@@ -6729,17 +6966,20 @@ def _register_routes(app: FastAPI):
             chunk = await app.state.memory.get_chunk(chunk_id, request_context=request_context)
             if not chunk:
                 raise HTTPException(status_code=404, detail="Chunk not found")
+            # This route is not bank-scoped in its path; the chunk carries the bank
+            # it belongs to, and attachments_for_chunks authorizes against it.
+            chunk_bank = chunk.get("bank_id")
+            if chunk_bank:
+                by_chunk = await app.state.memory.attachments_for_chunks(chunk_bank, [chunk_id], request_context)
+                if by_chunk.get(chunk_id):
+                    chunk["attachments"] = [_attachment_payload(chunk_bank, record) for record in by_chunk[chunk_id]]
             return chunk
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/chunks/{chunk_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/chunks/{chunk_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}",
@@ -6785,11 +7025,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/documents/{document_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}",
@@ -6832,11 +7068,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/operations",
@@ -6883,11 +7115,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/operations: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/operations")
 
     @app.get(
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
@@ -6925,17 +7153,19 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/operations/{operation_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/operations/{operation_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
         response_model=CancelOperationResponse,
-        summary="Cancel a pending async operation",
-        description="Cancel a pending async operation by removing it from the queue",
+        summary="Cancel a pending or in-flight async operation",
+        description=(
+            "Cancel a queued or running async operation. A 'pending' operation is never started. "
+            "A 'processing' one is cancelled cooperatively: the row is marked 'cancelled' immediately "
+            "and the worker running it stops at its next checkpoint, so work already in flight may "
+            "finish the batch it is on. This also clears operations stranded in 'processing' by a "
+            "crashed worker. Returns 409 for operations that already reached a terminal state."
+        ),
         operation_id="cancel_operation",
         tags=["Operations"],
     )
@@ -6943,7 +7173,7 @@ def _register_routes(app: FastAPI):
     async def api_cancel_operation(
         bank_id: str, operation_id: str, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Cancel a pending async operation."""
+        """Cancel a pending or in-flight async operation."""
         try:
             # Validate UUID format
             try:
@@ -6960,11 +7190,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/operations/{operation_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/operations/{operation_id}")
 
     @app.post(
         "/v1/default/banks/{bank_id}/operations/{operation_id}/retry",
@@ -6994,11 +7220,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/operations/{operation_id}/retry: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/operations/{operation_id}/retry")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/operations/{operation_id}/delete",
@@ -7028,65 +7250,44 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete")
 
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+    # The bank "profile" (disposition traits + mission) is no longer a surface of
+    # its own: both live in the bank configuration, which
+    # ``_get_bank_profile_authenticated`` already treated as the source of truth by
+    # overlaying it on top of the legacy DB columns. The three endpoints below are
+    # retired — they stay in the spec (so generated SDK methods are not deleted out
+    # from under callers) but always answer 410 with the config call to use instead.
+    # Their request bodies and `request_context` are declared but unused on purpose:
+    # dropping the body would change the generated signatures, which is the breakage
+    # this shape exists to avoid, and keeping the dependency means an unauthenticated
+    # caller still gets 401 rather than learning the route is gone.
+    _PROFILE_RETIRED_DETAIL = (
+        "The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank "
+        "configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, "
+        "`disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with "
+        "PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a "
+        "display-only label; read it from GET /v1/default/banks."
+    )
 
     @app.get(
         "/v1/default/banks/{bank_id}/profile",
         response_model=BankProfileResponse,
-        summary="Get memory bank profile",
-        description="Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.",
+        summary="Get memory bank profile (removed — use GET .../config)",
+        description=f"**Removed.** {_PROFILE_RETIRED_DETAIL}",
         operation_id="get_bank_profile",
         tags=["Banks"],
         deprecated=True,
     )
     async def api_get_bank_profile(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
-        """Get memory bank profile (disposition + mission)."""
-        try:
-            # Read endpoints must not have create-as-side-effect: a client
-            # holding onto a stale bank_id (e.g., a UI polling after the user
-            # changed context) would otherwise silently re-create the bank in
-            # an unrelated tenant. Surface a missing bank as 404.
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
-            if profile is None:
-                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-            # Convert DispositionTraits object to dict for Pydantic
-            disposition_dict = (
-                profile["disposition"].model_dump()
-                if hasattr(profile["disposition"], "model_dump")
-                else dict(profile["disposition"])
-            )
-            mission = profile.get("mission") or ""
-            return BankProfileResponse(
-                bank_id=bank_id,
-                name=profile["name"],
-                disposition=DispositionTraits(**disposition_dict),
-                mission=mission,
-                background=mission,  # Backwards compat
-            )
-        except OperationValidationError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except (AuthenticationError, HTTPException):
-            raise
-        except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/profile: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+        """Removed bank-profile read — always 410, pointing at the bank config API."""
+        raise HTTPException(status_code=410, detail=_PROFILE_RETIRED_DETAIL)
 
     @app.put(
         "/v1/default/banks/{bank_id}/profile",
         response_model=BankProfileResponse,
-        summary="Update memory bank disposition",
-        description="Update bank's disposition traits (skepticism, literalism, empathy)",
+        summary="Update memory bank disposition (removed — use PATCH .../config)",
+        description=f"**Removed.** {_PROFILE_RETIRED_DETAIL}",
         operation_id="update_bank_disposition",
         tags=["Banks"],
         deprecated=True,
@@ -7094,44 +7295,19 @@ def _register_routes(app: FastAPI):
     async def api_update_bank_disposition(
         bank_id: str, request: UpdateDispositionRequest, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Update bank disposition traits."""
-        try:
-            # Update disposition
-            await app.state.memory.update_bank_disposition(
-                bank_id, request.disposition.model_dump(), request_context=request_context
-            )
-
-            # Get updated profile
-            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
-            disposition_dict = (
-                profile["disposition"].model_dump()
-                if hasattr(profile["disposition"], "model_dump")
-                else dict(profile["disposition"])
-            )
-            mission = profile.get("mission") or ""
-            return BankProfileResponse(
-                bank_id=bank_id,
-                name=profile["name"],
-                disposition=DispositionTraits(**disposition_dict),
-                mission=mission,
-                background=mission,  # Backwards compat
-            )
-        except OperationValidationError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except (AuthenticationError, HTTPException):
-            raise
-        except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/profile: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+        """Removed disposition write — always 410, pointing at the bank config API."""
+        raise HTTPException(status_code=410, detail=_PROFILE_RETIRED_DETAIL)
 
     @app.post(
         "/v1/default/banks/{bank_id}/background",
         response_model=BackgroundResponse,
-        summary="Add/merge memory bank background (deprecated)",
-        description="Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.",
+        summary="Add/merge memory bank background (removed — use PATCH .../config)",
+        description=(
+            "**Removed.** The bank background was folded into the reflect mission. Write it with "
+            "PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That call replaces the value "
+            "rather than merging into it, so read the current mission from GET .../config first if you "
+            "relied on this endpoint's append behaviour."
+        ),
         operation_id="add_bank_background",
         tags=["Banks"],
         deprecated=True,
@@ -7139,23 +7315,16 @@ def _register_routes(app: FastAPI):
     async def api_add_bank_background(
         bank_id: str, request: AddBackgroundRequest, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Deprecated: Add or merge bank background. Now updates mission field."""
-        try:
-            result = await app.state.memory.merge_bank_mission(
-                bank_id, request.content, request_context=request_context
-            )
-            mission = result.get("mission") or ""
-            return BackgroundResponse(mission=mission, background=mission)
-        except OperationValidationError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except (AuthenticationError, HTTPException):
-            raise
-        except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/background: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+        """Removed background merge — always 410, pointing at the bank config API."""
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "The bank background endpoint has been removed. The background was folded into the reflect "
+                "mission: write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That "
+                "call replaces the value rather than merging into it, so read the current mission from "
+                "GET /v1/default/banks/{bank_id}/config first if you relied on this endpoint's append behaviour."
+            ),
+        )
 
     @app.put(
         "/v1/default/banks/{bank_id}",
@@ -7200,11 +7369,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}",
@@ -7250,11 +7415,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}")
 
     @app.delete(
         "/v1/default/banks/{bank_id}",
@@ -7282,11 +7443,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}")
 
     # =====================================================================
     # Bank Template Import / Export
@@ -7360,11 +7517,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/import: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/import")
 
     @app.get(
         "/v1/default/banks/{bank_id}/export",
@@ -7452,11 +7605,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/export: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/export")
 
     # =====================================================================
     # Document Transfer (Export / Import between banks — no LLM re-extraction)
@@ -7552,12 +7701,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/document-transfer/export: {traceback.format_exc()}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/document-transfer/export")
 
     @app.post(
         "/v1/default/banks/{bank_id}/document-transfer",
@@ -7605,10 +7749,58 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/document-transfer")
 
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+    @app.get(
+        "/v1/default/banks/{bank_id}/attachments/{attachment_id}",
+        summary="Fetch an attachment retained inline with a document",
+        description="Serve the bytes of an attachment retained as inline content. The id is the one "
+        "inside a placeholder token, and is returned on `attachments[].url` by recall and by the "
+        "document/chunk/memory reads — so an agent can show or reason over the original behind an "
+        "attachment-derived fact.\n\n"
+        "Bytes are served with the Content-Type the caller declared at retain. Access is authorized "
+        "against the bank; a missing attachment and an invisible bank both return 404, so the endpoint "
+        "cannot be used to probe what a bank holds.",
+        operation_id="get_bank_attachment",
+        tags=["Memory"],
+        responses={200: {"content": {"application/octet-stream": {}}, "description": "Attachment bytes"}},
+    )
+    async def api_get_bank_attachment(
+        bank_id: str,
+        attachment_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Serve one of a bank's retained inline attachments."""
+        from fastapi.responses import Response
+
+        try:
+            attachment = await app.state.memory.retrieve_bank_attachment(bank_id, attachment_id, request_context)
+            if attachment is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+            return Response(
+                content=attachment.data,
+                media_type=attachment.media_type,
+                headers={
+                    # Content-addressed: the bytes at this URL can never change, so
+                    # it is safe to cache indefinitely. Private, because the URL is
+                    # only meaningful with the bank's credentials.
+                    "Cache-Control": "private, max-age=31536000, immutable",
+                    # Serve exactly what the caller declared, and nothing else: the
+                    # accepted-type list is deliberately open, so a browser must not
+                    # be free to sniff a stored file into some *other* type. Note
+                    # the bytes are still served inline under their own declared
+                    # type — a bank writer who stores active content (SVG, HTML) can
+                    # have it execute in this origin, which is accepted here because
+                    # bank writers are trusted.
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/attachments/{attachment_id}")
 
     @app.get(
         "/v1/default/files/download/{key:path}",
@@ -7659,10 +7851,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error in GET /v1/default/files/download/{key}: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/files/download/{key}")
 
     @app.get(
         "/v1/bank-template-schema",
@@ -7699,11 +7888,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/observations: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/observations")
 
     @app.get(
         "/v1/default/banks/{bank_id}/observations/scopes",
@@ -7714,25 +7899,29 @@ def _register_routes(app: FastAPI):
             "under a scope: the exact set of tags it was consolidated with. Returns every distinct "
             "scope (tag order normalized) with the number of observations in it; the empty tag list "
             "is the global/untagged scope. Use a returned scope with the graph endpoint "
-            "(tags=<scope> & tags_match=exact) to filter observations to exactly that scope."
+            "(tags=<scope> & tags_match=exact) to filter observations to exactly that scope. "
+            "Paged: `total` reports every distinct scope in the bank."
         ),
         operation_id="list_observation_scopes",
         tags=["Memory"],
     )
-    async def api_list_observation_scopes(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+    async def api_list_observation_scopes(
+        bank_id: str,
+        limit: int = Query(default=100, ge=0, le=1000, description="Maximum number of scopes to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """List the distinct observation scopes (exact tag sets) for a bank."""
         try:
-            return await app.state.memory.list_observation_scopes(bank_id, request_context=request_context)
+            return await app.state.memory.list_observation_scopes(
+                bank_id, limit=limit, offset=offset, request_context=request_context
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/observations/scopes: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/observations/scopes")
 
     @app.post(
         "/v1/default/banks/{bank_id}/consolidation/recover",
@@ -7757,11 +7946,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/consolidation/recover: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/consolidation/recover")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/memories/{memory_id}/observations",
@@ -7792,30 +7977,26 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(
-                f"Error in DELETE /v1/default/banks/{bank_id}/memories/{memory_id}/observations: {error_detail}"
-            )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/memories/{memory_id}/observations")
 
     @app.get(
         "/v1/default/banks/{bank_id}/config",
         response_model=BankConfigResponse,
         summary="Get bank configuration",
         description="Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). "
-        "The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.",
+        "The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. "
+        "Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.",
         operation_id="get_bank_config",
         tags=["Banks"],
     )
     async def api_get_bank_config(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
-        """Get configuration for a bank with all hierarchical overrides applied."""
-        if not get_config().enable_bank_config_api:
-            raise HTTPException(
-                status_code=404,
-                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
-            )
+        """Get configuration for a bank with all hierarchical overrides applied.
+
+        Deliberately not gated on ``enable_bank_config_api``: that flag exists to stop
+        clients *changing* per-bank configuration, and a bank must always be able to
+        read its own resolved settings — it is the only surface exposing disposition
+        traits and the reflect mission since the profile endpoints were retired.
+        """
         try:
             state = await app.state.memory.get_bank_config(bank_id, request_context=request_context)
             return BankConfigResponse(bank_id=bank_id, config=state.config, overrides=state.overrides)
@@ -7824,11 +8005,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/config: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/config")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/config",
@@ -7865,11 +8042,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/config: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/config")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/config",
@@ -7896,11 +8069,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/config: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/config")
 
     @app.post(
         "/v1/default/banks/{bank_id}/consolidate",
@@ -7933,11 +8102,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/consolidate: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/consolidate")
 
     # =========================================================================
     # Webhook Endpoints
@@ -8027,28 +8192,29 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/webhooks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/webhooks")
 
     @app.get(
         "/v1/default/banks/{bank_id}/webhooks",
         response_model=WebhookListResponse,
         summary="List webhooks",
-        description="List all webhooks registered for a bank.",
+        description="List the webhooks registered for a bank, oldest first. "
+        "Paged: `total` reports every webhook on the bank.",
         operation_id="list_webhooks",
         tags=["Webhooks"],
     )
     async def api_list_webhooks(
         bank_id: str,
+        limit: int = Query(default=100, ge=0, le=1000, description="Maximum number of webhooks to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """List webhooks for a bank."""
         try:
-            rows = await app.state.memory.list_webhooks(
+            data = await app.state.memory.list_webhooks(
                 bank_id,
+                limit=limit,
+                offset=offset,
                 request_context=request_context,
             )
 
@@ -8077,17 +8243,18 @@ def _register_routes(app: FastAPI):
                     else str(row["updated_at"]),
                 )
 
-            return WebhookListResponse(items=[_parse_webhook_row(row) for row in rows])
+            return WebhookListResponse(
+                items=[_parse_webhook_row(row) for row in data["items"]],
+                total=data["total"],
+                limit=data["limit"],
+                offset=data["offset"],
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/webhooks: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/webhooks")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
@@ -8118,11 +8285,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/webhooks/{webhook_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"DELETE /v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @app.patch(
         "/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
@@ -8205,11 +8368,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/webhooks/{webhook_id}: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"PATCH /v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries",
@@ -8255,11 +8414,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
 
     @app.post(
         "/v1/default/banks/{bank_id}/memories",
@@ -8297,13 +8452,61 @@ def _register_routes(app: FastAPI):
         metrics = get_metrics_collector()
 
         try:
+            # Flatten any multimodal item to canonical placeholder text, and commit
+            # its images to content-addressed storage, BEFORE anything is submitted.
+            # Downstream — sync or async, the operations payload, every retry — then
+            # carries text only; raw screenshot bytes never enter the pipeline.
+            config = get_config()
+            # A document may re-reference its own attachments. Editing an article's
+            # wording in the control plane re-sends `original_text` as a plain
+            # string, placeholders and all; without this that edit would scrub them
+            # and silently delete every screenshot in the article. Only paid for
+            # when the caller actually wrote something placeholder-shaped.
+            allowed_by_document: dict[str, set[str]] = {}
+            revisited = {
+                item.document_id
+                for item in request.items
+                if item.document_id and isinstance(item.content, str) and contains_placeholder_like(item.content)
+            }
+            if revisited:
+                existing = await app.state.memory.attachments_for_documents(bank_id, sorted(revisited), request_context)
+                allowed_by_document = {
+                    document_id: {record.short_id for record in records} for document_id, records in existing.items()
+                }
+
+            canonical_contents = [
+                canonicalize_item_content(
+                    item.content,
+                    item_index=index,
+                    config=config,
+                    allowed_attachment_ids=allowed_by_document.get(item.document_id or ""),
+                )
+                for index, item in enumerate(request.items)
+            ]
+            retained_attachments = [
+                attachment for canonical in canonical_contents for attachment in canonical.attachments
+            ]
+            if retained_attachments:
+                await app.state.memory.store_retain_attachments(bank_id, retained_attachments, request_context)
+
             # Group items by strategy
             strategy_groups: dict[str | None, list[dict]] = {}
-            for item in request.items:
+            for item, canonical in zip(request.items, canonical_contents, strict=True):
                 effective = item.strategy
                 if effective not in strategy_groups:
                     strategy_groups[effective] = []
-                content_dict: dict = {"content": item.content}
+                content_dict: dict = {"content": canonical.text}
+                # The names this item gave its attachments, recorded against the
+                # document rather than the blob — the same bytes can be attached
+                # under a different name elsewhere, and the blob row is written
+                # once, for whichever document got there first.
+                item_filenames = {
+                    short_attachment_id(attachment.attachment_hash): attachment.filename
+                    for attachment in canonical.attachments
+                    if attachment.filename
+                }
+                if item_filenames:
+                    content_dict["attachment_filenames"] = item_filenames
                 if item.timestamp == "unset":
                     content_dict["event_date"] = None
                 elif item.timestamp:
@@ -8363,9 +8566,6 @@ def _register_routes(app: FastAPI):
                 )
             else:
                 # Check if batch API is enabled - if so, require async mode
-                from hindsight_api.config import get_config
-
-                config = get_config()
                 if config.retain_batch_enabled:
                     raise HTTPException(
                         status_code=400,
@@ -8418,6 +8618,10 @@ def _register_routes(app: FastAPI):
             # Caller reused an async retain operation_id that already belongs to
             # a different operation.
             raise HTTPException(status_code=409, detail=str(e))
+        except VisionNotSupportedError as e:
+            # The request is well-formed; the server's retain LLM cannot read the
+            # images it carries. 422 rather than 400 for that distinction.
+            raise HTTPException(status_code=422, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except ValueError as e:
@@ -8440,7 +8644,17 @@ def _register_routes(app: FastAPI):
             # Create a summary of the input for debugging
             input_summary = []
             for i, item in enumerate(request.items):
-                content_preview = item.content[:100] + "..." if len(item.content) > 100 else item.content
+                # Summarize the block form structurally: the raw content may be a
+                # list whose image blocks hold megabytes of base64, and this string
+                # goes into a log line and an error body.
+                if isinstance(item.content, str):
+                    raw_preview = item.content
+                else:
+                    raw_preview = " ".join(
+                        block.text if isinstance(block, TextContentBlock) else f"<{block.source.media_type}>"
+                        for block in item.content
+                    )
+                content_preview = raw_preview[:100] + "..." if len(raw_preview) > 100 else raw_preview
                 input_summary.append(
                     f"  [{i}] content={content_preview!r}, context={item.context}, timestamp={item.timestamp}"
                 )
@@ -8621,11 +8835,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/files/retain: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/files/retain")
 
     @app.delete(
         "/v1/default/banks/{bank_id}/memories",
@@ -8653,11 +8863,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories: {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memories")
 
     # ---- Audit Logs ----
     # Response models live in engine/audit.py so the MemoryEngine read methods
@@ -8706,10 +8912,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error listing audit logs: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/audit-logs")
 
     @app.get(
         "/v1/default/banks/{bank_id}/audit-logs/stats",
@@ -8741,10 +8944,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error getting audit log stats: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/audit-logs/stats")
 
     @app.get(
         "/v1/default/banks/{bank_id}/llm-requests",
@@ -8801,10 +9001,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error listing LLM requests: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/llm-requests")
 
     @app.get(
         "/v1/default/banks/{bank_id}/llm-requests/stats",
@@ -8836,7 +9033,4 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error getting LLM request stats: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/llm-requests/stats")

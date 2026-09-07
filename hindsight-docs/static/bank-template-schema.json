@@ -273,6 +273,19 @@
           "description": "Max chunks per streaming batch (0 disables batching)",
           "title": "Retain Chunk Batch Size"
         },
+        "retain_max_attachments_per_chunk": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard cap on inline images in a single extraction chunk",
+          "title": "Retain Max Attachments Per Chunk"
+        },
         "mcp_enabled_tools": {
           "anyOf": [
             {
@@ -747,6 +760,7 @@
             "value",
             "multi-values",
             "text",
+            "multi-text",
             "map"
           ],
           "title": "Type",
@@ -811,6 +825,7 @@
           "default": "text",
           "enum": [
             "text",
+            "multi-text",
             "value",
             "multi-values",
             "map"
@@ -1094,6 +1109,15 @@
             "exact"
           ],
           "title": "Match",
+          "type": "string"
+        },
+        "resolve": {
+          "default": "exact",
+          "enum": [
+            "exact",
+            "fuzzy"
+          ],
+          "title": "Resolve",
           "type": "string"
         }
       },

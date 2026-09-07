@@ -300,11 +300,13 @@ async def test_call_pins_configured_model(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     provider = _instantiate_provider()
-    result = await provider.call(
-        messages=[{"role": "user", "content": "hi"}],
-        max_retries=0,
-        scope="test",
-    )
+    result = (
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=0,
+            scope="test",
+        )
+    ).content
 
     assert result == "ok"
     assert captured["opts"].model == "claude-haiku-4-5"

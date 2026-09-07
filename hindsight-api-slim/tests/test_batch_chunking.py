@@ -174,7 +174,7 @@ def test_split_falls_back_to_one_chunk_per_slice_when_no_faithful_join_exists(mo
     body = "unjoinable body. " * 500
     chunks = ["chunk one", "chunk two", "chunk three"]
 
-    def _fake_iter_chunks(text, max_chars, structured_chunk_size=None):
+    def _fake_iter_chunks(text, max_chars, structured_chunk_size=None, **_image_budget):
         # Only the original body chunks into `chunks`; every rejoin attempt
         # comes back as something else, so verification always fails.
         return iter(list(chunks) if text == body else ["something else entirely"])

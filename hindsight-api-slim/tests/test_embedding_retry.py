@@ -14,16 +14,20 @@ contract of the retry wrapper:
 """
 
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
+from hindsight_api.engine.remote_retry import (
+    RetryPolicy,
+    is_transient_remote_error,
+    status_code_of,
+)
 from hindsight_api.engine.embeddings import (
-    EmbeddingRetryPolicy,
     LiteLLMEmbeddings,
     LiteLLMSDKEmbeddings,
-    _is_transient_embedding_error,
 )
 
 
@@ -53,7 +57,7 @@ def _response_for(texts):
     return response
 
 
-def _make_embeddings(policy: EmbeddingRetryPolicy, batch_size: int = 100) -> LiteLLMSDKEmbeddings:
+def _make_embeddings(policy: RetryPolicy, batch_size: int = 100) -> LiteLLMSDKEmbeddings:
     emb = LiteLLMSDKEmbeddings(
         api_key="test_key",
         model="openai/text-embedding-qwen3-8b",
@@ -68,7 +72,7 @@ def _make_embeddings(policy: EmbeddingRetryPolicy, batch_size: int = 100) -> Lit
 
 
 # Fast policy so the tests exercise the logic, not the sleeps.
-FAST_POLICY = EmbeddingRetryPolicy(max_retries=4, initial_backoff=0.01, max_backoff=0.04, budget_seconds=5.0)
+FAST_POLICY = RetryPolicy(max_retries=4, initial_backoff=0.01, max_backoff=0.04, budget_seconds=5.0)
 
 
 class TestTransientClassification:
@@ -76,29 +80,41 @@ class TestTransientClassification:
 
     @pytest.mark.parametrize("status", [500, 502, 503, 504, 408, 429])
     def test_transient_status_codes(self, status):
-        assert _is_transient_embedding_error(_StatusError(status)) is True
+        assert is_transient_remote_error(_StatusError(status)) is True
 
     @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
     def test_client_error_status_codes_are_not_transient(self, status):
-        assert _is_transient_embedding_error(_StatusError(status)) is False
+        assert is_transient_remote_error(_StatusError(status)) is False
 
     def test_transport_errors_are_transient(self):
         import httpx
 
-        assert _is_transient_embedding_error(httpx.ConnectError("connection refused")) is True
-        assert _is_transient_embedding_error(httpx.ReadTimeout("read timed out")) is True
-        assert _is_transient_embedding_error(TimeoutError("timed out")) is True
-        assert _is_transient_embedding_error(ConnectionError("reset by peer")) is True
+        assert is_transient_remote_error(httpx.ConnectError("connection refused")) is True
+        assert is_transient_remote_error(httpx.ReadTimeout("read timed out")) is True
+        assert is_transient_remote_error(TimeoutError("timed out")) is True
+        assert is_transient_remote_error(ConnectionError("reset by peer")) is True
 
     def test_named_sdk_errors_are_transient_without_status(self):
         class APITimeoutError(Exception):
             pass
 
-        assert _is_transient_embedding_error(APITimeoutError("no status attribute")) is True
+        assert is_transient_remote_error(APITimeoutError("no status attribute")) is True
 
     def test_unknown_errors_are_not_transient(self):
-        assert _is_transient_embedding_error(ValueError("bad input")) is False
-        assert _is_transient_embedding_error(Exception("API Error")) is False
+        assert is_transient_remote_error(ValueError("bad input")) is False
+        assert is_transient_remote_error(Exception("API Error")) is False
+
+    def test_google_genai_status_on_code_attribute(self):
+        """google.genai.errors.APIError carries the status on `code`, with `response` often None."""
+        assert is_transient_remote_error(SimpleNamespace(code=429, response=None)) is True
+        assert is_transient_remote_error(SimpleNamespace(code=503, response=None)) is True
+        assert is_transient_remote_error(SimpleNamespace(code=403, response=None)) is False
+
+    def test_non_status_code_attributes_are_ignored(self):
+        """`code` is a common attribute name; only plausible HTTP statuses may classify."""
+        assert status_code_of(SimpleNamespace(code="RESOURCE_EXHAUSTED")) is None
+        assert status_code_of(SimpleNamespace(code=1)) is None
+        assert status_code_of(SimpleNamespace(code=429)) == 429
 
 
 class TestEncodeRetries:
@@ -152,7 +168,7 @@ class TestEncodeRetries:
         assert emb._litellm.embedding.call_count == 1
 
     def test_retries_disabled_by_zero_max_retries(self):
-        emb = _make_embeddings(EmbeddingRetryPolicy(max_retries=0, budget_seconds=5.0))
+        emb = _make_embeddings(RetryPolicy(max_retries=0, budget_seconds=5.0))
         emb._litellm.embedding.side_effect = _InternalServerError()
 
         with pytest.raises(_InternalServerError):
@@ -167,7 +183,7 @@ class TestRetryBudget:
     def test_budget_cuts_retries_short_and_bounds_wall_clock(self):
         # Each failed attempt burns ~0.2s, so a 0.5s budget cannot fund the full
         # 5 attempts even though max_retries would allow them.
-        policy = EmbeddingRetryPolicy(max_retries=4, initial_backoff=0.05, max_backoff=0.2, budget_seconds=0.5)
+        policy = RetryPolicy(max_retries=4, initial_backoff=0.05, max_backoff=0.2, budget_seconds=0.5)
         emb = _make_embeddings(policy)
 
         def slow_failure(**kwargs):
@@ -189,7 +205,7 @@ class TestRetryBudget:
     def test_budget_is_shared_across_batches(self):
         # 6 texts at batch_size=2 -> 3 batches. A per-batch budget would let the
         # call spend 3x the configured ceiling.
-        policy = EmbeddingRetryPolicy(max_retries=4, initial_backoff=0.05, max_backoff=0.2, budget_seconds=0.4)
+        policy = RetryPolicy(max_retries=4, initial_backoff=0.05, max_backoff=0.2, budget_seconds=0.4)
         emb = _make_embeddings(policy, batch_size=2)
 
         def slow_failure(**kwargs):
@@ -209,7 +225,7 @@ class TestRetryBudget:
     def test_budget_not_consumed_by_successful_batches(self):
         # A long run of successful batches must not starve a later batch of its
         # retries — only failures and backoff sleeps count against the budget.
-        policy = EmbeddingRetryPolicy(max_retries=4, initial_backoff=0.01, max_backoff=0.04, budget_seconds=0.5)
+        policy = RetryPolicy(max_retries=4, initial_backoff=0.01, max_backoff=0.04, budget_seconds=0.5)
         emb = _make_embeddings(policy, batch_size=1)
         calls = {"n": 0}
 
@@ -306,7 +322,7 @@ class TestPolicyFromConfig:
         assert policy.budget_seconds == 7.5
 
     def test_defaults_are_bounded(self):
-        policy = EmbeddingRetryPolicy()
+        policy = RetryPolicy()
 
         assert 3 <= policy.max_retries + 1 <= 5
         assert policy.budget_seconds <= 15.0
@@ -322,7 +338,7 @@ class TestLiteLLMProxyEncodeRetries:
     through to the caller.
     """
 
-    def _make_proxy(self, policy: EmbeddingRetryPolicy, batch_size: int = 100) -> LiteLLMEmbeddings:
+    def _make_proxy(self, policy: RetryPolicy, batch_size: int = 100) -> LiteLLMEmbeddings:
         emb = LiteLLMEmbeddings(
             api_base="https://proxy.invalid",
             api_key="test_key",
@@ -371,3 +387,54 @@ class TestLiteLLMProxyEncodeRetries:
             emb.encode(["query"])
 
         assert emb._client.post.call_count == 1
+
+
+class TestEveryRemoteProviderRetries:
+    """A structural guard over the whole provider family.
+
+    Retry is implemented once per provider, so the provider that forgets is by
+    definition the one nobody wrote a test for: Gemini shipped without it (#4103),
+    and Cohere and ZeroEntropy had the same gap. This asserts over every
+    ``Embeddings`` subclass rather than over the ones we happened to remember, so a
+    new remote backend has to make a deliberate choice instead of silently
+    inheriting none.
+    """
+
+    # Providers that legitimately do not take an RetryPolicy, and why.
+    _EXEMPT = {
+        # In-process: no round trip to fail transiently.
+        "LocalSTEmbeddings": "in-process",
+        "OnnxEmbeddings": "in-process",
+        # Their own retry loop, including TEI's 429-as-backpressure handling.
+        "RemoteTEIEmbeddings": "own _request_with_retry (see tei_retry.py)",
+        # The OpenAI SDK retries internally; max_retries is passed to the client.
+        "OpenAIEmbeddings": "openai SDK max_retries",
+        "CodexOAuthEmbeddings": "openai SDK max_retries (subclass)",
+    }
+
+    def test_every_remote_backend_takes_a_retry_policy(self):
+        import inspect
+
+        from hindsight_api.engine import embeddings as embeddings_module
+        from hindsight_api.engine.embeddings import Embeddings
+
+        missing = []
+        for name, obj in vars(embeddings_module).items():
+            if not inspect.isclass(obj) or not issubclass(obj, Embeddings) or obj is Embeddings:
+                continue
+            if inspect.isabstract(obj) or name in self._EXEMPT:
+                continue
+            if "retry_policy" not in inspect.signature(obj.__init__).parameters:
+                missing.append(name)
+
+        assert not missing, (
+            f"{missing} take no retry_policy. Wire them through RetryPolicy "
+            f"(as the litellm/google/cohere/zeroentropy backends are), or add them to "
+            f"_EXEMPT with the reason they retry some other way."
+        )
+
+    def test_exemptions_still_name_real_classes(self):
+        """Keep the exemption list from silently outliving the classes it names."""
+        from hindsight_api.engine import embeddings as embeddings_module
+
+        assert not [name for name in self._EXEMPT if not hasattr(embeddings_module, name)]

@@ -224,11 +224,12 @@ async def reflect(
     system_message = get_system_message(disposition)
 
     # Call LLM
-    answer_text = await llm_config.call(
+    call_result = await llm_config.call(
         messages=[{"role": "system", "content": system_message}, {"role": "user", "content": prompt}],
         scope="memory_think",
         temperature=get_config().llm_temperature_reflect,
         max_completion_tokens=1000,
     )
+    answer_text = call_result.content
 
     return answer_text.strip()

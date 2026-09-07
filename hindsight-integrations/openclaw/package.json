@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-openclaw",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Hindsight memory plugin for OpenClaw - biomimetic long-term memory with fact extraction",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -38,6 +38,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
+    "prepack": "node scripts/pack-manifest.mjs strip",
+    "postpack": "node scripts/pack-manifest.mjs restore",
     "backfill:help": "node dist/backfill.js --help",
     "test": "vitest run src",
     "test:watch": "vitest src",

@@ -2771,7 +2771,12 @@ paths:
       - Operations
   /v1/default/banks/{bank_id}/operations/{operation_id}:
     delete:
-      description: Cancel a pending async operation by removing it from the queue
+      description: "Cancel a queued or running async operation. A 'pending' operation\
+        \ is never started. A 'processing' one is cancelled cooperatively: the row\
+        \ is marked 'cancelled' immediately and the worker running it stops at its\
+        \ next checkpoint, so work already in flight may finish the batch it is on.\
+        \ This also clears operations stranded in 'processing' by a crashed worker.\
+        \ Returns 409 for operations that already reached a terminal state."
       operationId: cancel_operation
       parameters:
       - explode: false
@@ -2811,7 +2816,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Cancel a pending async operation
+      summary: Cancel a pending or in-flight async operation
       tags:
       - Operations
     get:
@@ -2968,8 +2973,12 @@ paths:
   /v1/default/banks/{bank_id}/profile:
     get:
       deprecated: true
-      description: Get disposition traits and mission for a memory bank. Returns 404
-        if the bank does not exist.
+      description: "**Removed.** The bank profile endpoints have been removed. Disposition\
+        \ traits and the reflect mission are bank configuration: read them from GET\
+        \ /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`,\
+        \ `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config.\
+        \ The `name` field this endpoint also returned was a display-only label; read\
+        \ it from GET /v1/default/banks."
       operationId: get_bank_profile
       parameters:
       - explode: false
@@ -3001,12 +3010,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Get memory bank profile
+      summary: Get memory bank profile (removed — use GET .../config)
       tags:
       - Banks
     put:
       deprecated: true
-      description: "Update bank's disposition traits (skepticism, literalism, empathy)"
+      description: "**Removed.** The bank profile endpoints have been removed. Disposition\
+        \ traits and the reflect mission are bank configuration: read them from GET\
+        \ /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`,\
+        \ `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config.\
+        \ The `name` field this endpoint also returned was a display-only label; read\
+        \ it from GET /v1/default/banks."
       operationId: update_bank_disposition
       parameters:
       - explode: false
@@ -3044,14 +3058,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Update memory bank disposition
+      summary: Update memory bank disposition (removed — use PATCH .../config)
       tags:
       - Banks
   /v1/default/banks/{bank_id}/background:
     post:
       deprecated: true
-      description: "Deprecated: Use PUT /mission instead. This endpoint now updates\
-        \ the mission field."
+      description: "**Removed.** The bank background was folded into the reflect mission.\
+        \ Write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`.\
+        \ That call replaces the value rather than merging into it, so read the current\
+        \ mission from GET .../config first if you relied on this endpoint's append\
+        \ behaviour."
       operationId: add_bank_background
       parameters:
       - explode: false
@@ -3089,7 +3106,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Add/merge memory bank background (deprecated)
+      summary: Add/merge memory bank background (removed — use PATCH .../config)
       tags:
       - Banks
   /v1/default/banks/{bank_id}:
@@ -3493,6 +3510,54 @@ paths:
       summary: Export documents (async)
       tags:
       - Document Transfer
+  /v1/default/banks/{bank_id}/attachments/{attachment_id}:
+    get:
+      description: |-
+        Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads — so an agent can show or reason over the original behind an attachment-derived fact.
+
+        Bytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.
+      operationId: get_bank_attachment
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: attachment_id
+        required: true
+        schema:
+          title: Attachment Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            application/octet-stream: {}
+          description: Attachment bytes
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Fetch an attachment retained inline with a document
+      tags:
+      - Memory
   /v1/default/files/download/{key}:
     get:
       description: Stream a file previously written to file storage — currently the
@@ -3592,7 +3657,8 @@ paths:
         \ with. Returns every distinct scope (tag order normalized) with the number\
         \ of observations in it; the empty tag list is the global/untagged scope.\
         \ Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact)\
-        \ to filter observations to exactly that scope."
+        \ to filter observations to exactly that scope. Paged: `total` reports every\
+        \ distinct scope in the bank."
       operationId: list_observation_scopes
       parameters:
       - explode: false
@@ -3603,6 +3669,31 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: Maximum number of scopes to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of scopes to return
+          maximum: 1000
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -3754,9 +3845,11 @@ paths:
       tags:
       - Banks
     get:
-      description: Get fully resolved configuration for a bank including all hierarchical
-        overrides (global → tenant → bank). The 'config' field contains all resolved
-        config values. The 'overrides' field shows only bank-specific overrides.
+      description: "Get fully resolved configuration for a bank including all hierarchical\
+        \ overrides (global → tenant → bank). The 'config' field contains all resolved\
+        \ config values. The 'overrides' field shows only bank-specific overrides.\
+        \ Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write\
+        \ operations on this resource."
       operationId: get_bank_config
       parameters:
       - explode: false
@@ -3881,7 +3974,8 @@ paths:
       - Banks
   /v1/default/banks/{bank_id}/webhooks:
     get:
-      description: List all webhooks registered for a bank.
+      description: "List the webhooks registered for a bank, oldest first. Paged:\
+        \ `total` reports every webhook on the bank."
       operationId: list_webhooks
       parameters:
       - explode: false
@@ -3892,6 +3986,31 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: Maximum number of webhooks to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of webhooks to return
+          maximum: 1000
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -5282,6 +5401,9 @@ components:
         retain_chunk_batch_size:
           nullable: true
           type: integer
+        retain_max_attachments_per_chunk:
+          nullable: true
+          type: integer
         mcp_enabled_tools:
           items:
             type: string
@@ -5554,6 +5676,35 @@ components:
       - name
       - source_query
       title: BankTemplateMentalModel
+    Base64AttachmentSource:
+      description: |-
+        Inline attachment bytes, base64-encoded.
+
+        The only source type in this version. ``url`` (server-side fetch) and
+        ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
+        is modelled as a discriminated union on ``type`` rather than as bare fields.
+      properties:
+        type:
+          default: base64
+          enum:
+          - base64
+          title: Type
+          type: string
+        media_type:
+          description: "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'.\
+            \ Any well-formed type is accepted; whether the model can read it is the\
+            \ model's answer to give, and a provider that rejects it fails the retain\
+            \ with its own error."
+          title: Media Type
+          type: string
+        data:
+          description: "Base64-encoded bytes (no data: URI prefix)."
+          title: Data
+          type: string
+      required:
+      - data
+      - media_type
+      title: Base64AttachmentSource
     Body_file_retain:
       properties:
         files:
@@ -5631,6 +5782,47 @@ components:
       - operation_id
       - status
       title: ChildOperationStatus
+    ChunkAttachment:
+      description: "An attachment referenced by retained text, and where to fetch\
+        \ it."
+      properties:
+        id:
+          description: The id inside the text's placeholder; a prefix of the bytes'
+            sha256.
+          title: Id
+          type: string
+        hash:
+          description: Full sha256 of the attachment bytes.
+          title: Hash
+          type: string
+        kind:
+          description: "'image' or 'file', as the caller sent it."
+          title: Kind
+          type: string
+        media_type:
+          description: MIME type of the attachment.
+          title: Media Type
+          type: string
+        byte_size:
+          description: Size of the attachment in bytes.
+          title: Byte Size
+          type: integer
+        filename:
+          nullable: true
+          type: string
+        url:
+          description: Bank-scoped API path serving the bytes. Requires the same authorization
+            as the bank.
+          title: Url
+          type: string
+      required:
+      - byte_size
+      - hash
+      - id
+      - kind
+      - media_type
+      - url
+      title: ChunkAttachment
     ChunkData:
       description: Chunk data for a single chunk.
       properties:
@@ -5648,6 +5840,11 @@ components:
           description: Whether the chunk text was truncated due to token limits
           title: Truncated
           type: boolean
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - chunk_index
       - id
@@ -5690,6 +5887,11 @@ components:
         created_at:
           title: Created At
           type: string
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - bank_id
       - chunk_id
@@ -5794,6 +5996,9 @@ components:
           nullable: true
           type: integer
         retain_structured_chunk_size:
+          nullable: true
+          type: integer
+        retain_max_attachments_per_chunk:
           nullable: true
           type: integer
         enable_observations:
@@ -5961,11 +6166,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
@@ -6357,6 +6564,11 @@ components:
           nullable: true
         observation_scopes:
           $ref: '#/components/schemas/Observation_Scopes'
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - bank_id
       - content_hash
@@ -6820,6 +7032,29 @@ components:
       - store_document_text
       - worker
       title: FeaturesInfo
+    FileContentBlock:
+      description: |-
+        A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+
+        Split from ``image`` rather than folded into one type because the providers
+        split it: Anthropic has distinct image and document blocks, OpenAI has
+        image_url and file parts. Carrying the caller's own distinction through means
+        the per-provider conversion never has to guess from the media type alone.
+      properties:
+        type:
+          enum:
+          - file
+          title: Type
+          type: string
+        source:
+          $ref: '#/components/schemas/Base64AttachmentSource'
+        filename:
+          nullable: true
+          type: string
+      required:
+      - source
+      - type
+      title: FileContentBlock
     FileRetainResponse:
       description: Response model for file upload endpoint.
       example:
@@ -6909,6 +7144,21 @@ components:
             $ref: '#/components/schemas/ValidationError'
           type: array
       title: HTTPValidationError
+    ImageContentBlock:
+      description: "An image within a multimodal item, in the position the caller\
+        \ wrote it."
+      properties:
+        type:
+          enum:
+          - image
+          title: Type
+          type: string
+        source:
+          $ref: '#/components/schemas/Base64AttachmentSource'
+      required:
+      - source
+      - type
+      title: ImageContentBlock
     IncludeOptions:
       description: Options for including additional data in recall results.
       properties:
@@ -6941,11 +7191,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
@@ -7183,11 +7435,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -7226,11 +7480,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -7615,6 +7871,7 @@ components:
           - value
           - multi-values
           - text
+          - multi-text
           - map
           title: Type
           type: string
@@ -7655,6 +7912,7 @@ components:
           - value
           - multi-values
           - text
+          - multi-text
           - map
           title: Type
           type: string
@@ -7921,6 +8179,7 @@ components:
           default: text
           enum:
           - text
+          - multi-text
           - value
           - multi-values
           - map
@@ -7949,6 +8208,7 @@ components:
           default: text
           enum:
           - text
+          - multi-text
           - value
           - multi-values
           - map
@@ -8034,8 +8294,7 @@ components:
         timestamp: 2024-01-15T10:30:00Z
       properties:
         content:
-          title: Content
-          type: string
+          $ref: '#/components/schemas/Content'
         timestamp:
           $ref: '#/components/schemas/Timestamp'
         context:
@@ -8300,11 +8559,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -8343,11 +8604,13 @@ components:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
-            - match: any_strict
+            - resolve: exact
+              match: any_strict
               tags:
               - tags
               - tags
@@ -8552,11 +8815,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
@@ -8719,11 +8984,13 @@ components:
         recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
@@ -8836,11 +9103,13 @@ components:
         recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
-        - match: any_strict
+        - resolve: exact
+          match: any_strict
           tags:
           - tags
           - tags
@@ -9010,6 +9279,8 @@ components:
     ObservationScopesResponse:
       description: Response model for the observation scopes enumeration endpoint.
       example:
+        limit: 100
+        offset: 0
         scopes:
         - count: 12
           tags:
@@ -9020,14 +9291,30 @@ components:
           - project:apollo
         - count: 2
           tags: []
+        total: 3
       properties:
         scopes:
           description: "Distinct observation scopes, most populous first"
           items:
             $ref: '#/components/schemas/ObservationScope'
           type: array
+        total:
+          description: Total number of distinct scopes in the bank (ignores limit/offset)
+          title: Total
+          type: integer
+        limit:
+          description: Maximum number of scopes returned in this page
+          title: Limit
+          type: integer
+        offset:
+          description: Offset this page started at
+          title: Offset
+          type: integer
       required:
+      - limit
+      - offset
       - scopes
+      - total
       title: ObservationScopesResponse
     OperationProgress:
       description: |-
@@ -9999,6 +10286,7 @@ components:
     TagGroupLeaf:
       description: "A leaf tag filter: matches memories by tag list and match mode."
       example:
+        resolve: exact
         match: any_strict
         tags:
         - tags
@@ -10017,6 +10305,13 @@ components:
           - all_strict
           - exact
           title: Match
+          type: string
+        resolve:
+          default: exact
+          enum:
+          - exact
+          - fuzzy
+          title: Resolve
           type: string
       required:
       - tags
@@ -10104,6 +10399,22 @@ components:
       - end
       - start
       title: TemporalWindow
+    TextContentBlock:
+      description: "A run of text within a multimodal item, in the position the caller\
+        \ wrote it."
+      properties:
+        type:
+          enum:
+          - text
+          title: Type
+          type: string
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - type
+      title: TextContentBlock
     TokenUsage:
       description: |-
         Token usage metrics for LLM calls.
@@ -10315,11 +10626,13 @@ components:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
-          - match: any_strict
+          - resolve: exact
+            match: any_strict
             tags:
             - tags
             - tags
@@ -10594,6 +10907,9 @@ components:
     WebhookListResponse:
       description: Response model for listing webhooks.
       example:
+        total: 6
+        offset: 5
+        limit: 1
         items:
         - event_types:
           - event_types
@@ -10634,8 +10950,23 @@ components:
           items:
             $ref: '#/components/schemas/WebhookResponse'
           type: array
+        total:
+          description: Total number of webhooks on the bank (ignores limit/offset)
+          title: Total
+          type: integer
+        limit:
+          description: Maximum number of webhooks returned in this page
+          title: Limit
+          type: integer
+        offset:
+          description: Offset this page started at
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: WebhookListResponse
     WebhookResponse:
       description: Response model for a webhook.
@@ -10706,6 +11037,32 @@ components:
         \ before this was captured."
       nullable: true
       title: Observation Scopes
+    Content_anyOf_inner:
+      discriminator:
+        mapping:
+          file: '#/components/schemas/FileContentBlock'
+          image: '#/components/schemas/ImageContentBlock'
+          text: '#/components/schemas/TextContentBlock'
+        propertyName: type
+      oneOf:
+      - $ref: '#/components/schemas/TextContentBlock'
+      - $ref: '#/components/schemas/ImageContentBlock'
+      - $ref: '#/components/schemas/FileContentBlock'
+    Content:
+      anyOf:
+      - type: string
+      - items:
+          $ref: '#/components/schemas/Content_anyOf_inner'
+        type: array
+      description: |-
+        The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:
+
+          [{"type": "text", "text": "click the button shown:"},
+           {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+           {"type": "text", "text": "...then reconnect."}]
+
+        The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
+      title: Content
     Timestamp:
       anyOf:
       - format: date-time

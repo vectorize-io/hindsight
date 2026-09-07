@@ -115,26 +115,36 @@ def load_config_file():
                         os.environ[key] = value
 
 
-def get_config():
-    """Get configuration from environment variables.
+ENV_LLM_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
+ENV_LLM_API_KEY = "HINDSIGHT_API_LLM_API_KEY"
 
-    `llm_model` is left unset (None) when the env var is missing — the daemon's
-    hindsight-api process owns `PROVIDER_DEFAULT_MODELS` and resolves the
-    provider-keyed default itself. Duplicating that table here would silently
-    desync, and importing it from `hindsight_api.config` fails in standalone
-    venvs (e.g. `uvx hindsight-embed`) where `hindsight-api` isn't installed.
+
+def get_config() -> dict[str, str]:
+    """This invocation's daemon overrides, as ``HINDSIGHT_*`` environment variables.
+
+    Every ``HINDSIGHT_*`` variable in the process environment is forwarded
+    verbatim; there is no whitelist of known settings. A whitelist is exactly
+    how ``HINDSIGHT_API_LLM_BASE_URL`` came to be dropped while KEY/MODEL
+    applied (issue #4094) — ``hindsight-api``, not this wrapper, owns the list
+    of settings that exist, and it grows every release.
+
+    No provider or model default is injected: ``hindsight-api`` resolves both
+    (its ``DEFAULT_LLM_PROVIDER`` is this same ``"openai"``, and
+    ``PROVIDER_DEFAULT_MODELS`` is provider-keyed). Duplicating those tables
+    here would silently desync — and importing them fails in standalone venvs
+    (``uvx hindsight-embed``) where ``hindsight-api`` isn't installed anyway.
     """
     load_config_file()
-    provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
-    return {
-        "llm_api_key": (
-            None
-            if provider in NO_API_KEY_PROVIDERS
-            else os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        ),
-        "llm_provider": provider,
-        "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL"),
-    }
+    config = {key: value for key, value in os.environ.items() if key.startswith("HINDSIGHT_")}
+
+    # OPENAI_API_KEY is the one non-HINDSIGHT_ name honoured here, and only for
+    # providers that authenticate with an LLM API key at all.
+    provider = config.get(ENV_LLM_PROVIDER) or "openai"
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key and ENV_LLM_API_KEY not in config and provider not in NO_API_KEY_PROVIDERS:
+        config[ENV_LLM_API_KEY] = openai_key
+
+    return config
 
 
 # Provider -> API-key env var (None = no key needed)
@@ -246,11 +256,20 @@ def _do_configure_from_env():
     # Save configuration
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    config_values = {"HINDSIGHT_API_LLM_PROVIDER": provider}
-    if model:
-        config_values["HINDSIGHT_API_LLM_MODEL"] = model
+    # Persist every HINDSIGHT_API_* variable the caller set, not a hand-listed
+    # subset: the subset is why HINDSIGHT_API_LLM_BASE_URL never reached the
+    # written profile (issue #4094). HINDSIGHT_EMBED_* is deliberately excluded
+    # — those configure this wrapper for one invocation (API URL, component
+    # versions), and baking them into the profile is not what a user setting
+    # them for a single `configure` run asked for.
+    config_values = {key: value for key, value in os.environ.items() if key.startswith("HINDSIGHT_API_") and value}
+    config_values[ENV_LLM_PROVIDER] = provider
     if api_key:
-        config_values["HINDSIGHT_API_LLM_API_KEY"] = api_key
+        config_values[ENV_LLM_API_KEY] = api_key
+    else:
+        # Providers in NO_API_KEY_PROVIDERS authenticate locally; don't persist
+        # a stale key that the resolved provider will never use.
+        config_values.pop(ENV_LLM_API_KEY, None)
 
     from .env_template import render_config
 
@@ -453,12 +472,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
         daemon_client.stop_daemon(daemon_profile)
 
     # Start daemon with new config
-    new_config = {
-        "llm_api_key": api_key,
-        "llm_provider": provider,
-        "llm_model": model,
-    }
-    if daemon_client.ensure_daemon_running(new_config, daemon_profile):
+    if daemon_client.ensure_daemon_running(dict(config_dict), daemon_profile):
         print("  \033[32m✓ Daemon started\033[0m")
     else:
         print("  \033[33m⚠ Failed to start daemon (will start on first command)\033[0m")

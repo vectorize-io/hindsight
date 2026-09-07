@@ -686,12 +686,14 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
         stub_codex_stream_with(llm, fake_backend_stream),
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "ping"}],
-            max_retries=0,
-            initial_backoff=0.0,
-            max_backoff=0.0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "ping"}],
+                max_retries=0,
+                initial_backoff=0.0,
+                max_backoff=0.0,
+            )
+        ).content
 
     assert result == "ok"
     assert call_count["refresh"] == 1

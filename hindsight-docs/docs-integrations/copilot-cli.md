@@ -25,6 +25,8 @@ Memory does not move automatically — the banks are scoped differently and this
 
 Persistent memory for [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks) using [Hindsight](https://vectorize.io/hindsight). Python hook scripts automatically recall relevant context at session start (and for every subagent Copilot CLI spawns) and retain conversations as they happen — no changes to your Copilot CLI workflow required.
 
+[View Changelog →](/changelog/integrations/copilot-cli)
+
 ## Quick Start
 
 :::tip Recommended: Hindsight Cloud

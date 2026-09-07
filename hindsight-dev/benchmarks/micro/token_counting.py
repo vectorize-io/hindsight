@@ -17,7 +17,7 @@ The variants measured are the production call and the cheaper spellings of the
 same count:
 
 ``prod``
-    ``token_encoding.count_tokens`` exactly as recall calls it — quicktok's
+    ``token_encoding.count_tokens`` exactly as recall calls it — toktok's
     count-only API under the configured encoding.
 ``encode``
     ``Encoding.encode(disallowed_special=())`` — the production call without the
@@ -39,9 +39,9 @@ same count:
     ``len(text) // 4``. Not a proposal — the floor, so the numbers above have
     something to be compared against.
 
-``quicktok_count`` / ``quicktok_encode`` / ``quicktok_count_batch``
-    The spellings of the production tokenizer's own API. ``quicktok_count`` is
-    what ``prod`` resolves to; the other two show what the truncate call sites
+``toktok_encode`` / ``toktok_batch_count``
+    The other spellings of the production tokenizer's own API. ``prod`` already
+    resolves to toktok's ``count``; these two show what the truncate call sites
     (which need the ids) and a batched counter would cost instead.
 
 The tiktoken variants are kept as the baseline this repo migrated *from*, so the
@@ -72,7 +72,7 @@ import tracemalloc
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 
-import quicktok
+import toktok
 from hindsight_api.config import DEFAULT_TOKENIZER_ENCODING
 from hindsight_api.engine.token_encoding import count_tokens
 from rich.console import Console
@@ -208,20 +208,22 @@ def _tiktoken_encoding(name: str):
 
 def _v_prod(texts: Sequence[str], name: str) -> int:
     # The real production call, wrapper and all, when measuring the configured
-    # encoding; the same shape on quicktok directly when measuring another.
+    # encoding; the same shape on toktok directly when measuring another.
     if name == PROD_ENCODING:
         return sum(count_tokens(t) for t in texts)
-    return sum(quicktok.get_encoding(name).count(t) for t in texts)
+    return sum(toktok._encoding(name).count(t) for t in texts)
 
 
-def _v_quicktok_encode(texts: Sequence[str], name: str) -> int:
+def _v_toktok_encode(texts: Sequence[str], name: str) -> int:
     # The truncate call sites need the ids, not just the count.
-    enc = quicktok.get_encoding(name)
-    return sum(len(enc.encode(t, disallowed_special=())) for t in texts)
+    enc = toktok._encoding(name)
+    return sum(len(enc.encode_ordinary(t)) for t in texts)
 
 
-def _v_quicktok_count_batch(texts: Sequence[str], name: str) -> int:
-    return int(quicktok.count_batch(quicktok.get_encoding(name), list(texts)).sum())
+def _v_toktok_batch_count(texts: Sequence[str], name: str) -> int:
+    # toktok's supported public API: one Rust call for the whole list, GIL
+    # released and fanned out over threads.
+    return sum(toktok.batch_count(list(texts), name))
 
 
 def _v_chars_div_4(texts: Sequence[str], name: str) -> int:
@@ -256,8 +258,8 @@ def build_variants(encoding: str, threads: int) -> dict[str, Callable[[Sequence[
 
     variants: dict[str, Callable[[Sequence[str]], int]] = {
         "prod": bind(_v_prod),
-        "quicktok_encode": bind(_v_quicktok_encode),
-        "quicktok_count_batch": bind(_v_quicktok_count_batch),
+        "toktok_encode": bind(_v_toktok_encode),
+        "toktok_batch_count": bind(_v_toktok_batch_count),
         "chars_div_4": bind(_v_chars_div_4),
     }
 
@@ -484,7 +486,7 @@ def main() -> None:
     # Encoder load is a one-off (and may hit the network on a cold tiktoken cache).
     # Time it separately so it never lands inside a variant's numbers.
     t0 = time.perf_counter()
-    quicktok.get_encoding(args.encoding)
+    toktok._encoding(args.encoding)
     console.print(
         f"[dim]{args.encoding} load: {(time.perf_counter() - t0) * 1000:.1f} ms  "
         f"(one-off, lru_cached) | cpu_count={os.cpu_count()} | repeats={args.repeats}[/dim]\n"

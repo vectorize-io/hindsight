@@ -612,7 +612,7 @@ def _run_label_post_processing(labels_cfg, labels_data: dict) -> set[str]:
                 if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                     continue
                 label_str = f"{group.key}:{v.strip()}"
-                if group.type == "text":
+                if group.type in ("text", "multi-text"):
                     if label_str.lower() not in existing_texts_lower:
                         validated_entities.append(label_str)
                         existing_texts_lower.add(label_str.lower())
@@ -2378,3 +2378,219 @@ async def test_retain_application_tags_extract_complete_pairs(memory_real_llm, r
         )
     finally:
         await memory_real_llm.delete_bank(bank_id, request_context=request_context)
+
+
+# ─── multi-text (open-vocabulary multi-valued labels, issue #4025) ────────────
+
+
+def test_parse_entity_labels_multi_text_type():
+    """type='multi-text' round-trips through parse_entity_labels."""
+    cfg = parse_entity_labels(
+        [
+            {
+                "key": "name",
+                "type": "multi-text",
+                "tag": True,
+                "description": "Every name the subject is known by",
+            }
+        ]
+    )
+    assert cfg is not None
+    assert cfg.attributes[0].type == "multi-text"
+    assert cfg.attributes[0].tag is True
+
+
+def test_build_labels_model_multi_text_is_unconstrained_list():
+    """type='multi-text' → list[str] with no enum constraint and an empty-list default."""
+    cfg = parse_entity_labels([{"key": "name", "type": "multi-text", "description": "Names"}])
+    Model = build_labels_model(cfg)
+    assert Model is not None
+
+    prop = Model.model_json_schema()["properties"]["name"]
+    assert prop["type"] == "array"
+    assert prop["items"] == {"type": "string"}, f"multi-text items must be unconstrained strings, got: {prop['items']}"
+
+    # Any strings are accepted, and the field is optional (defaults to []).
+    assert Model(name=["Kubernetes", "k8s", "kube"]).name == ["Kubernetes", "k8s", "kube"]
+    assert Model().name == []
+
+
+def test_build_labels_model_multi_text_ignores_declared_values():
+    """A multi-text group with example values still produces an unconstrained list."""
+    cfg = parse_entity_labels([{"key": "name", "type": "multi-text", "values": [{"value": "kubernetes"}]}])
+    Model = build_labels_model(cfg)
+    assert Model is not None
+    assert Model.model_json_schema()["properties"]["name"]["items"] == {"type": "string"}
+
+
+def test_build_labels_lookup_skips_multi_text():
+    """multi-text has no fixed vocabulary, so nothing enters the lookup set."""
+    cfg = parse_entity_labels(
+        [
+            {"key": "name", "type": "multi-text", "values": [{"value": "kubernetes"}]},
+            {"key": "topic", "type": "value", "values": [{"value": "infra"}]},
+        ]
+    )
+    lookup = build_labels_lookup(cfg)
+    assert "name:kubernetes" not in lookup
+    assert lookup == {"topic:infra"}
+
+
+def test_is_label_entity_multi_text_prefix_match():
+    """multi-text label entities are recognised by their key prefix, like text."""
+    cfg = parse_entity_labels([{"key": "name", "type": "multi-text"}])
+    lookup = build_labels_lookup(cfg)
+    assert is_label_entity("name:k8s", cfg, lookup)
+    assert is_label_entity("Name:Kube", cfg, lookup)
+    assert not is_label_entity("Kubernetes", cfg, lookup)
+    assert not is_label_entity("other:k8s", cfg, lookup)
+
+
+def test_build_labels_prompt_section_multi_text():
+    """multi-text groups are described as an open list, with no value enumeration."""
+    from hindsight_api.engine.retain.fact_extraction import _build_labels_prompt_section
+
+    cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(key="name", type="multi-text", description="Every name the subject is known by"),
+        ]
+    )
+    result = _build_labels_prompt_section(cfg)
+    assert "CLASSIFICATION ATTRIBUTES" in result
+    assert "- name (list of free text, empty list if none): Every name the subject is known by" in result
+
+
+def test_multi_text_post_processing_keeps_every_value():
+    """Every extracted multi-text value becomes a key:value entity, bypassing the enum lookup."""
+    cfg = parse_entity_labels([{"key": "name", "type": "multi-text"}])
+    entity_texts = _run_label_post_processing(cfg, {"name": ["Kubernetes", "k8s", "kube"]})
+    assert entity_texts == {"name:Kubernetes", "name:k8s", "name:kube"}
+
+
+def test_multi_text_post_processing_rejects_sentinels_and_blanks():
+    """'None'/'null'/'n/a' and blank strings never become entities."""
+    cfg = parse_entity_labels([{"key": "name", "type": "multi-text"}])
+    entity_texts = _run_label_post_processing(cfg, {"name": ["None", "null", "n/a", "  ", "k8s"]})
+    assert entity_texts == {"name:k8s"}
+
+
+def test_multi_text_post_processing_empty_list_produces_no_entity():
+    cfg = parse_entity_labels([{"key": "name", "type": "multi-text"}])
+    assert _run_label_post_processing(cfg, {"name": []}) == set()
+
+
+def test_inject_label_tags_covers_multi_text():
+    """tag=True on a multi-text group writes every extracted value to the fact's tags."""
+    from hindsight_api.engine.retain.fact_extraction import _inject_label_tags
+
+    class _Fact:
+        def __init__(self, entities, tags):
+            self.entities = entities
+            self.tags = tags
+
+    class _Config:
+        entity_labels = [{"key": "name", "type": "multi-text", "tag": True}]
+
+    fact = _Fact(entities=["Kubernetes", "name:kubernetes", "name:k8s", "name:kube"], tags=[])
+    _inject_label_tags([fact], _Config())
+    assert fact.tags == ["name:kubernetes", "name:k8s", "name:kube"]
+
+
+def test_build_map_fields_model_multi_text_field():
+    """multi-text is available inside map groups too, as an unconstrained list field."""
+    from hindsight_api.engine.retain.entity_labels import _build_map_fields_model
+
+    Model = _build_map_fields_model(
+        {"name": MapField(type="text"), "aliases": MapField(type="multi-text", description="Other names")},
+        "PersonEntity",
+    )
+    assert Model is not None
+    props = Model.model_json_schema()["properties"]
+    assert props["aliases"]["type"] == "array"
+    assert props["aliases"]["items"] == {"type": "string"}
+
+
+def test_map_entity_post_processing_multi_text_field():
+    """A multi-text map field flattens to one key:field:value entity per value."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
+
+    fields = {"name": MapField(type="text"), "aliases": MapField(type="multi-text")}
+    validated: list[str] = []
+    existing: set[str] = set()
+    _extract_map_entities({"name": "Kubernetes", "aliases": ["k8s", "kube"]}, fields, "tool:", validated, existing)
+
+    assert set(validated) == {"tool:name:Kubernetes", "tool:aliases:k8s", "tool:aliases:kube"}
+
+
+def test_append_map_fields_prompt_multi_text():
+    """multi-text map fields are described as a free-text list in the prompt."""
+    from hindsight_api.engine.retain.fact_extraction import _append_map_fields_prompt
+
+    lines: list[str] = []
+    _append_map_fields_prompt({"aliases": MapField(type="multi-text", description="Other names")}, lines)
+    assert lines == ["    • aliases (list of free text, [] if none): Other names"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.hs_llm_core
+async def test_retain_extracts_multi_text_label(memory_real_llm, request_context):
+    """
+    End-to-end (issue #4025): a tag=True multi-text group lets the bank derive an
+    open vocabulary from the content — the alternative names are stated in the text,
+    not supplied by the caller — and every extracted value becomes a filterable tag.
+    """
+    memory = memory_real_llm
+
+    bank_id = f"test-labels-multi-text-{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        await memory._config_resolver.update_bank_config(
+            bank_id=bank_id,
+            updates={
+                "entity_labels": [
+                    {
+                        "key": "name",
+                        "type": "multi-text",
+                        "tag": True,
+                        "description": (
+                            "Every name the subject of this fact is known by — its canonical name "
+                            "plus abbreviations, acronyms, short forms and alternative spellings."
+                        ),
+                    }
+                ],
+            },
+            context=request_context,
+        )
+
+        unit_ids = await memory.retain_async(
+            bank_id=bank_id,
+            content=(
+                "We deploy services to a Kubernetes cluster on EKS — the team usually just says "
+                "k8s, or kube. Helm charts live in the monorepo."
+            ),
+            request_context=request_context,
+        )
+        assert len(unit_ids) > 0, "Should have extracted at least one fact"
+
+        entities = await memory.list_entities(bank_id, search="name:", limit=100, request_context=request_context)
+        name_labels = {e["canonical_name"].lower() for e in entities["items"]}
+        # More than one value under a single key — the thing a `text` group cannot express.
+        assert len(name_labels) > 1, f"multi-text must produce several values for one key. Got: {sorted(name_labels)}"
+        abbreviations = {n for n in name_labels if "k8s" in n or "kube" in n}
+        assert abbreviations, (
+            f"Expected an abbreviation from the content among the name labels. Got: {sorted(name_labels)}"
+        )
+
+        # tag=True makes each extracted value filterable at recall time.
+        page = await memory.list_memory_units(
+            bank_id,
+            tags=[sorted(abbreviations)[0]],
+            tags_match="any_strict",
+            request_context=request_context,
+        )
+        assert page["total"] > 0, (
+            f"tag=True must make '{sorted(abbreviations)[0]}' filterable; no unit carried it. Labels: {sorted(name_labels)}"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

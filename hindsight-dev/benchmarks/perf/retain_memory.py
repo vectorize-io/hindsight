@@ -105,6 +105,7 @@ def build_document(target_chars: int) -> str:
 
 
 def run(doc_mb: int, chunk_size: int) -> list[Measurement]:
+    from hindsight_api.config import DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK
     from hindsight_api.engine.memory_engine import _iter_raw_sub_batches
     from hindsight_api.engine.retain import fact_extraction
     from hindsight_api.engine.token_encoding import count_tokens
@@ -151,6 +152,10 @@ def run(doc_mb: int, chunk_size: int) -> list[Measurement]:
                     _SUB_BATCH_TOKENS,
                     chunk_size=chunk_size,
                     structured_chunk_size=None,
+                    # The generated document is text-only, so the image cap never
+                    # binds; this is the server default, passed explicitly because
+                    # the splitter requires every caller to state its chunking terms.
+                    max_attachments_per_chunk=DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK,
                 )
             ),
             lambda n: f"{n:,} sub-batches",

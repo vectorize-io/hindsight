@@ -24,6 +24,7 @@ The API service handles all memory operations (retain, recall, reflect).
 | `HINDSIGHT_API_MIGRATION_DATABASE_URL` | Direct PostgreSQL URL for running migrations, bypassing connection poolers (e.g. PgBouncer). When set, advisory locks and Alembic migrations use this URL instead of `DATABASE_URL`. | Falls back to `DATABASE_URL` |
 | `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
+| `HINDSIGHT_API_MIGRATION_ISOLATION` | Run migrations in a subprocess instead of in the calling process: `auto` (only on a free-threaded interpreter, where Alembic's psycopg2 would otherwise re-enable the GIL for the life of the process), `true`, or `false` | `auto` |
 | `HINDSIGHT_API_MIGRATION_CONCURRENCY` | Number of tenant schemas to migrate concurrently (PostgreSQL only). Each schema runs in its own process; within a schema migrations are always sequential. Each worker has a fixed startup cost (~1–2s to boot a fresh interpreter), so this only pays off with **many** schemas (roughly tens or more) or slow/high-latency migrations — for a handful of schemas it is slower than sequential. Each worker uses ~3 database connections, so keep `concurrency × 3` within your database's spare `max_connections` (and any PgBouncer pool limit). `1` = fully sequential. Measured at 20k schemas: the per-restart no-op resweep dropped from ~60min to ~11min (≈5×) at `concurrency=12`. | `1` |
 | `HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES` | Comma-separated list of maintenance discovery routines this deployment installs itself (see [Owning a maintenance routine](#owning-a-maintenance-routine)). Migrations skip anything named here. | Empty (every routine installed) |
 | `HINDSIGHT_API_DATABASE_BACKEND` | Database engine backend: `postgresql` or `oracle` (Oracle 23ai) | `postgresql` |
@@ -267,7 +268,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `meta`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot` | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -284,6 +285,11 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_TEMPERATURE_RETAIN` | Temperature for fact extraction during retain. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.1` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` | Temperature for the reflect "thinking" step. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.9` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` | Temperature for consolidation (mental-model delta and dedup). Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
+| `HINDSIGHT_API_LLM_VISION` | Whether the configured LLM can read images, overriding what the provider reports about itself. Leave unset and each provider answers for itself: Anthropic and Gemini report yes, OpenAI reports yes, `none` reports no, and every gateway-style backend (LiteLLM, Ollama, LM Studio, OpenRouter, an OpenAI-compatible proxy) reports *unknown*, because its catalogue mixes vision-capable and text-only models. A retain carrying [inline attachments](#inline-attachments-in-retain) is refused with `422` on both "no" and "unknown" — dropping an attachment silently would leave a document that looks retained with the information the caller cared about gone. Set `true` when you are running a vision model behind such a gateway; set `false` to refuse images against an endpoint that rejects them despite its model name. | Provider decides |
+| `HINDSIGHT_API_VLM_PROVIDER` | Provider for the **vision slot** — the model used only for retain chunks that carry an [inline attachment](#inline-attachments-in-retain). Every text-only chunk keeps using the retain LLM, so a bank whose documents mostly *are* text does not pay a vision model's price for all of it. Unset, attachments go to the retain LLM. | Retain LLM |
+| `HINDSIGHT_API_VLM_API_KEY` | API key for the vision slot. | Retain LLM's |
+| `HINDSIGHT_API_VLM_MODEL` | Model for the vision slot. This is the model `HINDSIGHT_API_LLM_VISION` and the `422` vision check apply to, since it is the one that will actually be handed the attachment. | Retain LLM's |
+| `HINDSIGHT_API_VLM_BASE_URL` | Base URL for the vision slot. Follows `HINDSIGHT_API_VLM_PROVIDER`'s own default when that is set and this is not — it never inherits the retain provider's host, which would send the request to the wrong endpoint with the wrong key. | Provider default |
 | `HINDSIGHT_API_LLM_SEND_BANK_AS_USER` | Tag outbound LLM and embedding calls with `user=<bank_id>` so gateways (OpenRouter usage accounting, LiteLLM, Helicone) can attribute spend per bank. When enabled, the bank id is transmitted to the upstream provider as the end-user identifier. | `false` |
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
@@ -300,7 +306,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN` | Whether the LLM backend accepts JSON Schema `pattern` in structured-output schemas. When `true`, retain constrains `occurred_start` / `occurred_end` to an ISO timestamp, which stops a grammar-constrained model from reasoning inside the timestamp string — a failure that corrupts the date and can burn the entire completion budget on an unterminated response. Left `false` because support is narrow and rejection is a hard 400 at request time: Bedrock validates schemas against an allowlist that excludes this keyword, and OpenAI errors on unsupported keywords under `strict`. Backends that neither enforce nor reject it gain nothing. | `false` |
 | `HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL` | Request structured output from the LiteLLM-backed providers (`litellm`, `litellmrouter`, `bedrock`) with a single forced tool call — the response schema becomes the tool's parameters — instead of `response_format`. Set to `true` for backends that reject `response_format` outright. This is region-dependent on Bedrock Claude: `ap-southeast-2` (`au.*` inference profiles) refuses the translated Converse `outputConfig` with `Extra inputs are not permitted`, while the same model in `us-east-1` (`us.*`) accepts it and needs nothing here. Verified against both. If the model answers without calling the tool, the reply is parsed as text as before. Other providers ignore it. | `false` |
 | `HINDSIGHT_API_LLM_CODEX_HOME` | Credentials directory for the `openai-codex` provider — the directory holding the `auth.json` it authenticates with. Overrides the process-wide `CODEX_HOME` for Hindsight's own LLM calls. Its reason to exist is that `CODEX_HOME` is process-wide: set this (and the per-member `HINDSIGHT_API_LLM_<n>_CODEX_HOME`) to run two independently authorized ChatGPT profiles in one process, so a [multi-LLM chain](#multi-llm-strategies-failover--round-robin) of two Codex members can fail over between accounts. | Unset (`CODEX_HOME`, else `~/.codex`) |
-| `HINDSIGHT_API_LLM_MEMBER_LABEL` | Optional non-secret label for the primary member in routing diagnostics. Labels are server-only, at most 64 printable characters, and must not contain credential paths or profile identifiers. | `primary` |
+| `HINDSIGHT_API_LLM_MEMBER_LABEL` | Optional non-secret label for the unindexed primary in routing diagnostics. The same label is used by the default, retain, reflect, and consolidation primary providers. Labels are server-only, at most 64 printable characters, and must not contain credential paths or profile identifiers. | `primary` |
 | `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` | Optional native Ollama `num_ctx` override. Leave unset to use the model/server default; set a positive integer only when you need a larger context window. Setting it also routes free-form calls (including the startup connection probe) through the native `/api/chat` API, since the OpenAI-compatible endpoint cannot express a context size — see the note below. | Unset |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
 | `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models#provider-capabilities). | `true` |
@@ -456,6 +462,20 @@ export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 # Default base_url: https://opencode.ai/zen/go/v1 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
 
+# Meta Model API (Muse Spark, OpenAI-compatible, https://ai.developer.meta.com)
+export HINDSIGHT_API_LLM_PROVIDER=meta
+export HINDSIGHT_API_LLM_API_KEY=your-meta-model-api-key
+export HINDSIGHT_API_LLM_MODEL=muse-spark-1.3
+# Default base_url: https://api.meta.ai/v1 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
+# Muse Spark always reasons: leave HINDSIGHT_API_LLM_REASONING_EFFORT unset or set it to
+# minimal/low/medium/high/xhigh. "none" is rejected with HTTP 400. Reasoning tokens are
+# billed against the output budget, so keep the per-operation max-token limits generous.
+# Muse Spark reasons before every reply, so calls are slow: reflect's 30s default
+# deadline is not enough for its final synthesis and the call fails after retries.
+# Raise it (and the global deadline) when using this provider:
+export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=300
+export HINDSIGHT_API_LLM_TIMEOUT=300
+
 # Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
 export HINDSIGHT_API_LLM_PROVIDER=nous
 export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash
@@ -544,14 +564,15 @@ The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra 
 | `HINDSIGHT_API_LLM_<n>_BEDROCK_SERVICE_TIER` / `_GEMINI_SERVICE_TIER` | Per-member service tier. | - |
 | `HINDSIGHT_API_LLM_<n>_VERTEXAI_PROJECT_ID` / `_VERTEXAI_REGION` / `_VERTEXAI_SERVICE_ACCOUNT_KEY` | Per-member Vertex AI project, region, and service-account key path (for a `vertexai` member). Each falls back to the global `HINDSIGHT_API_LLM_VERTEXAI_*` when unset. | Global / `us-central1` / ADC |
 | `HINDSIGHT_API_LLM_<n>_CODEX_HOME` | Per-member Codex credentials directory — the directory holding the `auth.json` this member authenticates with (for an `openai-codex` member). Set it so two Codex members run as two independently authorized ChatGPT profiles; without it every member resolves the same store. Falls back to the global `HINDSIGHT_API_LLM_CODEX_HOME`, then `CODEX_HOME`, then `~/.codex`. | Global / `CODEX_HOME` / `~/.codex` |
-| `HINDSIGHT_API_LLM_<n>_MEMBER_LABEL` | Optional non-secret routing label for member `n`. At most 64 printable characters; use an operational name such as `secondary`, never a credential path or profile identity. | `member-<n>` |
+| `HINDSIGHT_API_LLM_<n>_MEMBER_LABEL` | Optional non-secret routing label for global indexed member `n`. At most 64 printable characters; use an operational name such as `secondary`, never a credential path or profile identity. | `member-<n>` |
 | `HINDSIGHT_API_LLM_<n>_LITELLMROUTER_CONFIG` | Per-member LiteLLM Router config JSON (for a `litellmrouter` member). Falls back to the global `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` when unset. | - |
 | `HINDSIGHT_API_LLM_STRATEGY` | JSON routing strategy across the chain. Unset = single primary LLM (no change). | - |
 
-The strategy JSON supports two modes:
+The strategy JSON supports three modes:
 
 - `{"mode": "failover"}` — try members in order (primary first); on a member's failure (after its own retries) advance to the next.
 - `{"mode": "round-robin"}` — rotate the starting member per request to spread load, then fall through the rest on failure. Add `"weights": [3, 1, ...]` (positive ints, one per member, primary first) for an **unbalanced** rotation.
+- `{"mode": "metadata", "routes": [...]}` — **retain only**: pick the member from each retained item's own `metadata`. See [Metadata routing](#metadata-routing) below.
 
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic
@@ -567,21 +588,58 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 export HINDSIGHT_API_LLM_STRATEGY='{"mode": "round-robin", "weights": [3, 1]}'
 ```
 
+#### Metadata routing
+
+`{"mode": "metadata"}` sends each retained item to the chain member its own metadata selects, so one deployment can extract different documents with different models:
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_API_KEY=sk-...
+export HINDSIGHT_API_LLM_1_PROVIDER=ollama
+export HINDSIGHT_API_LLM_1_MODEL=qwen3:8b
+export HINDSIGHT_API_LLM_STRATEGY='{
+  "mode": "metadata",
+  "routes": [{"key": "classification", "value": "sensitive", "member": 1}]
+}'
+```
+
+Retaining `{"content": "...", "metadata": {"classification": "sensitive"}}` extracts facts on the local `qwen3:8b`; everything else uses the primary.
+
+- **Routes are matched per item, in declared order — the first match wins.** An item that matches no route uses member `0` (the primary).
+- **Values are compared as strings**, because retain metadata is free-form JSON and route values come from an env var: `"member": 1` matches metadata `1` and `"1"`. A list value matches if any entry does, so `{"labels": ["pii", "eu"]}` matches a route on `labels` = `pii`.
+- **Nothing is stored.** The selection is made when the item's extraction prompt is built and is not persisted, so changing the routes changes only future retains. Reprocessing a document replays its original metadata and therefore re-routes the same way.
+- **Each retain item is one extraction prompt**, so a batch mixing differently routed items is fine — every item goes to its own member.
+
+**What this does not do.** Metadata routing chooses *which model extracts a document*. It is not a data boundary: the facts extracted from a routed document are stored in the same bank as everything else, and recall, reflect, consolidation, mental-model refresh and dry-run extraction all continue to use the primary LLM. If you need a document's content kept away from a provider entirely, use a separate bank with a per-bank LLM configuration instead.
+
+Two further limits:
+
+- **`update_mode: "append"` routes on the metadata supplied with the append call**, not the stored document's. An append re-extracts the stored body together with the new text, so resupply the same metadata to keep it on the same member.
+- **Batch retain is not supported** with this mode. `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` submits every item of an operation as a single job to a single member, which cannot honour per-item routes, so the combination is rejected at startup.
+
 Set `HINDSIGHT_API_LLM_MEMBER_LABEL=preferred` and
 `HINDSIGHT_API_LLM_1_MEMBER_LABEL=secondary` to make routing diagnostics readable without exposing
-credentials. Unset labels use `primary` and `member-<n>`. Labels are server-only and never become
-bank configuration. Each operation can override its primary label and indexed members with the
-`RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (for example,
-`HINDSIGHT_API_RETAIN_LLM_MEMBER_LABEL` and `HINDSIGHT_API_RETAIN_LLM_1_MEMBER_LABEL`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
+credentials. These are the only label forms: operation-specific providers use the same global
+primary label, and operation-prefixed indexed labels are not parsed. Unset labels use `primary` and
+`member-<n>`.
 
-For Codex members, a 429 after the provider's own retries places that member in a per-router
-cooldown for a valid `Retry-After` duration or 60 seconds; one request probes it after expiry.
-Cooldown state is process-local to each `MultiLLMProvider` instance, so a restart clears it and
-each instance admits its own probe. A positively confirmed invalid, expired, or reused refresh
-credential is terminal: Hindsight does
-not try another member or retry the enclosing operation. Other 401s, timeouts, and 5xx errors keep
-the existing generic retry/failover behavior. Batch retain stays bound to its submitting member and
-is never rerouted by cooldown state.
+**Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
+
+For Codex members, an explicit HTTP 429 after that provider's own retries places only that member
+in cooldown for a valid `Retry-After` duration, or 60 seconds when the header is invalid or absent.
+Deadlines are monotonic, and exactly one request probes a member after expiry. State belongs to each
+`MultiLLMProvider` instance in one process: it is not shared across operations, worker processes, or
+restarts. When every member is cooling, a shortest wait at or below the call's effective maximum
+backoff is handled once inline without changing the request's member order; a longer wait raises the
+existing quota-defer signal.
+
+That defer is deliberately asymmetric. Long-reset asynchronous worker operations are scheduled for
+the sanitized retry time without consuming their retry count. Synchronous recall and reflect cannot
+be deferred, so they continue through the existing generic HTTP 500 conversion with the sanitized
+retry-time message; there is no special HTTP status mapping. A positively confirmed invalid,
+expired, or reused Codex refresh credential is terminal: the original provider exception is raised
+unchanged, without failover or a new cooldown. Other auth failures, timeouts, and 5xx responses keep
+the existing generic retry/failover behavior. Codex's internal retry budget is unchanged.
 
 The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the first batch-capable member in declared order, which need not be the primary — so a chain whose primary has no batch API can still use `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` as long as one member supports it. That member serves the whole batch (submit, polling and retrieval all target the account that holds it), so batch does not fail over the way the interactive retain/reflect/consolidation calls do. An in-flight batch is bound to the account that submitted it, so if the worker restarts mid-batch it resumes on that same account even when the chain has since been reordered or extended. Removing that member — or rotating its API key — while a batch is still running makes the operation fail with an explicit error instead of polling a different account.
 
@@ -750,13 +808,14 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE` | Texts per ONNX forward pass. The provider runs in-process, so this is what bounds the activation tensor (and therefore peak memory) when a caller embeds a large list — an import, for example. | `32` |
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_CPU_MEM_ARENA` | Enable ONNX Runtime's CPU memory arena. The arena caches freed blocks and never returns them, so RSS holds its high-water mark for the life of the process. | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_TEI_URL` | TEI server URL | - |
-| `HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE` | Max texts per TEI `/embed` request. Also the batch size retain coalesces a document's per-chunk embeddings up to, so raise it when the TEI deployment has headroom for larger requests | `32` |
+| `HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE` | Max texts per TEI `/embed` request, and the unit the client fans out over (see `HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS`). TEI's own `--max-client-batch-size` (32 by default) is a hard validation error rather than a soft cap, so raising this above the server's value fails the request instead of being clamped | `32` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` | OpenAI API key (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE` | Max inputs per `embeddings.create` call for `openai`/`openrouter` providers — lower this when the upstream endpoint enforces stricter limits (e.g. DashScope caps at 10) | `100` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` | Optional requested output dimensions for OpenAI `text-embedding-3` models (e.g., `384` to match an existing pgvector schema) | - |
-| `HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES` | Retries after the first attempt when a remote embedding call fails transiently (5xx, timeout, connection error). `0` disables retrying. Applies to the `litellm` and `litellm-sdk` providers; 4xx auth/validation errors are never retried. | `4` |
+| `HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS` | Embedding requests a remote provider keeps in flight for one `encode()` call. This is what buys throughput from an embedding service: the same TEI server sustains ~903 texts/s at one in-flight request and ~2,080 at eight. Applies to every remote provider (`tei`, `openai`, `cohere`, `zeroentropy`, `litellm`, `litellm-sdk`, `google`, ...); the in-process `local`/`onnx` backends are unaffected. Lower it when the embedding service or your provider quota cannot take the parallelism | `8` |
+| `HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES` | Retries after the first attempt when a remote embedding call fails transiently (5xx, timeout, connection error). `0` disables retrying. Applies to the `litellm`, `litellm-sdk`, `google` (Gemini API / Vertex AI), `cohere` and `zeroentropy` providers — none of which retry on their own — including Gemini `429 RESOURCE_EXHAUSTED` quota responses; 4xx auth/validation errors are never retried. (`tei` and the `openai` family use their own built-in retry instead.) | `4` |
 | `HINDSIGHT_API_EMBEDDINGS_INITIAL_BACKOFF` | Initial backoff in seconds between embedding retries (doubles per attempt, with jitter) | `0.5` |
 | `HINDSIGHT_API_EMBEDDINGS_MAX_BACKOFF` | Cap on the backoff between embedding retries, in seconds | `4.0` |
 | `HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET` | Wall-clock ceiling, in seconds, on the time one `encode()` call may spend retrying (failed attempts plus backoff). Keeps a degraded provider from stalling a synchronous recall. | `15.0` |
@@ -781,6 +840,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_DIMENSIONS` | Vector width the configured LiteLLM model returns. When set, the startup dimension probe is skipped, so the API boots even while the proxy is still starting. Declares the width rather than requesting it (the value is not sent to the proxy); a wrong value fails the first embedding call with an explicit error. | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY` | LiteLLM SDK API key for direct embedding provider access (optional — omit for providers that use ambient credentials, e.g. AWS Bedrock with IAM) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL` | LiteLLM SDK embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `cohere/embed-english-v3.0` |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL_ID` | **Bedrock only.** The target LiteLLM actually invokes, when it differs from `..._MODEL` — typically an [application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html) ARN, which you need when a Service Control Policy denies `bedrock:InvokeModel` on the bare model id. LiteLLM picks the Bedrock request/response shape from `..._MODEL`, so leave that a recognizable id (e.g. `bedrock/amazon.titan-embed-text-v2:0`) and put the ARN here. | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE` | Custom base URL for LiteLLM SDK embeddings (optional) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS` | Optional output embedding dimensions (provider-dependent, e.g., `768` for Gemini embedding models) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT` | Encoding format for embedding responses. Set to empty string to omit the parameter (needed for Voyage AI, Gemini). | `float` |
@@ -1054,6 +1114,10 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
+| `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
+| `HINDSIGHT_API_RERANKER_MAX_BACKOFF` | Cap on the backoff between rerank retries, in seconds | `4.0` |
+| `HINDSIGHT_API_RERANKER_RETRY_BUDGET` | Wall-clock ceiling, in seconds, on the time one rerank may spend retrying (failed attempts plus backoff). Tighter than the embedding budget because rerank runs after retrieval has already spent time on the same request. With a fallback chain configured, each member spends its own budget before the chain advances. | `10.0` |
 | `HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER` | Add `X-Hindsight-Bank-Id: <bank_id>` to remote reranker requests. Enable only for trusted endpoints because this transmits the current bank ID. Covers TEI, Cohere-compatible HTTP, LiteLLM proxy, and LiteLLM SDK transports. | `false` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
@@ -1334,12 +1398,13 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_PORT` | Server port | `8888` |
 | `HINDSIGHT_API_BASE_PATH` | Base path for API when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 | `HINDSIGHT_API_WORKERS` | Number of uvicorn worker processes | `1` |
+| `HINDSIGHT_API_EVENT_LOOPS` | Number of event loops served from a single process, each on its own thread. Only a throughput win on the free-threaded `-py3.14t` image, where the loops execute Python in parallel rather than taking turns; on a standard build it warns and buys nothing. The DB pool size is divided across the loops, not multiplied. | `1` |
 | `HINDSIGHT_API_ACCESS_LOG` | Enable uvicorn access log (`true`, `1`, `yes`, `on` to enable) | `false` |
 | `HINDSIGHT_API_LOG_LEVEL` | Log level: `debug`, `info`, `warning`, `error` | `info` |
 | `HINDSIGHT_API_LOG_FORMAT` | Log format: `text` or `json` (structured logging for cloud platforms) | `text` |
 | `HINDSIGHT_API_LOG_JSON_FIELDS` | Comma-separated allowlist of JSON log fields to emit (e.g. `severity,message,tenant`). Available: `severity`, `message`, `timestamp`, `logger`, `tenant`, `exception`. Empty = all fields. | `""` (all) |
 | `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
-| `HINDSIGHT_API_TOKENIZER_ENCODING` | Vocabulary used for every token count and chunk boundary (recall budgets, chunk sizes, prompt fitting, embedding truncation). `o200k_base` matches current OpenAI models and counts non-Latin text far closer to what they actually charge; `cl100k_base` reproduces the counts Hindsight produced before this default changed. Server-level: token budgets are only comparable between banks if they are all counted the same way. Other bundled vocabularies: `o200k_harmony`, `llama3`, `qwen3`. | `o200k_base` |
+| `HINDSIGHT_API_TOKENIZER_ENCODING` | Vocabulary used for every token count and chunk boundary (recall budgets, chunk sizes, prompt fitting, embedding truncation). `o200k_base` matches current OpenAI models and counts non-Latin text far closer to what they actually charge; `cl100k_base` reproduces the counts Hindsight produced before this default changed. Server-level: token budgets are only comparable between banks if they are all counted the same way. Other bundled vocabulary: `o200k_harmony`. | `o200k_base` |
 | `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Increase if a legitimate first-time model download needs more time. | `300` |
 | `HINDSIGHT_API_STARTUP_WAIT_SECONDS` | **Docker image only.** How long the container waits for the API to answer `/health` before it stops and restarts. Raising `HINDSIGHT_API_MODEL_INIT_TIMEOUT` above the default raises this wait too, so a slow first-time model download is not cut short; set this to override the wait on its own. | `300`, or `HINDSIGHT_API_MODEL_INIT_TIMEOUT` + 30s when that is longer |
 
@@ -1477,6 +1542,9 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | Max completion tokens for fact extraction LLM calls | `64000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_SIZE` | Max characters per chunk for fact extraction. Larger chunks extract fewer LLM calls but may lose context. | `3000` |
 | `HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE` | Max characters for a single JSONL line or conversation turn to keep whole. Unset uses `HINDSIGHT_API_RETAIN_CHUNK_SIZE`. Must be a positive integer when set. | - |
+| `HINDSIGHT_API_RETAIN_ATTACHMENT_MAX_SIZE_MB` | Max decoded size of a single attachment sent as inline retain content. Above every mainstream provider's own per-file ceiling, so the provider's limit binds first for legitimate content while an abusive upload is refused at the ingress. | `20` |
+| `HINDSIGHT_API_RETAIN_ATTACHMENT_MAX_COUNT` | Max inline attachments in one retain item. Split larger documents across several items. | `50` |
+| `HINDSIGHT_API_RETAIN_MAX_ATTACHMENTS_PER_CHUNK` | Max attachments in one extraction chunk. `HINDSIGHT_API_RETAIN_CHUNK_SIZE` budgets **text only** — a placeholder costs the ~22 characters it occupies and nothing more — so this is what bounds attachments, matching a provider's per-request limit. Lower it for a model with a smaller context. Configurable per bank. | `8` |
 | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, `verbatim`, `chunks`, or `custom` | `concise` |
 | `HINDSIGHT_API_RETAIN_MISSION` | What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode. | - |
 | `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Full prompt override for fact extraction (only used when mode is `custom`). Replaces built-in extraction rules entirely. | - |
@@ -1499,6 +1567,97 @@ Controls the retain (memory ingestion) pipeline.
 > **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, `gemini`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
 >
 > **Gemini** uses the [Gemini Batch API](https://ai.google.dev/gemini-api/docs/batch-api) (flat 50% input + output discount, 24h SLA — typically minutes). It needs no extra settings beyond `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` and an API-key `gemini` provider; Vertex AI (`vertexai`) is not batch-capable.
+
+#### Inline attachments in retain
+
+A retain item's `content` can be a plain string, as it always could, or an ordered
+list of text, image and file blocks so an attachment sits where it actually appears:
+
+```json
+{
+  "content": [
+    {"type": "text",  "text": "To reset the VPN, click the button shown:"},
+    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+    {"type": "text",  "text": "...then reconnect."},
+    {"type": "file",  "source": {"type": "base64", "media_type": "application/pdf", "data": "..."},
+                      "filename": "escalation-policy.pdf"}
+  ]
+}
+```
+
+The point is *position*. Extraction runs the interleaved text and attachments
+through a vision model, so the model reads a screenshot beside the sentence that
+introduces it, rather than being handed a caption you produced beforehand. That is
+the same bargain the rest of Hindsight offers for text: hand it the raw content
+and trust the extractor.
+
+`image` and `file` are separate types because the providers separate them —
+Anthropic has distinct image and document blocks, OpenAI has `image_url` and file
+parts — so carrying your own distinction through means the conversion never has to
+guess from the media type alone.
+
+This is distinct from [`POST /files/retain`](#file-conversion), which converts a
+whole file to markdown as its **own** document — still the right tool for scanned
+PDFs and office documents when you want them parsed rather than looked at, but it
+separates the content from the prose around it.
+
+**Accepted types.** Any well-formed `type/subtype` is accepted. There is no
+allowlist: whether the model can read a format is the model's answer to give, and
+a provider that rejects one fails the retain with its own error, which is more
+informative than a guess made at the ingress. Bytes are served back under the
+Content-Type the caller declared.
+
+:::warning
+Because the declared type is served verbatim, a bank writer who retains active
+content (an SVG or an HTML file) can have it execute in the dataplane's origin
+when it is fetched. Treat write access to a bank as equivalent to being able to
+host content on that origin.
+:::
+
+What happens to the bytes:
+
+- They are hashed (sha256) and stored **content-addressed**, so the same
+  attachment across many documents or re-ingests is stored once, and re-retaining
+  an unchanged document is a no-op.
+- Storage goes through the same backend as uploaded files — `native`
+  (PostgreSQL), `s3`, `gcs`, `azure`. See [File storage](#file-storage).
+- The document's stored text keeps a placeholder (`⟦hs-att:...⟧`) where the
+  attachment sat, so chunking, idempotency, `update_mode=append` and
+  re-extraction behave exactly as they do for text.
+- `document_attachments` records which documents reference which attachment,
+  derived from that text on every write. Deleting a document reclaims only the
+  blobs nothing else still references.
+- Every read surface returns the attachments alongside the text —
+  `chunks[].attachments` and each memory's `attachments` on recall, plus
+  get-document, get-chunk, get-memory and list-memories — each with a
+  bank-authorized `url` serving the original bytes.
+
+Extracted **facts** never carry the placeholder: a fact reads `[image:
+image/png]` where the attachment was, and the machine-readable handle travels
+beside it in `attachments`. A content hash is not knowledge.
+
+A **memory's** `attachments` are the ones that fact was actually drawn from, not
+every attachment in its chunk. They are stored on the memory itself
+(`memory_units.attachment_ids`), like its tags, so they travel with the memory
+rather than living in a separate edge table. Extraction runs one call per chunk, and a chunk
+holding a screenshot also holds the prose around it, so the chunk's attachments
+would otherwise be shown against every fact the call produced — the architecture
+diagram offered as the evidence for the paragraph about paging policy. The
+extractor is asked which attachments each fact came from, and a fact stated in
+the surrounding text has no `attachments` at all. That emptiness is the feature:
+an attachment shown beside a memory means the model looked at it to produce that
+memory.
+
+A **chunk's** `attachments` stay exactly what they were — everything the chunk
+references — because that is a question about the chunk, not about a fact.
+
+Two things will refuse the retain outright, both with `422`, rather than dropping
+attachments silently:
+
+- The retain LLM is not vision-capable, or Hindsight cannot tell that it is. See
+  [`HINDSIGHT_API_LLM_VISION`](#llm-configuration).
+- `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true`. The batch path builds provider
+  request bodies directly and never sees the interleaved content.
 
 #### Fireworks batch inference
 
@@ -2478,7 +2637,7 @@ are merged independently, so unrelated concurrent updates all survive.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Enable per-bank config API | `true` |
+| `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Allow clients to change per-bank configuration (`PATCH`/`DELETE .../config`). Reading a bank's config is always allowed. | `true` |
 | `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH` | Enable the per-bank LLM connectivity probe (`POST /v1/default/banks/{bank_id}/health/llm`). It makes a real provider call, so it is **off by default** — enable it to expose the endpoint. Returns status only — never the provider/model/endpoint. | `false` |
 | `HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT` | Enable the dry-run extraction preview endpoint (`POST /v1/default/banks/{bank_id}/memories/dry-run-extract`). Runs extraction only — makes a real LLM call but stores nothing. Set to `false` to remove the endpoint (returns `404`). | `true` |
 | `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE` | Bank template manifest (JSON) applied automatically to every newly-created bank. See below. | _(unset)_ |

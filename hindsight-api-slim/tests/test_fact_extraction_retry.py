@@ -9,6 +9,7 @@ BaseException'), which happened when last_error was only set in the
 BadRequestError handler and not for non-dict JSON responses.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import dataclasses
 import json
 from datetime import datetime, timezone
@@ -163,9 +164,7 @@ def _make_llm_config(mock_response):
     # Set explicitly: ``model`` is an instance attribute, so ``spec=LLMProvider``
     # does not provide it, and the extraction error paths name the model.
     llm.model = "mock-model"
-    token_usage = MagicMock()
-    token_usage.__add__ = lambda self, other: self
-    llm.call = AsyncMock(return_value=(mock_response, token_usage))
+    llm.call = AsyncMock(return_value=LLMCallResult(content=mock_response, usage=TokenUsage()))
     return llm
 
 
@@ -731,7 +730,7 @@ def _make_recording_llm(mock_response):
 
     llm = MagicMock(spec=LLMProvider)
     llm.provider = "mock"
-    llm.call = AsyncMock(return_value=(mock_response, TokenUsage()))
+    llm.call = AsyncMock(return_value=LLMCallResult(content=mock_response, usage=TokenUsage()))
     return llm
 
 

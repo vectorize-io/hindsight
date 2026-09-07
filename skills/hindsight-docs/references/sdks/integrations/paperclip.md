@@ -5,6 +5,8 @@ Persistent memory for [Paperclip AI](https://github.com/paperclipai/paperclip) a
 
 Install the `@vectorize-io/hindsight-paperclip` plugin once. Every agent in your Paperclip instance automatically gets long-term memory that persists across runs, companies, and restarts — no code changes required.
 
+[View Changelog →](../../changelog/integrations/paperclip.md)
+
 ## Installation
 
 ```bash

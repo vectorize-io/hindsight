@@ -140,7 +140,7 @@ class CodexRefreshExpiredError(RuntimeError):
 
 
 class CodexReauthenticationRequiredError(CodexRefreshExpiredError):
-    """A positively identified invalid/expired/reused refresh token after reread."""
+    """A positively identified invalid, expired, or reused refresh token."""
 
 
 class CodexAuthManager:

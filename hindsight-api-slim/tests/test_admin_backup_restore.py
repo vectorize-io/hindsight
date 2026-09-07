@@ -17,6 +17,7 @@ import pytest
 import pytest_asyncio
 
 import hindsight_api.admin.cli as admin_cli
+from hindsight_api import migrations
 from hindsight_api.admin.cli import BACKUP_TABLES, _backup, _restore
 from hindsight_api.extensions import Tenant
 from hindsight_api.migrations import run_migrations
@@ -807,6 +808,15 @@ async def test_backup_restore_includes_extension_table(backup_test_schema):
 @pytest.mark.asyncio
 async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(monkeypatch):
     """run-db-migration without --schema should include the base schema and deduplicate tenant schemas."""
+    # Patches migrations.run_migrations and asserts on the calls, so the work must
+    # stay in-process; an isolated migration would never see the patch.
+    # See migrations._should_isolate_migrations.
+    # Patched rather than set via HINDSIGHT_API_MIGRATION_ISOLATION: the flag is read
+    # through get_config(), whose result is cached in a module global, so setting the
+    # env var after any earlier get_config() call has no effect. That goes unnoticed on
+    # 3.11, where "auto" resolves to no-isolation anyway, and fails on a free-threaded
+    # build where "auto" isolates and these patches are never reached.
+    monkeypatch.setattr(migrations, "_should_isolate_migrations", lambda: False)
     calls: dict[str, list] = {
         "run_migrations": [],
         "ensure_vector_extension": [],
@@ -874,6 +884,15 @@ async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(m
 @pytest.mark.asyncio
 async def test_run_migration_without_schema_runs_optional_post_migration_hooks(monkeypatch):
     """Embedding dimension sync should be optional, while vector/text checks always run."""
+    # Patches migrations.run_migrations and asserts on the calls, so the work must
+    # stay in-process; an isolated migration would never see the patch.
+    # See migrations._should_isolate_migrations.
+    # Patched rather than set via HINDSIGHT_API_MIGRATION_ISOLATION: the flag is read
+    # through get_config(), whose result is cached in a module global, so setting the
+    # env var after any earlier get_config() call has no effect. That goes unnoticed on
+    # 3.11, where "auto" resolves to no-isolation anyway, and fails on a free-threaded
+    # build where "auto" isolates and these patches are never reached.
+    monkeypatch.setattr(migrations, "_should_isolate_migrations", lambda: False)
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     calls: dict[str, list] = {
         "run_migrations": [],
@@ -955,6 +974,15 @@ async def test_run_migration_without_schema_runs_optional_post_migration_hooks(m
 @pytest.mark.asyncio
 async def test_run_migration_with_schema_only_runs_requested_schema(monkeypatch):
     """run-db-migration with --schema should only migrate the requested schema."""
+    # Patches migrations.run_migrations and asserts on the calls, so the work must
+    # stay in-process; an isolated migration would never see the patch.
+    # See migrations._should_isolate_migrations.
+    # Patched rather than set via HINDSIGHT_API_MIGRATION_ISOLATION: the flag is read
+    # through get_config(), whose result is cached in a module global, so setting the
+    # env var after any earlier get_config() call has no effect. That goes unnoticed on
+    # 3.11, where "auto" resolves to no-isolation anyway, and fails on a free-threaded
+    # build where "auto" isolates and these patches are never reached.
+    monkeypatch.setattr(migrations, "_should_isolate_migrations", lambda: False)
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     calls: dict[str, list] = {
         "run_migrations": [],

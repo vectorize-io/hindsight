@@ -12,11 +12,29 @@ strings, consuming ~200ms of pure CPU time and generating ~15MB of allocation ch
 
 The variants measured are:
 ``prod``
-    The production ``embedding_to_pgvector`` call (zero-copy orjson SIMD Ryu formatting with fallback).
+    The production ``embedding_to_pgvector`` call: one C-level ``%``-format per vector
+    against a per-dimension cached ``"[%.9g,...]"`` template, after narrowing to float32.
 ``listcomp_str``
     List comprehension with ``str()``: ``"[" + ",".join([str(v) for v in emb]) + "]"``
 ``baseline_generator``
     The previous generator baseline: ``"[" + ",".join(repr(float(v)) for v in emb) + "]"``
+``binary_pgvector``
+    Emits pgvector's binary wire format instead of a text literal.
+
+This function used to serialize through orjson, which was the sole reason the API depended
+on it — one function, on the retain write path, playing no part in HTTP serialization. The
+dependency was dropped once measurement showed how little it bought end to end: on a real
+``perf-test --suite retain`` run (200 items, 384d) the orjson calls totalled 2.9ms of a
+~1.9s retain, and paired throughput runs could not distinguish the two implementations from
+noise. What replaced it is ``prod`` above, roughly 1.8x faster than the generator baseline
+and ~5x slower than orjson was — no pure-Python formatter closes that gap, because orjson
+formats floats with SIMD Ryu in Rust.
+
+``binary_pgvector`` is the unexploited win and the reason this file keeps measuring it:
+skipping text entirely is ~2 orders of magnitude faster than the baseline and ~2.8x smaller
+on the wire, but it needs an asyncpg codec registered for the ``vector`` type, and Oracle
+would still need the text encoder (it stores the literal as a CLOB). Left measured, not
+built, so the trade-off stays a number rather than a memory.
 
 Usage (from the repo root):
     ./scripts/benchmarks/run-vector-serialization-bench.sh
@@ -30,6 +48,7 @@ import json
 import math
 import os
 import random
+import struct
 import time
 import tracemalloc
 from array import array
@@ -73,6 +92,7 @@ class VariantResult:
     total_floats: int
     m_floats_per_sec: float
     matches_baseline: bool
+    out_bytes: int  # total serialized size — what actually travels to Postgres
 
 
 # --- Variant implementations ---
@@ -100,6 +120,32 @@ def _v_listcomp_str(vectors: Sequence[Any]) -> list[str]:
         else:
             res.append("[" + ",".join([str(value) for value in emb]) + "]")
     return res
+
+
+def _v_binary_pgvector(vectors: Sequence[Any]) -> list[bytes]:
+    """Skip text entirely: emit pgvector's binary wire format.
+
+    Layout is ``int16 dim | int16 unused | dim * big-endian float32``. Reaching this
+    from the engine needs an asyncpg codec registered for the ``vector`` type; it is
+    measured here to size the prize before paying for that plumbing.
+    """
+    res = []
+    for emb in vectors:
+        if isinstance(emb, str):
+            arr = np.array(emb[1:-1].split(","), dtype=np.float32) if len(emb) > 2 else np.empty(0, np.float32)
+        elif isinstance(emb, array):
+            arr = np.frombuffer(emb, dtype=np.float32)
+        else:
+            arr = np.asarray(emb, dtype=np.float32)
+        res.append(struct.pack(">HH", arr.shape[0], 0) + arr.astype(">f4").tobytes())
+    return res
+
+
+def _decode_pgvector_binary(buf: bytes) -> str:
+    """Render a binary-format vector back as a literal, so conformance can compare it."""
+    dim = struct.unpack_from(">HH", buf, 0)[0]
+    values = np.frombuffer(buf, dtype=">f4", count=dim, offset=4).astype(np.float32)
+    return "[" + ",".join(repr(float(v)) for v in values) + "]"
 
 
 def build_workloads(seed: int) -> list[Workload]:
@@ -171,6 +217,7 @@ def build_variants() -> dict[str, Callable[[Sequence[Any]], list[str]]]:
         "baseline_generator": _v_baseline_generator,
         "listcomp_str": _v_listcomp_str,
         "prod": _v_prod,
+        "binary_pgvector": _v_binary_pgvector,
     }
 
 
@@ -178,7 +225,7 @@ def build_variants() -> dict[str, Callable[[Sequence[Any]], list[str]]]:
 class Timing:
     wall_ms: float
     cpu_ms: float
-    results: list[str]
+    results: list[str] | list[bytes]
 
 
 def _measure(fn: Callable[[Sequence[Any]], list[str]], vectors: Sequence[Any], repeats: int) -> Timing:
@@ -208,7 +255,11 @@ def _measure_peak_kib(fn: Callable[[Sequence[Any]], list[str]], vectors: Sequenc
     return peak / 1024
 
 
-def _check_conformance_output(baseline_str: str, candidate_str: str) -> bool:
+def _check_conformance_output(baseline_str: str, candidate_str: str | bytes) -> bool:
+    if isinstance(candidate_str, bytes):
+        # Binary variants carry the same floats in pgvector wire format; decode and
+        # compare numerically so they are held to the same conformance bar as text.
+        candidate_str = _decode_pgvector_binary(candidate_str)
     if not (candidate_str.startswith("[") and candidate_str.endswith("]")):
         return False
     b_parts = baseline_str[1:-1].split(",") if len(baseline_str) > 2 else []
@@ -297,6 +348,7 @@ def run(workloads: Sequence[Workload], repeats: int) -> list[VariantResult]:
                         break
 
             m_floats_s = (wl.total_floats / timing.wall_ms / 1000) if timing.wall_ms > 0 else 0.0
+            out_bytes = sum(len(item) for item in timing.results)
             results.append(
                 VariantResult(
                     workload=wl.name,
@@ -307,6 +359,7 @@ def run(workloads: Sequence[Workload], repeats: int) -> list[VariantResult]:
                     total_floats=wl.total_floats,
                     m_floats_per_sec=m_floats_s,
                     matches_baseline=matches,
+                    out_bytes=out_bytes,
                 )
             )
     return results
@@ -335,6 +388,7 @@ def _render(workloads: Sequence[Workload], results: Sequence[VariantResult]) -> 
         table.add_column("cpu ms", justify="right")
         table.add_column("cpu/wall", justify="right")
         table.add_column("peak KiB", justify="right")
+        table.add_column("wire KiB", justify="right")
         table.add_column("Mfloat/s", justify="right")
         table.add_column("conformance", justify="right")
 
@@ -347,6 +401,7 @@ def _render(workloads: Sequence[Workload], results: Sequence[VariantResult]) -> 
                 f"{r.cpu_ms:.3f}",
                 f"{(r.cpu_ms / r.wall_ms):.2f}" if r.wall_ms > 0 else "—",
                 f"{r.peak_kib:,.0f}",
+                f"{r.out_bytes / 1024:,.0f}",
                 f"{r.m_floats_per_sec:.2f}",
                 "[green]ok[/green]" if r.matches_baseline else "[red]MISMATCH[/red]",
             )

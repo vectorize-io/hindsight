@@ -8,6 +8,8 @@ description: "Add long-term memory to GitHub Copilot in VS Code with Hindsight v
 
 Long-term memory for [GitHub Copilot](https://github.com/features/copilot) in VS Code, powered by [Hindsight](https://vectorize.io/hindsight). One command connects Copilot's agent mode to the Hindsight MCP server and adds a recall/retain rule — so Copilot recalls relevant memory at the start of a task and retains durable facts as it works.
 
+[View Changelog →](/changelog/integrations/github-copilot)
+
 ## How It Works
 
 VS Code Copilot supports two things this integration uses:

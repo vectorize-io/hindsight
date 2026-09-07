@@ -20,10 +20,19 @@ So: adding an eager top-level import here is not a neutral edit. It puts the cos
 spawned worker, and the failure it causes does not look like an import problem — it looks like the
 pod being fine.
 
-``apply_default_thread_limits()`` stays eager on purpose, and is the one thing that must: it caps
-the native ML thread pools by setting environment variables that OpenBLAS/OpenMP/MKL read only at
-load time, so it has to run before anything pulls in numpy/torch/onnxruntime. Laziness below makes
-that guarantee stronger, not weaker — those libraries now load later than they used to.
+Two calls stay eager on purpose, and are the only ones that must. Both configure how the
+process executes, and both are worthless once the libraries they govern have loaded:
+
+``apply_default_thread_limits()`` caps the native ML thread pools by setting environment
+variables that OpenBLAS/OpenMP/MKL read only at load time, so it has to run before anything
+pulls in numpy/torch/onnxruntime.
+
+``_enforce_free_threading()`` guards against a free-threaded build silently re-enabling the
+GIL, which the first import of a C extension lacking free-threading support does — for the
+life of the process, with only a RuntimeWarning. It is a no-op on a normal build.
+
+Laziness below makes both guarantees stronger, not weaker — those libraries now load later
+than they used to.
 """
 
 from typing import TYPE_CHECKING
@@ -31,9 +40,15 @@ from typing import TYPE_CHECKING
 # Cap native ML thread pools (OpenBLAS/OpenMP/MKL) before any import pulls in
 # numpy/torch/onnxruntime — they read these env vars only at load time. See
 # hindsight_api/_thread_limits.py for the rationale.
+from ._free_threading import enforce as _enforce_free_threading
 from ._thread_limits import apply_default_thread_limits
 
 apply_default_thread_limits()
+# Must run before anything imports a C extension: on a free-threaded build the GIL is
+# re-enabled by the first import of an extension that has not declared support for
+# running without it, and that is irreversible for the life of the process. No-op on a
+# normal build. See ._free_threading for the modes.
+_enforce_free_threading()
 
 __version__ = "0.9.2"
 

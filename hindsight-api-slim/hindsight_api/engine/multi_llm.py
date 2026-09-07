@@ -1,4 +1,4 @@
-"""Multi-LLM routing: failover and (weighted) round-robin across N providers.
+"""Multi-LLM routing: failover, (weighted) round-robin and metadata across N providers.
 
 ``MultiLLMProvider`` wraps an ordered list of :class:`LLMProvider` members and a
 :class:`~hindsight_api.config.LLMStrategyConfig`, exposing the same public surface
@@ -14,6 +14,11 @@ Strategies:
 - ``failover``: try members in declared order ``[0..N]``.
 - ``round-robin``: rotate the starting member per request (optionally weighted),
   then fall through the remaining members on error.
+- ``metadata``: retain only. Each retained item picks its member from its own
+  ``metadata`` (see ``member_for_metadata``); an item matching no route uses the
+  primary. Selection happens per item at fact-extraction time, so nothing about
+  it is stored and no other operation is affected — see ``config.py`` and the
+  configuration docs for what this does and does not promise.
 
 Batch retain runs on the **first batch-capable member** in declared order (see
 ``batch_provider_impl``), which need not be the primary; once selected, the whole
@@ -23,22 +28,18 @@ batch lifecycle stays on that member and does not fail over. Every other direct
 paths.
 """
 
+import asyncio
 import logging
 import math
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from time import monotonic
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from ..config import LLM_STRATEGY_FAILOVER, LLMStrategyConfig
-from .llm_interface import (
-    LLMCooldownFailure,
-    LLMTerminalFailure,
-    ProviderRateLimitResetError,
-    ProviderReauthenticationRequiredError,
-)
+from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
+from .llm_interface import LLMCooldownFailure, LLMTerminalFailure, ProviderRateLimitResetError
 from .llm_wrapper import LLMProvider, OutputTooLongError
 
 if TYPE_CHECKING:
@@ -48,11 +49,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_COOLDOWN_SECONDS = 60.0
+_PROBE_POLL_SECONDS = 0.05
 
 
 @dataclass
 class _MemberState:
     cooldown_until: float | None = None
+    cooldown_exception: BaseException | None = None
     probing: bool = False
     generation: int = 0
 
@@ -66,9 +69,26 @@ def _should_failover(exc: BaseException) -> bool:
     ``KeyboardInterrupt`` and ``SystemExit`` are ``BaseException`` (not
     ``Exception``) and therefore propagate unchanged.
     """
-    if isinstance(exc, (OutputTooLongError, ProviderReauthenticationRequiredError)):
+    if isinstance(exc, OutputTooLongError):
         return False
     return isinstance(exc, Exception)
+
+
+def _metadata_matches(actual: Any, expected: str) -> bool:
+    """Whether a retain item's metadata value matches a route's value.
+
+    Retain metadata is free-form JSON while a route value is always a string, so
+    compare on the string form. A list/tuple/set value matches when any of its
+    entries does, which is what makes ``{"labels": ["pii", "eu"]}`` routable.
+    """
+    if isinstance(actual, (list, tuple, set, frozenset)):
+        return any(_metadata_matches(entry, expected) for entry in actual)
+    if actual is None or isinstance(actual, dict):
+        return False
+    if isinstance(actual, bool):
+        # str(True) is "True"; JSON booleans should match "true"/"false".
+        return str(actual).lower() == expected.lower()
+    return str(actual) == expected
 
 
 class _WeightedRoundRobin:
@@ -100,14 +120,15 @@ class _WeightedRoundRobin:
 
 
 class MultiLLMProvider:
-    """Route LLM calls across multiple members per a failover / round-robin strategy."""
+    """Route LLM calls across multiple members per the configured strategy."""
 
     def __init__(self, members: list[LLMProvider], strategy: LLMStrategyConfig) -> None:
         if not members:
             raise ValueError("MultiLLMProvider requires at least one member")
         self._members = members
         self._strategy = strategy
-        # Ownership is per router instance, not per credential or process-wide.
+        # State belongs to this router instance. A second operation/router using
+        # the same provider objects gets an independent cooldown history.
         self._states = [_MemberState() for _ in members]
         self._state_lock = threading.Lock()
 
@@ -119,154 +140,264 @@ class MultiLLMProvider:
             )
         self._scheduler = _WeightedRoundRobin(weights)
 
+        if strategy.mode == LLM_STRATEGY_METADATA:
+            for route in strategy.routes or []:
+                if route.member >= len(members):
+                    raise ValueError(
+                        f"LLM metadata route {route.key}={route.value!r} selects member {route.member}, "
+                        f"but the chain has members 0..{len(members) - 1}."
+                    )
+
     # ── routing ────────────────────────────────────────────────────────────────
 
     def _member_order(self) -> list[int]:
         """Indices to try, in order, for one request."""
         n = len(self._members)
+        if self._strategy.mode == LLM_STRATEGY_METADATA:
+            # A metadata member is chosen per item by the retain path, which then
+            # calls that member directly. Anything reaching the chain itself has
+            # no item to route on, so it stays on the primary and does not fail
+            # over into another member's lane.
+            return [0]
         if self._strategy.mode == LLM_STRATEGY_FAILOVER:
             return list(range(n))
         start = self._scheduler.next()
         return [(start + i) % n for i in range(n)]
 
+    def member_for_metadata(self, metadata: dict[str, Any] | None) -> LLMProvider | None:
+        """The member selected by a retained item's metadata, or ``None``.
+
+        ``None`` means "nothing to re-bind": either the chain is not in metadata
+        mode, or no route matched and the caller's existing primary binding is
+        already the right one. The first matching route in declared order wins,
+        so overlapping routes are resolved by configuration order rather than
+        rejected — one item is one prompt, so there is never more than one item
+        to satisfy.
+        """
+        if self._strategy.mode != LLM_STRATEGY_METADATA or not metadata:
+            return None
+        for route in self._strategy.routes or []:
+            if _metadata_matches(metadata.get(route.key), route.value):
+                return self._members[route.member]
+        return None
+
     async def _dispatch(self, method_name: str, **kwargs: Any) -> Any:
         last_exc: BaseException | None = None
+        # Keep the request's original ordering across the one bounded inline
+        # wait. Re-running _member_order() would rotate round-robin mid-request.
         order = self._member_order()
-        for position, idx in enumerate(order):
-            member = self._members[idx]
-            label = member.member_label or ("primary" if idx == 0 else f"member-{idx}")
-            with self._state_lock:
-                state = self._states[idx]
-                if state.probing:
-                    logger.debug(
-                        "LLM member %d (%s/%s, label=%s) skipped: state=%s",
-                        idx,
-                        member.provider,
-                        member.model,
-                        label,
-                        "probing",
-                    )
-                    continue
-                if state.cooldown_until is not None:
-                    remaining_seconds = state.cooldown_until - monotonic()
-                    if remaining_seconds > 0:
+        inline_retry_used = False
+        request_saved_failure: BaseException | None = None
+
+        while True:
+            attempted_member = False
+            skipped_failure: BaseException | None = None
+            for position, idx in enumerate(order):
+                member = self._members[idx]
+                label = getattr(member, "member_label", None) or ("primary" if idx == 0 else f"member-{idx}")
+                with self._state_lock:
+                    state = self._states[idx]
+                    if state.probing:
+                        if skipped_failure is None and state.cooldown_exception is not None:
+                            skipped_failure = state.cooldown_exception
                         logger.debug(
-                            "LLM member %d (%s/%s, label=%s) skipped: state=cooldown remaining=%.3fs",
+                            "LLM member %d (%s/%s, label=%s) skipped: state=probing",
                             idx,
                             member.provider,
                             member.model,
                             label,
-                            remaining_seconds,
                         )
                         continue
-                probing = state.cooldown_until is not None
-                generation = state.generation
+                    if state.cooldown_until is not None:
+                        remaining_seconds = state.cooldown_until - monotonic()
+                        if remaining_seconds > 0:
+                            if skipped_failure is None and state.cooldown_exception is not None:
+                                skipped_failure = state.cooldown_exception
+                            logger.debug(
+                                "LLM member %d (%s/%s, label=%s) skipped: state=cooldown remaining=%.3fs",
+                                idx,
+                                member.provider,
+                                member.model,
+                                label,
+                                remaining_seconds,
+                            )
+                            continue
+                    probing = state.cooldown_until is not None
+                    generation = state.generation
+                    if probing:
+                        state.probing = True
+
+                attempted_member = True
                 if probing:
-                    state.probing = True
-            if probing:
-                logger.info("LLM member %d (%s/%s, label=%s) state=probing", idx, member.provider, member.model, label)
-            try:
-                result = await getattr(member, method_name)(**kwargs)
-                with self._state_lock:
-                    # A success started before a newer quota failure says nothing
-                    # about that cooldown; only its matching probe can reopen it.
-                    if probing and state.generation == generation:
-                        state.cooldown_until = None
-                        logger.info(
-                            "LLM member %d (%s/%s, label=%s) state=eligible after successful probe",
+                    logger.info(
+                        "LLM member %d (%s/%s, label=%s) state=probing",
+                        idx,
+                        member.provider,
+                        member.model,
+                        label,
+                    )
+                try:
+                    result = await getattr(member, method_name)(**kwargs)
+                    with self._state_lock:
+                        # A success that predates a newer quota observation must
+                        # not erase it; only the matching generation may reopen.
+                        if probing and state.generation == generation:
+                            state.cooldown_until = None
+                            state.cooldown_exception = None
+                            logger.info(
+                                "LLM member %d (%s/%s, label=%s) state=eligible after successful probe",
+                                idx,
+                                member.provider,
+                                member.model,
+                                label,
+                            )
+                    return result
+                except BaseException as exc:  # noqa: BLE001 - exact object may be re-raised
+                    if not isinstance(exc, Exception):
+                        raise
+                    classify_failure = getattr(member, "classify_failure", None)
+                    failure = classify_failure(exc) if classify_failure is not None else None
+                    if isinstance(failure, LLMTerminalFailure):
+                        logger.warning(
+                            "LLM member %d (%s/%s, label=%s) category=reauthentication_required; stopping operation",
                             idx,
                             member.provider,
                             member.model,
                             label,
                         )
-                return result
-            except BaseException as e:  # noqa: BLE001 - re-raised unless it should fail over
-                if not isinstance(e, Exception):
-                    raise
-                # The router knows the member's position; a standalone wrapper
-                # cannot correctly name an unlabelled secondary member.
-                failure = (
-                    LLMTerminalFailure()
-                    if isinstance(e, ProviderReauthenticationRequiredError)
-                    else member.classify_failure(e)
-                )
-                if isinstance(failure, LLMTerminalFailure):
+                        # Identity, traceback, and provider remediation text are
+                        # part of the existing exception contract.
+                        raise
+
+                    if isinstance(failure, LLMCooldownFailure) or probing:
+                        delay = failure.retry_after_seconds if isinstance(failure, LLMCooldownFailure) else None
+                        cooldown_source = "provider_retry_after"
+                        if delay is None or not math.isfinite(delay) or delay < 0:
+                            delay = _DEFAULT_COOLDOWN_SECONDS
+                            cooldown_source = "default"
+                        with self._state_lock:
+                            state.cooldown_until = max(state.cooldown_until or 0.0, monotonic() + delay)
+                            # Followers which find every member unavailable need
+                            # the member's own nonterminal cause.  Keep the
+                            # latest one with the lease it created so they can
+                            # fail promptly after their one bounded wait.
+                            state.cooldown_exception = exc
+                            state.generation += 1
+                        if probing:
+                            # A half-open call is already this member's one
+                            # recovery attempt.  If it fails, do not sleep and
+                            # acquire another probe lease in the same request.
+                            inline_retry_used = True
+                        logger.warning(
+                            "LLM member %d (%s/%s, label=%s) state=cooldown category=%s "
+                            "cooldown_source=%s retry_after=%.3fs",
+                            idx,
+                            member.provider,
+                            member.model,
+                            label,
+                            failure.category.value if failure is not None else "probe_failed",
+                            cooldown_source,
+                            delay,
+                        )
+
+                    if not _should_failover(exc):
+                        raise
+                    last_exc = exc
+                    remaining = len(order) - position - 1
                     logger.warning(
-                        "LLM member %d (%s/%s, label=%s) category=reauthentication_required; stopping operation",
+                        "LLM member %d (%s/%s, label=%s) failed on %s: %s%s",
                         idx,
                         member.provider,
                         member.model,
                         label,
+                        method_name,
+                        failure.category.value if failure is not None else exc,
+                        f"; trying next member ({remaining} left)" if remaining else "; no members left",
                     )
-                    raise ProviderReauthenticationRequiredError(
-                        f"LLM member {idx} ({label}) requires reauthentication. "
-                        "Refresh its configured credentials before retrying."
-                    ) from None
-                if isinstance(failure, LLMCooldownFailure) or probing:
-                    delay = failure.retry_after_seconds if isinstance(failure, LLMCooldownFailure) else None
-                    cooldown_source = "provider_retry_after"
-                    if delay is None or not math.isfinite(delay) or delay < 0:
-                        delay = _DEFAULT_COOLDOWN_SECONDS
-                        cooldown_source = "default"
-                    with self._state_lock:
-                        state.cooldown_until = max(state.cooldown_until or 0.0, monotonic() + delay)
-                        state.generation += 1
-                    logger.warning(
-                        "LLM member %d (%s/%s, label=%s) state=cooldown category=%s "
-                        "cooldown_source=%s retry_after=%.3fs",
-                        idx,
-                        member.provider,
-                        member.model,
-                        label,
-                        failure.category.value if failure is not None else "probe_failed",
-                        cooldown_source,
-                        delay,
-                    )
-                if not _should_failover(e):
-                    raise
-                last_exc = e
-                remaining = len(order) - position - 1
-                logger.warning(
-                    "LLM member %d (%s/%s, label=%s) failed on %s: %s%s",
-                    idx,
-                    member.provider,
-                    member.model,
-                    label,
-                    method_name,
-                    failure.category.value if failure is not None else e,
-                    f"; trying next member ({remaining} left)" if remaining else "; no members left",
-                )
-            finally:
-                if probing:
-                    with self._state_lock:
-                        state.probing = False
-        # No provider request is made while every member is cooling/probing.
-        # Reuse the worker's existing quota defer signal, not a router wait loop.
-        with self._state_lock:
-            if last_exc is None or all(state.cooldown_until is not None for state in self._states):
+                finally:
+                    if probing:
+                        with self._state_lock:
+                            state.probing = False
+
+            if skipped_failure is not None:
+                request_saved_failure = skipped_failure
+            with self._state_lock:
                 now = monotonic()
-                delay = min(
+                # Only members in this request's immutable route order can make
+                # it available.  In metadata mode, direct chain calls are
+                # primary-only; a healthy secondary belongs to an explicitly
+                # selected metadata lane and must not suppress the primary's
+                # bounded wait or deferral.
+                ordered_states = [(idx, self._states[idx]) for idx in order]
+                unavailable = all(state.probing or state.cooldown_until is not None for _idx, state in ordered_states)
+                waits = [
                     (
-                        1.0 if state.probing else max(0.0, state.cooldown_until - now)
-                        for state in self._states
-                        if state.cooldown_until is not None
-                    ),
-                    # Another thread may have finished its probe since this
-                    # dispatch skipped it. Defer without inventing a new replay.
-                    default=1.0,
+                        _PROBE_POLL_SECONDS if state.probing else max(0.0, (state.cooldown_until or now) - now),
+                        idx,
+                    )
+                    for idx, state in ordered_states
+                    if state.probing or state.cooldown_until is not None
+                ]
+
+            if unavailable and waits:
+                wait_seconds, earliest_idx = min(waits)
+                earliest_member = self._members[earliest_idx]
+                explicit_max_backoff = kwargs.get("max_backoff")
+                configured_max_backoff = getattr(earliest_member, "max_backoff", None)
+                effective_max_backoff = (
+                    explicit_max_backoff
+                    if explicit_max_backoff is not None
+                    else configured_max_backoff
+                    if configured_max_backoff is not None
+                    else 30.0
+                    if method_name == "call_with_tools"
+                    else 60.0
                 )
-                wall_now = datetime.now(timezone.utc)
-                # Extremely large finite Retry-After values must not overflow
-                # datetime. Saturate only the external wakeup, not eligibility.
-                max_delay = (datetime.max.replace(tzinfo=timezone.utc) - wall_now).total_seconds() - 1.0
-                retry_at = wall_now + timedelta(seconds=min(delay, max_delay))
-                raise ProviderRateLimitResetError(
-                    retry_at=retry_at,
-                    message="All LLM members are cooling down or probing; retry after the reset time.",
-                ) from None
-        # Otherwise preserve the existing final-error behavior.
-        assert last_exc is not None
-        raise last_exc
+
+                if wait_seconds > effective_max_backoff:
+                    wall_now = datetime.now(UTC)
+                    # Saturate only the external timestamp; the monotonic
+                    # eligibility deadline retains the provider's full delay.
+                    max_delay = (datetime.max.replace(tzinfo=UTC) - wall_now).total_seconds() - 1.0
+                    retry_at = wall_now + timedelta(seconds=min(wait_seconds, max_delay))
+                    raise ProviderRateLimitResetError(
+                        retry_at=retry_at,
+                        message=f"All LLM members are cooling down; retry at {retry_at.isoformat()}.",
+                    ) from None
+
+                if not inline_retry_used:
+                    inline_retry_used = True
+                    await asyncio.sleep(wait_seconds)
+                    continue
+
+                # A concurrent half-open probe owns the only request lease. Do
+                # not poll it: after the single bounded wait, fail with this
+                # request's last error, or the nearest member's saved cooldown
+                # cause.  A later request may probe again once it is eligible.
+                if last_exc is not None:
+                    raise last_exc
+                if request_saved_failure is not None:
+                    raise request_saved_failure
+
+            # A probe owner may recover after this request observed and skipped
+            # it but before the post-loop snapshot above.  With no member
+            # attempted, spend the one inline budget on an immediate reroute;
+            # after that budget is spent, surface the native cause captured at
+            # the skip rather than polling or synthesizing an exhaustion error.
+            if not attempted_member:
+                if not inline_retry_used:
+                    inline_retry_used = True
+                    continue
+                if request_saved_failure is not None:
+                    raise request_saved_failure
+
+            # One inline retry is the bound: a provider that immediately reports
+            # another short reset does not cause an unbounded router retry loop.
+            if last_exc is not None:
+                raise last_exc
+            if request_saved_failure is not None:
+                raise request_saved_failure
+            raise RuntimeError("MultiLLMProvider exhausted member routing without a result")
 
     async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         return await self._dispatch("call", messages=messages, **kwargs)
@@ -301,6 +432,22 @@ class MultiLLMProvider:
                     member.model,
                     e,
                 )
+
+    def supports_vision(self) -> bool | None:
+        """Whether EVERY member can accept images — the opposite of batch routing.
+
+        Batch capacity may live on one member because the batch path picks that
+        member deliberately. Vision cannot: any call may fail over to any member,
+        so a chain is only safe for images if none of its members would drop
+        them. One ``False`` makes the chain False; otherwise an unknown member
+        makes the whole chain unknown.
+        """
+        answers = [member.supports_vision() for member in self._members]
+        if any(answer is False for answer in answers):
+            return False
+        if any(answer is None for answer in answers):
+            return None
+        return True
 
     # ── batch routing ───────────────────────────────────────────────────────────
 
@@ -364,13 +511,17 @@ class MultiLLMProvider:
                 trace_id=str(uuid.uuid4()),
                 operation_span_id=str(uuid.uuid4()),
             )
-        return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings, trace_ctx)
+        return ConfiguredLLMProvider(cast(LLMProvider, self), config.llm_gemini_safety_settings, trace_ctx)
 
     # ── attribute passthrough ────────────────────────────────────────────────────
 
     @property
     def members(self) -> list[LLMProvider]:
         return self._members
+
+    @property
+    def strategy(self) -> LLMStrategyConfig:
+        return self._strategy
 
     def __getattr__(self, name: str) -> Any:
         # Anything not defined here (provider, model, api_key, base_url,

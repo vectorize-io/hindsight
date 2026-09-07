@@ -102,11 +102,24 @@ run_setup_mode() {
   # `openclaw plugins doctor` can print diagnostics for UNRELATED bundled
   # plugins (e.g. ollama double-registration in clean CI envs). Only fail if
   # doctor surfaces something that specifically names hindsight, or if the
-  # command itself exits non-zero.
-  local doctor_out
-  if ! doctor_out="$(openclaw plugins doctor 2>&1)"; then
-    printf '%s\n' "$doctor_out" >&2
-    fail "openclaw plugins doctor exited non-zero after: $label"
+  # command itself exits non-zero for a reason we do not expect.
+  #
+  # Since openclaw 2026.8.1 the memory "kind" is an exclusive slot: installing
+  # this plugin deselects the bundled `memory-core`, and doctor reports that
+  # deselection as a diagnostic — which makes it exit non-zero even though the
+  # state is exactly the one we want (`plugins.slots.memory = hindsight-openclaw`).
+  # Tolerate a non-zero exit only when every diagnostic line is that notice.
+  local doctor_out doctor_rc=0 unexpected
+  doctor_out="$(openclaw plugins doctor 2>&1)" || doctor_rc=$?
+  if [[ $doctor_rc -ne 0 ]]; then
+    unexpected="$(printf '%s\n' "$doctor_out" \
+      | grep -E '^- ' \
+      | grep -vE '^- memory-core: memory plugin not selected for the memory slot' || true)"
+    if [[ -n "$unexpected" ]]; then
+      printf '%s\n' "$doctor_out" >&2
+      fail "openclaw plugins doctor exited non-zero after: $label"
+    fi
+    warn "  doctor exit $doctor_rc is the expected memory-slot deselection notice"
   fi
   if printf '%s' "$doctor_out" | grep -iE 'hindsight.*(fail|error|not loaded)|(fail|error).*hindsight' >/dev/null; then
     printf '%s\n' "$doctor_out" >&2

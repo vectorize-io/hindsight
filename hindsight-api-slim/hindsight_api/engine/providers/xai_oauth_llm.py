@@ -69,6 +69,8 @@ from hindsight_api.engine.structured_output import provider_json_schema, strict_
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -657,6 +659,10 @@ class XaiOAuthLLM(LLMInterface):
     # LLMInterface
     # ------------------------------------------------------------------
 
+    def supports_vision(self) -> bool:
+        """Grok models are multimodal."""
+        return True
+
     async def verify_connection(self) -> None:
         """Verify the lane with one tiny completion."""
         try:
@@ -700,9 +706,8 @@ class XaiOAuthLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """Make a non-streaming completion call with retry logic.
 
         Non-streaming is deliberate for the first implementation: the engine
@@ -784,15 +789,16 @@ class XaiOAuthLLM(LLMInterface):
                     finish_reason=completion_content.finish_reason,
                 )
 
-                if return_usage:
-                    return result, TokenUsage(
+                return LLMCallResult(
+                    content=result,
+                    usage=TokenUsage(
                         input_tokens=counts.input_tokens,
                         output_tokens=counts.output_tokens,
                         total_tokens=counts.total_tokens,
                         cached_tokens=counts.cached_tokens,
                         thoughts_tokens=counts.thoughts_tokens,
-                    )
-                return result
+                    ),
+                )
 
             # XaiOAuthRefreshError is retried alongside the transport errors: a
             # credential-side blip (a network error reaching auth.x.ai, a 5xx
@@ -934,11 +940,27 @@ class XaiOAuthLLM(LLMInterface):
         and :meth:`_close_when_drained` closes them on the way out.
         """
         draining = list(self._draining)
+        # Captured before cancelling: _close_when_drained's `finally` pops each entry
+        # out of _drained on its way through, so after the awaits below this map is
+        # empty whether or not the close actually happened.
+        retired = list(self._drained)
         for task in draining:
             task.cancel()
         for task in draining:
             with suppress(asyncio.CancelledError):
                 await task
+
+        # A cancelled drain task cannot be relied on to have closed its client. The
+        # cancellation is delivered at that task's next await -- which is the
+        # `await stale.aclose()` in its `finally` -- so the close never runs, and
+        # CancelledError is a BaseException, so the `suppress(Exception)` there does
+        # not catch it either. The client then leaked its connections on shutdown.
+        # Closing here is where it is actually guaranteed to happen; aclose() is
+        # idempotent, so a drain that did complete on its own costs nothing.
+        for stale in retired:
+            with suppress(Exception):
+                await stale.aclose()
+
         await self._client.aclose()
         self._auth.close()
 

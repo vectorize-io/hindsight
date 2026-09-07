@@ -254,6 +254,131 @@ class TestRetainHook:
         assert call_kwargs[1]["context"] == "cursor"
 
 
+class TestRetainTriggers:
+    """`stop` and `sessionEnd` both run retain.py -- they must not double-store.
+
+    `stop` gives the right granularity but is gated by the turn window, so a
+    session ending inside that window is never stored. `sessionEnd` flushes
+    the tail. They overlap at the end of a conversation.
+    """
+
+    def _transcript(self, tmp_path, count):
+        path = tmp_path / "transcript.jsonl"
+        messages = []
+        for i in range(count):
+            role = "user" if i % 2 == 0 else "assistant"
+            messages.append({"role": role, "content": f"message {i}"})
+        path.write_text("\n".join(json.dumps(m) for m in messages))
+        return path
+
+    def _run(self, monkeypatch, tmp_path, hook_input, mock_client):
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+        monkeypatch.setenv("CURSOR_PLUGIN_DATA", str(tmp_path / "data"))
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+
+        import retain
+
+        importlib.reload(retain)
+        with (
+            patch.object(retain, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(retain, "HindsightClient", return_value=mock_client),
+            patch.object(retain, "ensure_bank_mission"),
+        ):
+            retain.main()
+        return retain
+
+    def test_session_end_flushes_inside_the_turn_window(self, monkeypatch, tmp_path):
+        """A 2-turn session ends: `stop` would never retain, `sessionEnd` must."""
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "10")
+        transcript = self._transcript(tmp_path, 4)
+
+        stop_client = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-1", "transcript_path": str(transcript), "hook_event_name": "stop"},
+            stop_client,
+        )
+        stop_client.retain.assert_not_called()
+
+        end_client = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-1", "transcript_path": str(transcript), "hook_event_name": "sessionEnd"},
+            end_client,
+        )
+        end_client.retain.assert_called_once()
+
+    def test_session_end_after_a_retain_is_a_noop(self, monkeypatch, tmp_path):
+        """The stop/sessionEnd overlap must not store the transcript twice."""
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "1")
+        transcript = self._transcript(tmp_path, 4)
+
+        stop_client = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-2", "transcript_path": str(transcript), "hook_event_name": "stop"},
+            stop_client,
+        )
+        stop_client.retain.assert_called_once()
+
+        end_client = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-2", "transcript_path": str(transcript), "hook_event_name": "sessionEnd"},
+            end_client,
+        )
+        end_client.retain.assert_not_called()
+
+    def test_session_end_retains_again_once_the_transcript_grows(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "1")
+        transcript = self._transcript(tmp_path, 2)
+
+        first = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-3", "transcript_path": str(transcript), "hook_event_name": "stop"},
+            first,
+        )
+        first.retain.assert_called_once()
+
+        self._transcript(tmp_path, 6)
+        second = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-3", "transcript_path": str(transcript), "hook_event_name": "sessionEnd"},
+            second,
+        )
+        second.retain.assert_called_once()
+
+    def test_watermark_is_per_session(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "1")
+        transcript = self._transcript(tmp_path, 4)
+
+        first = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-a", "transcript_path": str(transcript), "hook_event_name": "stop"},
+            first,
+        )
+        first.retain.assert_called_once()
+
+        other = MagicMock()
+        self._run(
+            monkeypatch,
+            tmp_path,
+            {"conversation_id": "conv-b", "transcript_path": str(transcript), "hook_event_name": "sessionEnd"},
+            other,
+        )
+        other.retain.assert_called_once()
+
+
 class TestManifest:
     def test_plugin_json_valid(self):
         plugin_path = os.path.join(os.path.dirname(__file__), "..", ".cursor-plugin", "plugin.json")
@@ -273,6 +398,8 @@ class TestManifest:
         assert hooks["version"] == 1
         assert "sessionStart" in hooks["hooks"]
         assert "stop" in hooks["hooks"]
+        # sessionEnd is the final flush for sessions that end mid turn-window.
+        assert "sessionEnd" in hooks["hooks"]
         # beforeSubmitPrompt should NOT be present (it doesn't support additionalContext)
         assert "beforeSubmitPrompt" not in hooks["hooks"]
 

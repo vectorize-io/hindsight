@@ -12,6 +12,7 @@ cover the three pieces that make that distinction visible:
   the request was actually in flight.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import asyncio
 import logging
 from unittest.mock import patch
@@ -279,7 +280,7 @@ async def test_permit_wait_is_reported_separately_from_request_time(monkeypatch)
         llm = llm_wrapper.LLMConfig(provider="mock", api_key="", base_url="", model="m")
 
         async def fake_call(**kwargs):
-            return "ok"
+            return LLMCallResult(content="ok", usage=TokenUsage())
 
         monkeypatch.setattr(llm._provider_impl, "call", fake_call)
 
@@ -287,7 +288,7 @@ async def test_permit_wait_is_reported_separately_from_request_time(monkeypatch)
         await asyncio.sleep(_PERMIT_HOLD_SECONDS)
         assert not call.done(), "call should be queued behind the permit"
         saturated.release()
-        assert await call == "ok"
+        assert (await call).content == "ok"
     finally:
         reset_queue_wait_sink(token)
 

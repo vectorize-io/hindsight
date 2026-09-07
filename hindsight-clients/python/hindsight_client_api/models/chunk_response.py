@@ -18,7 +18,8 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.chunk_attachment import ChunkAttachment
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -32,7 +33,8 @@ class ChunkResponse(BaseModel):
     chunk_index: StrictInt
     chunk_text: StrictStr
     created_at: StrictStr
-    __properties: ClassVar[List[str]] = ["chunk_id", "document_id", "bank_id", "chunk_index", "chunk_text", "created_at"]
+    attachments: Optional[List[ChunkAttachment]] = None
+    __properties: ClassVar[List[str]] = ["chunk_id", "document_id", "bank_id", "chunk_index", "chunk_text", "created_at", "attachments"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -73,6 +75,18 @@ class ChunkResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in attachments (list)
+        _items = []
+        if self.attachments:
+            for _item_attachments in self.attachments:
+                if _item_attachments:
+                    _items.append(_item_attachments.to_dict())
+            _dict['attachments'] = _items
+        # set to None if attachments (nullable) is None
+        # and model_fields_set contains the field
+        if self.attachments is None and "attachments" in self.model_fields_set:
+            _dict['attachments'] = None
+
         return _dict
 
     @classmethod
@@ -90,7 +104,8 @@ class ChunkResponse(BaseModel):
             "bank_id": obj.get("bank_id"),
             "chunk_index": obj.get("chunk_index"),
             "chunk_text": obj.get("chunk_text"),
-            "created_at": obj.get("created_at")
+            "created_at": obj.get("created_at"),
+            "attachments": [ChunkAttachment.from_dict(_item) for _item in obj["attachments"]] if obj.get("attachments") is not None else None
         })
         return _obj
 

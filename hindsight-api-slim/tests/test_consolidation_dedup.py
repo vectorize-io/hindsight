@@ -5,6 +5,7 @@ guard the fix in CI — unlike the real-LLM integration test, which only trigger
 the path stochastically.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import logging
 import types
 import uuid
@@ -279,7 +280,10 @@ async def test_dedup_no_twin_above_threshold_returns_none() -> None:
 
 async def test_dedup_llm_keep_does_not_merge() -> None:
     kwargs, conn, llm = _ctx()
-    llm.call.return_value = '{"action": "keep", "text": "", "reason": "different language"}'
+    llm.call.return_value = LLMCallResult(
+        content='{"action": "keep", "text": "", "reason": "different language"}',
+        usage=TokenUsage(),
+    )
     with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         result = await _dedup_reconcile_create(**kwargs)
     assert result is None
@@ -290,7 +294,10 @@ async def test_dedup_llm_keep_does_not_merge() -> None:
 
 async def test_dedup_llm_missing_action_defaults_to_keep() -> None:
     kwargs, conn, llm = _ctx()
-    llm.call.return_value = _DedupDecision(reason="underfilled structured response")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(reason="underfilled structured response"),
+        usage=TokenUsage(),
+    )
     with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         result = await _dedup_reconcile_create(**kwargs)
     assert result is None
@@ -383,8 +390,9 @@ def test_dedup_prompt_contract_requests_json_not_key_value() -> None:
 async def test_dedup_llm_merge_folds_into_twin() -> None:
     kwargs, conn, llm = _ctx()
     kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
-    llm.call.return_value = (
-        '{"action": "merge", "text": "Uzbek content on YouTube is very rich.", "reason": "same fact"}'
+    llm.call.return_value = LLMCallResult(
+        content=('{"action": "merge", "text": "Uzbek content on YouTube is very rich.", "reason": "same fact"}'),
+        usage=TokenUsage(),
     )
     with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]):
         result = await _dedup_reconcile_create(**kwargs)
@@ -414,8 +422,9 @@ async def test_dedup_llm_merge_sanitizes_text_before_write() -> None:
     # A raw NUL reaching the driver breaks the Postgres UTF-8 encode.
     kwargs, conn, llm = _ctx()
     kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
-    llm.call.return_value = _DedupDecision(
-        action="merge", text="Uzbek content\x00 on YouTube is very rich.", reason="same fact"
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="Uzbek content\x00 on YouTube is very rich.", reason="same fact"),
+        usage=TokenUsage(),
     )
     with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]):
         result = await _dedup_reconcile_create(**kwargs)
@@ -429,7 +438,10 @@ async def test_dedup_llm_merge_sanitizes_text_before_write() -> None:
 async def test_dedup_picks_highest_above_threshold_skips_below() -> None:
     # Only the >=threshold candidate is considered; a 0.95 result is ignored at threshold 0.97.
     kwargs, conn, llm = _ctx(threshold=0.97)
-    llm.call.return_value = _DedupDecision(action="keep")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="keep"),
+        usage=TokenUsage(),
+    )
     with _patch_embed(), _patch_probe([_obs("near but distinct", 0.95), _obs("the real twin", 0.98)]):
         await _dedup_reconcile_create(**kwargs)
     # the twin passed to the LLM is the >=0.97 one, not the 0.95
@@ -476,7 +488,10 @@ def _update_ctx(threshold: float = 0.97):
 @pytest.mark.memory_backend_incompatible
 async def test_dedup_update_merge_folds_into_twin_and_deletes_updated() -> None:
     kwargs, conn, llm = _update_ctx()
-    llm.call.return_value = _DedupDecision(action="merge", text="Uzbek YouTube content is very rich and growing.")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="Uzbek YouTube content is very rich and growing."),
+        usage=TokenUsage(),
+    )
     with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         await _dedup_reconcile_update(**kwargs)
     llm.call.assert_awaited_once()
@@ -499,7 +514,10 @@ async def test_dedup_update_merge_folds_into_twin_and_deletes_updated() -> None:
 
 async def test_dedup_update_keep_does_not_merge() -> None:
     kwargs, conn, llm = _update_ctx()
-    llm.call.return_value = _DedupDecision(action="keep", reason="different growth claim")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="keep", reason="different growth claim"),
+        usage=TokenUsage(),
+    )
     with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         await _dedup_reconcile_update(**kwargs)
     llm.call.assert_awaited_once()
@@ -579,7 +597,10 @@ async def test_dedup_create_twin_vanished_returns_none_so_caller_creates() -> No
     # no row (fetchval -> None); the helper must return None so the caller still CREATEs.
     kwargs, conn, llm = _ctx()
     conn.fetchval_result = None
-    llm.call.return_value = _DedupDecision(action="merge", text="merged text")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
     with (
         _patch_embed(),
         _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]),
@@ -598,7 +619,10 @@ async def test_dedup_create_fold_uses_only_live_new_sources() -> None:
     deleted_source_id = uuid.uuid4()
     kwargs["create_source_ids"] = [deleted_source_id, live_source_id]
     conn.live_rows = [{"id": live_source_id}]
-    llm.call.return_value = _DedupDecision(action="merge", text="merged text")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
     with (
         _patch_embed(),
         _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]),
@@ -613,7 +637,10 @@ async def test_dedup_create_all_new_sources_deleted_returns_none() -> None:
     kwargs, conn, llm = _ctx()
     kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
     conn.live_rows = []
-    llm.call.return_value = _DedupDecision(action="merge", text="merged text")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
     with (
         _patch_embed(),
         _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]),
@@ -630,7 +657,10 @@ async def test_dedup_update_twin_vanished_does_not_delete_updated() -> None:
     # If the fold matches no row (twin vanished mid-window), the updated row must NOT be deleted.
     kwargs, conn, llm = _update_ctx()
     conn.fetchval_result = None
-    llm.call.return_value = _DedupDecision(action="merge", text="merged text")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
     with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         await _dedup_reconcile_update(**kwargs)
     conn.fetchval.assert_awaited_once()  # fold attempted
@@ -646,7 +676,10 @@ async def test_dedup_update_fold_uses_only_live_updated_sources() -> None:
     deleted_source_id = uuid.uuid4()
     conn.fetchrow_result = {"source_memory_ids": [deleted_source_id, live_source_id]}
     conn.live_rows = [{"id": live_source_id}]
-    llm.call.return_value = _DedupDecision(action="merge", text="merged text")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
     with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         await _dedup_reconcile_update(**kwargs)
     conn.fetchval.assert_awaited_once()
@@ -658,7 +691,10 @@ async def test_dedup_update_all_updated_sources_deleted_skips_fold_and_delete() 
     kwargs, conn, llm = _update_ctx()
     conn.fetchrow_result = {"source_memory_ids": [uuid.uuid4(), uuid.uuid4()]}
     conn.live_rows = []
-    llm.call.return_value = _DedupDecision(action="merge", text="merged text")
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
     with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         await _dedup_reconcile_update(**kwargs)
     conn.fetchval.assert_not_called()

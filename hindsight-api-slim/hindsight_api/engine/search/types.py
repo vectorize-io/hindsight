@@ -28,6 +28,21 @@ class GraphRetrievalTimings:
     hop_details: list[dict] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class GraphRetrieval:
+    """What one graph-retrieval strategy returned, plus how long it took getting there.
+
+    ``timings`` is diagnostics only — every caller but the perf path discards it,
+    and it is ``None`` when instrumentation is off. Pairing it with the results in
+    a bare tuple meant the interesting half was always the one you had to remember
+    came first; a strategy that returned them the other way round would type-check
+    identically against ``tuple[list, X | None]`` at every implementation.
+    """
+
+    results: list["RetrievalResult"]
+    timings: "GraphRetrievalTimings | None" = None
+
+
 @dataclass
 class RetrievalResult:
     """

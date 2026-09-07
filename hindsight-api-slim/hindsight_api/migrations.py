@@ -16,7 +16,12 @@ No alembic.ini required - all configuration is done programmatically.
 """
 
 import hashlib
+import json
 import logging
+import os
+import subprocess
+import sys
+import sysconfig
 import threading
 import time
 from pathlib import Path
@@ -28,6 +33,13 @@ from alembic.util.exc import CommandError
 from sqlalchemy import Connection, create_engine, text
 from sqlalchemy.pool import NullPool
 
+from ._free_threading import ENV_FREE_THREADING
+from ._pg_extensions import (
+    create_extension,
+    ensure_extensions_in_public,
+    extension_schema,
+    relocate_extension_to_public,
+)
 from ._pg_search import normalize_pg_search_tokenizer, pg_search_bm25_columns
 from ._text_search import mental_models_text_document
 from ._vector_index import (
@@ -40,10 +52,14 @@ from ._vector_index import (
     should_defer_index_creation,
     uses_per_bank_vector_indexes,
 )
+from .config import ENV_MIGRATION_ISOLATION, get_config
 from .db_url import is_oracle_url, to_libpq_url
 from .utils import mask_network_location
 
 logger = logging.getLogger(__name__)
+
+#: Set in the migration child's env so it does not spawn a child of its own.
+_CHILD_MARKER = "_HINDSIGHT_MIGRATION_CHILD"
 
 # Advisory lock ID for migrations (arbitrary unique number)
 MIGRATION_LOCK_ID = 123456789
@@ -67,68 +83,21 @@ def _detect_vector_extension(conn, vector_extension: str = "pgvector") -> str:
 
 
 def _ensure_pgvector_extension_in_public(conn: Connection) -> None:
-    """Ensure pgvector is installed before pgvector-backed migrations run."""
+    """Ensure pgvector is installed in ``public`` before pgvector-backed migrations run."""
     logger.debug("Checking pgvector extension availability...")
 
-    # First, check if extension already exists
-    ext_check = conn.execute(
-        text(
-            "SELECT extname, nspname FROM pg_extension e "
-            "JOIN pg_namespace n ON e.extnamespace = n.oid "
-            "WHERE extname = 'vector'"
-        )
-    ).fetchone()
-
-    if ext_check:
-        # Extension exists - check if in correct schema
-        ext_schema = ext_check[1]
-        if ext_schema == "public":
-            logger.info("pgvector extension found in public schema - ready to use")
-        else:
-            # Extension in wrong schema - try to fix if we have permissions
-            logger.warning(
-                f"pgvector extension found in schema '{ext_schema}' instead of 'public'. Attempting to relocate..."
-            )
-            try:
-                conn.execute(text("DROP EXTENSION vector CASCADE"))
-                conn.execute(text("SET search_path TO public"))
-                conn.execute(text("CREATE EXTENSION vector"))
-                conn.commit()
-                logger.info("pgvector extension relocated to public schema")
-            except Exception as e:
-                # Failed to relocate - log but don't fail if extension exists somewhere
-                logger.warning(
-                    f"Could not relocate pgvector extension to public schema: {e}. "
-                    f"Continuing with extension in '{ext_schema}' schema."
-                )
-                conn.rollback()
-    else:
-        # Extension doesn't exist - try to install
+    if extension_schema(conn, "vector") is None:
         logger.info("pgvector extension not found, attempting to install...")
         try:
-            conn.execute(text("SET search_path TO public"))
-            conn.execute(text("CREATE EXTENSION vector"))
+            create_extension(conn, "vector")
             conn.commit()
             logger.info("pgvector extension installed in public schema")
         except Exception as e:
-            # Installation failed - this is only fatal if extension truly doesn't exist
-            # Check one more time in case another process installed it
+            # Installation failed - this is only fatal if the extension truly
+            # doesn't exist; another process may have installed it meanwhile.
             conn.rollback()
-            ext_recheck = conn.execute(
-                text(
-                    "SELECT nspname FROM pg_extension e "
-                    "JOIN pg_namespace n ON e.extnamespace = n.oid "
-                    "WHERE extname = 'vector'"
-                )
-            ).fetchone()
-
-            if ext_recheck:
-                logger.warning(
-                    f"Could not install pgvector extension (permission denied?), "
-                    f"but extension exists in '{ext_recheck[0]}' schema. Continuing..."
-                )
-            else:
-                # Extension truly doesn't exist and we can't install it
+            existing = extension_schema(conn, "vector")
+            if not existing:
                 logger.error(
                     f"pgvector extension is not installed and cannot be installed: {e}. "
                     f"Please ensure pgvector is installed by a database administrator. "
@@ -137,6 +106,16 @@ def _ensure_pgvector_extension_in_public(conn: Connection) -> None:
                 raise RuntimeError(
                     "pgvector extension is required but not installed. Please install it with: CREATE EXTENSION vector;"
                 ) from e
+            logger.warning(
+                f"Could not install pgvector extension (permission denied?), "
+                f"but extension exists in '{existing}' schema. Continuing..."
+            )
+
+    # Relocate an installation an older version (or an operator) put elsewhere.
+    # ALTER EXTENSION ... SET SCHEMA carries its dependent objects along, unlike
+    # the DROP ... CASCADE + CREATE this used to do, which took every embedding
+    # column with it.
+    relocate_extension_to_public(conn, "vector")
 
 
 def _bootstrap_vector_extension_for_migrations(conn: Connection, vector_extension: str) -> None:
@@ -144,6 +123,11 @@ def _bootstrap_vector_extension_for_migrations(conn: Connection, vector_extensio
     if vector_extension == "pgvector":
         _ensure_pgvector_extension_in_public(conn)
     bootstrap_extension(conn, vector_extension)
+    # Repair anything an older version installed into a tenant schema, where the
+    # runtime (which connects with the default search_path) cannot resolve it — the
+    # pg_trgm case that made every retain fail silently in schema mode (#4118).
+    ensure_extensions_in_public(conn)
+    conn.commit()
 
 
 def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
@@ -238,6 +222,91 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     logger.info(f"Database migrations completed successfully for schema '{schema_name}'")
 
 
+def _should_isolate_migrations() -> bool:
+    """Whether to run the migration in a subprocess instead of in this process.
+
+    Controlled by ``HINDSIGHT_API_MIGRATION_ISOLATION``:
+
+        auto    (default) isolate only on a free-threaded interpreter
+        true    isolate everywhere — useful to keep alembic's import graph and its
+                sync engine out of a long-lived server process regardless
+        false   never isolate; the historical behaviour
+
+    "auto" exists because of psycopg2. Alembic drives PostgreSQL through SQLAlchemy's
+    sync engine, and psycopg2 has no free-threaded build: importing it on a
+    ``python3.14t`` interpreter re-enables the GIL for the life of the process. A
+    server that migrates on startup would therefore spend the rest of its life
+    single-threaded, having done the damage before serving a single request.
+
+    ``_CHILD_MARKER`` stops the child from recursing.
+    """
+    if os.environ.get(_CHILD_MARKER):
+        return False
+    mode = get_config().migration_isolation
+    if mode == "true":
+        return True
+    if mode == "false":
+        return False
+    return bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+
+
+def _run_in_migration_child(target: str, kwargs: dict) -> None:
+    """Run the migration in a subprocess so this process never imports psycopg2.
+
+    Alembic drives PostgreSQL through SQLAlchemy's sync engine, i.e. psycopg2, which
+    has no free-threaded build. Importing it on a ``python3.14t`` interpreter re-enables
+    the GIL for the life of the process -- so a server that migrates on startup would
+    spend the rest of its life single-threaded, having done the damage before it served
+    a single request.
+
+    The boundary is the whole migration entrypoint rather than each ``create_engine``
+    call: schema migration also reaches ``ensure_embedding_dimension`` and the vector /
+    text-search extension helpers, each of which opens its own sync engine. Isolating the
+    entrypoint covers all of them in one child instead of one spawn apiece.
+
+    The migration itself is short, rare and not on any hot path, so paying a process
+    spawn for it is free.
+
+    The payload goes over stdin, not argv: ``run_migrations_for_schemas`` is called
+    with every tenant schema at once, and at the scale that entrypoint is documented
+    for (20k schemas) the JSON is hundreds of KB — past ``ARG_MAX`` on macOS and close
+    to it on Linux, which would fail as ``E2BIG`` only on the largest deployments.
+
+    The child inherits stdout/stderr instead of having them captured. A full sweep can
+    run for the best part of an hour; capturing would hold every line until it finished
+    and show an operator nothing while it ran.
+    """
+    payload = json.dumps({"target": target, "kwargs": kwargs})
+    # The child imports psycopg2 deliberately — that is the entire reason it exists —
+    # so the free-threading guard has to be off inside it. Otherwise the guard the
+    # parent installs (strict by default on a free-threaded build, and inherited here)
+    # turns psycopg2's "the GIL has been enabled" warning into an exception and the
+    # migration fails.
+    #
+    # PYTHONWARNINGS is overwritten rather than merely cleared, for two reasons: the
+    # free-threaded CI job runs the suite with that warning promoted to an error and
+    # the child must not inherit it, and the warning is pure noise here — the child is
+    # SUPPOSED to take the GIL. Left visible it surfaces in the logs of a `-py3.14t`
+    # container as "the global interpreter lock (GIL) has been enabled", which reads
+    # like the image has silently lost its free-threading when it has not.
+    env = {
+        **os.environ,
+        ENV_MIGRATION_ISOLATION: "false",
+        ENV_FREE_THREADING: "off",
+        _CHILD_MARKER: "1",
+    }
+    env["PYTHONWARNINGS"] = "ignore:The global interpreter lock"
+    logger.info("Running migrations in a subprocess (psycopg2 needs the GIL; see %s)", ENV_MIGRATION_ISOLATION)
+    result = subprocess.run(
+        [sys.executable, "-m", "hindsight_api.migrations"],
+        input=payload,
+        env=env,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Migration subprocess failed (exit {result.returncode}); see the child's output above.")
+
+
 def run_migrations(
     database_url: str,
     script_location: str | None = None,
@@ -286,6 +355,20 @@ def run_migrations(
     # ineffective when the app URL goes through a pooler.  Configure
     # HINDSIGHT_API_MIGRATION_DATABASE_URL to the direct PostgreSQL endpoint
     # (e.g. hindsight-pg-rw) to restore correct locking behaviour.
+    # On a free-threaded interpreter, keep psycopg2 out of this process entirely.
+    # ``_CHILD_MARKER`` stops the child from recursing.
+    if _should_isolate_migrations():
+        _run_in_migration_child(
+            "run_migrations",
+            {
+                "database_url": database_url,
+                "script_location": script_location,
+                "schema": schema,
+                "migration_database_url": migration_database_url,
+            },
+        )
+        return
+
     raw_url = migration_database_url or database_url
     # Oracle URLs are passed through to SQLAlchemy unchanged; only PG URLs
     # need the libpq normalization (asyncpg → psycopg2 driver, ssl → sslmode).
@@ -1077,7 +1160,7 @@ def ensure_text_search_extension(
             elif text_search_extension == "pgroonga":
                 # Ensure pgroonga extension is available
                 try:
-                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgroonga CASCADE"))
+                    create_extension(conn, "pgroonga", cascade=True)
                 except Exception:
                     # Extension might already exist or user lacks permissions — verify
                     has_ext = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pgroonga'")).fetchone()
@@ -1269,6 +1352,26 @@ def run_migrations_for_schemas(
     Failures are collected per schema and re-raised together so one bad tenant
     does not hide the status of the others.
     """
+    # Free-threaded build: keep psycopg2 (and every sync engine this reaches --
+    # ensure_embedding_dimension, the vector and text-search extension helpers) out of
+    # the caller's process. One child covers the whole sweep.
+    if _should_isolate_migrations():
+        _run_in_migration_child(
+            "run_migrations_for_schemas",
+            {
+                "database_url": database_url,
+                "schemas": schemas,
+                "concurrency": concurrency,
+                "migration_database_url": migration_database_url,
+                "embedding_dimension": embedding_dimension,
+                "vector_extension": vector_extension,
+                "text_search_extension": text_search_extension,
+                "pg_search_tokenizer": pg_search_tokenizer,
+                "ensure_extensions": ensure_extensions,
+            },
+        )
+        return
+
     if not schemas:
         return
 
@@ -1308,3 +1411,28 @@ def run_migrations_for_schemas(
         raise RuntimeError(
             f"Database migrations failed for {len(errors)} of {len(schemas)} schema(s): {failed}"
         ) from next(iter(errors.values()))
+
+
+def _main() -> None:
+    """Entry point for the migration subprocess (see ``_run_in_migration_child``).
+
+    Invoked as ``python -m hindsight_api.migrations`` with the JSON payload on stdin.
+    Kept deliberately thin: it exists only so the psycopg2 import happens in a process
+    that is allowed to have the GIL, and it re-enters ``run_migrations`` with
+    ``_CHILD_MARKER`` set so the subprocess branch is skipped.
+    """
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    payload = json.loads(sys.stdin.read())
+    os.environ[_CHILD_MARKER] = "1"
+    targets = {
+        "run_migrations": run_migrations,
+        "run_migrations_for_schemas": run_migrations_for_schemas,
+    }
+    target = payload["target"]
+    if target not in targets:
+        raise SystemExit(f"unknown migration target {target!r}; expected one of {sorted(targets)}")
+    targets[target](**payload["kwargs"])
+
+
+if __name__ == "__main__":
+    _main()

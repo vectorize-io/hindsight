@@ -1705,10 +1705,13 @@ def extract_chinese_period(query: str, reference_date: datetime) -> DateRange | 
         return constraint(sat, sat + timedelta(days=1))
 
     if chinese_search(rf"上{_CHINESE_OPTIONAL_PERIOD_MARKER}(周|星期|礼拜)末"):
-        days_since_sat = (reference_date.weekday() + 2) % 7
-        if days_since_sat == 0:
-            days_since_sat = 7
-        sat = reference_date - timedelta(days=days_since_sat)
+        # Anchor to last week's Monday like every sibling rule above, rather
+        # than stepping back to the most recent Saturday. Stepping back lands on
+        # the weekend in progress when asked on a Sunday, which makes 上周末
+        # return the same window as 这周末 and leaves the weekend the user meant
+        # unreachable -- 上上周末 is already a week further back.
+        start = reference_date - timedelta(days=reference_date.weekday() + 7)
+        sat = start + timedelta(days=5)
         return constraint(sat, sat + timedelta(days=1))
 
     if chinese_search(r"(?<!每)(?<!个)(?<!各)(?<!隔)周末"):

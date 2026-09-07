@@ -88,6 +88,17 @@ _SKIP_TABLES = frozenset(
         "graph_maintenance_queue",  # transient work queue; regenerated on import
         "entity_maintenance_queue",  # transient work queue; regenerated on import
         "file_storage",  # raw uploads; documents.original_text is already carried
+        # Attachments retained as inline content, and the document edges derived
+        # from the text. Skipped because the bytes they point at live in
+        # file_storage, which is skipped just above — carrying the rows alone
+        # would give the target a bank full of records referencing blobs it does
+        # not have. The placeholders survive in documents.original_text, and both
+        # extraction and the read paths already degrade gracefully when one
+        # resolves to nothing, so an imported document keeps its facts and simply
+        # cannot show the attachment. Carrying them properly means bundling their
+        # bytes into the archive — a deliberate feature, not a line in this set.
+        "attachments",
+        "document_attachments",
         # Curation archive of retired facts — local operational state, not part of
         # the live knowledge the export replays. Its rows mirror memory_units (stale
         # embedding) and snapshot source-bank entity ids that the import re-resolves

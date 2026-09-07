@@ -120,10 +120,26 @@ class LoopWatchdog:
             except RuntimeError:
                 return  # loop closed — nothing left to watch
             if not serviced.wait(self._stall_threshold_s):
+                # A stop() requested while this ping was outstanding is not a stall to
+                # report: stop() runs on the loop thread and its join() blocks that
+                # thread for up to poll_interval + threshold + 1s, so the loop cannot
+                # service an in-flight ping — the watchdog would be reporting a stall it
+                # caused itself, with the shutdown frame as the named culprit. In
+                # production that lands a spurious "EVENT LOOP BLOCKED" warning at every
+                # clean shutdown, pointing at watchdog.stop(); in tests it made the
+                # "quiet on a responsive loop" case fail ~5% of runs (measured 11/200
+                # locally, and on CI shard 2). Re-checked here rather than before the
+                # wait: only the outcome of the wait tells us the ping went unserviced.
+                if self._stop.is_set():
+                    return
                 self._report(sent_at)
                 # Block until the loop finally services the ping so we emit one
-                # report per stall, not one per poll while it stays blocked.
-                serviced.wait()
+                # report per stall, not one per poll while it stays blocked. Bounded by
+                # stop() so a loop that never comes back cannot pin the thread here and
+                # make stop()'s join() wait out its full timeout.
+                while not serviced.wait(self._poll_interval_s):
+                    if self._stop.is_set():
+                        return
 
     def _report(self, sent_at: float) -> None:
         frame = sys._current_frames().get(self._loop_thread_id or -1)

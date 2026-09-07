@@ -623,11 +623,6 @@ class InMemoryMemories(MemoriesExtension):
         doc = self.documents.get(str(document_id))
         return list(doc["chunk_texts"]) if doc else None
 
-    async def count_chunks(self, *, bank_id, document_id):
-        self.calls.append("count_chunks")
-        doc = self.documents.get(str(document_id))
-        return len(doc["chunk_texts"]) if doc else 0
-
     async def delete_document_record(self, *, bank_id, document_id):
         self.calls.append("delete_document_record")
         self.documents.pop(str(document_id), None)
@@ -659,9 +654,25 @@ class InMemoryMemories(MemoriesExtension):
         self.calls.append("memories_timeseries")
         return []
 
-    async def observation_scope_counts(self, *, conn, fq_table, bank_id):
+    async def observation_scope_counts(self, *, conn, fq_table, bank_id, limit=100, offset=0):
         self.calls.append("observation_scope_counts")
-        return []
+        # Same paged shape as list_tags above: the histogram is the store's to group,
+        # order and page, so the stub does it over its own rows rather than shipping
+        # every scope back for the engine to trim.
+        counts: dict[tuple[str, ...], int] = {}
+        for row in self.rows.values():
+            if row.fact_type != "observation":
+                continue
+            scope = tuple(sorted(row.tags or []))
+            counts[scope] = counts.get(scope, 0) + 1
+        scopes = [{"tags": list(scope), "count": count} for scope, count in counts.items()]
+        scopes.sort(key=lambda it: (-it["count"], it["tags"]))
+        return {
+            "scopes": scopes[offset : offset + limit],
+            "total": len(scopes),
+            "limit": limit,
+            "offset": offset,
+        }
 
     # -- the knowledge-page index -------------------------------------------
     #

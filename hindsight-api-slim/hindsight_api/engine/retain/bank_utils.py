@@ -510,9 +510,10 @@ Merged mission:"""
     try:
         messages = [{"role": "user", "content": prompt}]
 
-        content = await llm_config.call(
+        call_result = await llm_config.call(
             messages=messages, scope="bank_mission", temperature=0.3, max_completion_tokens=8192
         )
+        content = call_result.content
 
         logger.info(f"LLM response for mission merge (first 500 chars): {content[:500]}")
 

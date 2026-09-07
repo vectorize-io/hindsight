@@ -104,9 +104,11 @@ class TestBuildPerOpSemaphores:
         monkeypatch.delenv("HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT", raising=False)
         result = llm_wrapper._build_per_op_semaphores()
         assert set(result.keys()) == {"retain", "reflect"}
-        # asyncio.Semaphore's internal counter is _value; assert it matches.
-        assert result["retain"]._value == 2
-        assert result["reflect"]._value == 3
+        # These are CrossLoopSemaphores (process-wide caps usable from several event
+        # loops), which expose the configured cap as a public property rather than
+        # requiring a peek at asyncio.Semaphore's private _value.
+        assert result["retain"].capacity == 2
+        assert result["reflect"].capacity == 3
 
     def test_empty_string_treated_as_unset(self, monkeypatch):
         monkeypatch.setenv("HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT", "")
@@ -295,7 +297,7 @@ class TestSemaphoreEnforcement:
                 provider.call(messages=[{"role": "user", "content": "unrelated"}], scope="retain"),
                 timeout=0.5,
             )
-            assert await asyncio.wait_for(retrying, timeout=3) == "ok"
+            assert (await asyncio.wait_for(retrying, timeout=3)).content == "ok"
 
         assert events == ["retrying-attempt-1", "unrelated", "retrying"]
 
@@ -379,7 +381,7 @@ class TestSemaphoreEnforcement:
             assert holder.stage == "llm.openai.retain.attempt=1/2.backoff", (
                 "backoff sleep must be visible in the stage while no permit is held"
             )
-            assert await asyncio.wait_for(task, timeout=3) == "ok"
+            assert (await asyncio.wait_for(task, timeout=3)).content == "ok"
 
     @pytest.mark.asyncio
     async def test_per_op_composes_with_global(self):

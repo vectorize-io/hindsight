@@ -2,8 +2,9 @@ import React, {useMemo, useState} from 'react';
 import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
+import {usePluginData} from '@docusaurus/useGlobalData';
 import IntegrationsBanner from '@site/src/components/IntegrationsBanner';
-import {integrationsSorted} from '@site/src/lib/integrations';
+import {integrationsSorted, CATEGORY_LABELS, groupByCategory} from '@site/src/lib/integrations';
 import styles from './index.module.css';
 
 /**
@@ -51,58 +52,99 @@ interface Integration {
   icon?: string;
 }
 
-function IntegrationCard({integration}: {integration: Integration}) {
+/**
+ * The gallery is a browse surface, not a reading surface: 60 three-line cards with a repeated
+ * "Hindsight Team" byline made the page long enough that scanning it meant scrolling past what you
+ * were looking for. This is the same row the changelog listing uses — icon, name, two lines of
+ * description — grouped by category so the shape of the catalogue is visible at a glance.
+ *
+ * Featured uses the same row, tinted and spanning wider tracks, so the page reads as one list with
+ * three entries lifted out of it rather than two competing card designs. The coding-agents card
+ * keeps its harness strip: "one install, every agent" is a claim a single icon cannot make.
+ */
+function IntegrationCard({
+  integration,
+  changelogSlug,
+  featured = false,
+}: {
+  integration: Integration;
+  changelogSlug?: string;
+  featured?: boolean;
+}) {
   const harnessBase = useBaseUrl('/img/harness/');
   const iconSrc = useBaseUrl(integration.icon ?? '');
-  const faviconSrc = useBaseUrl('/img/favicon.png');
   const isExternal = integration.link.startsWith('http');
 
   return (
-    <Link to={integration.link} className={styles.card} {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
-      <div className={styles.cardHeader}>
-        {integration.icon && <img src={iconSrc} alt="" className={styles.cardIcon} aria-hidden />}
-        <span className={`${styles.typeBadge} ${integration.type === 'official' ? styles.typeBadgeOfficial : styles.typeBadgeCommunity}`}>
-          {integration.type === 'official' ? 'Official' : 'Community'}
-        </span>
-      </div>
-      <div className={styles.cardBody}>
-        <h3 className={styles.cardTitle}>{integration.name}</h3>
-        <p className={styles.cardDescription}>{integration.description}</p>
-        {integration.id === 'coding-agents' && (
-          <div className={styles.harnessStrip} aria-label="Supported coding agents">
-            {CODING_AGENT_LOGOS.map((h) => (
-              <img
-                key={h.id}
-                src={`${harnessBase}${h.file}`}
-                alt={h.name}
-                title={h.name}
-                className={styles.harnessLogo}
-                loading="lazy"
-              />
-            ))}
-          </div>
+    <div className={`${styles.compactCard} ${featured ? styles.compactCardFeatured : ''}`}>
+      <div className={styles.compactHeader}>
+        {integration.icon && <img src={iconSrc} alt="" className={styles.compactIcon} aria-hidden />}
+        <Link
+          to={integration.link}
+          className={styles.compactName}
+          {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
+          {integration.name}
+        </Link>
+        {integration.type === 'community' && (
+          <img
+            src={`https://github.com/${integration.by}.png?size=40`}
+            alt={`Community integration by @${integration.by}`}
+            title={`Community integration by @${integration.by}`}
+            className={styles.compactAuthor}
+            loading="lazy"
+          />
         )}
       </div>
-      <div className={styles.cardFooter}>
-        {integration.type === 'official' ? (
-          <span className={styles.byLine}>
-            <img src={faviconSrc} alt="" className={styles.authorIcon} aria-hidden />
-            <span className={styles.authorName}>Hindsight Team</span>
-          </span>
-        ) : (
-          <span className={styles.byLine}>
-            <img src={`https://github.com/${integration.by}.png?size=40`} alt="" className={styles.authorIcon} aria-hidden />
-            <span className={styles.authorName}>@{integration.by}</span>
-          </span>
+
+      <p className={styles.compactDescription}>{integration.description}</p>
+
+      {featured && integration.id === 'coding-agents' && (
+        <div className={styles.harnessStrip} aria-label="Supported coding agents">
+          {CODING_AGENT_LOGOS.map((h) => (
+            <img
+              key={h.id}
+              src={`${harnessBase}${h.file}`}
+              alt={h.name}
+              title={h.name}
+              className={styles.harnessLogo}
+              loading="lazy"
+            />
+          ))}
+        </div>
+      )}
+
+      <div className={styles.compactActions}>
+        <Link
+          to={integration.link}
+          className={styles.actionPill}
+          {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
+          {isExternal ? 'Site ↗' : 'Docs'}
+        </Link>
+        {/* Only integrations that publish a package have a changelog; the rest would link to a 404. */}
+        {changelogSlug && (
+          <Link to={`/changelog/integrations/${changelogSlug}`} className={styles.actionPill}>
+            Changelog
+          </Link>
         )}
       </div>
-    </Link>
+    </div>
   );
 }
 
 export default function IntegrationsHub(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState<IntegrationType | 'all'>('all');
+
+  // Which integrations have a changelog page, from the same build-time index the /changelog
+  // listing uses — so a card grows a Changelog button the release after its first release,
+  // with nothing here to update.
+  const {entries: changelogEntries} = usePluginData('integration-changelogs') as {
+    entries: {id: string; slug: string}[];
+  };
+  const changelogSlugs = useMemo(
+    () => new Map(changelogEntries.map((e) => [e.id, e.slug])),
+    [changelogEntries],
+  );
 
   // Superseded pages stay published and linked from the docs sidebar, but the gallery is where
   // people come to CHOOSE an integration — offering something we are actively migrating them off
@@ -196,7 +238,12 @@ export default function IntegrationsHub(): React.ReactElement {
             <h2 className={styles.featuredTitle}>Featured</h2>
             <div className={styles.featuredGrid}>
               {featured.map((integration) => (
-                <IntegrationCard key={integration.id} integration={integration} />
+                <IntegrationCard
+                  key={integration.id}
+                  integration={integration}
+                  changelogSlug={changelogSlugs.get(integration.id)}
+                  featured
+                />
               ))}
             </div>
           </section>
@@ -217,9 +264,23 @@ export default function IntegrationsHub(): React.ReactElement {
             </button>
           </div>
         ) : (
-          <div className={styles.grid}>
-            {rest.map((integration) => (
-              <IntegrationCard key={integration.id} integration={integration} />
+          <div className={styles.groups}>
+            {groupByCategory(rest).map(([category, items]) => (
+              <section key={category} className={styles.group}>
+                <h3 className={styles.groupTitle}>
+                  {CATEGORY_LABELS[category] ?? category}
+                  <span className={styles.groupCount}>{items.length}</span>
+                </h3>
+                <div className={styles.compactGrid}>
+                  {items.map((integration) => (
+                    <IntegrationCard
+                      key={integration.id}
+                      integration={integration}
+                      changelogSlug={changelogSlugs.get(integration.id)}
+                    />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}

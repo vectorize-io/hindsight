@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import hindsight_api.engine.search.retrieval as retrieval_module
+from hindsight_api.engine.search.types import GraphRetrieval
 from hindsight_api.engine.search.retrieval import _select_with_temporal_coverage, retrieve_temporal_combined_sql
 from hindsight_api.engine.task_backend import fq_table
 
@@ -194,7 +195,7 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
     class FakeGraphRetriever:
         async def retrieve(self, **kwargs):
             graph_call_kwargs.append(set(kwargs))
-            return [], None
+            return GraphRetrieval([], None)
 
     fake_config = SimpleNamespace(graph_seed_min_similarity=0.3, temporal_semantic_min_similarity=0.24)
 

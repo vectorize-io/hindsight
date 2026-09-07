@@ -7,6 +7,8 @@ description: "Guard Hindsight memory operations with Superagent. Blocks prompt i
 
 Safety middleware for [Hindsight](https://vectorize.io/hindsight) memory operations, powered by [Superagent](https://www.superagent.sh). Wrap your memory client with `SafeHindsight` to guard against prompt injection and strip PII before anything is written to memory — and to screen queries before they reach recall or reflect.
 
+[View Changelog →](/changelog/integrations/superagent)
+
 ## Quick Start
 
 :::tip Recommended: Hindsight Cloud

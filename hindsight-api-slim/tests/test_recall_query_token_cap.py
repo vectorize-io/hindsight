@@ -8,10 +8,10 @@ exceeded Postgres' stack depth (SQLSTATE 54001).
 """
 
 from hindsight_api.engine.memory_engine import (
-    get_token_encoding,
     _truncate_query_to_token_limit,
     count_tokens,
 )
+from hindsight_api.engine.token_encoding import _load_encoding
 from hindsight_api.engine.search.retrieval import tokenize_query
 
 
@@ -79,4 +79,5 @@ def test_truncated_query_round_trips_through_the_encoder():
     bounded = _truncate_query_to_token_limit(query, 500)
 
     assert isinstance(bounded, str)
-    assert get_token_encoding().encode(bounded) == get_token_encoding().encode(query)[:500]
+    enc = _load_encoding()
+    assert enc.encode_ordinary(bounded) == enc.encode_ordinary(query)[:500]

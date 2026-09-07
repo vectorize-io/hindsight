@@ -198,7 +198,7 @@ def registered_recorder():
 @pytest.mark.asyncio
 async def test_wrapper_success_recorded_by_provider(registered_recorder):
     llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
-    result = await llm.call(messages=[{"role": "user", "content": "hello"}], scope="memory")
+    result = (await llm.call(messages=[{"role": "user", "content": "hello"}], scope="memory")).content
 
     assert result == "mock response"
     assert len(registered_recorder.records) == 1
@@ -390,12 +390,14 @@ async def test_retain_extract_success_records_usage_once(registered_recorder):
         return_value=_openai_response_with_usage('{"fact": "the sky is blue"}')
     )
 
-    result = await llm.call(
-        messages=[{"role": "user", "content": "extract facts"}],
-        response_format=_Extracted,
-        scope="retain_extract_facts",
-        max_retries=0,
-    )
+    result = (
+        await llm.call(
+            messages=[{"role": "user", "content": "extract facts"}],
+            response_format=_Extracted,
+            scope="retain_extract_facts",
+            max_retries=0,
+        )
+    ).content
 
     assert isinstance(result, _Extracted)
     assert len(registered_recorder.records) == 1

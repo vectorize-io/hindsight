@@ -61,7 +61,7 @@ func (dst *Timestamp) UnmarshalJSON(data []byte) error {
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src *Timestamp) MarshalJSON() ([]byte, error) {
+func (src Timestamp) MarshalJSON() ([]byte, error) {
 	if src.String != nil {
 		return json.Marshal(&src.String)
 	}

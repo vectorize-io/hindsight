@@ -506,7 +506,9 @@ pub fn retain(
     };
 
     let item = MemoryItem {
-        content: content.clone(),
+        // `content` is now `string | ContentBlock[]` so retain can take inline
+        // images. The CLI only ever sends text, which is the string variant.
+        content: hindsight_client::types::Content::Variant0(content.clone()),
         context,
         metadata: None,
         timestamp,
