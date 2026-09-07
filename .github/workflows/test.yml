@@ -47,6 +47,7 @@ jobs:
       integrations-agent-plugin: ${{ steps.filter.outputs.integrations-agent-plugin }}
       integrations-copilot-cli: ${{ steps.filter.outputs.integrations-copilot-cli }}
       extensions-supabase-tenant: ${{ steps.filter.outputs.extensions-supabase-tenant }}
+      extensions-static-keys-tenant: ${{ steps.filter.outputs.extensions-static-keys-tenant }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
@@ -179,6 +180,8 @@ jobs:
             - 'hindsight-integrations/copilot-cli/**'
           extensions-supabase-tenant:
             - 'hindsight-extensions/supabase-tenant/**'
+          extensions-static-keys-tenant:
+            - 'hindsight-extensions/static-keys-tenant/**'
           integrations-crewai:
             - 'hindsight-integrations/crewai/**'
           integrations-litellm:
@@ -3966,6 +3969,53 @@ jobs:
           --build-arg HINDSIGHT_IMAGE=ghcr.io/vectorize-io/hindsight:latest-slim \
           -t hindsight-with-supabase .
 
+  test-extension-static-keys-tenant:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.extensions-static-keys-tenant == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    # No --frozen: the lock is not checked in, because tool.uv.sources resolves
+    # hindsight-api-slim from the local checkout and its dependency tree moves
+    # with core.
+    - name: Install dependencies
+      working-directory: ./hindsight-extensions/static-keys-tenant
+      run: uv sync
+
+    - name: Run tests
+      working-directory: ./hindsight-extensions/static-keys-tenant
+      run: uv run pytest tests -v
+
+    # The Dockerfile IS the distribution mechanism — its final `import` step is
+    # the only thing proving the extension is reachable from the interpreter the
+    # server runs. Build it from the repo root, where the sources are in context.
+    - name: Build the extension image
+      run: |
+        docker build \
+          -f hindsight-extensions/static-keys-tenant/Dockerfile \
+          --build-arg HINDSIGHT_IMAGE=ghcr.io/vectorize-io/hindsight:latest-slim \
+          -t hindsight-with-static-keys .
+
   test-crewai-integration:
     needs: [detect-changes]
     if: >-
@@ -5595,6 +5645,7 @@ jobs:
       - test-obsidian-integration
       - test-agent-framework-integration
       - test-extension-supabase-tenant
+      - test-extension-static-keys-tenant
       - test-crewai-integration
       - test-langgraph-integration
       - test-superagent-integration
