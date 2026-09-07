@@ -116,6 +116,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `recallMaxTokens`          | `1024`                         | Max tokens for recall response. Controls how much memory context is injected per turn.                                                                                                                                                                                                                           |
 | `recallTypes`              | `["observation"]`              | Memory types to recall. Options: `world`, `experience`, `observation`. Defaults to observations — the consolidated, deduplicated view — to avoid surfacing the same answer multiple times when many raw memories say the same thing.                                                                             |
 | `preferObservations`       | `false`                        | When `true`, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones. Pair with a `recallTypes` that includes raw types (e.g. `["observation", "world", "experience"]`) to surface just-retained facts before consolidation, without duplicating consolidated content. |
+| `recallMinScores`          | `{}`                           | Optional score floors for auto-recall, keyed by stage (for example `{"reranker": 0.3}`). Missing fields impose no floor; memories with missing or `null` scores pass. Reranker scores are query-local, so use this as a garbage gate rather than a calibrated relevance dial.                                    |
 | `recallRoles`              | `["user", "assistant"]`        | Roles included when building prior context for recall query composition. Options: `user`, `assistant`, `system`, `tool`.                                                                                                                                                                                         |
 | `recallTopK`               | —                              | Max number of memories to inject per turn. Applied after API response as a hard cap.                                                                                                                                                                                                                             |
 | `recallContextTurns`       | `1`                            | Number of user turns to include when composing recall query context. `1` keeps latest-message-only behavior.                                                                                                                                                                                                     |
@@ -201,6 +202,19 @@ Glob syntax:
 Retained documents use stable session-scoped IDs derived from the OpenClaw `sessionKey`. Every retain in a session shares one document id like `openclaw:agent:agentname:discord:channel:123`, so all turns of the conversation accumulate under a single Hindsight document (on legacy APIs without `update_mode: 'append'` support, the integration falls back to per-retain ids — `...:turn:<boot>:000001`, `...:window:<boot>:000002` for chunked retention — so prior turns aren't overwritten; `<boot>` is a token minted per host process, which keeps a restart from replaying ids the previous run already used). Retained documents include richer metadata such as `session_key`, `agent_id`, `provider`, `channel_id`, `thread_id`, `sender_id`, `turn_index`, and `retention_scope`. Each message in the retained JSON also carries a structured `timestamp` field (ISO 8601) lifted from OpenClaw's per-message time, so facts are not polluted by inline weekday/date prefixes.
 
 `retainContext` is sent separately from the transcript content and gives Hindsight's extraction LLM interpretation guidance for the retained document. The default is designed for OpenClaw transcripts: it explains that sender/channel/provider metadata is operational routing data, that assistant-role first-person statements belong to the AI assistant, and that bank IDs or tags should not be treated as the discussed project. Sender/channel/provider stay in retain request metadata/context and are not prepended into retained transcript content.
+
+## OpenClaw compatibility
+
+Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.9.x**. The plugin reads both the old and the new conversation-metadata labels, so plugin and OpenClaw versions do not need to match.
+
+**On OpenClaw 2026.8.1 or later, use 0.12.0 or later.** 2026.8.1 changed how OpenClaw labels the metadata it attaches to each message; earlier plugin versions no longer recognised it, so turns were skipped with `missing stable sender identity`, routing IDs were stored as conversation content, and automatic recall could search using that metadata instead of your message.
+
+Two expected (non-error) messages on 2026.8.1+:
+
+- Install prints `Exclusive slot "memory" switched from "memory-core" to "hindsight-openclaw"` — correct; Hindsight replaces OpenClaw's built-in memory.
+- `openclaw plugins doctor` then reports `memory-core` is not selected for the memory slot — that is OpenClaw noting its built-in memory stepped aside.
+
+Upgrading from 0.11.1 or earlier: installs could fail with `npm error Cannot read properties of null (reading 'edgesOut')`. That was a packaging problem in the plugin, fixed in 0.12.0 — retry with the new version.
 
 ## Documentation
 

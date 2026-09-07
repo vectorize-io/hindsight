@@ -105,6 +105,30 @@ No external dependencies needed.
 
 See [perf/README.md](perf/README.md) for detailed documentation.
 
+### Multimodal Retain
+
+Is the information in the pictures reaching memory? Retains the same KB articles
+twice — once with their images inline, once with the images absent — and asks
+questions that only the images can answer. See
+[`multimodal_retain/README.md`](multimodal_retain/README.md) for the corpus, the
+metrics and the recorded baseline.
+
+Needs a server with a **vision-capable retain LLM**; without one the multimodal
+arm is refused with `422` and the report says so rather than reporting zeros.
+
+```bash
+uv run python -m benchmarks.multimodal_retain run --api-url http://localhost:8917 --build my-branch
+
+# re-render a saved artifact, no LLM calls
+uv run python -m benchmarks.multimodal_retain report benchmarks/results/multimodal_retain/<artifact>.json
+```
+
+**Options:**
+- `--article NAME` - Run one article (repeatable)
+- `--build LABEL` - Label recorded in the artifact
+- `--out PATH` - Where to write the artifact
+- `--keep-banks` - Leave the benchmark banks behind for inspection
+
 ### Token Counting (micro)
 
 Measures the token counting recall does per candidate fact, chunk and

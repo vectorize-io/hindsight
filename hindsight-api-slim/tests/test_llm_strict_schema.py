@@ -23,6 +23,7 @@ reads the same retain-scoped field rather than the global flag, keeping the batc
 and streaming paths in agreement.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import dataclasses
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -331,9 +332,8 @@ async def test_retain_chunk_extraction_threads_retain_flag(strict):
     llm_config = MagicMock(spec=LLMProvider)
     llm_config.provider = "mock"
     llm_config._provider_impl = SimpleNamespace(supports_prompt_caching=lambda: False)
-    token_usage = MagicMock()
-    token_usage.__add__ = lambda self, other: self
-    llm_config.call = AsyncMock(return_value=({"facts": []}, token_usage))
+    token_usage = TokenUsage()
+    llm_config.call = AsyncMock(return_value=LLMCallResult(content={"facts": []}, usage=token_usage))
 
     await _extract_facts_from_chunk(
         chunk="some text",
@@ -355,7 +355,7 @@ async def test_reflect_structured_output_threads_reflect_flag(strict):
 
     llm_config = MagicMock(spec=LLMProvider)
     llm_config.provider = "mock"
-    llm_config.call = AsyncMock(return_value=({"answer": "x"}, MagicMock()))
+    llm_config.call = AsyncMock(return_value=LLMCallResult(content={"answer": "x"}, usage=TokenUsage()))
 
     with patch(
         "hindsight_api.engine.reflect.agent.get_config",

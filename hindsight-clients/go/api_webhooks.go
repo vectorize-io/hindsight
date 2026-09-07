@@ -435,7 +435,21 @@ type ApiListWebhooksRequest struct {
 	ctx context.Context
 	ApiService *WebhooksAPIService
 	bankId string
+	limit *int32
+	offset *int32
 	authorization *string
+}
+
+// Maximum number of webhooks to return
+func (r ApiListWebhooksRequest) Limit(limit int32) ApiListWebhooksRequest {
+	r.limit = &limit
+	return r
+}
+
+// Offset for pagination
+func (r ApiListWebhooksRequest) Offset(offset int32) ApiListWebhooksRequest {
+	r.offset = &offset
+	return r
 }
 
 func (r ApiListWebhooksRequest) Authorization(authorization string) ApiListWebhooksRequest {
@@ -450,7 +464,7 @@ func (r ApiListWebhooksRequest) Execute() (*WebhookListResponse, *http.Response,
 /*
 ListWebhooks List webhooks
 
-List all webhooks registered for a bank.
+List the webhooks registered for a bank, oldest first. Paged: `total` reports every webhook on the bank.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -486,6 +500,18 @@ func (a *WebhooksAPIService) ListWebhooksExecute(r ApiListWebhooksRequest) (*Web
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.limit != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")
+	} else {
+		var defaultValue int32 = 100
+		r.limit = &defaultValue
+	}
+	if r.offset != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "offset", r.offset, "form", "")
+	} else {
+		var defaultValue int32 = 0
+		r.offset = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 

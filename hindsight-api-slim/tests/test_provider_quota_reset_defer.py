@@ -103,7 +103,13 @@ async def test_extract_facts_from_text_preserves_provider_quota_reset(monkeypatc
             event_date=None,
             llm_config=object(),
             agent_name="TestAgent",
-            config=SimpleNamespace(retain_chunk_size=1000, retain_structured_chunk_size=None),
+            config=SimpleNamespace(
+                retain_chunk_size=1000,
+                retain_structured_chunk_size=None,
+                # Chunking budgets the image-aware splitter reads; this body
+                # carries no images, so the values only have to exist.
+                retain_max_attachments_per_chunk=8,
+            ),
         )
 
     assert exc_info.value.retry_at == retry_at

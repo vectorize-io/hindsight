@@ -113,3 +113,34 @@ def test_main_rejects_an_unknown_target(monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"target": "drop_everything", "kwargs": {}})))
     with pytest.raises(SystemExit, match="drop_everything"):
         migrations._main()
+
+
+async def test_extension_context_run_migration_goes_through_the_isolation_boundary():
+    """Runtime tenant provisioning must not open a sync engine in the server process.
+
+    ``ExtensionContext.run_migration`` is the seam cloud tenant provisioning uses to
+    create a schema for a new bank. It used to call ``run_migrations`` and then the
+    ``ensure_*`` helpers one by one -- and only the first of those isolates, so the
+    other three imported psycopg2 into a free-threaded API process and the request
+    500'd. ``run_migrations_for_schemas`` is the entrypoint that covers all four
+    behind one isolation check.
+    """
+    from hindsight_api.extensions.context import DefaultExtensionContext
+
+    ctx = DefaultExtensionContext(database_url="postgresql://user:pass@host/db")
+    with (
+        patch.object(migrations, "run_migrations_for_schemas") as sweep,
+        patch.object(migrations, "run_migrations") as run_one,
+        patch.object(migrations, "ensure_embedding_dimension") as dim,
+        patch.object(migrations, "ensure_vector_extension") as vec,
+        patch.object(migrations, "ensure_text_search_extension") as text_search,
+    ):
+        await ctx.run_migration("tenant_acme")
+
+    for unisolated in (run_one, dim, vec, text_search):
+        unisolated.assert_not_called()
+    (url, schemas), kwargs = sweep.call_args
+    assert url == "postgresql://user:pass@host/db"
+    assert schemas == ["tenant_acme"]
+    # The post-migration extension steps must still happen -- inside the child.
+    assert kwargs["vector_extension"] and kwargs["text_search_extension"]

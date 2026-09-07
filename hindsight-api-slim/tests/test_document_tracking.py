@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api import RequestContext
-from hindsight_api.engine.response_models import TokenUsage
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 
 
 @pytest.mark.asyncio
@@ -513,9 +513,7 @@ async def test_document_stored_without_chunks_when_zero_facts(memory_no_llm_veri
 
     async def mock_llm_zero_facts(*args, **kwargs):
         response = {"facts": []}
-        if kwargs.get("return_usage", False):
-            return response, TokenUsage(input_tokens=10, output_tokens=2)
-        return response
+        return LLMCallResult(content=response, usage=TokenUsage(input_tokens=10, output_tokens=2))
 
     try:
         with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_zero_facts):

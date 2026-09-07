@@ -33,11 +33,12 @@ async def test_causal_targets_are_offset_from_extraction_group_start(monkeypatch
     monkeypatch.setattr(fact_extraction, "_inject_label_tags", lambda *_args: None)
 
     config = dataclasses.replace(_get_raw_config(), retain_extraction_mode="normal", retain_batch_enabled=False)
-    facts, _, _ = await fact_extraction.extract_facts_from_contents(
+    extraction = await fact_extraction.extract_facts_from_contents(
         [RetainContent(content="preceding"), RetainContent(content="causal group")],
         llm_config=None,
         config=config,
     )
+    facts = extraction.facts
 
     assert facts[5].causal_relations[0].target_fact_index == 4
 
@@ -66,11 +67,12 @@ async def test_each_chunk_uses_its_own_causal_index_base(monkeypatch):
     monkeypatch.setattr(fact_extraction, "_inject_label_tags", lambda *_args: None)
 
     config = dataclasses.replace(_get_raw_config(), retain_extraction_mode="normal", retain_batch_enabled=False)
-    facts, _, _ = await fact_extraction.extract_facts_from_contents(
+    extraction = await fact_extraction.extract_facts_from_contents(
         [RetainContent(content="two chunks")],
         llm_config=None,
         config=config,
     )
+    facts = extraction.facts
 
     assert facts[1].causal_relations[0].target_fact_index == 0
     assert facts[3].causal_relations[0].target_fact_index == 2
@@ -165,11 +167,12 @@ async def test_batch_causal_targets_use_each_chunk_start(monkeypatch):
         return batch_impl
 
     llm_config = SimpleNamespace(batch_provider_impl=_batch_provider_impl, provider="test")
-    facts, _, _ = await fact_extraction.extract_facts_from_contents_batch_api(
+    extraction = await fact_extraction.extract_facts_from_contents_batch_api(
         [RetainContent(content="preceding"), RetainContent(content="first|second")],
         llm_config=llm_config,
         config=config,
     )
+    facts = extraction.facts
 
     assert facts[5].causal_relations[0].target_fact_index == 4
     assert facts[7].causal_relations[0].target_fact_index == 6

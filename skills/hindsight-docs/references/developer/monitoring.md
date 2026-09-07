@@ -161,6 +161,40 @@ sum(rate(hindsight_retain_documents_total{outcome="no_facts"}[15m]))
 - `success`: Whether the call succeeded (`true`, `false`)
 - `token_bucket`: Token count bucket for cardinality control (`0-100`, `100-500`, `500-1k`, `1k-5k`, `5k-10k`, `10k-50k`, `50k+`)
 
+### Consolidation Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `hindsight.consolidation.batch_failures` | Counter | failure_class, error_type | Consolidation LLM batch calls that failed, including those whose facts were later recovered |
+
+**Labels:**
+- `failure_class`: How the call was treated (`fail_fast` — the model returned something the response schema rejects, so a re-send of the same payload cannot help; `retry` — transport-shaped, an unchanged re-send may succeed; `propagate` — not a batch failure, re-raised to the task handler)
+- `error_type`: Exception class name (e.g. `ValidationError`, `JSONDecodeError`)
+
+This is not the same signal as the `failed_consolidation` field in bank stats. That
+field counts *facts* still waiting to be consolidated after a failure; when a batch
+call fails, consolidation halves the batch and retries, so a call that failed at
+batch size 8 and succeeded at size 1 leaves `failed_consolidation` at 0. Everything
+the failed response asked for is dropped, though — including any observations it
+wanted to delete — so a bank can look completely healthy while its
+supersession cleanup does nothing.
+
+Alert on the schema-rejection rate, which no other metric exposes:
+
+```promql
+sum(rate(hindsight_consolidation_batch_failures_total{failure_class="fail_fast"}[15m]))
+```
+
+A sustained non-zero rate usually means the consolidation model does not reliably
+emit valid JSON for the response schema. Switching to a model with stronger
+structured output, or enabling `HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION` if
+the provider supports grammar-enforced schemas, is the usual fix.
+
+The same count is reported per run as `llm_batch_failures` in the consolidation
+operation's result, and the consolidation log summary prints a warning line
+whenever it is non-zero. Both count *attempts* — one batch call retried three times
+contributes three — so they are not bounded by the number of batches in the run.
+
 ### HTTP Request Metrics
 
 | Metric | Type | Labels | Description |

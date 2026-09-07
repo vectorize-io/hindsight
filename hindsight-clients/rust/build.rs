@@ -43,6 +43,39 @@ fn filter_multipart_endpoints(spec: &mut serde_json::Value) {
     }
 }
 
+/// Drop error responses that carry no schema (the documented 404 on bank-scoped
+/// reads, say).
+///
+/// progenitor models at most one error type per operation --
+/// `assertion failed: response_types.len() <= 1` in method.rs -- and FastAPI
+/// already gives every one of these operations a typed 422. A bodyless 404 adds
+/// a second, empty error type and panics the generator. Dropping it costs the
+/// Rust client nothing: an undeclared status still surfaces as
+/// `Error::UnexpectedResponse`, status code intact.
+fn filter_bodyless_error_responses(spec: &mut serde_json::Value) {
+    let Some(paths) = spec.get_mut("paths").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    for (_path_name, path_item) in paths.iter_mut() {
+        let Some(operations) = path_item.as_object_mut() else {
+            continue;
+        };
+        for (_method, operation) in operations.iter_mut() {
+            let Some(responses) = operation.get_mut("responses").and_then(|v| v.as_object_mut()) else {
+                continue;
+            };
+            responses.retain(|status, response| {
+                let is_error = status
+                    .chars()
+                    .next()
+                    .map(|c| c == '4' || c == '5')
+                    .unwrap_or(false);
+                !(is_error && response.get("content").is_none())
+            });
+        }
+    }
+}
+
 /// Collapse `anyOf` whose members are all plain string types into a single
 /// `{"type": "string"}`. Without this, progenitor emits a struct like
 /// `MemoryItemTimestamp { #[serde(flatten)] subtype_0: Option<DateTime>, ... }`
@@ -186,6 +219,10 @@ fn main() {
 
     // Filter out multipart/form-data endpoints (progenitor doesn't support them)
     filter_multipart_endpoints(&mut spec_json);
+
+    // Drop schema-less error responses; progenitor allows only one error type
+    // per operation and the typed 422 is the one worth keeping.
+    filter_bodyless_error_responses(&mut spec_json);
 
     // Now parse as OpenAPI struct
     let spec: openapiv3::OpenAPI = serde_json::from_value(spec_json)

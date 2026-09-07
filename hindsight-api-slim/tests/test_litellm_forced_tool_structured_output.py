@@ -69,7 +69,7 @@ async def _call_capturing_request(llm: LiteLLMLLM, response: _Response) -> dict[
     """Run ``call`` against a stubbed completion and return the request kwargs."""
     completion = AsyncMock(return_value=response)
     llm._acompletion = completion  # type: ignore[method-assign]
-    result = await llm.call(messages=_MESSAGES, response_format=_Facts, max_retries=0)
+    result = (await llm.call(messages=_MESSAGES, response_format=_Facts, max_retries=0)).content
     return {"kwargs": completion.await_args.kwargs, "result": result}
 
 
@@ -151,7 +151,7 @@ async def test_plain_calls_are_untouched_by_the_flag():
     completion = AsyncMock(return_value=_Response(_Message("hello"), finish_reason="stop"))
     llm._acompletion = completion  # type: ignore[method-assign]
 
-    result = await llm.call(messages=_MESSAGES, max_retries=0)
+    result = (await llm.call(messages=_MESSAGES, max_retries=0)).content
 
     assert result == "hello"
     assert "tools" not in completion.await_args.kwargs
@@ -188,11 +188,13 @@ async def test_skip_validation_returns_the_raw_tool_arguments():
     response = _Response(_Message(None, [_ToolCall("structured_response", '{"facts": ["raw"]}')]))
     llm._acompletion = AsyncMock(return_value=response)  # type: ignore[method-assign]
 
-    result = await llm.call(
-        messages=_MESSAGES,
-        response_format=_Facts,
-        skip_validation=True,
-        max_retries=0,
-    )
+    result = (
+        await llm.call(
+            messages=_MESSAGES,
+            response_format=_Facts,
+            skip_validation=True,
+            max_retries=0,
+        )
+    ).content
 
     assert result == {"facts": ["raw"]}

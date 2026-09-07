@@ -1,5 +1,6 @@
 """Base Extension class for all Hindsight extensions."""
 
+import threading
 from abc import ABC
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,16 @@ class Extension(ABC):
                     Keys are lowercased with the prefix stripped.
         """
         self.config = config
+        # The context is per-THREAD, because a multi-loop server builds one application per
+        # loop -- each on its own thread, each with its own engine and its own connection
+        # pool -- while the extension instance itself is shared across all of them. A single
+        # attribute keeps only the last writer's context, so every other loop then reaches a
+        # pool that belongs to a foreign loop: asyncpg raises "got Future attached to a
+        # different loop", and under concurrency the connection protocol corrupts outright.
+        self._contexts = threading.local()
+        # ...and the first one set is kept as the fallback for threads that never had one
+        # set on them (a single-loop server, or work handed to an executor thread). Single
+        # loop means exactly one context is ever set, so this is the unchanged behaviour.
         self._context: "ExtensionContext | None" = None
 
     def set_context(self, context: "ExtensionContext") -> None:
@@ -45,7 +56,9 @@ class Extension(ABC):
         Args:
             context: The ExtensionContext providing system APIs.
         """
-        self._context = context
+        self._contexts.value = context
+        if self._context is None:
+            self._context = context
 
     @property
     def context(self) -> "ExtensionContext":
@@ -58,11 +71,14 @@ class Extension(ABC):
         Raises:
             RuntimeError: If context has not been set yet.
         """
-        if self._context is None:
+        context = getattr(self._contexts, "value", None)
+        if context is None:
+            context = self._context
+        if context is None:
             raise RuntimeError(
                 "Extension context not set. Context is available after the extension is loaded by the system."
             )
-        return self._context
+        return context
 
     async def on_startup(self) -> None:
         """

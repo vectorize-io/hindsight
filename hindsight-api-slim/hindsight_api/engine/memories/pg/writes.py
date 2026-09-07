@@ -71,6 +71,7 @@ async def insert_facts(
     tags_list = []
     observation_scopes_list = []
     text_signals_list = []
+    attachment_ids_list = []
 
     for fact in facts:
         fact_texts.append(_sanitize_text(fact.fact_text))
@@ -110,6 +111,10 @@ async def insert_facts(
             except (ValueError, AttributeError):
                 pass
         text_signals_list.append(" ".join(signal_parts) if signal_parts else None)
+        # Short ids of the attachments this fact was drawn from, as the extractor
+        # attributed them. Empty for a fact stated in the prose — which is most of
+        # them, and the reason this is per fact rather than per chunk.
+        attachment_ids_list.append(json.dumps(list(dict.fromkeys(fact.attachment_ids))))
 
     # Batch insert all facts — delegates to DataAccessOps which handles
     # unnest (PG) vs row-by-row (Oracle) transparently.
@@ -132,6 +137,7 @@ async def insert_facts(
         tags_list,
         observation_scopes_list,
         text_signals_list,
+        attachment_ids_list,
         text_search_extension=config.text_search_extension,
     )
 

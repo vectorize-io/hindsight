@@ -975,6 +975,7 @@ class TestOracleOpsInsertFactsBatch:
             metadata_jsons=['{"key": "val"}'] * n,
             chunk_ids=[f"chunk-{i}" for i in range(n)],
             document_ids=[f"doc-{i}" for i in range(n)],
+            attachment_ids_list=["[]"] * n,
             tags_list=[f'["tag-{i}"]' for i in range(n)],
             observation_scopes_list=[None] * n,
             text_signals_list=[None] * n,
@@ -1038,6 +1039,7 @@ class TestOracleOpsInsertFactsBatch:
             tags_list=['["nature", "sky"]'],
             observation_scopes_list=["global"],
             text_signals_list=["positive"],
+            attachment_ids_list=["[]"],
         )
 
         query, rows_data = mock_conn.executemany.call_args.args
@@ -1066,14 +1068,24 @@ class TestOracleOpsInsertFactsBatch:
 
     @pytest.mark.asyncio
     async def test_sql_column_count_matches_values(self, ops, mock_conn):
-        """The INSERT column list and VALUES placeholders must both have 16 entries."""
+        """Columns, placeholders and bound values must all agree.
+
+        Counted against each other rather than against a literal, because the
+        literal is what goes stale: adding a column to `memory_units` bumps all
+        three together and a hardcoded number then fails for the wrong reason,
+        telling you nothing about whether they still match.
+        """
         batch = self._make_batch(1)
         await ops.insert_facts_batch(conn=mock_conn, **batch)
 
-        query, _ = mock_conn.executemany.call_args.args
-        # Extract the column list between "(" and ")" after INSERT INTO ... (
-        # and count the $N placeholders in VALUES
-        assert query.count("$") == 16, "VALUES clause must have 16 placeholders"
+        query, rows_data = mock_conn.executemany.call_args.args
+        columns = query[query.index("(") + 1 : query.index(")")].split(",")
+        placeholders = query.count("$")
+
+        assert len(columns) == placeholders, (
+            f"INSERT names {len(columns)} columns but binds {placeholders} placeholders"
+        )
+        assert len(rows_data[0]) == placeholders, f"{placeholders} placeholders but {len(rows_data[0])} values per row"
 
     @pytest.mark.asyncio
     async def test_tags_json_decoded_to_list(self, ops, mock_conn):
@@ -1154,6 +1166,7 @@ class TestPostgreSQLSearchVector:
             tags_list=[""],
             observation_scopes_list=[None],
             text_signals_list=[None],
+            attachment_ids_list=["[]"],
         )
         with patch("hindsight_api.config.get_config", return_value=self._cfg(ext)):
             await PostgreSQLOps().insert_facts_batch(conn=conn, **batch)

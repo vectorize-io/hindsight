@@ -61,3 +61,11 @@ testpaths = ["tests"]
 dev = [
     "pytest>=9.0.2",
 ]
+
+[tool.uv]
+# crewai hard-pins `json-repair==0.25.2`, which carries a high-severity
+# unbounded-CPU DoS (GHSA-xf7x-x43h-rpqh, fixed in 0.60.1). The pin persists
+# through the latest crewai, and crewai uses exactly one symbol from the
+# package -- `repair_json`, in tool_usage.py and agents/parser.py -- so the
+# override is narrow. Revisit if crewai relaxes the pin itself.
+override-dependencies = ["json-repair>=0.60.1"]

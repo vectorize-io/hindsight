@@ -31,5 +31,6 @@ PROVIDER_CATALOG: tuple[ProviderInfo, ...] = (
     ProviderInfo("minimax", "MiniMax", needs_api_key=True),
     ProviderInfo("zai", "Z.ai", needs_api_key=True),
     ProviderInfo("atlas", "Atlas Cloud", needs_api_key=True, default_base_url="https://api.atlascloud.ai/v1"),
+    ProviderInfo("meta", "Meta Model API", needs_api_key=True, default_base_url="https://api.meta.ai/v1"),
     ProviderInfo("volcano", "Volcano", needs_api_key=True),
 )

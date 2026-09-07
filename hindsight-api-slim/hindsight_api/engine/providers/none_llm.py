@@ -12,7 +12,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, Callable
 
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
-from ..response_models import LLMToolCallResult
+from ..response_models import LLMCallResult, LLMToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,10 @@ class NoneLLM(LLMInterface):
         """No-op — no LLM connection to verify."""
         logger.debug("NoneLLM: no LLM connection to verify (provider=none)")
 
+    def supports_vision(self) -> bool:
+        """False, definitively: there is no model here to look at an image."""
+        return False
+
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -48,9 +52,8 @@ class NoneLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """Raise LLMNotAvailableError — no LLM is configured."""
         raise LLMNotAvailableError(
             "LLM provider is set to 'none'. This operation requires an LLM. "

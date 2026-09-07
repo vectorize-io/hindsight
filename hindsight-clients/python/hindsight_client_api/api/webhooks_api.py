@@ -974,6 +974,8 @@ class WebhooksApi:
     async def list_webhooks(
         self,
         bank_id: StrictStr,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of webhooks to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -990,10 +992,14 @@ class WebhooksApi:
     ) -> WebhookListResponse:
         """List webhooks
 
-        List all webhooks registered for a bank.
+        List the webhooks registered for a bank, oldest first. Paged: `total` reports every webhook on the bank.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param limit: Maximum number of webhooks to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1020,6 +1026,8 @@ class WebhooksApi:
 
         _param = self._list_webhooks_serialize(
             bank_id=bank_id,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1029,6 +1037,7 @@ class WebhooksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WebhookListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1046,6 +1055,8 @@ class WebhooksApi:
     async def list_webhooks_with_http_info(
         self,
         bank_id: StrictStr,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of webhooks to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1062,10 +1073,14 @@ class WebhooksApi:
     ) -> ApiResponse[WebhookListResponse]:
         """List webhooks
 
-        List all webhooks registered for a bank.
+        List the webhooks registered for a bank, oldest first. Paged: `total` reports every webhook on the bank.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param limit: Maximum number of webhooks to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1092,6 +1107,8 @@ class WebhooksApi:
 
         _param = self._list_webhooks_serialize(
             bank_id=bank_id,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1101,6 +1118,7 @@ class WebhooksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WebhookListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1118,6 +1136,8 @@ class WebhooksApi:
     async def list_webhooks_without_preload_content(
         self,
         bank_id: StrictStr,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of webhooks to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1134,10 +1154,14 @@ class WebhooksApi:
     ) -> RESTResponseType:
         """List webhooks
 
-        List all webhooks registered for a bank.
+        List the webhooks registered for a bank, oldest first. Paged: `total` reports every webhook on the bank.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param limit: Maximum number of webhooks to return
+        :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1164,6 +1188,8 @@ class WebhooksApi:
 
         _param = self._list_webhooks_serialize(
             bank_id=bank_id,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1173,6 +1199,7 @@ class WebhooksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WebhookListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1185,6 +1212,8 @@ class WebhooksApi:
     def _list_webhooks_serialize(
         self,
         bank_id,
+        limit,
+        offset,
         authorization,
         _request_auth,
         _content_type,
@@ -1210,6 +1239,14 @@ class WebhooksApi:
         if bank_id is not None:
             _path_params['bank_id'] = bank_id
         # process the query parameters
+        if limit is not None:
+            
+            _query_params.append(('limit', limit))
+            
+        if offset is not None:
+            
+            _query_params.append(('offset', offset))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization

@@ -17,6 +17,7 @@ from uuid import UUID
 import numpy as np
 
 from ..metadata_utils import drop_null_values
+from ..response_models import TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,8 @@ class RetainContentDict(TypedDict, total=False):
         resolve_entities: Whether the supplied `entities` are resolved against the bank's
             existing entities (optional, default True). False takes them literally.
         tags: Visibility scope tags for this content item (optional)
+        attachment_filenames: Short attachment id -> filename, for inline attachments
+            in this item (optional)
         observation_scopes: How to scope observations for consolidation (optional).
             "per_tag" runs one pass per individual tag; "combined" (default) runs a
             single pass with all tags; "shared" runs a single pass over one global,
@@ -179,6 +182,11 @@ class RetainContent:
     # takes them literally; extracted entities are always resolved either way (#3479).
     resolve_entities: bool = True
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
+    #: Short attachment id -> the name the caller gave it in *this* item. Carried
+    #: to `sync_document_attachments`, which records it on the document edge: a
+    #: filename describes the reference, not the bytes, so the same PDF can be
+    #: "policy-v1.pdf" here and "escalation-runbook.pdf" in another document.
+    attachment_filenames: dict[str, str] = field(default_factory=dict)
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
@@ -205,6 +213,83 @@ class ChunkMetadata:
     fact_count: int
     content_index: int  # Index of the source content
     chunk_index: int  # Global chunk index across all contents
+
+
+@dataclass(frozen=True)
+class RetainBatchResult:
+    """What one pass of the retain pipeline produced.
+
+    Every entry point into the pipeline returns this — ``retain_batch`` and the
+    three paths it delegates to (``_streaming_retain_batch``, ``_try_delta_retain``,
+    ``_delta_metadata_only``), plus the engine wrappers around them. They used to
+    return a bare 3-tuple each, and the arity had already drifted:
+    ``_streaming_retain_batch`` was annotated ``tuple[list[list[str]], TokenUsage]``
+    while returning three values, and ``retain_batch`` handed that straight back as
+    its own 3-tuple. Nothing caught it — a tuple's shape is checked nowhere, and
+    ``ty`` has ``invalid-return-type`` disabled — so the declared contract and the
+    real one simply disagreed until someone unpacked two names and got a
+    ``ValueError`` at runtime. Naming the fields is what makes that mismatch
+    impossible rather than merely unlikely.
+    """
+
+    memory_ids: list[list[str]]
+    """Created memory-unit ids, one inner list per submitted content item, in order."""
+
+    usage: TokenUsage
+    """LLM tokens consumed by this pass. Merged with ``+`` across concurrent groups."""
+
+    processed_content_tokens: int | None
+    """Content+context tokens that actually reached extraction.
+
+    ``0`` when nothing was re-extracted (a delta whose chunks all matched), and
+    ``None`` when the path does not account for it (streaming, which spans many
+    sub-batches). ``None`` and ``0`` are therefore *not* interchangeable: the
+    former means "unknown", the latter "known to be nothing".
+    """
+
+
+@dataclass(frozen=True)
+class ExtractionResult:
+    """What one fact-extraction pass produced, whatever route it took.
+
+    The three extraction entry points — the LLM fan-out
+    (``extract_facts_from_contents``), the Batch API route
+    (``extract_facts_from_contents_batch_api``), and chunks mode
+    (``_extract_facts_chunks``, no LLM at all) — are interchangeable by design:
+    ``extract_facts_from_contents`` dispatches to the other two and returns their
+    result unchanged. They therefore have to agree on their output exactly, which
+    is precisely what three separately-maintained 3-tuples could not guarantee.
+
+    ``facts`` and ``chunks`` are positionally related: each fact's
+    ``chunk_index`` indexes into ``chunks``, so the two lists must come from the
+    same pass and cannot be sourced independently.
+    """
+
+    facts: list["ExtractedFact"]
+    """Extracted facts, in chunk order, carrying their ``content_index``/``chunk_index``."""
+
+    chunks: list["ChunkMetadata"]
+    """One entry per chunk the pass saw, including chunks that yielded no facts."""
+
+    usage: TokenUsage
+    """LLM tokens consumed. Zero for chunks mode, which makes no model call."""
+
+
+def merge_processed_content_tokens(a: int | None, b: int | None) -> int | None:
+    """Combine ``RetainBatchResult.processed_content_tokens`` across sub-results.
+
+    ``None`` is contagious: it means "this part of the retain did not go through
+    chunk-level dedup", so the aggregate is unknown and callers must
+    conservatively bill the full content. Only when *both* sides are known does
+    the total mean anything, and then it is their sum.
+
+    Lives beside the field it governs because the rule is not obvious from the
+    types — ``None + int`` looks like a bug to fix rather than a semantic to
+    preserve, and it was previously re-derived inline at each merge site.
+    """
+    if a is None or b is None:
+        return None
+    return a + b
 
 
 @dataclass
@@ -257,6 +342,12 @@ class ExtractedFact:
     mentioned_at: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
+    # Short ids of the attachments this fact was drawn from, as the extractor
+    # attributed them. Empty for a fact stated in the prose — which is most of
+    # them, and the reason this is per-fact rather than per-chunk: every fact in
+    # a chunk used to inherit every attachment in it, so a sentence about
+    # recording a sync id carried the escalation PDF it never mentioned.
+    attachment_ids: list[str] = field(default_factory=list)
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
@@ -294,6 +385,11 @@ class ProcessedFact:
 
     # Causal relations
     causal_relations: list[CausalRelation] = field(default_factory=list)
+
+    # Short ids of the attachments this fact was drawn from, as the extractor
+    # attributed them. Empty for a fact stated in the surrounding prose — which
+    # is most of them, and the reason this is per-fact rather than per-chunk.
+    attachment_ids: list[str] = field(default_factory=list)
 
     # Chunk reference
     chunk_id: str | None = None
@@ -393,6 +489,7 @@ class ProcessedFact:
             metadata=extracted_fact.metadata,
             entities=entities,
             causal_relations=extracted_fact.causal_relations,
+            attachment_ids=list(extracted_fact.attachment_ids),
             chunk_id=chunk_id,
             content_index=extracted_fact.content_index,
             tags=extracted_fact.tags,

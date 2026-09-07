@@ -297,7 +297,7 @@ class TestSemaphoreEnforcement:
                 provider.call(messages=[{"role": "user", "content": "unrelated"}], scope="retain"),
                 timeout=0.5,
             )
-            assert await asyncio.wait_for(retrying, timeout=3) == "ok"
+            assert (await asyncio.wait_for(retrying, timeout=3)).content == "ok"
 
         assert events == ["retrying-attempt-1", "unrelated", "retrying"]
 
@@ -381,7 +381,7 @@ class TestSemaphoreEnforcement:
             assert holder.stage == "llm.openai.retain.attempt=1/2.backoff", (
                 "backoff sleep must be visible in the stage while no permit is held"
             )
-            assert await asyncio.wait_for(task, timeout=3) == "ok"
+            assert (await asyncio.wait_for(task, timeout=3)).content == "ok"
 
     @pytest.mark.asyncio
     async def test_per_op_composes_with_global(self):

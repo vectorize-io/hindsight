@@ -83,7 +83,7 @@ func (dst *MentalModelTriggerInputTagGroupsInner) UnmarshalJSON(data []byte) err
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src *MentalModelTriggerInputTagGroupsInner) MarshalJSON() ([]byte, error) {
+func (src MentalModelTriggerInputTagGroupsInner) MarshalJSON() ([]byte, error) {
 	if src.TagGroupAndInput != nil {
 		return json.Marshal(&src.TagGroupAndInput)
 	}

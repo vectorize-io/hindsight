@@ -6,7 +6,10 @@ identical, model-agnostic truncation before any backend's `encode()` runs.
 
 Config is exposed as the generic `HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS`, with the
 old LiteLLM-SDK-specific `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS` kept as
-a deprecated alias for backward compatibility.
+a deprecated alias for backward compatibility. It defaults to 8192 — the input limit of
+essentially every remote embedding model — because leaving it off let a knowledge page
+sized to its own 8192-token generation budget fail its refresh permanently (#4165); 0
+opts out.
 """
 
 import logging
@@ -28,6 +31,8 @@ class _FakeBackend:
     """Records the texts each `encode_*` call actually receives."""
 
     provider_name = "fake"
+    query_prefix = ""
+    passage_prefix = ""
 
     def __init__(self, dimension: int = 3) -> None:
         self._dimension = dimension
@@ -58,7 +63,7 @@ class TestTruncateInputs:
         backend = _FakeBackend()
         long_text = "word " * 500  # far more than 50 tokens
         with caplog.at_level(logging.WARNING):
-            result = embedding_utils._truncate_inputs([long_text], 50, backend)
+            result = embedding_utils._truncate_inputs([long_text], 50, backend, "document")
 
         assert count_tokens(result[0]) <= 50
         assert result[0] != long_text
@@ -72,7 +77,7 @@ class TestTruncateInputs:
     def test_short_input_untouched_no_warning(self, caplog):
         backend = _FakeBackend()
         with caplog.at_level(logging.WARNING):
-            result = embedding_utils._truncate_inputs(["short text"], 50, backend)
+            result = embedding_utils._truncate_inputs(["short text"], 50, backend, "document")
 
         assert result == ["short text"]
         assert not any("truncated" in r.message for r in caplog.records)
@@ -115,7 +120,55 @@ class TestConfigWiring:
         monkeypatch.setenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS, "4096")
         assert HindsightConfig.from_env().embeddings_max_input_tokens == 8192
 
-    def test_default_is_disabled(self, monkeypatch):
+    def test_default_is_the_common_model_limit(self, monkeypatch):
         monkeypatch.delenv(ENV_EMBEDDINGS_MAX_INPUT_TOKENS, raising=False)
         monkeypatch.delenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS, raising=False)
+        assert HindsightConfig.from_env().embeddings_max_input_tokens == 8192
+
+    def test_zero_opts_out(self, monkeypatch):
+        """0 is the only way to send text uncapped now that the default is a real limit."""
+        monkeypatch.setenv(ENV_EMBEDDINGS_MAX_INPUT_TOKENS, "0")
+        monkeypatch.delenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS, raising=False)
         assert HindsightConfig.from_env().embeddings_max_input_tokens is None
+
+
+class _PrefixedBackend(_FakeBackend):
+    """An asymmetric model whose instruction `Embeddings._encode_prefixed` glues on
+    AFTER the cap has been applied."""
+
+    query_prefix = "query: "
+    passage_prefix = "passage: "
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return super().encode_documents([f"{self.passage_prefix}{t}" for t in texts])
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return super().encode_documents([f"{self.query_prefix}{t}" for t in texts])
+
+
+@pytest.mark.asyncio
+class TestFinalPayloadFitsTheCap:
+    """What must fit the model's limit is the string that goes over the wire."""
+
+    @pytest.mark.parametrize("input_type", ["document", "query"])
+    async def test_prefix_is_charged_against_the_budget(self, input_type):
+        backend = _PrefixedBackend()
+        with _patch_cap(50):
+            await embedding_utils.generate_embeddings_batch(backend, ["word " * 500], input_type=input_type)
+
+        # backend.received holds the prefixed text, i.e. the actual provider payload.
+        assert count_tokens(backend.received[0]) <= 50
+
+    async def test_page_name_plus_content_fits(self):
+        """#4165: a knowledge page embeds `f"{name} {content}"`. Content sized to the
+        cap plus the name used to arrive exactly one token over."""
+        backend = _FakeBackend()
+        content = "consolidated " * 9000
+        while count_tokens(content) > 8192:
+            content = content[: -len("consolidated ")]
+        assert count_tokens(content) == 8192
+
+        with _patch_cap(8192):
+            await embedding_utils.generate_embeddings_batch(backend, [f"User working preferences {content}"])
+
+        assert count_tokens(backend.received[0]) <= 8192

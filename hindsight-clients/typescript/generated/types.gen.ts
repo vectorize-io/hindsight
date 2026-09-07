@@ -589,6 +589,12 @@ export type BankTemplateConfig = {
    */
   retain_chunk_batch_size?: number | null;
   /**
+   * Retain Max Attachments Per Chunk
+   *
+   * Hard cap on inline images in a single extraction chunk
+   */
+  retain_max_attachments_per_chunk?: number | null;
+  /**
    * Mcp Enabled Tools
    *
    * MCP tool allowlist for this bank (None = all tools)
@@ -929,6 +935,34 @@ export type BankTemplateMentalModel = {
 };
 
 /**
+ * Base64AttachmentSource
+ *
+ * Inline attachment bytes, base64-encoded.
+ *
+ * The only source type in this version. ``url`` (server-side fetch) and
+ * ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
+ * is modelled as a discriminated union on ``type`` rather than as bare fields.
+ */
+export type Base64AttachmentSource = {
+  /**
+   * Type
+   */
+  type?: "base64";
+  /**
+   * Media Type
+   *
+   * MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed type is accepted; whether the model can read it is the model's answer to give, and a provider that rejects it fails the retain with its own error.
+   */
+  media_type: string;
+  /**
+   * Data
+   *
+   * Base64-encoded bytes (no data: URI prefix).
+   */
+  data: string;
+};
+
+/**
  * Body_file_retain
  */
 export type BodyFileRetain = {
@@ -1014,6 +1048,56 @@ export type ChildOperationStatus = {
 };
 
 /**
+ * ChunkAttachment
+ *
+ * An attachment referenced by retained text, and where to fetch it.
+ */
+export type ChunkAttachment = {
+  /**
+   * Id
+   *
+   * The id inside the text's placeholder; a prefix of the bytes' sha256.
+   */
+  id: string;
+  /**
+   * Hash
+   *
+   * Full sha256 of the attachment bytes.
+   */
+  hash: string;
+  /**
+   * Kind
+   *
+   * 'image' or 'file', as the caller sent it.
+   */
+  kind: string;
+  /**
+   * Media Type
+   *
+   * MIME type of the attachment.
+   */
+  media_type: string;
+  /**
+   * Byte Size
+   *
+   * Size of the attachment in bytes.
+   */
+  byte_size: number;
+  /**
+   * Filename
+   *
+   * Original filename, when the caller supplied one.
+   */
+  filename?: string | null;
+  /**
+   * Url
+   *
+   * Bank-scoped API path serving the bytes. Requires the same authorization as the bank.
+   */
+  url: string;
+};
+
+/**
  * ChunkData
  *
  * Chunk data for a single chunk.
@@ -1037,6 +1121,12 @@ export type ChunkData = {
    * Whether the chunk text was truncated due to token limits
    */
   truncated?: boolean;
+  /**
+   * Attachments
+   *
+   * Attachments this chunk's text references, in order of first appearance, when it was retained with inline content. The text keeps each attachment's placeholder token (⟦hs-att:...⟧) where it sat, so a multimodal agent can render or reason over the original at the position it occupied in the source document. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
@@ -1083,6 +1173,12 @@ export type ChunkResponse = {
    * Created At
    */
   created_at: string;
+  /**
+   * Attachments
+   *
+   * Attachments referenced by this chunk's text, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
@@ -1213,6 +1309,12 @@ export type CreateBankRequest = {
    * Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset.
    */
   retain_structured_chunk_size?: number | null;
+  /**
+   * Retain Max Attachments Per Chunk
+   *
+   * Maximum inline attachments one extraction chunk may carry. retain_chunk_size budgets text only — a placeholder costs the characters it occupies and nothing more — so this is what bounds attachments. Match it to the provider's per-request limit.
+   */
+  retain_max_attachments_per_chunk?: number | null;
   /**
    * Enable Observations
    *
@@ -1729,6 +1831,12 @@ export type DocumentResponse = {
    * The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured.
    */
   observation_scopes?: string | Array<Array<string>> | null;
+  /**
+   * Attachments
+   *
+   * Attachments referenced by this document, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
@@ -2145,6 +2253,30 @@ export type FeaturesInfo = {
 };
 
 /**
+ * FileContentBlock
+ *
+ * A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+ *
+ * Split from ``image`` rather than folded into one type because the providers
+ * split it: Anthropic has distinct image and document blocks, OpenAI has
+ * image_url and file parts. Carrying the caller's own distinction through means
+ * the per-provider conversion never has to guess from the media type alone.
+ */
+export type FileContentBlock = {
+  /**
+   * Type
+   */
+  type: "file";
+  source: Base64AttachmentSource;
+  /**
+   * Filename
+   *
+   * Original filename, passed to providers that show one to the model (e.g. OpenAI).
+   */
+  filename?: string | null;
+};
+
+/**
  * FileRetainResponse
  *
  * Response model for file upload endpoint.
@@ -2200,6 +2332,19 @@ export type HttpValidationError = {
    * Detail
    */
   detail?: Array<ValidationError>;
+};
+
+/**
+ * ImageContentBlock
+ *
+ * An image within a multimodal item, in the position the caller wrote it.
+ */
+export type ImageContentBlock = {
+  /**
+   * Type
+   */
+  type: "image";
+  source: Base64AttachmentSource;
 };
 
 /**
@@ -3000,8 +3145,28 @@ export type MemoriesTimeseriesResponse = {
 export type MemoryItem = {
   /**
    * Content
+   *
+   * The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:
+   *
+   * [{"type": "text", "text": "click the button shown:"},
+   * {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+   * {"type": "text", "text": "...then reconnect."}]
+   *
+   * The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
    */
-  content: string;
+  content:
+    | string
+    | Array<
+        | ({
+            type: "text";
+          } & TextContentBlock)
+        | ({
+            type: "image";
+          } & ImageContentBlock)
+        | ({
+            type: "file";
+          } & FileContentBlock)
+      >;
   /**
    * Timestamp
    *
@@ -3935,6 +4100,24 @@ export type ObservationScopesResponse = {
    * Distinct observation scopes, most populous first
    */
   scopes: Array<ObservationScope>;
+  /**
+   * Total
+   *
+   * Total number of distinct scopes in the bank (ignores limit/offset)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Maximum number of scopes returned in this page
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset this page started at
+   */
+  offset: number;
 };
 
 /**
@@ -5051,6 +5234,22 @@ export type TemporalWindow = {
 };
 
 /**
+ * TextContentBlock
+ *
+ * A run of text within a multimodal item, in the position the caller wrote it.
+ */
+export type TextContentBlock = {
+  /**
+   * Type
+   */
+  type: "text";
+  /**
+   * Text
+   */
+  text: string;
+};
+
+/**
  * TokenUsage
  *
  * Token usage metrics for LLM calls.
@@ -5520,6 +5719,24 @@ export type WebhookListResponse = {
    * Items
    */
   items: Array<WebhookResponse>;
+  /**
+   * Total
+   *
+   * Total number of webhooks on the bank (ignores limit/offset)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Maximum number of webhooks returned in this page
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset this page started at
+   */
+  offset: number;
 };
 
 /**
@@ -5688,6 +5905,10 @@ export type GetGraphData = {
 
 export type GetGraphErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -5764,6 +5985,10 @@ export type ListMemoriesData = {
 };
 
 export type ListMemoriesErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -6083,6 +6308,10 @@ export type GetAgentStatsData = {
 
 export type GetAgentStatsErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -6166,6 +6395,10 @@ export type GetMemoriesTimeseriesData = {
 
 export type GetMemoriesTimeseriesErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -6217,6 +6450,10 @@ export type ListEntitiesData = {
 
 export type ListEntitiesErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -6265,6 +6502,10 @@ export type GetEntityGraphData = {
 };
 
 export type GetEntityGraphErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -6410,6 +6651,10 @@ export type ListMentalModelsData = {
 };
 
 export type ListMentalModelsErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -6772,6 +7017,10 @@ export type GetKnowledgeBaseTreeData = {
 
 export type GetKnowledgeBaseTreeErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -6885,6 +7134,10 @@ export type ExportKnowledgeBaseData = {
 
 export type ExportKnowledgeBaseErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -6934,6 +7187,10 @@ export type SearchKnowledgeBaseData = {
 };
 
 export type SearchKnowledgeBaseErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -7117,6 +7374,10 @@ export type ListDirectivesData = {
 };
 
 export type ListDirectivesErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -7334,6 +7595,10 @@ export type ListDocumentsData = {
 };
 
 export type ListDocumentsErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -7611,6 +7876,10 @@ export type ListTagsData = {
 
 export type ListTagsErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -7713,6 +7982,10 @@ export type ListOperationsData = {
 };
 
 export type ListOperationsErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -8182,6 +8455,10 @@ export type ExportBankTemplateData = {
 
 export type ExportBankTemplateErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -8332,6 +8609,44 @@ export type ExportDocumentsResponses = {
 
 export type ExportDocumentsResponse = ExportDocumentsResponses[keyof ExportDocumentsResponses];
 
+export type GetBankAttachmentData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Attachment Id
+     */
+    attachment_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/attachments/{attachment_id}";
+};
+
+export type GetBankAttachmentErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetBankAttachmentError = GetBankAttachmentErrors[keyof GetBankAttachmentErrors];
+
+export type GetBankAttachmentResponses = {
+  /**
+   * Attachment bytes
+   */
+  200: unknown;
+};
+
 export type DownloadFileData = {
   body?: never;
   headers?: {
@@ -8431,11 +8746,28 @@ export type ListObservationScopesData = {
      */
     bank_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Limit
+     *
+     * Maximum number of scopes to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks/{bank_id}/observations/scopes";
 };
 
 export type ListObservationScopesErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -8591,6 +8923,10 @@ export type GetBankConfigData = {
 
 export type GetBankConfigErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -8698,11 +9034,28 @@ export type ListWebhooksData = {
      */
     bank_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Limit
+     *
+     * Maximum number of webhooks to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks/{bank_id}/webhooks";
 };
 
 export type ListWebhooksErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -9064,6 +9417,10 @@ export type ListAuditLogsData = {
 
 export type ListAuditLogsErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -9112,6 +9469,10 @@ export type AuditLogStatsData = {
 };
 
 export type AuditLogStatsErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */
@@ -9222,6 +9583,10 @@ export type ListLlmRequestsData = {
 
 export type ListLlmRequestsErrors = {
   /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
    * Validation Error
    */
   422: HttpValidationError;
@@ -9270,6 +9635,10 @@ export type LlmRequestStatsData = {
 };
 
 export type LlmRequestStatsErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
   /**
    * Validation Error
    */

@@ -97,15 +97,15 @@ FROM python:3.14-slim AS api-only-freethreaded
 WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends curl procps libxml2 libssl3 libpq5 \
+    && apt-get install -y --no-install-recommends curl procps libssl3 libpq5 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 hindsight
 
 # The venv's interpreter lives in /opt/pythons, so it has to come along.
 COPY --from=api-builder-freethreaded /opt/pythons /opt/pythons
-COPY --from=api-builder-freethreaded /app/api /app/api
-COPY docker/standalone/start-all.sh /app/start-all.sh
-RUN chmod +x /app/start-all.sh && chown -R hindsight:hindsight /app
+COPY --chown=hindsight:hindsight --from=api-builder-freethreaded /app/api /app/api
+COPY --chown=hindsight:hindsight docker/standalone/start-all.sh /app/start-all.sh
+RUN chmod +x /app/start-all.sh
 
 USER hindsight
 

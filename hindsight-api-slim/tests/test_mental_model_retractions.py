@@ -7,6 +7,7 @@ the retraction prompt is not tested here: the pass is driven through a stub that
 returns a fixed operation list, so these cover the pipeline, not the model.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import json
 import os
 import uuid
@@ -122,6 +123,7 @@ async def _insert_memory(memory: MemoryEngine, conn, bank_id: str, text: str) ->
         occurred_start=None,
         occurred_end=None,
         mentioned_at=None,
+        attachment_ids=[],
     )
     unit_ids = await store.insert_facts(
         conn=conn, ops=memory._backend.ops, bank_id=bank_id, facts=[fact], document_id=None
@@ -489,7 +491,7 @@ def _patch_op_calls(monkeypatch, memory: MemoryEngine, *, retraction_ops, delta_
         is_retraction = system == STRUCTURED_RETRACTION_SYSTEM_PROMPT
         calls.append({"kind": "retraction" if is_retraction else "delta", "messages": messages, **kwargs})
         ops = _resolve_block_markers(retraction_ops if is_retraction else delta_ops, messages[1]["content"])
-        return DeltaOperationList.model_validate({"operations": ops})
+        return LLMCallResult(content=DeltaOperationList.model_validate({"operations": ops}), usage=TokenUsage())
 
     monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
     return calls
@@ -908,15 +910,17 @@ async def test_real_model_removes_only_the_retracted_claim(retraction_llm):
         max_output_tokens=2048,
     )
 
-    raw = await retraction_llm.call(
-        messages=[
-            {"role": "system", "content": STRUCTURED_RETRACTION_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        max_completion_tokens=4096,
-        temperature=0.0,
-        scope="mental_model_retraction_ops",
-    )
+    raw = (
+        await retraction_llm.call(
+            messages=[
+                {"role": "system", "content": STRUCTURED_RETRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_completion_tokens=4096,
+            temperature=0.0,
+            scope="mental_model_retraction_ops",
+        )
+    ).content
     outcome = apply_operations(document, parse_delta_operation_list(raw).operations)
     result = render_document(outcome.document)
 

@@ -49,6 +49,7 @@
     "lightMode": "Passer en mode clair",
     "bank": {
       "select": "Sélectionner une banque de mémoire...",
+      "allBanks": "Toutes les banques mémoire",
       "search": "Rechercher des banques de mémoire...",
       "empty": "Aucune banque de mémoire pour l'instant.",
       "noSearchResults": "Aucune banque ne correspond à votre recherche.",
@@ -739,7 +740,8 @@
     "labelObservationScopes": "Portées d'observation",
     "invalidatedFactsTitle": "Faits invalidés",
     "documentUpdating": "Mise à jour…",
-    "lastRefreshed": "Actualisé {time}"
+    "lastRefreshed": "Actualisé {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1626,12 +1628,46 @@
     "observationScopesEmpty": "Ajoutez des tags ci-dessus pour prévisualiser les portées d'observation",
     "metadataHelpText": "Un <code>key: value</code> par ligne",
     "entitiesHelpText": "Indications séparées par des virgules fusionnées avec les entités extraites automatiquement",
-    "textNotStoredWarning": "Le texte brut du document ne sera pas conservé sur ce serveur — seules les mémoires extraites sont conservées."
+    "textNotStoredWarning": "Le texte brut du document ne sera pas conservé sur ce serveur — seules les mémoires extraites sont conservées.",
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "Bienvenue sur Hindsight",
-    "selectBank": "Sélectionnez une banque de mémoire dans le menu ci-dessus pour commencer.",
-    "sidebarHint": "La barre latérale apparaîtra une fois que vous aurez sélectionné une banque de mémoire."
+  "banksOverview": {
+    "title": "Banques mémoire",
+    "subtitle": "Chaque banque mémoire est un cerveau distinct : un stockage isolé de tout ce dont se souvient un utilisateur, un agent ou un projet. Rien n'est partagé entre les banques.",
+    "welcomeTitle": "Bienvenue dans Hindsight",
+    "welcomeBody": "Une banque mémoire est un cerveau distinct : un stockage isolé de tout ce dont se souvient un utilisateur, un agent ou un projet. Créez la première pour commencer.",
+    "search": "Rechercher des banques...",
+    "noSearchResults": "Aucune banque ne correspond à votre recherche.",
+    "columnBank": "Banque",
+    "columnMemories": "Mémoires",
+    "columnLastActivity": "Dernière activité",
+    "columnCreated": "Créée",
+    "never": "Jamais",
+    "emptyBank": "vide",
+    "selectAll": "Sélectionner toutes les banques chargées",
+    "selectBank": "Sélectionner {bank}",
+    "selectedCount": "{count} sélectionnées",
+    "clearSelection": "Effacer",
+    "deleteSelected": "Supprimer la sélection",
+    "bulkDeleteTitle": "Supprimer {count} banques mémoire ?",
+    "bulkDeletePrompt": "Ces banques et tout ce qu'elles contiennent seront définitivement supprimés :",
+    "bulkDeleteMore": "et {count} de plus",
+    "bulkDeleteWarning": "Cette action est irréversible. Toutes les mémoires, entités, documents et profils de banque seront définitivement supprimés.",
+    "bulkDeleteSequentialNote": "Les banques sont supprimées une par une, cela peut prendre du temps. Gardez cette fenêtre ouverte jusqu'à la fin.",
+    "bulkDeleteConfirmLabel": "Saisissez {word} pour confirmer",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "Suppression de {done} sur {total}...",
+    "bulkDeleteDone": "{count} banques supprimées",
+    "bulkDeletePartial": "{deleted} supprimées, {failed} en échec",
+    "bulkDeleteFailures": "Ces banques n'ont pas pu être supprimées :"
   },
   "login": {
     "title": "Plan de contrôle Hindsight",
@@ -1678,10 +1714,6 @@
         "fetch": "Impossible de récupérer la configuration de la banque",
         "update": "Impossible de mettre à jour la configuration de la banque",
         "reset": "Impossible de réinitialiser la configuration de la banque"
-      },
-      "bankProfile": {
-        "fetch": "Impossible de récupérer le profil de la banque",
-        "update": "Impossible de mettre à jour le profil de la banque"
       },
       "memories": {
         "list": "Impossible de lister les unités de mémoire",

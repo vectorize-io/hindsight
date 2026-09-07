@@ -1,6 +1,6 @@
 # Hindsight
 
-> Agent Memory that Works Like Human Memory
+> Agent Memory That Learns
 
 Hindsight is an agent memory system that gives AI agents persistent, structured memory across sessions. It extracts facts, entities, and relationships from conversations and enables temporal reasoning, opinion formation, and multi-strategy retrieval.
 

@@ -49,6 +49,7 @@
     "lightMode": "ライトモードに切り替え",
     "bank": {
       "select": "メモリバンクを選択...",
+      "allBanks": "すべてのメモリバンク",
       "search": "メモリバンクを検索...",
       "empty": "メモリバンクがありません。",
       "noSearchResults": "検索に一致するバンクはありません。",
@@ -739,7 +740,8 @@
     "labelObservationScopes": "観測スコープ",
     "invalidatedFactsTitle": "無効化されたファクト",
     "documentUpdating": "更新中",
-    "lastRefreshed": "更新 {time}"
+    "lastRefreshed": "更新 {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1626,12 +1628,46 @@
     "observationScopesEmpty": "観察スコープをプレビューするには、上にタグを追加してください",
     "metadataHelpText": "1行に1つの <code>key: value</code>",
     "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント",
-    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません。抽出されたメモリのみが保持されます。"
+    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません。抽出されたメモリのみが保持されます。",
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "Hindsightへようこそ",
-    "selectBank": "上のドロップダウンからメモリバンクを選択して始めましょう。",
-    "sidebarHint": "メモリバンクを選択するとサイドバーが表示されます。"
+  "banksOverview": {
+    "title": "メモリバンク",
+    "subtitle": "メモリバンクはそれぞれ独立した「脳」です。1 人のユーザー、1 つのエージェントまたはプロジェクトが記憶するすべてを隔離して保管します。バンク間で共有されるものはありません。",
+    "welcomeTitle": "Hindsight へようこそ",
+    "welcomeBody": "メモリバンクは独立した「脳」です。1 人のユーザー、1 つのエージェントまたはプロジェクトが記憶するすべてを隔離して保管します。まずは最初のバンクを作成しましょう。",
+    "search": "バンクを検索...",
+    "noSearchResults": "検索条件に一致するバンクはありません。",
+    "columnBank": "バンク",
+    "columnMemories": "メモリ",
+    "columnLastActivity": "最終アクティビティ",
+    "columnCreated": "作成日",
+    "never": "なし",
+    "emptyBank": "空",
+    "selectAll": "読み込み済みのバンクをすべて選択",
+    "selectBank": "{bank} を選択",
+    "selectedCount": "{count} 件選択中",
+    "clearSelection": "クリア",
+    "deleteSelected": "選択項目を削除",
+    "bulkDeleteTitle": "{count} 件のメモリバンクを削除しますか?",
+    "bulkDeletePrompt": "これらのバンクとその中身はすべて完全に削除されます:",
+    "bulkDeleteMore": "他 {count} 件",
+    "bulkDeleteWarning": "この操作は元に戻せません。すべてのメモリ、エンティティ、ドキュメント、およびバンクプロファイルが完全に削除されます。",
+    "bulkDeleteSequentialNote": "バンクは 1 件ずつ削除されるため時間がかかることがあります。完了するまでこのダイアログを開いたままにしてください。",
+    "bulkDeleteConfirmLabel": "確認のため {word} と入力してください",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "{total} 件中 {done} 件を削除中...",
+    "bulkDeleteDone": "{count} 件のバンクを削除しました",
+    "bulkDeletePartial": "{deleted} 件削除、{failed} 件失敗",
+    "bulkDeleteFailures": "これらのバンクは削除できませんでした:"
   },
   "login": {
     "title": "Hindsight コントロールプレーン",
@@ -1678,10 +1714,6 @@
         "fetch": "バンク設定の取得に失敗しました",
         "update": "バンク設定の更新に失敗しました",
         "reset": "バンク設定のリセットに失敗しました"
-      },
-      "bankProfile": {
-        "fetch": "バンクプロフィールの取得に失敗しました",
-        "update": "バンクプロフィールの更新に失敗しました"
       },
       "memories": {
         "list": "メモリユニットの一覧取得に失敗しました",

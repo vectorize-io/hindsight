@@ -205,10 +205,12 @@ async def test_vertexai_integration_actual_api():
 
     try:
         # Simple test call
-        response = await provider.call(
-            messages=[{"role": "user", "content": "Say 'ok' and nothing else"}],
-            max_completion_tokens=10,
-        )
+        response = (
+            await provider.call(
+                messages=[{"role": "user", "content": "Say 'ok' and nothing else"}],
+                max_completion_tokens=10,
+            )
+        ).content
 
         assert response is not None
         assert isinstance(response, str)

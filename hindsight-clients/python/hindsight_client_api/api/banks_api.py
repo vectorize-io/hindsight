@@ -72,9 +72,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> BackgroundResponse:
-        """(Deprecated) Add/merge memory bank background (deprecated)
+        """(Deprecated) Add/merge memory bank background (removed — use PATCH .../config)
 
-        Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.
+        **Removed.** The bank background was folded into the reflect mission. Write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That call replaces the value rather than merging into it, so read the current mission from GET .../config first if you relied on this endpoint's append behaviour.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -149,9 +149,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[BackgroundResponse]:
-        """(Deprecated) Add/merge memory bank background (deprecated)
+        """(Deprecated) Add/merge memory bank background (removed — use PATCH .../config)
 
-        Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.
+        **Removed.** The bank background was folded into the reflect mission. Write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That call replaces the value rather than merging into it, so read the current mission from GET .../config first if you relied on this endpoint's append behaviour.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -226,9 +226,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """(Deprecated) Add/merge memory bank background (deprecated)
+        """(Deprecated) Add/merge memory bank background (removed — use PATCH .../config)
 
-        Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.
+        **Removed.** The bank background was folded into the reflect mission. Write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That call replaces the value rather than merging into it, so read the current mission from GET .../config first if you relied on this endpoint's append behaviour.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1287,6 +1287,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "BankStatsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1363,6 +1364,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "BankStatsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1439,6 +1441,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "BankStatsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1539,7 +1542,7 @@ class BanksApi:
     ) -> BankConfigResponse:
         """Get bank configuration
 
-        Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.
+        Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1578,6 +1581,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "BankConfigResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1611,7 +1615,7 @@ class BanksApi:
     ) -> ApiResponse[BankConfigResponse]:
         """Get bank configuration
 
-        Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.
+        Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1650,6 +1654,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "BankConfigResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1683,7 +1688,7 @@ class BanksApi:
     ) -> RESTResponseType:
         """Get bank configuration
 
-        Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.
+        Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1722,6 +1727,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "BankConfigResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1815,9 +1821,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> BankProfileResponse:
-        """(Deprecated) Get memory bank profile
+        """(Deprecated) Get memory bank profile (removed — use GET .../config)
 
-        Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.
+        **Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1888,9 +1894,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[BankProfileResponse]:
-        """(Deprecated) Get memory bank profile
+        """(Deprecated) Get memory bank profile (removed — use GET .../config)
 
-        Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.
+        **Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1961,9 +1967,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """(Deprecated) Get memory bank profile
+        """(Deprecated) Get memory bank profile (removed — use GET .../config)
 
-        Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.
+        **Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2145,6 +2151,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "MemoriesTimeseriesResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2225,6 +2232,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "MemoriesTimeseriesResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2305,6 +2313,7 @@ class BanksApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "MemoriesTimeseriesResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -4475,9 +4484,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> BankProfileResponse:
-        """(Deprecated) Update memory bank disposition
+        """(Deprecated) Update memory bank disposition (removed — use PATCH .../config)
 
-        Update bank's disposition traits (skepticism, literalism, empathy)
+        **Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -4552,9 +4561,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[BankProfileResponse]:
-        """(Deprecated) Update memory bank disposition
+        """(Deprecated) Update memory bank disposition (removed — use PATCH .../config)
 
-        Update bank's disposition traits (skepticism, literalism, empathy)
+        **Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -4629,9 +4638,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """(Deprecated) Update memory bank disposition
+        """(Deprecated) Update memory bank disposition (removed — use PATCH .../config)
 
-        Update bank's disposition traits (skepticism, literalism, empathy)
+        **Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.
 
         :param bank_id: (required)
         :type bank_id: str

@@ -439,6 +439,23 @@ class LLMTraceRecorder:
         # pooled connection per sub-batch. Bounded, and only ever holds ids: a trace id is ~36
         # bytes and this is capped, so it cannot grow with traffic.
         self._rows_written: OrderedDict[str, None] = OrderedDict()
+        # Event loop this recorder's pool belongs to, bound in `bind_loop()` once the
+        # engine is initialising inside its own loop. None until then (and forever in
+        # tests that never initialise), which means "no affinity, always record".
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Pin this recorder to the loop whose pool it writes through.
+
+        `register_span_recorder` puts every engine's recorder in one process-wide
+        composite, so with several event loops in one process (the multi-loop
+        launcher) an LLM call on loop A fans out to loop B's recorder too. Writing
+        through B's pool from A raises "attached to a different loop" at best, and
+        drives concurrent unsynchronised access into asyncpg's protocol objects at
+        worst. Recording the owner lets `_record_fire_and_forget` drop the calls
+        that are not its own.
+        """
+        self._owner_loop = loop
 
     def _writable(self) -> Any | None:
         """Return the pool to write through, or None if writing isn't possible.
@@ -541,6 +558,10 @@ class LLMTraceRecorder:
     def _record_fire_and_forget(self, record: LLMRequestRecord) -> None:
         """Schedule a trace write as a background task."""
         try:
+            if self._owner_loop is not None and self._owner_loop is not asyncio.get_running_loop():
+                # Another loop's engine made this call; its own recorder is in the
+                # same composite and will write the row. See `bind_loop`.
+                return
             task = asyncio.create_task(self._safe_write(record))
         except RuntimeError:
             # No running event loop (e.g. during shutdown)

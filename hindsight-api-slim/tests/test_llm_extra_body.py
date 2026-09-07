@@ -219,14 +219,16 @@ async def test_gemini_structured_call_uses_native_schema_without_prompt_duplicat
     response.text = '{"answer": "ok"}'
     provider._client.aio.models.generate_content = AsyncMock(return_value=response)
 
-    result = await provider.call(
-        messages=[
-            {"role": "system", "content": "Return concise JSON."},
-            {"role": "user", "content": "hello"},
-        ],
-        response_format=StructuredAnswer,
-        scope="test",
-    )
+    result = (
+        await provider.call(
+            messages=[
+                {"role": "system", "content": "Return concise JSON."},
+                {"role": "user", "content": "hello"},
+            ],
+            response_format=StructuredAnswer,
+            scope="test",
+        )
+    ).content
 
     config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
     assert result.answer == "ok"
@@ -249,15 +251,17 @@ async def test_gemini_cached_structured_call_keeps_native_schema():
     response.text = '{"answer": "ok"}'
     provider._client.aio.models.generate_content = AsyncMock(return_value=response)
 
-    result = await provider.call(
-        messages=[
-            {"role": "system", "content": "Return concise JSON."},
-            {"role": "user", "content": "hello"},
-        ],
-        response_format=StructuredAnswer,
-        cached_prefix="cachedContents/test",
-        scope="test",
-    )
+    result = (
+        await provider.call(
+            messages=[
+                {"role": "system", "content": "Return concise JSON."},
+                {"role": "user", "content": "hello"},
+            ],
+            response_format=StructuredAnswer,
+            cached_prefix="cachedContents/test",
+            scope="test",
+        )
+    ).content
 
     config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
     assert result.answer == "ok"
@@ -282,17 +286,19 @@ async def test_gemini_structured_parse_failure_falls_back_to_prompt_schema():
     valid.text = '{"answer": "ok"}'
     provider._client.aio.models.generate_content = AsyncMock(side_effect=[invalid, valid])
 
-    result = await provider.call(
-        messages=[
-            {"role": "system", "content": "Return concise JSON."},
-            {"role": "user", "content": "hello"},
-        ],
-        response_format=StructuredAnswer,
-        scope="test",
-        max_retries=1,
-        initial_backoff=0,
-        max_backoff=0,
-    )
+    result = (
+        await provider.call(
+            messages=[
+                {"role": "system", "content": "Return concise JSON."},
+                {"role": "user", "content": "hello"},
+            ],
+            response_format=StructuredAnswer,
+            scope="test",
+            max_retries=1,
+            initial_backoff=0,
+            max_backoff=0,
+        )
+    ).content
 
     first_config = provider._client.aio.models.generate_content.call_args_list[0].kwargs["config"]
     fallback_config = provider._client.aio.models.generate_content.call_args_list[1].kwargs["config"]
@@ -322,18 +328,20 @@ async def test_gemini_cached_parse_retry_keeps_cached_native_schema():
     valid.text = '{"answer": "ok"}'
     provider._client.aio.models.generate_content = AsyncMock(side_effect=[invalid, valid])
 
-    result = await provider.call(
-        messages=[
-            {"role": "system", "content": "Return concise JSON."},
-            {"role": "user", "content": "hello"},
-        ],
-        response_format=StructuredAnswer,
-        cached_prefix="cachedContents/test",
-        scope="test",
-        max_retries=1,
-        initial_backoff=0,
-        max_backoff=0,
-    )
+    result = (
+        await provider.call(
+            messages=[
+                {"role": "system", "content": "Return concise JSON."},
+                {"role": "user", "content": "hello"},
+            ],
+            response_format=StructuredAnswer,
+            cached_prefix="cachedContents/test",
+            scope="test",
+            max_retries=1,
+            initial_backoff=0,
+            max_backoff=0,
+        )
+    ).content
 
     first_config = provider._client.aio.models.generate_content.call_args_list[0].kwargs["config"]
     retry_config = provider._client.aio.models.generate_content.call_args_list[1].kwargs["config"]

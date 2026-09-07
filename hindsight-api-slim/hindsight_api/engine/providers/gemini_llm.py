@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import logging
+import re
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import ContextVar
@@ -29,6 +30,8 @@ from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult,
 from hindsight_api.engine.structured_output import has_tagged_union, provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
+
+from ..response_models import LLMCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,57 @@ def _gemini_dict_schema(response_format: Any) -> dict[str, Any]:
         return node
 
     return strip(schema)
+
+
+#: ``data:<media type>;base64,<payload>`` — the OpenAI-style image part's URL form.
+_DATA_URI_RE = re.compile(r"^data:(?P<media_type>[\w.+-]+/[\w.+-]+);base64,(?P<data>.*)$", re.DOTALL)
+
+
+def _to_gemini_parts(content: Any, genai_types: Any) -> list[Any]:
+    """Translate a message's content into Gemini ``Part``s.
+
+    Retain assembles multimodal messages in the OpenAI part vocabulary — one
+    canonical wire shape, converted per provider here — so an inline image
+    reaches Gemini as ``inline_data`` rather than as a data URI the model would
+    read as literal text.
+
+    A plain string, which is what every text-only call sends, becomes the single
+    text Part it always did.
+    """
+    if not isinstance(content, list):
+        return [genai_types.Part(text=content)]
+
+    parts: list[Any] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "text":
+            parts.append(genai_types.Part(text=part.get("text", "")))
+            continue
+        # Gemini takes every attachment as inline_data — a PDF is the same shape
+        # as a PNG, differing only in mime_type — so images and files converge
+        # here rather than needing separate block types as they do on Anthropic.
+        if part.get("type") == "image_url":
+            url = (part.get("image_url") or {}).get("url", "")
+        elif part.get("type") == "file":
+            url = (part.get("file") or {}).get("file_data", "")
+        else:
+            continue
+        match = _DATA_URI_RE.match(url)
+        if match is None:
+            # Gemini has no fetch-this-URL part; surfacing the reference as text is
+            # better than dropping the message content silently.
+            parts.append(genai_types.Part(text=f"[image at {url}]"))
+            continue
+        parts.append(
+            genai_types.Part(
+                inline_data=genai_types.Blob(
+                    mime_type=match.group("media_type"),
+                    data=base64.b64decode(match.group("data")),
+                )
+            )
+        )
+    return parts
 
 
 @dataclass(frozen=True)
@@ -360,10 +414,9 @@ class GeminiLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         cached_prefix: str | None = None,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make a Gemini/VertexAI API call with retry logic.
 
@@ -379,7 +432,6 @@ class GeminiLLM(LLMInterface):
             skip_validation: Return raw JSON without Pydantic validation.
             strict_schema: Ignored — Gemini always grammar-enforces structured output via its
                 native response_schema, so it is strict regardless of this flag.
-            return_usage: If True, return tuple (result, TokenUsage).
             cached_prefix: Optional CachedContent resource name (from
                 ``GeminiCacheManager.get_or_create``). When set, the
                 system_instruction is assumed to live in the cache; this call
@@ -390,8 +442,6 @@ class GeminiLLM(LLMInterface):
                 normal uncached path.
 
         Returns:
-            If return_usage=False: Parsed response if response_format provided, else text.
-            If return_usage=True: Tuple of (result, TokenUsage).
         """
         start_time = time.time()
 
@@ -416,7 +466,7 @@ class GeminiLLM(LLMInterface):
             elif role == "assistant":
                 gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
             else:
-                gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
+                gemini_contents.append(genai_types.Content(role="user", parts=_to_gemini_parts(content, genai_types)))
 
         def _system_instruction_with_schema() -> str:
             schema = provider_json_schema(response_format)
@@ -611,16 +661,14 @@ class GeminiLLM(LLMInterface):
                         f"time={duration:.3f}s"
                     )
 
-                if return_usage:
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=input_tokens + output_tokens,
-                        cached_tokens=cached_tokens,
-                        thoughts_tokens=thoughts_tokens,
-                    )
-                    return result, token_usage
-                return result
+                token_usage = TokenUsage(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    cached_tokens=cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
+                )
+                return LLMCallResult(content=result, usage=token_usage)
 
             except json.JSONDecodeError as e:
                 last_exception = e
@@ -1191,6 +1239,10 @@ class GeminiLLM(LLMInterface):
     #
     # Interface contract preserved (see fact_extraction.py result handling)::
     #     result["response"]["body"]["choices"][0]["message"]["content"]
+
+    def supports_vision(self) -> bool:
+        """Gemini models are natively multimodal, on both the Gemini API and Vertex."""
+        return True
 
     async def supports_batch_api(self) -> bool:
         """True for the Gemini API; False for Vertex AI.

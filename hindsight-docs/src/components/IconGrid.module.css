@@ -36,6 +36,17 @@
   align-items: center;
   justify-content: center;
   opacity: 0.85;
+  /* The marks are single-path SVGs that inherit currentColor, so one colour per
+     tile is all it takes. The fallback is `inherit` on purpose: a tile with no
+     brand colour keeps the neutral look it has always had, which also leaves the
+     other IconGrid callers (ClientsGrid) untouched. */
+  color: var(--icon-color, inherit);
+}
+
+/* Near-black brand colours (OpenAI, Ollama, Anthropic, ...) would vanish against
+   the dark surface, so those tiles carry an explicit override. */
+[data-theme='dark'] .icon {
+  color: var(--icon-color-dark, var(--icon-color, inherit));
 }
 
 .label {

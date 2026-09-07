@@ -46,7 +46,7 @@ def gradient_text(text: str, start: tuple = GRADIENT_START, end: tuple = GRADIEN
 def print_banner():
     """Print the Hindsight startup banner."""
     print(LOGO)
-    tagline = gradient_text("Hindsight: Agent Memory That Works Like Human Memory")
+    tagline = gradient_text("Hindsight: Agent Memory That Learns")
     print(f"\n  {tagline}\n")
 
 

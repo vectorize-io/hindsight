@@ -34,8 +34,6 @@ const failureErrorKeys: Record<string, string> = {
   "Failed to fetch chunk": "api.errors.chunks.fetch",
   "Failed to fetch operations": "api.errors.operations.fetch",
   "Failed to cancel operation": "api.errors.operations.cancel",
-  "Failed to fetch bank profile": "api.errors.bankProfile.fetch",
-  "Failed to update bank profile": "api.errors.bankProfile.update",
 };
 
 /**

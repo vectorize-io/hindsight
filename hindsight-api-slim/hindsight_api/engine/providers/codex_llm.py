@@ -22,12 +22,19 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
 import httpx
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+    ProviderRateLimitResetError,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
@@ -36,6 +43,7 @@ from hindsight_api.engine.structured_output import provider_json_schema, strict_
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
 from .codex_auth import (
     _CODEX_CLIENT_ID,
     _CODEX_REFRESH_TOKEN_URL,
@@ -126,6 +134,42 @@ _DEFAULT_CODEX_TIMEOUT = 120.0
 # by ``max_completion_tokens`` never approaches this, so blowing past it means
 # the stream is not going to end on its own.
 _MAX_SSE_BODY_CHARS = 4 * 1024 * 1024
+
+
+def _codex_quota_retry_at(response: httpx.Response) -> datetime | None:
+    """Return a future reset time from a Codex usage-limit response."""
+    if response.status_code != 429:
+        return None
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict) or error.get("type") != "usage_limit_reached":
+        return None
+    resets_at = error.get("resets_at")
+    if isinstance(resets_at, bool) or not isinstance(resets_at, (int, float)):
+        return None
+    try:
+        retry_at = datetime.fromtimestamp(resets_at, UTC)
+    except (OSError, OverflowError, ValueError):
+        return None
+    return retry_at if retry_at > datetime.now(UTC) else None
+
+
+def _raise_codex_quota_defer(
+    response: httpx.Response, *, provider: str, model: str, scope: str, max_backoff: float
+) -> None:
+    """Turn a long Codex quota window into the engine's defer signal."""
+    retry_at = _codex_quota_retry_at(response)
+    if retry_at is None or (retry_at - datetime.now(UTC)).total_seconds() <= max_backoff:
+        return
+    raise ProviderRateLimitResetError(
+        retry_at=retry_at,
+        message=f"Codex quota exhausted ({provider}/{model}, scope={scope}); retry at {retry_at.isoformat()}",
+    )
 
 
 class CodexRunawayStreamError(httpx.RequestError):
@@ -412,6 +456,10 @@ class CodexLLM(LLMInterface):
         }
         return mapping.get(effort.lower(), "auto") if effort else "auto"
 
+    def supports_vision(self) -> bool:
+        """Codex runs OpenAI's own models, all of which are multimodal."""
+        return True
+
     async def verify_connection(self) -> None:
         """Verify Codex connection by making a simple test call."""
         try:
@@ -444,9 +492,8 @@ class CodexLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """Make API call to Codex backend with SSE streaming.
 
         Args:
@@ -669,18 +716,14 @@ class CodexLLM(LLMInterface):
                     # bugs that would otherwise silently erase spans (#3025).
                     logger.debug("Codex span recording failed: %s", span_error, exc_info=True)
 
-                if return_usage:
-                    # Codex doesn't provide token counts, estimate based on content
-                    estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
-                    estimated_output = len(content) // 4
-                    token_usage = TokenUsage(
-                        input_tokens=estimated_input,
-                        output_tokens=estimated_output,
-                        total_tokens=estimated_input + estimated_output,
-                    )
-                    return result, token_usage
-
-                return result
+                estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
+                estimated_output = len(content) // 4
+                token_usage = TokenUsage(
+                    input_tokens=estimated_input,
+                    output_tokens=estimated_output,
+                    total_tokens=estimated_input + estimated_output,
+                )
+                return LLMCallResult(content=result, usage=token_usage)
 
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
@@ -722,6 +765,14 @@ class CodexLLM(LLMInterface):
                         "Codex authentication failed. Your OAuth token may have expired.\n"
                         "Run 'codex auth login' to re-authenticate."
                     ) from e
+
+                _raise_codex_quota_defer(
+                    e.response,
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    max_backoff=max_backoff,
+                )
 
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
@@ -987,6 +1038,13 @@ class CodexLLM(LLMInterface):
                 set_stage(f"llm.codex.tools.attempt={attempt}/2")
                 async with self._stream_request(url, payload, headers) as response:
                     if response.status_code != 200:
+                        _raise_codex_quota_defer(
+                            response,
+                            provider=self.provider,
+                            model=self.model,
+                            scope=scope,
+                            max_backoff=max_backoff,
+                        )
                         # 401/403 on the first attempt may still be recovered by the
                         # reactive token refresh below — don't log those as errors yet.
                         detail = f"Codex API error {response.status_code}: {response.text[:500]}"

@@ -49,6 +49,7 @@
     "lightMode": "라이트 모드로 전환",
     "bank": {
       "select": "메모리 뱅크 선택...",
+      "allBanks": "모든 메모리 뱅크",
       "search": "메모리 뱅크 검색...",
       "empty": "아직 메모리 뱅크가 없습니다.",
       "noSearchResults": "검색과 일치하는 뱅크가 없습니다.",
@@ -739,7 +740,8 @@
     "labelObservationScopes": "관찰 범위",
     "invalidatedFactsTitle": "무효화된 사실",
     "documentUpdating": "업데이트 중",
-    "lastRefreshed": "새로고침 {time}"
+    "lastRefreshed": "새로고침 {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -1626,12 +1628,46 @@
     "observationScopesEmpty": "관찰 범위를 미리 보려면 위에 태그를 추가하세요",
     "metadataHelpText": "한 줄에 하나의 <code>key: value</code>",
     "entitiesHelpText": "자동 추출된 엔터티와 병합되는 쉼표로 구분된 힌트",
-    "textNotStoredWarning": "이 서버에는 문서 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다."
+    "textNotStoredWarning": "이 서버에는 문서 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다.",
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "Hindsight에 오신 것을 환영합니다",
-    "selectBank": "위의 드롭다운에서 메모리 뱅크를 선택하여 시작하세요.",
-    "sidebarHint": "메모리 뱅크를 선택하면 사이드바가 나타납니다."
+  "banksOverview": {
+    "title": "메모리 뱅크",
+    "subtitle": "각 메모리 뱅크는 별개의 뇌입니다. 한 사용자, 에이전트 또는 프로젝트가 기억하는 모든 것을 격리해 저장하며, 뱅크 간에는 아무것도 공유되지 않습니다.",
+    "welcomeTitle": "Hindsight에 오신 것을 환영합니다",
+    "welcomeBody": "메모리 뱅크는 별개의 뇌입니다. 한 사용자, 에이전트 또는 프로젝트가 기억하는 모든 것을 격리해 저장합니다. 첫 번째 뱅크를 만들어 시작해 보세요.",
+    "search": "뱅크 검색...",
+    "noSearchResults": "검색과 일치하는 뱅크가 없습니다.",
+    "columnBank": "뱅크",
+    "columnMemories": "메모리",
+    "columnLastActivity": "마지막 활동",
+    "columnCreated": "생성일",
+    "never": "없음",
+    "emptyBank": "비어 있음",
+    "selectAll": "불러온 뱅크 모두 선택",
+    "selectBank": "{bank} 선택",
+    "selectedCount": "{count}개 선택됨",
+    "clearSelection": "지우기",
+    "deleteSelected": "선택 항목 삭제",
+    "bulkDeleteTitle": "메모리 뱅크 {count}개를 삭제할까요?",
+    "bulkDeletePrompt": "이 뱅크와 그 안의 모든 내용이 영구적으로 삭제됩니다:",
+    "bulkDeleteMore": "외 {count}개",
+    "bulkDeleteWarning": "이 작업은 되돌릴 수 없습니다. 모든 메모리, 엔티티, 문서 및 뱅크 프로필이 영구적으로 삭제됩니다.",
+    "bulkDeleteSequentialNote": "뱅크는 하나씩 삭제되므로 시간이 걸릴 수 있습니다. 완료될 때까지 이 대화 상자를 열어 두세요.",
+    "bulkDeleteConfirmLabel": "확인하려면 {word}를 입력하세요",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "{total}개 중 {done}개 삭제 중...",
+    "bulkDeleteDone": "뱅크 {count}개를 삭제했습니다",
+    "bulkDeletePartial": "{deleted}개 삭제, {failed}개 실패",
+    "bulkDeleteFailures": "다음 뱅크는 삭제하지 못했습니다:"
   },
   "login": {
     "title": "Hindsight 제어 플레인",
@@ -1678,10 +1714,6 @@
         "fetch": "뱅크 구성을 가져오지 못했습니다",
         "update": "뱅크 구성을 업데이트하지 못했습니다",
         "reset": "뱅크 구성을 재설정하지 못했습니다"
-      },
-      "bankProfile": {
-        "fetch": "뱅크 프로필을 가져오지 못했습니다",
-        "update": "뱅크 프로필을 업데이트하지 못했습니다"
       },
       "memories": {
         "list": "메모리 유닛 목록을 가져오지 못했습니다",

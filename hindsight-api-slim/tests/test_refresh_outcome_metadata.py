@@ -7,6 +7,7 @@ refresh_mental_model operation must let a monitoring layer distinguish
 ``result_metadata`` alone, without a follow-up content fetch.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import asyncio
 import uuid
 from dataclasses import dataclass, field
@@ -150,7 +151,7 @@ def _patch_delta_llm(monkeypatch, memory: MemoryEngine, *, returns) -> None:
     async def fake_call(*, messages, **kwargs):
         if isinstance(returns, Exception):
             raise returns
-        return DeltaOperationList.model_validate({"operations": returns})
+        return LLMCallResult(content=DeltaOperationList.model_validate({"operations": returns}), usage=TokenUsage())
 
     monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
 

@@ -89,7 +89,7 @@ async def test_attempt_stage_is_published_only_after_permits_are_acquired():
     await asyncio.wait_for(waiting_for_permit.wait(), timeout=1)
     assert holder.stage == "llm.openai.memory.queued"
     release_permit.set()
-    assert await task == "ok"
+    assert (await task).content == "ok"
 
 
 @pytest.mark.asyncio
@@ -99,11 +99,13 @@ async def test_json_object_call_adds_json_hint_to_user_message():
     llm._client.chat.completions.create = create
 
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "Return whether this worked."}],
+                response_format=SimpleJsonResponse,
+                max_retries=0,
+            )
+        ).content
 
     assert result.ok is True
     sent_messages = create.call_args.kwargs["messages"]
@@ -119,11 +121,13 @@ async def test_json_object_call_strips_gemma_thought_tags_before_parsing():
     llm._client.chat.completions.create = create
 
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "Return whether this worked."}],
+                response_format=SimpleJsonResponse,
+                max_retries=0,
+            )
+        ).content
 
     assert result.ok is True
 
@@ -203,12 +207,14 @@ async def test_missing_choices_are_retryable_provider_response_errors():
         patch("hindsight_api.engine.providers.openai_compatible_llm.asyncio.sleep", new=AsyncMock()) as sleep_mock,
         patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
     ):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=1,
-            initial_backoff=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "Return whether this worked."}],
+                response_format=SimpleJsonResponse,
+                max_retries=1,
+                initial_backoff=0,
+            )
+        ).content
 
     assert result.ok is True
     assert create.await_count == 2
@@ -250,12 +256,14 @@ async def test_repairable_json_is_recovered_instead_of_being_dropped():
     llm._client.chat.completions.create = create
 
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=1,
-            initial_backoff=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "Return whether this worked."}],
+                response_format=SimpleJsonResponse,
+                max_retries=1,
+                initial_backoff=0,
+            )
+        ).content
 
     assert result.ok is True
 
@@ -280,12 +288,14 @@ async def test_repeated_output_does_not_cut_the_retry_budget_short():
     llm._client.chat.completions.create = create
 
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=3,
-            initial_backoff=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "Return whether this worked."}],
+                response_format=SimpleJsonResponse,
+                max_retries=3,
+                initial_backoff=0,
+            )
+        ).content
 
     assert result.ok is True
     assert create.await_count == 3
@@ -309,12 +319,14 @@ async def test_a_changed_response_still_earns_a_fresh_generation():
     llm._client.chat.completions.create = create
 
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=3,
-            initial_backoff=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "Return whether this worked."}],
+                response_format=SimpleJsonResponse,
+                max_retries=3,
+                initial_backoff=0,
+            )
+        ).content
 
     assert result.ok is True
     assert create.await_count == 3
@@ -339,12 +351,14 @@ async def test_ollama_native_repairs_malformed_json_instead_of_dropping_it():
         ),
         patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
     ):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "Return whether this worked."}],
-            response_format=SimpleJsonResponse,
-            max_retries=1,
-            initial_backoff=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "Return whether this worked."}],
+                response_format=SimpleJsonResponse,
+                max_retries=1,
+                initial_backoff=0,
+            )
+        ).content
 
     assert result.ok is True
 
@@ -471,12 +485,14 @@ async def test_a_malformed_body_that_is_not_truncated_still_gets_repaired():
     llm._client.chat.completions.create = create
 
     with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call(
-            messages=[{"role": "user", "content": "List the facts."}],
-            response_format=FactListResponse,
-            max_retries=1,
-            initial_backoff=0,
-        )
+        result = (
+            await llm.call(
+                messages=[{"role": "user", "content": "List the facts."}],
+                response_format=FactListResponse,
+                max_retries=1,
+                initial_backoff=0,
+            )
+        ).content
 
     assert result.facts == ["alpha", "beta"]
 

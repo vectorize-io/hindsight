@@ -267,6 +267,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -479,6 +482,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -1058,6 +1064,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1198,6 +1207,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1283,6 +1295,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1366,6 +1381,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -1640,6 +1658,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -2262,6 +2283,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2459,6 +2483,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2543,6 +2570,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -2885,6 +2915,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -3292,6 +3325,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -3785,6 +3821,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -3978,6 +4017,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -4074,8 +4116,8 @@
         "tags": [
           "Operations"
         ],
-        "summary": "Cancel a pending async operation",
-        "description": "Cancel a pending async operation by removing it from the queue",
+        "summary": "Cancel a pending or in-flight async operation",
+        "description": "Cancel a queued or running async operation. A 'pending' operation is never started. A 'processing' one is cancelled cooperatively: the row is marked 'cancelled' immediately and the worker running it stops at its next checkpoint, so work already in flight may finish the batch it is on. This also clears operations stranded in 'processing' by a crashed worker. Returns 409 for operations that already reached a terminal state.",
         "operationId": "cancel_operation",
         "parameters": [
           {
@@ -4278,8 +4320,8 @@
         "tags": [
           "Banks"
         ],
-        "summary": "Get memory bank profile",
-        "description": "Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.",
+        "summary": "Get memory bank profile (removed \u2014 use GET .../config)",
+        "description": "**Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.",
         "operationId": "get_bank_profile",
         "deprecated": true,
         "parameters": [
@@ -4336,8 +4378,8 @@
         "tags": [
           "Banks"
         ],
-        "summary": "Update memory bank disposition",
-        "description": "Update bank's disposition traits (skepticism, literalism, empathy)",
+        "summary": "Update memory bank disposition (removed \u2014 use PATCH .../config)",
+        "description": "**Removed.** The bank profile endpoints have been removed. Disposition traits and the reflect mission are bank configuration: read them from GET /v1/default/banks/{bank_id}/config as `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and `reflect_mission`, and write them with PATCH /v1/default/banks/{bank_id}/config. The `name` field this endpoint also returned was a display-only label; read it from GET /v1/default/banks.",
         "operationId": "update_bank_disposition",
         "deprecated": true,
         "parameters": [
@@ -4406,8 +4448,8 @@
         "tags": [
           "Banks"
         ],
-        "summary": "Add/merge memory bank background (deprecated)",
-        "description": "Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.",
+        "summary": "Add/merge memory bank background (removed \u2014 use PATCH .../config)",
+        "description": "**Removed.** The bank background was folded into the reflect mission. Write it with PATCH /v1/default/banks/{bank_id}/config as `reflect_mission`. That call replaces the value rather than merging into it, so read the current mission from GET .../config first if you relied on this endpoint's append behaviour.",
         "operationId": "add_bank_background",
         "deprecated": true,
         "parameters": [
@@ -4781,6 +4823,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -5035,6 +5080,73 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/attachments/{attachment_id}": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Fetch an attachment retained inline with a document",
+        "description": "Serve the bytes of an attachment retained as inline content. The id is the one inside a placeholder token, and is returned on `attachments[].url` by recall and by the document/chunk/memory reads \u2014 so an agent can show or reason over the original behind an attachment-derived fact.\n\nBytes are served with the Content-Type the caller declared at retain. Access is authorized against the bank; a missing attachment and an invisible bank both return 404, so the endpoint cannot be used to probe what a bank holds.",
+        "operationId": "get_bank_attachment",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Attachment Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment bytes",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/octet-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/files/download/{key}": {
       "get": {
         "tags": [
@@ -5178,7 +5290,7 @@
           "Memory"
         ],
         "summary": "List observation scopes",
-        "description": "Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.",
+        "description": "Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope. Paged: `total` reports every distinct scope in the bank.",
         "operationId": "list_observation_scopes",
         "parameters": [
           {
@@ -5189,6 +5301,33 @@
               "type": "string",
               "title": "Bank Id"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 0,
+              "description": "Maximum number of scopes to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of scopes to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
           },
           {
             "name": "authorization",
@@ -5217,6 +5356,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -5364,7 +5506,7 @@
           "Banks"
         ],
         "summary": "Get bank configuration",
-        "description": "Get fully resolved configuration for a bank including all hierarchical overrides (global \u2192 tenant \u2192 bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.",
+        "description": "Get fully resolved configuration for a bank including all hierarchical overrides (global \u2192 tenant \u2192 bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.",
         "operationId": "get_bank_config",
         "parameters": [
           {
@@ -5403,6 +5545,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -5690,7 +5835,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "List all webhooks registered for a bank.",
+        "description": "List the webhooks registered for a bank, oldest first. Paged: `total` reports every webhook on the bank.",
         "operationId": "list_webhooks",
         "parameters": [
           {
@@ -5701,6 +5846,33 @@
               "type": "string",
               "title": "Bank Id"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 0,
+              "description": "Maximum number of webhooks to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of webhooks to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
           },
           {
             "name": "authorization",
@@ -5729,6 +5901,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -6344,6 +6519,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -6432,6 +6610,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -6693,6 +6874,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -6781,6 +6965,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -7805,6 +7992,18 @@
             "title": "Retain Chunk Batch Size",
             "description": "Max chunks per streaming batch (0 disables batching)"
           },
+          "retain_max_attachments_per_chunk": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Max Attachments Per Chunk",
+            "description": "Hard cap on inline images in a single extraction chunk"
+          },
           "mcp_enabled_tools": {
             "anyOf": [
               {
@@ -8389,6 +8588,33 @@
         "title": "BankTemplateMentalModel",
         "description": "A mental model definition within a bank template manifest."
       },
+      "Base64AttachmentSource": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "base64",
+            "title": "Type",
+            "default": "base64"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed type is accepted; whether the model can read it is the model's answer to give, and a provider that rejects it fails the retain with its own error."
+          },
+          "data": {
+            "type": "string",
+            "title": "Data",
+            "description": "Base64-encoded bytes (no data: URI prefix)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "media_type",
+          "data"
+        ],
+        "title": "Base64AttachmentSource",
+        "description": "Inline attachment bytes, base64-encoded.\n\nThe only source type in this version. ``url`` (server-side fetch) and\n``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this\nis modelled as a discriminated union on ``type`` rather than as bare fields."
+      },
       "Body_file_retain": {
         "properties": {
           "files": {
@@ -8519,6 +8745,63 @@
         "title": "ChildOperationStatus",
         "description": "Status of a child operation (for batch operations)."
       },
+      "ChunkAttachment": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The id inside the text's placeholder; a prefix of the bytes' sha256."
+          },
+          "hash": {
+            "type": "string",
+            "title": "Hash",
+            "description": "Full sha256 of the attachment bytes."
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "'image' or 'file', as the caller sent it."
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME type of the attachment."
+          },
+          "byte_size": {
+            "type": "integer",
+            "title": "Byte Size",
+            "description": "Size of the attachment in bytes."
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename, when the caller supplied one."
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Bank-scoped API path serving the bytes. Requires the same authorization as the bank."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "hash",
+          "kind",
+          "media_type",
+          "byte_size",
+          "url"
+        ],
+        "title": "ChunkAttachment",
+        "description": "An attachment referenced by retained text, and where to fetch it."
+      },
       "ChunkData": {
         "properties": {
           "id": {
@@ -8538,6 +8821,21 @@
             "title": "Truncated",
             "description": "Whether the chunk text was truncated due to token limits",
             "default": false
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments this chunk's text references, in order of first appearance, when it was retained with inline content. The text keeps each attachment's placeholder token (\u27e6hs-att:...\u27e7) where it sat, so a multimodal agent can render or reason over the original at the position it occupied in the source document. Omitted when there are none."
           }
         },
         "type": "object",
@@ -8587,6 +8885,21 @@
           "created_at": {
             "type": "string",
             "title": "Created At"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments referenced by this chunk's text, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
           }
         },
         "type": "object",
@@ -8834,6 +9147,18 @@
             ],
             "title": "Retain Structured Chunk Size",
             "description": "Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset."
+          },
+          "retain_max_attachments_per_chunk": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Max Attachments Per Chunk",
+            "description": "Maximum inline attachments one extraction chunk may carry. retain_chunk_size budgets text only \u2014 a placeholder costs the characters it occupies and nothing more \u2014 so this is what bounds attachments. Match it to the provider's per-request limit."
           },
           "enable_observations": {
             "anyOf": [
@@ -9620,6 +9945,21 @@
             ],
             "title": "Observation Scopes",
             "description": "The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured."
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments referenced by this document, when it was retained with inline content. Each carries a bank-scoped `url` serving the original bytes. Omitted when there are none."
           }
         },
         "type": "object",
@@ -10309,6 +10649,37 @@
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
       },
+      "FileContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file",
+            "title": "Type"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Base64AttachmentSource"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename, passed to providers that show one to the model (e.g. OpenAI)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "source"
+        ],
+        "title": "FileContentBlock",
+        "description": "A non-image attachment \u2014 a PDF, a spreadsheet \u2014 in the position it was written.\n\nSplit from ``image`` rather than folded into one type because the providers\nsplit it: Anthropic has distinct image and document blocks, OpenAI has\nimage_url and file parts. Carrying the caller's own distinction through means\nthe per-provider conversion never has to guess from the media type alone."
+      },
       "FileRetainResponse": {
         "properties": {
           "operation_ids": {
@@ -10425,6 +10796,25 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImageContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Base64AttachmentSource"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "source"
+        ],
+        "title": "ImageContentBlock",
+        "description": "An image within a multimodal item, in the position the caller wrote it."
       },
       "IncludeOptions": {
         "properties": {
@@ -11702,8 +12092,37 @@
       "MemoryItem": {
         "properties": {
           "content": {
-            "type": "string",
-            "title": "Content"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContentBlock"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageContentBlock"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileContentBlock"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                      "file": "#/components/schemas/FileContentBlock",
+                      "image": "#/components/schemas/ImageContentBlock",
+                      "text": "#/components/schemas/TextContentBlock"
+                    }
+                  }
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Content",
+            "description": "The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:\n\n  [{\"type\": \"text\", \"text\": \"click the button shown:\"},\n   {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},\n   {\"type\": \"text\", \"text\": \"...then reconnect.\"}]\n\nThe block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form."
           },
           "timestamp": {
             "anyOf": [
@@ -13184,15 +13603,35 @@
             "type": "array",
             "title": "Scopes",
             "description": "Distinct observation scopes, most populous first"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of distinct scopes in the bank (ignores limit/offset)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Maximum number of scopes returned in this page"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset this page started at"
           }
         },
         "type": "object",
         "required": [
-          "scopes"
+          "scopes",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "ObservationScopesResponse",
         "description": "Response model for the observation scopes enumeration endpoint.",
         "example": {
+          "limit": 100,
+          "offset": 0,
           "scopes": [
             {
               "count": 12,
@@ -13211,7 +13650,8 @@
               "count": 2,
               "tags": []
             }
-          ]
+          ],
+          "total": 3
         }
       },
       "OperationProgress": {
@@ -15320,6 +15760,26 @@
         "title": "TemporalWindow",
         "description": "A caller-supplied window for recall's temporal arm.\n\nSupplying this **replaces the date extraction** recall would otherwise run\nover the query text, so a caller that already knows the range it means does\nnot have to phrase it in English and hope the parser agrees.\n\nIt is **not a filter**. The temporal arm is one of four retrieval arms: it\nsurfaces memories whose own dates (``mentioned_at`` / ``occurred_start`` /\n``occurred_end``) fall inside the window so fusion can rank them higher.\nThe semantic, keyword and graph arms are unaffected, so results dated\noutside the window are still returned. Narrowing results to a date range is\na different operation this does not provide.\n\nHas no effect when the bank's ``enable_temporal_retrieval`` config is off:\nthat flag gates the arm itself, and stays the single switch for it."
       },
+      "TextContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "TextContentBlock",
+        "description": "A run of text within a multimodal item, in the position the caller wrote it."
+      },
       "TokenUsage": {
         "properties": {
           "input_tokens": {
@@ -16113,11 +16573,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of webhooks on the bank (ignores limit/offset)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Maximum number of webhooks returned in this page"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset this page started at"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "WebhookListResponse",
         "description": "Response model for listing webhooks."

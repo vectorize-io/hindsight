@@ -5,6 +5,7 @@ Handles entity extraction and resolution for stored facts.
 """
 
 import logging
+from dataclasses import dataclass
 
 from . import link_utils
 from .types import EntityResolutionResult, ProcessedFact, UserEntities
@@ -12,10 +13,27 @@ from .types import EntityResolutionResult, ProcessedFact, UserEntities
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PreparedFactEntities:
+    """Per-fact inputs to entity resolution, all three aligned to ``facts`` by index.
+
+    The alignment is the whole contract: resolution zips these together, so a
+    caller that reordered or filtered one list without the others would silently
+    attach entities to the wrong fact. Three same-shaped lists in a bare tuple
+    made that easy to do and impossible to see — and most callers wanted only
+    ``entities_per_fact``, so they wrote ``_texts, _dates, entities_per_fact``
+    and depended on the other two staying exactly where they were.
+    """
+
+    fact_texts: list[str]
+    fact_dates: list
+    entities_per_fact: list[list[dict]]
+
+
 def _prepare_facts_for_entity_processing(
     facts: list[ProcessedFact],
     user_entities_per_content: dict[int, UserEntities] | None = None,
-) -> tuple[list[str], list, list[list[dict]]]:
+) -> PreparedFactEntities:
     """
     Extract fact texts, dates, and merged entity lists from ProcessedFact objects.
 
@@ -25,7 +43,7 @@ def _prepare_facts_for_entity_processing(
     without turning off resolution for the extractor's (#3479).
 
     Returns:
-        Tuple of (fact_texts, fact_dates, entities_per_fact)
+        A PreparedFactEntities whose three lists are index-aligned to ``facts``.
     """
     user_entities_per_content = user_entities_per_content or {}
 
@@ -60,7 +78,7 @@ def _prepare_facts_for_entity_processing(
 
         entities_per_fact.append(llm_entities)
 
-    return fact_texts, fact_dates, entities_per_fact
+    return PreparedFactEntities(fact_texts, fact_dates, entities_per_fact)
 
 
 async def resolve_entities(
@@ -99,7 +117,10 @@ async def resolve_entities(
     if len(unit_ids) != len(facts):
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and facts ({len(facts)})")
 
-    fact_texts, fact_dates, entities_per_fact = _prepare_facts_for_entity_processing(facts, user_entities_per_content)
+    prepared = _prepare_facts_for_entity_processing(facts, user_entities_per_content)
+    fact_texts = prepared.fact_texts
+    fact_dates = prepared.fact_dates
+    entities_per_fact = prepared.entities_per_fact
 
     return await link_utils.resolve_entities_only(
         entity_resolver,

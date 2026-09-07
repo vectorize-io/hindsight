@@ -88,6 +88,52 @@ cleanup() {
   exit "$rc"
 }
 
+# Decide whether a `plugins doctor` run is acceptable.
+#   assert_doctor_clean <output> <exit-code> <label>
+#
+# Diagnostics are the "- <plugin>: <message>" lines under "Diagnostics:".
+#
+# ANY diagnostic naming this plugin is a failure, whatever its wording. This
+# used to match a word list ('fail', 'error', 'not loaded') and that let real
+# breakage through: openclaw 2026.9.x blocks a non-bundled plugin's typed hooks
+# with
+#   - hindsight-openclaw: typed hook "before_prompt_build" blocked because
+#     non-bundled plugins must set ...hooks.allowConversationAccess=true
+# which contains none of those words. In that state the plugin still logs
+# "agent hooks registered" and doctor still lists it as loaded, so nothing else
+# in this script distinguishes it — a build that never recalls or retains would
+# have passed as green. Fail closed instead: if a future openclaw release
+# starts emitting a genuinely benign hindsight diagnostic, allowlist that exact
+# message here, with a comment saying why it is benign.
+assert_doctor_clean() {
+  local out="$1" rc="$2" label="$3"
+  local diags hindsight_diags other_diags
+  diags="$(printf '%s\n' "$out" | grep -E '^- ' || true)"
+
+  hindsight_diags="$(printf '%s\n' "$diags" | grep -i 'hindsight' || true)"
+  if [[ -n "$hindsight_diags" ]]; then
+    printf '%s\n' "$out" >&2
+    fail "plugins doctor reported hindsight diagnostics after: $label"
+  fi
+
+  # Diagnostics for UNRELATED bundled plugins (e.g. ollama double-registration
+  # in clean CI envs) are tolerated while doctor still exits 0. A non-zero exit
+  # is only acceptable for the one diagnostic we expect: since openclaw
+  # 2026.8.1 the memory "kind" is an exclusive slot, so installing this plugin
+  # deselects the bundled `memory-core` and doctor reports that — exiting
+  # non-zero even though `plugins.slots.memory = hindsight-openclaw` is exactly
+  # the state we want.
+  if [[ $rc -ne 0 ]]; then
+    other_diags="$(printf '%s\n' "$diags" \
+      | grep -vE '^- memory-core: memory plugin not selected for the memory slot' || true)"
+    if [[ -n "$other_diags" ]]; then
+      printf '%s\n' "$out" >&2
+      fail "openclaw plugins doctor exited non-zero after: $label"
+    fi
+    warn "  doctor exit $rc is the expected memory-slot deselection notice"
+  fi
+}
+
 run_setup_mode() {
   local label="$1"
   shift
@@ -99,19 +145,9 @@ run_setup_mode() {
     openclaw config validate >&2 || true
     fail "openclaw config validate failed after: $label"
   fi
-  # `openclaw plugins doctor` can print diagnostics for UNRELATED bundled
-  # plugins (e.g. ollama double-registration in clean CI envs). Only fail if
-  # doctor surfaces something that specifically names hindsight, or if the
-  # command itself exits non-zero.
-  local doctor_out
-  if ! doctor_out="$(openclaw plugins doctor 2>&1)"; then
-    printf '%s\n' "$doctor_out" >&2
-    fail "openclaw plugins doctor exited non-zero after: $label"
-  fi
-  if printf '%s' "$doctor_out" | grep -iE 'hindsight.*(fail|error|not loaded)|(fail|error).*hindsight' >/dev/null; then
-    printf '%s\n' "$doctor_out" >&2
-    fail "plugins doctor reported hindsight-specific issues after: $label"
-  fi
+  local doctor_out doctor_rc=0
+  doctor_out="$(openclaw plugins doctor 2>&1)" || doctor_rc=$?
+  assert_doctor_clean "$doctor_out" "$doctor_rc" "$label"
   log "  ✓ $label → config valid + doctor clean"
 }
 

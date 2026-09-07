@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from .tags import TagGroup, TagsMatch
-from .types import GraphRetrievalTimings, RetrievalResult
+from .types import GraphRetrieval, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class GraphRetriever(ABC):
         created_after: datetime | None = None,  # Only include memory_units created after this time
         created_before: datetime | None = None,  # Only include memory_units created before this time
         preselected_semantic_seeds: list[RetrievalResult] | None = None,
-    ) -> tuple[list[RetrievalResult], GraphRetrievalTimings | None]:
+    ) -> GraphRetrieval:
         """
         Retrieve relevant facts via graph traversal.
 

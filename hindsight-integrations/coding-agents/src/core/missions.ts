@@ -194,7 +194,12 @@ export interface KnowledgePage {
 }
 
 /**
- * The subject-scoping clause every seeded page's query carries, naming the repository it is about.
+ * The subject-scoping clause every seeded page's query carries, naming the subject it is about.
+ *
+ * `project` is the repository when the bank is one repository's, and the BANK otherwise — a bank
+ * several repos share has no repo to name, and naming whichever one seeded last made the sentence
+ * flip on every session start (#4146). Either way it must be stable for the bank, because the
+ * clause is PATCHed onto pages that outlive the session.
  *
  * A bank collects everything said IN a repository, which is NOT the same as everything said ABOUT
  * it: a repo that reads its dependency's source, drafts its upstream issues, or documents how it
@@ -269,10 +274,11 @@ const PAGE_TAXONOMY: readonly KnowledgePage[] = [
 ];
 
 /**
- * The seeded pages for one repository: the taxonomy above with `project` named in every query.
+ * The seeded pages for one subject: the taxonomy above with `project` named in every query.
  *
- * A pure function of `project`, so the query text is STABLE for a given repo and `seedPages()`
- * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run.
+ * A pure function of `project`, so the query text is STABLE for a given subject and `seedPages()`
+ * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run — which
+ * holds only while the caller's `project` is itself stable per bank (see `bankProjectName`).
  */
 export function pagesFor(project: string): KnowledgePage[] {
   const scope = pageScopeRule(project);

@@ -15,6 +15,7 @@ so what is under test is the refresh's own branching and reporting, not model
 behaviour.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import uuid
 from typing import Any
 
@@ -98,7 +99,8 @@ def patch_delta_llm(monkeypatch):
             calls.append({"messages": messages, **kwargs})
             if isinstance(returns, Exception):
                 raise returns
-            return returns
+            # `call` returns the envelope; `returns` is the payload the test canned.
+            return LLMCallResult(content=returns, usage=TokenUsage())
 
         monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
         return calls

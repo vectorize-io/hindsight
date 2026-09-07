@@ -131,12 +131,18 @@ async def tool_search_mental_models(
     # skip the filter, or mental models would see every scope while the other
     # reflect retrieval tools correctly see only untagged data.
     if tags or tags_match == "exact":
-        tag_clause, tag_params, next_param = build_tags_where_clause(tags, param_offset=next_param, match=tags_match)
+        built = build_tags_where_clause(tags, param_offset=next_param, match=tags_match)
+        tag_clause = built.sql
+        tag_params = built.params
+        next_param = built.next_param_offset
         filters += f" {tag_clause}"
         params.extend(tag_params)
 
     if tag_groups:
-        groups_clause, groups_params, next_param = build_tag_groups_where_clause(tag_groups, next_param)
+        built = build_tag_groups_where_clause(tag_groups, next_param)
+        groups_clause = built.sql
+        groups_params = built.params
+        next_param = built.next_param_offset
         filters += f" {groups_clause}"
         params.extend(groups_params)
 

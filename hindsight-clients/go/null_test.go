@@ -24,7 +24,7 @@ func TestNullHandling(t *testing.T) {
 	// Test retain which returns operation_id as null
 	req := RetainRequest{
 		Items: []MemoryItem{
-			{Content: "Test content for null handling"},
+			{Content: TextContent("Test content for null handling")},
 		},
 	}
 

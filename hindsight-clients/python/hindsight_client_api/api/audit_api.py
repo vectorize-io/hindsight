@@ -107,6 +107,7 @@ class AuditApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AuditLogStatsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -187,6 +188,7 @@ class AuditApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AuditLogStatsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -267,6 +269,7 @@ class AuditApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AuditLogStatsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -435,6 +438,7 @@ class AuditApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AuditLogListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -531,6 +535,7 @@ class AuditApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AuditLogListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -627,6 +632,7 @@ class AuditApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AuditLogListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(

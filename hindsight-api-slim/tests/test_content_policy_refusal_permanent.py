@@ -19,6 +19,8 @@ These tests pin the permanence at all three layers:
 
 from __future__ import annotations
 
+from hindsight_api.engine.response_models import TokenUsage
+
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -213,7 +215,13 @@ async def test_call_with_tools_raises_permanent_error_without_retrying(monkeypat
 
 def _extraction_config() -> SimpleNamespace:
     """Only the two fields extract_facts_from_text reads before chunk dispatch."""
-    return SimpleNamespace(retain_chunk_size=1000, retain_structured_chunk_size=1000)
+    return SimpleNamespace(
+        retain_chunk_size=1000,
+        retain_structured_chunk_size=1000,
+        # Chunking budgets the image-aware splitter reads; these bodies carry no
+        # images, so the values only have to exist.
+        retain_max_attachments_per_chunk=8,
+    )
 
 
 async def _run_extraction(chunk_errors: dict[int, Exception]):

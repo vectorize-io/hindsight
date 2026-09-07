@@ -59,6 +59,7 @@ async def _seed_memory(
         observation_scopes=None,
         entities=[],
         causal_relations=[],
+        attachment_ids=[],
         occurred_start=None,
         occurred_end=None,
         mentioned_at=None,

@@ -3417,6 +3417,89 @@ class TestMarkFailedParentPropagation:
         )
 
     @pytest.mark.asyncio
+    async def test_cancelled_sibling_counts_as_done_and_settles_parent(self, pool, backend, clean_operations):
+        """A cancelled child must not strand the parent in 'processing' (issue #4131).
+
+        The poller's copy of the rollup mirrors MemoryEngine._maybe_update_parent_operation:
+        'cancelled' is a done state, and with no failures the parent settles on 'cancelled'.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        parent_id = uuid.uuid4()
+        cancelled_child_id = uuid.uuid4()
+        last_child_id = uuid.uuid4()
+
+        await self._insert_op(
+            pool, op_id=parent_id, bank_id=bank_id, operation_type="batch_retain", status="processing"
+        )
+        await self._insert_op(
+            pool,
+            op_id=cancelled_child_id,
+            bank_id=bank_id,
+            operation_type="retain",
+            status="cancelled",
+            result_metadata={"parent_operation_id": str(parent_id)},
+        )
+        await self._insert_op(
+            pool,
+            op_id=last_child_id,
+            bank_id=bank_id,
+            operation_type="retain",
+            status="processing",
+            result_metadata={"parent_operation_id": str(parent_id)},
+        )
+
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
+        await poller._mark_completed(str(last_child_id), None)
+
+        parent_status = await pool.fetchval("SELECT status FROM async_operations WHERE operation_id = $1", parent_id)
+        assert parent_status == "cancelled", f"parent must not be left in 'processing', got '{parent_status}'"
+
+    @pytest.mark.asyncio
+    async def test_failed_sibling_outranks_cancelled_one(self, pool, backend, clean_operations):
+        """A real failure still wins over a cancellation — it carries a cause to surface."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        parent_id = uuid.uuid4()
+        cancelled_child_id = uuid.uuid4()
+        last_child_id = uuid.uuid4()
+
+        await self._insert_op(
+            pool, op_id=parent_id, bank_id=bank_id, operation_type="batch_retain", status="processing"
+        )
+        await self._insert_op(
+            pool,
+            op_id=cancelled_child_id,
+            bank_id=bank_id,
+            operation_type="retain",
+            status="cancelled",
+            result_metadata={"parent_operation_id": str(parent_id)},
+        )
+        await self._insert_op(
+            pool,
+            op_id=last_child_id,
+            bank_id=bank_id,
+            operation_type="retain",
+            status="processing",
+            result_metadata={"parent_operation_id": str(parent_id)},
+        )
+
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
+        await poller._mark_failed(str(last_child_id), "DB constraint violation", schema=None)
+
+        parent_row = await pool.fetchrow(
+            "SELECT status, error_message FROM async_operations WHERE operation_id = $1", parent_id
+        )
+        assert parent_row["status"] == "failed"
+        assert "DB constraint violation" in parent_row["error_message"]
+
+    @pytest.mark.asyncio
     async def test_mark_failed_finalises_parent_when_last_sibling_fails(self, pool, backend, clean_operations):
         """When the last pending child fails, parent batch_retain is marked failed."""
         from hindsight_api.worker import WorkerPoller
@@ -5056,3 +5139,114 @@ class TestTerminalOperationRetention:
             'ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"',
         ]
         assert backend._default_schema == "APP_USER"
+
+
+class TestCancelledStatusIsFinal:
+    """`DELETE /operations/{id}` may now cancel a 'processing' row (issue #4131).
+
+    Cancellation is cooperative: the worker running the operation only notices at
+    its next checkpoint, so every one of its status writes can still land *after*
+    an operator cancelled. None of them may overwrite 'cancelled' — otherwise the
+    operator's decision is silently reverted, and `_schedule_retry` in particular
+    would put the cancelled work back on the queue to be re-claimed.
+    """
+
+    async def _cancelled_op(self, pool, op_type: str = "consolidation") -> uuid.UUID:
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        op_id = uuid.uuid4()
+        await _ensure_bank(pool, bank_id)
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, worker_id)
+            VALUES ($1, $2, $3, 'cancelled', 'test-worker-1')
+            """,
+            op_id,
+            bank_id,
+            op_type,
+        )
+        return op_id
+
+    def _poller(self, backend):
+        from hindsight_api.worker import WorkerPoller
+
+        return WorkerPoller(backend=backend, worker_id="test-worker-1", executor=AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_mark_failed_does_not_overwrite_cancelled(self, pool, backend, clean_operations):
+        op_id = await self._cancelled_op(pool)
+
+        await self._poller(backend)._mark_failed(str(op_id), "boom", None)
+
+        row = await pool.fetchrow("SELECT status, error_message FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "cancelled"
+        assert row["error_message"] is None
+
+    @pytest.mark.asyncio
+    async def test_schedule_retry_does_not_requeue_cancelled(self, pool, backend, clean_operations):
+        """The important one: without the guard the row goes back to 'pending' and is re-claimed."""
+        op_id = await self._cancelled_op(pool)
+
+        retry_at = datetime.now(UTC) + timedelta(seconds=60)
+        await self._poller(backend)._schedule_retry(str(op_id), retry_at, "transient", None)
+
+        row = await pool.fetchrow(
+            "SELECT status, retry_count, next_retry_at FROM async_operations WHERE operation_id = $1", op_id
+        )
+        assert row["status"] == "cancelled"
+        assert (row["retry_count"] or 0) == 0
+        assert row["next_retry_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_defer_does_not_requeue_cancelled(self, pool, backend, clean_operations):
+        op_id = await self._cancelled_op(pool)
+
+        exec_date = datetime.now(UTC) + timedelta(seconds=60)
+        await self._poller(backend)._defer_operation(str(op_id), exec_date, "quota", None)
+
+        row = await pool.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_mark_completed_does_not_overwrite_cancelled(self, pool, backend, clean_operations):
+        """Already guarded on status='processing' — asserted here so it stays that way."""
+        op_id = await self._cancelled_op(pool)
+
+        await self._poller(backend)._mark_completed(str(op_id), None)
+
+        row = await pool.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_executor_failure_after_cancel_leaves_row_cancelled(self, pool, backend, clean_operations):
+        """End-to-end: a task cancelled mid-flight that then raises stays 'cancelled'."""
+        from hindsight_api.worker import WorkerPoller
+        from hindsight_api.worker.poller import ClaimedTask
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "consolidation", "operation_id": str(op_id), "bank_id": bank_id})
+        await _ensure_bank(pool, bank_id)
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'test-worker-1')
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+        async def cancel_then_fail(task_dict):
+            # An operator cancels while the task is running, then the task raises.
+            await pool.execute(
+                "UPDATE async_operations SET status = 'cancelled', updated_at = now() WHERE operation_id = $1",
+                op_id,
+            )
+            raise RuntimeError("boom")
+
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=cancel_then_fail)
+        await poller.execute_task(ClaimedTask(operation_id=str(op_id), task_dict=json.loads(payload), schema=None))
+        assert await poller.wait_for_active_tasks(timeout=5.0)
+
+        row = await pool.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "cancelled", "a cancelled operation must not be resurrected by the failure path"

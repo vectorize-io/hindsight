@@ -457,6 +457,50 @@ class TestLiteLLMSDKEmbeddings:
             assert encode_call_args.kwargs["dimensions"] == 768
             assert "allowed_openai_params" not in encode_call_args.kwargs
 
+    async def test_model_id_forwarded_when_set(self, mock_litellm):
+        """A Bedrock application inference profile ARN rides in model_id, not model.
+
+        LiteLLM derives the Bedrock payload shape from `model`, so `model` has to stay
+        a recognizable id while `model_id` carries the opaque ARN it actually invokes.
+        """
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            arn = "arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc123"
+            emb = LiteLLMSDKEmbeddings(
+                model="bedrock/amazon.titan-embed-text-v2:0",
+                model_id=arn,
+            )
+            await emb.initialize()
+
+            init_call_args = mock_litellm.aembedding.call_args
+            assert init_call_args.kwargs["model"] == "bedrock/amazon.titan-embed-text-v2:0"
+            assert init_call_args.kwargs["model_id"] == arn
+
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            emb.encode(["test"])
+
+            encode_call_args = mock_litellm.embedding.call_args
+            assert encode_call_args.kwargs["model"] == "bedrock/amazon.titan-embed-text-v2:0"
+            assert encode_call_args.kwargs["model_id"] == arn
+
+    async def test_model_id_omitted_when_unset(self, mock_litellm):
+        """No model_id kwarg is sent when it is not configured (litellm defaults to model)."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(api_key="test_key", model="cohere/embed-english-v3.0")
+            await emb.initialize()
+
+            assert "model_id" not in mock_litellm.aembedding.call_args.kwargs
+
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            emb.encode(["test"])
+
+            assert "model_id" not in mock_litellm.embedding.call_args.kwargs
+
     async def test_encoding_format_default_is_float(self, mock_litellm):
         """Test that encoding_format defaults to 'float' for backwards compatibility."""
         with patch(
@@ -575,6 +619,23 @@ class TestLiteLLMSDKEmbeddingsFactory:
             assert isinstance(embeddings, LiteLLMSDKEmbeddings)
             assert embeddings.api_key is None
             assert embeddings.model == "bedrock/amazon.titan-embed-text-v2:0"
+
+    def test_create_from_env_with_model_id(self, monkeypatch):
+        """A configured Bedrock invoke target is threaded through to the client."""
+        arn = "arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc123"
+        mock_config = MagicMock()
+        mock_config.embeddings_provider = "litellm-sdk"
+        mock_config.embeddings_litellm_sdk_api_key = None
+        mock_config.embeddings_litellm_sdk_model = "bedrock/amazon.titan-embed-text-v2:0"
+        mock_config.embeddings_litellm_sdk_model_id = arn
+        mock_config.embeddings_litellm_sdk_api_base = None
+
+        with patch("hindsight_api.config.get_config", return_value=mock_config):
+            embeddings = create_embeddings_from_env()
+
+            assert isinstance(embeddings, LiteLLMSDKEmbeddings)
+            assert embeddings.model == "bedrock/amazon.titan-embed-text-v2:0"
+            assert embeddings.model_id == arn
 
     def test_create_from_env_with_api_base(self, monkeypatch):
         """Test creating embeddings with custom API base."""

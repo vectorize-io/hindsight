@@ -60,7 +60,7 @@ func (dst *ObservationScopes) UnmarshalJSON(data []byte) error {
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src *ObservationScopes) MarshalJSON() ([]byte, error) {
+func (src ObservationScopes) MarshalJSON() ([]byte, error) {
 	if src.ArrayOfArrayOfString != nil {
 		return json.Marshal(&src.ArrayOfArrayOfString)
 	}

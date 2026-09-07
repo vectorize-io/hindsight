@@ -49,6 +49,7 @@
     "lightMode": "切换到浅色模式",
     "bank": {
       "select": "选择记忆库...",
+      "allBanks": "所有记忆库",
       "search": "搜索记忆库...",
       "empty": "还没有记忆库。",
       "noSearchResults": "没有与搜索匹配的记忆库。",
@@ -739,7 +740,8 @@
     "labelObservationScopes": "观测范围",
     "invalidatedFactsTitle": "已失效的事实",
     "documentUpdating": "更新中",
-    "lastRefreshed": "已刷新 {time}"
+    "lastRefreshed": "已刷新 {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -1626,12 +1628,46 @@
     "observationScopesEmpty": "在上方添加标签以预览观察范围",
     "metadataHelpText": "每行一个 <code>key: value</code>",
     "entitiesHelpText": "逗号分隔的提示，与自动提取的实体合并",
-    "textNotStoredWarning": "此服务器不会存储文档原始文本，仅保留提取的记忆。"
+    "textNotStoredWarning": "此服务器不会存储文档原始文本，仅保留提取的记忆。",
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "欢迎使用 Hindsight",
-    "selectBank": "请从上方下拉菜单选择一个记忆库开始使用。",
-    "sidebarHint": "选择记忆库后，侧边栏会出现。"
+  "banksOverview": {
+    "title": "记忆库",
+    "subtitle": "每个记忆库都是一个独立的大脑——隔离存储某个用户、智能体或项目记住的一切。记忆库之间不共享任何内容。",
+    "welcomeTitle": "欢迎使用 Hindsight",
+    "welcomeBody": "记忆库是一个独立的大脑——隔离存储某个用户、智能体或项目记住的一切。创建第一个记忆库开始使用。",
+    "search": "搜索记忆库...",
+    "noSearchResults": "没有与搜索匹配的记忆库。",
+    "columnBank": "记忆库",
+    "columnMemories": "记忆",
+    "columnLastActivity": "最近活动",
+    "columnCreated": "创建时间",
+    "never": "从未",
+    "emptyBank": "空",
+    "selectAll": "选择所有已加载的记忆库",
+    "selectBank": "选择 {bank}",
+    "selectedCount": "已选择 {count} 个",
+    "clearSelection": "清除",
+    "deleteSelected": "删除所选",
+    "bulkDeleteTitle": "删除 {count} 个记忆库？",
+    "bulkDeletePrompt": "这些记忆库及其中的全部内容将被永久删除：",
+    "bulkDeleteMore": "以及另外 {count} 个",
+    "bulkDeleteWarning": "此操作无法撤销。所有记忆、实体、文档和记忆库配置都将永久删除。",
+    "bulkDeleteSequentialNote": "记忆库会逐个删除，可能需要一些时间。请在完成前保持此对话框打开。",
+    "bulkDeleteConfirmLabel": "输入 {word} 以确认",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "正在删除 {total} 个中的第 {done} 个...",
+    "bulkDeleteDone": "已删除 {count} 个记忆库",
+    "bulkDeletePartial": "已删除 {deleted} 个，失败 {failed} 个",
+    "bulkDeleteFailures": "以下记忆库无法删除："
   },
   "login": {
     "title": "Hindsight 控制面板",
@@ -1678,10 +1714,6 @@
         "fetch": "获取记忆库配置失败",
         "update": "更新记忆库配置失败",
         "reset": "重置记忆库配置失败"
-      },
-      "bankProfile": {
-        "fetch": "获取记忆库配置文件失败",
-        "update": "更新记忆库配置文件失败"
       },
       "memories": {
         "list": "列出记忆单元失败",

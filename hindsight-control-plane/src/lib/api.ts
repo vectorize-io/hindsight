@@ -31,6 +31,27 @@ function describeErrorDetails(details: unknown): string | undefined {
   return String(details);
 }
 
+/**
+ * One element of a multimodal retain item's content.
+ *
+ * Retain accepts either a plain string or an ordered list of these, so an
+ * attachment can sit inline where it actually appears and the extractor reads it
+ * alongside the prose that refers to it.
+ *
+ * `image` and `file` are separate because the providers separate them —
+ * Anthropic has image and document blocks, OpenAI has image_url and file parts.
+ */
+export type RetainAttachmentSource = {
+  type: "base64";
+  media_type: string;
+  data: string;
+};
+
+export type RetainContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: RetainAttachmentSource }
+  | { type: "file"; source: RetainAttachmentSource; filename?: string };
+
 export interface WebhookHttpConfig {
   method: string;
   timeout_seconds: number;
@@ -341,7 +362,13 @@ export interface BankTemplateImportResponse {
 }
 
 export class ControlPlaneClient {
-  private async fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  private async fetchApi<T>(
+    path: string,
+    options?: RequestInit,
+    // Bulk callers loop over many requests and report the failures themselves; one
+    // toast per failed item would bury the screen.
+    { suppressErrorToast = false }: { suppressErrorToast?: boolean } = {}
+  ): Promise<T> {
     try {
       const response = await fetch(withBasePath(path), {
         ...options,
@@ -391,24 +418,26 @@ export class ControlPlaneClient {
         const description = describeErrorDetails(errorDetails) || errorMessage;
         const status = response.status;
 
-        if (isClientError) {
-          // Client errors (4xx) - validation, bad request, etc. - show as warning
-          toast.warning("Client Error", {
-            description,
-            duration: 5000,
-          });
-        } else if (status >= 500) {
-          // Server errors (5xx) - show as error
-          toast.error("Server Error", {
-            description,
-            duration: 5000,
-          });
-        } else {
-          // Other HTTP errors - show as error
-          toast.error("API Error", {
-            description,
-            duration: 5000,
-          });
+        if (!suppressErrorToast) {
+          if (isClientError) {
+            // Client errors (4xx) - validation, bad request, etc. - show as warning
+            toast.warning("Client Error", {
+              description,
+              duration: 5000,
+            });
+          } else if (status >= 500) {
+            // Server errors (5xx) - show as error
+            toast.error("Server Error", {
+              description,
+              duration: 5000,
+            });
+          } else {
+            // Other HTTP errors - show as error
+            toast.error("API Error", {
+              description,
+              duration: 5000,
+            });
+          }
         }
 
         // Still throw error for callers that want to handle it
@@ -421,7 +450,7 @@ export class ControlPlaneClient {
       return response.json();
     } catch (error) {
       // If it's not a response error (network error, etc.), show toast
-      if (!(error as any).status) {
+      if (!(error as any).status && !suppressErrorToast) {
         toast.error("Network Error", {
           description: error instanceof Error ? error.message : "Failed to connect to server",
           duration: 5000,
@@ -540,7 +569,11 @@ export class ControlPlaneClient {
   async retain(params: {
     bank_id: string;
     items: Array<{
-      content: string;
+      /**
+       * Raw content: a plain string, or ordered blocks so an image sits inline
+       * where it appears. The block form needs a vision-capable retain LLM.
+       */
+      content: string | Array<RetainContentBlock>;
       timestamp?: string;
       context?: string;
       document_id?: string;
@@ -666,7 +699,7 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Cancel a pending operation
+   * Cancel a pending or in-flight operation
    */
   async cancelOperation(bankId: string, operationId: string) {
     return this.fetchApi<{
@@ -990,14 +1023,18 @@ export class ControlPlaneClient {
   /**
    * Delete an entire memory bank and all its data
    */
-  async deleteBank(bankId: string) {
+  async deleteBank(bankId: string, options?: { suppressErrorToast?: boolean }) {
     return this.fetchApi<{
       success: boolean;
       message: string;
       deleted_count: number;
-    }>(bankApi(bankId), {
-      method: "DELETE",
-    });
+    }>(
+      bankApi(bankId),
+      {
+        method: "DELETE",
+      },
+      { suppressErrorToast: options?.suppressErrorToast }
+    );
   }
 
   /**
@@ -1192,20 +1229,32 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Get bank profile
+   * Get a bank's profile: its display name, disposition traits and reflect mission.
+   *
+   * There is no profile endpoint any more — the traits and the mission are bank
+   * configuration, and the display name lives on the bank listing — so this composes
+   * the two reads. The name lookup is best-effort: a bank past the first page of a
+   * large deployment still resolves because the list is filtered by id, but if it
+   * cannot be found the id itself is the label.
    */
   async getBankProfile(bankId: string) {
-    return this.fetchApi<{
-      bank_id: string;
-      name: string;
+    const [configResp, banksResp] = await Promise.all([
+      this.getBankConfig(bankId),
+      this.listBanks({ q: bankId, limit: 100 }).catch(() => ({ banks: [] as any[] })),
+    ]);
+    const config = configResp.config ?? {};
+    const trait = (key: string) => Number(config[key] ?? 3);
+    const listed = banksResp.banks.find((bank) => bank.bank_id === bankId);
+    return {
+      bank_id: bankId,
+      name: (listed?.name as string | undefined) || bankId,
       disposition: {
-        skepticism: number;
-        literalism: number;
-        empathy: number;
-      };
-      mission: string;
-      background?: string; // Deprecated, kept for backwards compatibility
-    }>(`/api/profile/${encodeURIComponent(bankId)}`);
+        skepticism: trait("disposition_skepticism"),
+        literalism: trait("disposition_literalism"),
+        empathy: trait("disposition_empathy"),
+      },
+      mission: (config.reflect_mission as string | undefined) ?? "",
+    };
   }
 
   /**
@@ -1442,10 +1491,16 @@ export class ControlPlaneClient {
    * consolidated with. Returns every distinct scope (tag order normalized) with
    * the number of observations in it; the empty tag list is the global scope.
    */
-  async listObservationScopes(bankId: string) {
+  async listObservationScopes(bankId: string, params?: { limit?: number; offset?: number }) {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.append("limit", String(params.limit));
+    if (params?.offset !== undefined) query.append("offset", String(params.offset));
     return this.fetchApi<{
       scopes: Array<{ tags: string[]; count: number }>;
-    }>(bankApi(bankId, `/observations/scopes`));
+      total: number;
+      limit: number;
+      offset: number;
+    }>(bankApi(bankId, `/observations/scopes${query.toString() ? `?${query}` : ""}`));
   }
 
   // ============= TAGS =============
@@ -1958,8 +2013,16 @@ export class ControlPlaneClient {
   /**
    * List webhooks for a bank
    */
-  async listWebhooks(bankId: string): Promise<{ items: Webhook[] }> {
-    return this.fetchApi<{ items: Webhook[] }>(bankApi(bankId, "/webhooks"));
+  async listWebhooks(
+    bankId: string,
+    params?: { limit?: number; offset?: number }
+  ): Promise<{ items: Webhook[]; total: number; limit: number; offset: number }> {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.append("limit", String(params.limit));
+    if (params?.offset !== undefined) query.append("offset", String(params.offset));
+    return this.fetchApi<{ items: Webhook[]; total: number; limit: number; offset: number }>(
+      bankApi(bankId, `/webhooks${query.toString() ? `?${query}` : ""}`)
+    );
   }
 
   /**

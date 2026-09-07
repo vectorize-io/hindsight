@@ -40,6 +40,7 @@ from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.cache_affinity import (
     CacheAffinityMode,
     apply_cache_affinity,
+    apply_opencode_session,
     parse_cache_affinity,
     resolve_cache_affinity,
 )
@@ -55,10 +56,13 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
+
+from ..response_models import LLMCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -478,6 +482,14 @@ def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[di
     return normalized
 
 
+# Provider implementations that reject every tool_choice except "auto" with an
+# HTTP 400 rather than ignoring it. Meta Model API: 'only `"auto"` is supported
+# for `tool_choice`. `"none"`, `"required"`, and named function choices are not
+# currently supported'. Reflect's agent loop forces a retrieval tool on its first
+# turn, so without this every reflect call against Meta fails outright.
+_NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS = frozenset({"meta"})
+
+
 def _summarize_status_error(e: APIStatusError, body_max: int = 400) -> str:
     """Render an APIStatusError with status code + truncated response body.
 
@@ -678,6 +690,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - MiniMax: MiniMax-M3 / MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
     - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via https://api.deepseek.com
     - opencode-go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
+    - Meta: Muse Spark models via Meta Model API (https://api.meta.ai/v1)
     """
 
     def __init__(
@@ -739,6 +752,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "opencode-go",
             "atlas",
             "fireworks",
+            "meta",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -767,6 +781,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://opencode.ai/zen/go/v1"
             elif self.provider == "atlas":
                 self.base_url = "https://api.atlascloud.ai/v1"
+            elif self.provider == "meta":
+                self.base_url = "https://api.meta.ai/v1"
             elif self.provider == "fireworks":
                 # OpenAI-compatible inference host (online path). The batch API
                 # lives on a separate control-plane host — see FireworksLLM.
@@ -794,6 +810,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 "zai",
                 "opencode-go",
                 "atlas",
+                "meta",
                 "ollama-cloud",
             )
             and not self.api_key
@@ -819,9 +836,11 @@ class OpenAICompatibleLLM(LLMInterface):
         )
 
         # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
-        client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
-        if default_headers:
-            client_kwargs["default_headers"] = default_headers
+        client_kwargs: dict[str, Any] = {
+            "api_key": self.api_key,
+            "max_retries": 0,
+            "default_headers": with_openai_compatible_user_agent(default_headers),
+        }
         if self.base_url:
             parsed = urlparse(self.base_url)
             if parsed.query:
@@ -868,6 +887,17 @@ class OpenAICompatibleLLM(LLMInterface):
         tool choice after the tools list has been narrowed.
         """
         return self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS
+
+    def _rejects_non_auto_tool_choice(self) -> bool:
+        """Whether this endpoint rejects every ``tool_choice`` except ``"auto"``.
+
+        Distinct from ``_drops_tool_choice_required``: those endpoints accept the
+        field and quietly ignore it, so reflect gets a useless answer. These
+        endpoints fail the request outright with HTTP 400, so reflect gets no
+        answer at all. Meta Model API is the first of them — it rejects "none",
+        "required" and named choices alike.
+        """
+        return self.provider in _NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS
 
     def _verification_max_completion_tokens(self) -> int:
         """Return the startup verification budget for OpenAI-compatible gateways."""
@@ -1000,9 +1030,8 @@ class OpenAICompatibleLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make an LLM API call with retry logic.
 
@@ -1019,11 +1048,8 @@ class OpenAICompatibleLLM(LLMInterface):
             strict_schema: Use strict json_schema (grammar-enforced) response_format instead of
                 the soft json_object path. Supported by OpenAI and schema-capable self-hosted
                 backends (llama.cpp, vLLM). Server-wide via HINDSIGHT_API_LLM_STRICT_SCHEMA.
-            return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
-            If return_usage=False: Parsed response if response_format is provided, otherwise text content.
-            If return_usage=True: Tuple of (result, TokenUsage) with token counts.
 
         Raises:
             OutputTooLongError: If output exceeds token limits.
@@ -1051,7 +1077,6 @@ class OpenAICompatibleLLM(LLMInterface):
                 max_backoff=max_backoff,
                 skip_validation=skip_validation,
                 scope=scope,
-                return_usage=return_usage,
                 attempt_context=attempt_context,
             )
 
@@ -1147,6 +1172,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # deterministic (the schema text is fixed per response_format), so the id
         # stays stable across the calls of one run.
         apply_cache_affinity(call_params, self._cache_affinity)
+        apply_opencode_session(call_params, self.provider)
 
         last_exception = None
 
@@ -1316,9 +1342,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"time={duration:.3f}s, ratio out/in={ratio:.2f}"
                     )
 
-                if return_usage:
-                    return result, token_counts
-                return result
+                return LLMCallResult(content=result, usage=token_counts)
 
             except LengthFinishReasonError as e:
                 logger.warning(f"LLM output exceeded token limits: {str(e)}")
@@ -1387,9 +1411,10 @@ class OpenAICompatibleLLM(LLMInterface):
                                         output_tokens=0,
                                         success=True,
                                     )
-                                    if return_usage:
-                                        return result, TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
-                                    return result
+                                    return LLMCallResult(
+                                        content=result,
+                                        usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),
+                                    )
                     except (json.JSONDecodeError, KeyError, TypeError):
                         pass  # Failed to parse tool_use_failed, continue with normal retry
 
@@ -1486,6 +1511,16 @@ class OpenAICompatibleLLM(LLMInterface):
         if "deepseek" in self.model.lower() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
             request_tool_choice = None
 
+        # Meta rejects any tool_choice other than "auto" outright (HTTP 400), so the
+        # field has to come off the request entirely. A named choice has already been
+        # narrowed to a single tool above, so the call stays practically forced under
+        # auto — the same reasoning as the DeepSeek branch. NOTE: "none" cannot be
+        # expressed this way and would become "auto"; no caller on this path uses it
+        # (only the gemini / claude-code / github-copilot providers handle NONE), so
+        # it is left rather than given an untested tools-stripping branch.
+        if self._rejects_non_auto_tool_choice() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+            request_tool_choice = None
+
         # LM Studio and Ollama silently drop tool_choice="required", returning an
         # empty tool_calls array instead of forcing a call (#1563/#1179).
         # Downgrade to auto (None) so the model still gets to call a tool. Named
@@ -1550,6 +1585,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         apply_bank_attribution(call_params)
         apply_cache_affinity(call_params, self._cache_affinity)
+        apply_opencode_session(call_params, self.provider)
 
         last_exception = None
 
@@ -1698,7 +1734,6 @@ class OpenAICompatibleLLM(LLMInterface):
         max_backoff: float,
         skip_validation: bool,
         scope: str = "memory",
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
@@ -1922,14 +1957,12 @@ class OpenAICompatibleLLM(LLMInterface):
                         error=None,
                     )
 
-                    if return_usage:
-                        token_usage = TokenUsage(
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            total_tokens=total_tokens,
-                        )
-                        return validated_result, token_usage
-                    return validated_result
+                    token_usage = TokenUsage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        total_tokens=total_tokens,
+                    )
+                    return LLMCallResult(content=validated_result, usage=token_usage)
 
                 except ProviderResponseError as e:
                     last_exception = e
@@ -1977,6 +2010,18 @@ class OpenAICompatibleLLM(LLMInterface):
         if last_exception:
             raise last_exception
         raise RuntimeError("Ollama call failed after all retries")
+
+    def supports_vision(self) -> bool | None:
+        """Known only for OpenAI itself; unknown for every other backend here.
+
+        This class serves a dozen providers, most of which are gateways or
+        proxies whose model catalogue mixes vision-capable and text-only models
+        (groq, openrouter, ollama, lmstudio, ...). Claiming support on their
+        behalf would silently drop images for the text-only half, so they return
+        ``None`` and an operator running a vision model opts in explicitly with
+        ``HINDSIGHT_API_LLM_VISION=true``.
+        """
+        return True if self.provider == "openai" else None
 
     async def supports_batch_api(self) -> bool:
         """Check if this provider supports batch API operations."""

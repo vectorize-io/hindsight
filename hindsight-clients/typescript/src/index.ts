@@ -29,6 +29,9 @@ import { createClient, createConfig } from "../generated/client";
 import type { Client } from "../generated/client";
 import * as sdk from "../generated/sdk.gen";
 import type {
+  TextContentBlock,
+  ImageContentBlock,
+  FileContentBlock,
   RetainRequest,
   RetainResponse,
   RecallRequest,
@@ -120,8 +123,21 @@ export interface EntityInput {
   type?: string;
 }
 
+/**
+ * One element of a multimodal retain item's content.
+ *
+ * Retain accepts either a plain string or an ordered list of these, so an
+ * attachment sits inline where it actually appears and the extractor reads it
+ * alongside the prose that refers to it. Requires a vision-capable retain LLM
+ * server-side.
+ *
+ * Re-exported from the generated types rather than redeclared, so the shape
+ * stays whatever the API actually accepts.
+ */
+export type ContentBlock = TextContentBlock | ImageContentBlock | FileContentBlock;
+
 export interface MemoryItemInput {
-  content: string;
+  content: string | ContentBlock[];
   timestamp?: string | Date;
   context?: string;
   metadata?: Record<string, string>;
@@ -280,7 +296,7 @@ export class HindsightClient {
    */
   async retain(
     bankId: string,
-    content: string,
+    content: string | ContentBlock[],
     options?: {
       timestamp?: Date | string;
       context?: string;
@@ -633,6 +649,9 @@ export class HindsightClient {
       retainChunkSize?: number;
       /** Maximum characters for a single JSONL line or conversation turn to keep whole during retain. */
       retainStructuredChunkSize?: number;
+      /** Max inline attachments one extraction chunk may carry. `retainChunkSize`
+       *  budgets text only, so this is what bounds attachments. */
+      retainMaxAttachmentsPerChunk?: number;
       /** Toggle automatic observation consolidation after retain(). */
       enableObservations?: boolean;
       /** Controls what gets synthesised into observations. Replaces built-in rules. */
@@ -665,6 +684,7 @@ export class HindsightClient {
         retain_custom_instructions: options.retainCustomInstructions,
         retain_chunk_size: options.retainChunkSize,
         retain_structured_chunk_size: options.retainStructuredChunkSize,
+        retain_max_attachments_per_chunk: options.retainMaxAttachmentsPerChunk,
         enable_observations: options.enableObservations,
         observations_mission: options.observationsMission,
         enable_text_search: options.enableTextSearch,
@@ -692,6 +712,12 @@ export class HindsightClient {
 
   /**
    * Get a bank's profile.
+   *
+   * @deprecated Removed server-side — the endpoint answers 410. Disposition traits and
+   * the reflect mission are bank configuration: use {@link getBankConfig} and read
+   * `disposition_skepticism`, `disposition_literalism`, `disposition_empathy` and
+   * `reflect_mission`. The bank's display label, which was itself deprecated, is on
+   * `GET /v1/default/banks` — this wrapper exposes no bank listing.
    */
   async getBankProfile(
     bankId: string,
@@ -709,7 +735,8 @@ export class HindsightClient {
   /**
    * Get the resolved configuration for a bank, including any bank-level overrides.
    *
-   * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
+   * Always available: `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false` disables only the
+   * config writes, not this read.
    */
   async getBankConfig(
     bankId: string,
@@ -741,6 +768,9 @@ export class HindsightClient {
       retainCustomInstructions?: string;
       retainChunkSize?: number;
       retainStructuredChunkSize?: number;
+      /** Max inline attachments one extraction chunk may carry. `retainChunkSize`
+       *  budgets text only, so this is what bounds attachments. */
+      retainMaxAttachmentsPerChunk?: number;
       /**
        * Controlled vocabulary for entity labels. Each group classifies a fact under a
        * `key`: `"value"`/`"multi-values"` pick from the group's declared `values`, while
@@ -840,6 +870,8 @@ export class HindsightClient {
     if (options.retainChunkSize !== undefined) updates.retain_chunk_size = options.retainChunkSize;
     if (options.retainStructuredChunkSize !== undefined)
       updates.retain_structured_chunk_size = options.retainStructuredChunkSize;
+    if (options.retainMaxAttachmentsPerChunk !== undefined)
+      updates.retain_max_attachments_per_chunk = options.retainMaxAttachmentsPerChunk;
     if (options.entityLabels !== undefined) updates.entity_labels = options.entityLabels;
     if (options.entitiesAllowFreeForm !== undefined)
       updates.entities_allow_free_form = options.entitiesAllowFreeForm;

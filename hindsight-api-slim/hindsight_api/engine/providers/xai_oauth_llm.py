@@ -69,6 +69,8 @@ from hindsight_api.engine.structured_output import provider_json_schema, strict_
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -657,6 +659,10 @@ class XaiOAuthLLM(LLMInterface):
     # LLMInterface
     # ------------------------------------------------------------------
 
+    def supports_vision(self) -> bool:
+        """Grok models are multimodal."""
+        return True
+
     async def verify_connection(self) -> None:
         """Verify the lane with one tiny completion."""
         try:
@@ -700,9 +706,8 @@ class XaiOAuthLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """Make a non-streaming completion call with retry logic.
 
         Non-streaming is deliberate for the first implementation: the engine
@@ -784,15 +789,16 @@ class XaiOAuthLLM(LLMInterface):
                     finish_reason=completion_content.finish_reason,
                 )
 
-                if return_usage:
-                    return result, TokenUsage(
+                return LLMCallResult(
+                    content=result,
+                    usage=TokenUsage(
                         input_tokens=counts.input_tokens,
                         output_tokens=counts.output_tokens,
                         total_tokens=counts.total_tokens,
                         cached_tokens=counts.cached_tokens,
                         thoughts_tokens=counts.thoughts_tokens,
-                    )
-                return result
+                    ),
+                )
 
             # XaiOAuthRefreshError is retried alongside the transport errors: a
             # credential-side blip (a network error reaching auth.x.ai, a 5xx

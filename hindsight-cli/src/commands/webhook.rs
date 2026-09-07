@@ -45,6 +45,15 @@ pub fn list(
                 }
                 println!();
             }
+            // The listing is paged server-side; say so rather than quietly
+            // showing the first page as if it were everything.
+            let shown = result.items.len() as i64;
+            if shown < result.total {
+                println!(
+                    "  {}",
+                    ui::dim(&format!("Showing {} of {} webhooks.", shown, result.total))
+                );
+            }
         }
     } else {
         output::print_output(&result, output_format)?;

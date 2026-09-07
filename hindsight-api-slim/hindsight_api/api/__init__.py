@@ -20,6 +20,7 @@ def create_app(
     mcp_api_enabled: bool = False,
     mcp_mount_path: str = "/mcp",
     initialize_memory: bool = True,
+    run_background_tasks: bool = True,
 ) -> FastAPI:
     """
     Create and configure the unified Hindsight API application.
@@ -31,6 +32,8 @@ def create_app(
         mcp_api_enabled: Whether to enable MCP server (default: False)
         mcp_mount_path: Path to mount MCP server (default: /mcp)
         initialize_memory: Whether to initialize memory system on startup (default: True)
+        run_background_tasks: Whether this app starts the worker poller (default: True). Set
+                False for the extra event loops of the multi-loop launcher, which serve HTTP only.
 
     Returns:
         Configured FastAPI application with enabled APIs
@@ -62,7 +65,11 @@ def create_app(
     if http_api_enabled:
         from .http import create_app as create_http_app
 
-        app = create_http_app(memory=memory, initialize_memory=initialize_memory)
+        app = create_http_app(
+            memory=memory,
+            initialize_memory=initialize_memory,
+            run_background_tasks=run_background_tasks,
+        )
         logger.info("HTTP REST API enabled")
     else:
         # Create minimal FastAPI app

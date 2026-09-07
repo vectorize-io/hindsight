@@ -13,6 +13,7 @@ were resolved into ``HindsightConfig`` but never reached the provider, so a conf
 (``LiteLLM call exceeded timeout=120.0s``) and the per-op retry knobs were inert.
 """
 
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import pytest
 
 from hindsight_api.config import (
@@ -35,7 +36,7 @@ def _spy_provider_call(monkeypatch, llm: LLMConfig) -> dict:
 
     async def fake_call(**kwargs):
         captured.update(kwargs)
-        return "ok"
+        return LLMCallResult(content="ok", usage=TokenUsage())
 
     monkeypatch.setattr(llm._provider_impl, "call", fake_call)
     return captured

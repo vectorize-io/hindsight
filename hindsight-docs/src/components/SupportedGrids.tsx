@@ -18,5 +18,5 @@ export function ClientsGrid() {
 
 
 export function LLMProvidersGrid() {
-  return <IconGrid items={LLM_PROVIDERS.map(({label, icon}) => ({label, icon}))} />;
+  return <IconGrid items={LLM_PROVIDERS.map(({label, icon, color, colorDark}) => ({label, icon, color, colorDark}))} />;
 }

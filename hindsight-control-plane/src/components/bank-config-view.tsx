@@ -458,19 +458,16 @@ export function BankConfigView() {
     if (!bankId) return;
     setLoading(true);
     try {
-      const [configResp, profileResp] = await Promise.all([
-        client.getBankConfig(bankId),
-        client.getBankProfile(bankId),
-      ]);
+      const configResp = await client.getBankConfig(bankId);
       const cfg = configResp.config;
       const overrides = configResp.overrides ?? {};
+      // Disposition and the reflect mission are ordinary config keys — the separate
+      // profile read they used to be merged with no longer exists.
       const prof: ProfileData = {
-        reflect_mission: profileResp.mission ?? "",
-        disposition_skepticism:
-          cfg.disposition_skepticism ?? profileResp.disposition?.skepticism ?? 3,
-        disposition_literalism:
-          cfg.disposition_literalism ?? profileResp.disposition?.literalism ?? 3,
-        disposition_empathy: cfg.disposition_empathy ?? profileResp.disposition?.empathy ?? 3,
+        reflect_mission: cfg.reflect_mission ?? "",
+        disposition_skepticism: cfg.disposition_skepticism ?? 3,
+        disposition_literalism: cfg.disposition_literalism ?? 3,
+        disposition_empathy: cfg.disposition_empathy ?? 3,
       };
       setBaseConfig(cfg);
       setBaseOverrides(overrides);

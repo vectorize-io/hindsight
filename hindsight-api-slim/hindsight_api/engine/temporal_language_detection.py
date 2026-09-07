@@ -87,30 +87,51 @@ def _char_tables(languages: list[Locale], settings: Settings) -> LocaleCharTable
     """Per-locale character sets, and the characters unique to each locale.
 
     This is ``FullTextLanguageDetector.get_unique_characters`` with its result
-    memoised. It is a pure function of the locale set: ``get_wordchars_for_detection``
-    caches on the (singleton) ``Locale``, and the O(n²) difference sweep over
-    those sets is therefore deterministic.
+    memoised. The *result* is a deterministic function of the locale set:
+    ``get_wordchars_for_detection`` caches on the (singleton) ``Locale``, so the
+    O(n²) difference sweep over those sets always produces the same answer.
+
+    It is not, however, side-effect free — this docstring used to call it "a pure
+    function", and that is what made computing it outside the lock look safe. On a
+    cache miss it *builds* the locale dictionaries it then reads. See the lock
+    comment below.
     """
     key = tuple(lang.shortname for lang in languages)
     cached = _char_table_cache.get(key)
     if cached is not None:
         return cached
 
-    detection_settings = settings.replace(NORMALIZE=False)
-    language_chars = [lang.get_wordchars_for_detection(settings=detection_settings) for lang in languages]
-
-    unique_chars = []
-    for char_set in language_chars:
-        remaining = char_set
-        for other in language_chars:
-            if other != char_set:
-                remaining = remaining - other
-        unique_chars.append(remaining)
-
-    tables = LocaleCharTables(language_chars=language_chars, unique_chars=unique_chars)
+    # The *computation* has to be inside the lock, not just the assignment.
+    # ``get_wordchars_for_detection`` is not a read: on a miss it builds each
+    # locale's dictionary under a fresh ``Settings`` (hence a fresh
+    # ``registry_key``) and writes it into ``locale.dictionaries`` and
+    # dateparser's class-level regex caches — for all 200+ locales. Two threads
+    # missing together therefore mutate the same dicts concurrently, which on a
+    # free-threaded build segfaults inside the ``regex`` extension rather than
+    # merely raising "dictionary changed size during iteration". Missing at the
+    # same moment is the *normal* case, not a rare one: it is what N engines
+    # warming their analyzers on the startup executor do. Same shape as
+    # ``_ensure_dictionary_warm`` below — unlocked pre-check, then
+    # double-checked under the lock, so the steady state is still lock-free.
     with _char_table_lock:
+        cached = _char_table_cache.get(key)
+        if cached is not None:
+            return cached
+
+        detection_settings = settings.replace(NORMALIZE=False)
+        language_chars = [lang.get_wordchars_for_detection(settings=detection_settings) for lang in languages]
+
+        unique_chars = []
+        for char_set in language_chars:
+            remaining = char_set
+            for other in language_chars:
+                if other != char_set:
+                    remaining = remaining - other
+            unique_chars.append(remaining)
+
+        tables = LocaleCharTables(language_chars=language_chars, unique_chars=unique_chars)
         _char_table_cache[key] = tables
-    return tables
+        return tables
 
 
 def _character_check(text: str, languages: list[Locale], settings: Settings) -> list[Locale]:

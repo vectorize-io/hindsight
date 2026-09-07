@@ -49,6 +49,7 @@
     "lightMode": "Zum Hellmodus wechseln",
     "bank": {
       "select": "Speicherbank auswählen...",
+      "allBanks": "Alle Speicherbänke",
       "search": "Speicherbänke durchsuchen...",
       "empty": "Noch keine Speicherbänke vorhanden.",
       "noSearchResults": "Keine Banken entsprechen deiner Suche.",
@@ -739,7 +740,8 @@
     "labelObservationScopes": "Beobachtungsbereiche",
     "invalidatedFactsTitle": "Ungültige Fakten",
     "documentUpdating": "Wird aktualisiert",
-    "lastRefreshed": "Aktualisiert {time}"
+    "lastRefreshed": "Aktualisiert {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -1626,12 +1628,46 @@
     "observationScopesEmpty": "Fügen Sie oben Tags hinzu, um Beobachtungsbereiche vorzuschauen",
     "metadataHelpText": "Ein <code>key: value</code> pro Zeile",
     "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden",
-    "textNotStoredWarning": "Der Rohtext des Dokuments wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
+    "textNotStoredWarning": "Der Rohtext des Dokuments wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "Willkommen bei Hindsight",
-    "selectBank": "Wählen Sie eine Speicherbank aus dem Dropdown oben, um loszulegen.",
-    "sidebarHint": "Die Seitenleiste erscheint, sobald Sie eine Speicherbank ausgewählt haben."
+  "banksOverview": {
+    "title": "Speicherbänke",
+    "subtitle": "Jede Speicherbank ist ein eigenes Gehirn — ein isolierter Speicher für alles, woran sich ein Benutzer, Agent oder Projekt erinnert. Zwischen Bänken wird nichts geteilt.",
+    "welcomeTitle": "Willkommen bei Hindsight",
+    "welcomeBody": "Eine Speicherbank ist ein eigenes Gehirn — ein isolierter Speicher für alles, woran sich ein Benutzer, Agent oder Projekt erinnert. Erstellen Sie Ihre erste, um loszulegen.",
+    "search": "Bänke suchen...",
+    "noSearchResults": "Keine Bänke entsprechen Ihrer Suche.",
+    "columnBank": "Bank",
+    "columnMemories": "Erinnerungen",
+    "columnLastActivity": "Letzte Aktivität",
+    "columnCreated": "Erstellt",
+    "never": "Nie",
+    "emptyBank": "leer",
+    "selectAll": "Alle geladenen Bänke auswählen",
+    "selectBank": "{bank} auswählen",
+    "selectedCount": "{count} ausgewählt",
+    "clearSelection": "Aufheben",
+    "deleteSelected": "Ausgewählte löschen",
+    "bulkDeleteTitle": "{count} Speicherbänke löschen?",
+    "bulkDeletePrompt": "Diese Bänke und ihr gesamter Inhalt werden dauerhaft gelöscht:",
+    "bulkDeleteMore": "und {count} weitere",
+    "bulkDeleteWarning": "Diese Aktion kann nicht rückgängig gemacht werden. Alle Erinnerungen, Entitäten, Dokumente und Bank-Profile werden dauerhaft gelöscht.",
+    "bulkDeleteSequentialNote": "Die Bänke werden nacheinander gelöscht, das kann dauern. Lassen Sie diesen Dialog bis zum Ende geöffnet.",
+    "bulkDeleteConfirmLabel": "Geben Sie zur Bestätigung {word} ein",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "Lösche {done} von {total}...",
+    "bulkDeleteDone": "{count} Bänke gelöscht",
+    "bulkDeletePartial": "{deleted} gelöscht, {failed} fehlgeschlagen",
+    "bulkDeleteFailures": "Diese Bänke konnten nicht gelöscht werden:"
   },
   "login": {
     "title": "Hindsight Control Plane",
@@ -1678,10 +1714,6 @@
         "fetch": "Bankkonfiguration konnte nicht abgerufen werden",
         "update": "Bankkonfiguration konnte nicht aktualisiert werden",
         "reset": "Bankkonfiguration konnte nicht zurückgesetzt werden"
-      },
-      "bankProfile": {
-        "fetch": "Bankprofil konnte nicht abgerufen werden",
-        "update": "Bankprofil konnte nicht aktualisiert werden"
       },
       "memories": {
         "list": "Speichereinheiten konnten nicht aufgelistet werden",

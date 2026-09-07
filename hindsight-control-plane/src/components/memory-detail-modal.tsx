@@ -18,6 +18,11 @@ import {
   Braces,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  AttachmentStrip,
+  InlineAttachmentText,
+  type RetainedAttachment,
+} from "@/components/ui/inline-attachment-text";
 import { TagList } from "@/components/ui/tag-list";
 import { Button } from "@/components/ui/button";
 import { ObservationHistoryView, type HistoryEntry } from "@/components/observation-history-view";
@@ -49,6 +54,8 @@ interface MemoryDetail {
   document_id: string | null;
   chunk_id: string | null;
   tags: string[];
+  /** Attachments behind this fact, resolved from the chunk it came from. */
+  attachments?: RetainedAttachment[];
   // Copied from the source document at retain time — carries `harness`, so the
   // coding agent behind a fact is known without loading the document.
   metadata: Record<string, unknown> | null;
@@ -301,6 +308,14 @@ export function MemoryDetailModal({
                         {t("sectionText")}
                       </div>
                       <p className="text-sm text-foreground leading-relaxed">{memory.text}</p>
+                      {/* The fact's text says "[image: image/png]" where an
+                          attachment was — a content hash is not knowledge — so
+                          what the model actually looked at is shown here. */}
+                      <AttachmentStrip
+                        bankId={currentBank ?? ""}
+                        attachments={memory.attachments}
+                        className="mt-3"
+                      />
                     </div>
 
                     {/* Dates */}
@@ -544,6 +559,14 @@ export function MemoryDetailModal({
                             )}
                           </div>
                           <p className="text-sm text-foreground leading-relaxed">{memory.text}</p>
+                          {/* The fact's text says "[image: image/png]" where an
+                              attachment was — a content hash is not knowledge —
+                              so what the model actually looked at is shown here. */}
+                          <AttachmentStrip
+                            bankId={currentBank ?? ""}
+                            attachments={memory.attachments}
+                            className="mt-3"
+                          />
                         </div>
 
                         {/* Curation: invalidate / restore (raw facts only) */}
@@ -724,9 +747,12 @@ export function MemoryDetailModal({
                               {t("sectionChunkText")}
                             </div>
                             <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
-                              <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
-                                {chunk.chunk_text}
-                              </pre>
+                              <InlineAttachmentText
+                                text={chunk.chunk_text}
+                                bankId={currentBank ?? ""}
+                                attachments={chunk.attachments}
+                                className="text-sm whitespace-pre-wrap font-mono text-foreground"
+                              />
                             </div>
                           </div>
                         )}
@@ -791,9 +817,12 @@ export function MemoryDetailModal({
                                 {t("sectionOriginalText")}
                               </div>
                               <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
-                                <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
-                                  {document.original_text}
-                                </pre>
+                                <InlineAttachmentText
+                                  text={document.original_text}
+                                  bankId={currentBank ?? ""}
+                                  attachments={document.attachments}
+                                  className="text-sm whitespace-pre-wrap font-mono text-foreground"
+                                />
                               </div>
                             </div>
                           </>

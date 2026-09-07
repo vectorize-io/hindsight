@@ -28,6 +28,8 @@ from hindsight_api._cross_loop import CrossLoopLock
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.response_models import LLMToolCallResult
 
+from ..response_models import LLMCallResult
+
 logger = logging.getLogger(__name__)
 
 # Default GGUF model for offline mode
@@ -179,6 +181,17 @@ class LlamaCppServer:
             # Prompt cache: reuse KV cache for repeated system prompts
             "--cache",
             "true",
+            # Keep the prompt cache in RAM. llama_cpp.server's other option,
+            # `disk`, is backed by diskcache, which pickles cache entries
+            # (CVE-2025-69872): anyone able to write to the cache directory
+            # gets code execution in this process when an entry is read back.
+            # diskcache has had no release since 5.6.3 in 2023 and no fixed
+            # version exists, so the exposure is permanent if the disk backend
+            # is ever selected. `ram` is already llama_cpp.server's default;
+            # stating it here means a future edit has to opt into the risk
+            # deliberately rather than inherit it by changing a default.
+            "--cache_type",
+            "ram",
         ]
         # Only pass chat_format if explicitly set (most GGUF models have it embedded)
         if self.chat_format:
@@ -417,9 +430,8 @@ class LlamaCppLLM(LLMInterface):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """Delegate call to the OpenAI-compatible API."""
         await self._ensure_initialized()
         return await self._delegate.call(
@@ -433,7 +445,6 @@ class LlamaCppLLM(LLMInterface):
             max_backoff=max_backoff,
             skip_validation=skip_validation,
             strict_schema=strict_schema,
-            return_usage=return_usage,
             attempt_context=attempt_context,
         )
 

@@ -623,11 +623,6 @@ class InMemoryMemories(MemoriesExtension):
         doc = self.documents.get(str(document_id))
         return list(doc["chunk_texts"]) if doc else None
 
-    async def count_chunks(self, *, bank_id, document_id):
-        self.calls.append("count_chunks")
-        doc = self.documents.get(str(document_id))
-        return len(doc["chunk_texts"]) if doc else 0
-
     async def delete_document_record(self, *, bank_id, document_id):
         self.calls.append("delete_document_record")
         self.documents.pop(str(document_id), None)
@@ -659,9 +654,25 @@ class InMemoryMemories(MemoriesExtension):
         self.calls.append("memories_timeseries")
         return []
 
-    async def observation_scope_counts(self, *, conn, fq_table, bank_id):
+    async def observation_scope_counts(self, *, conn, fq_table, bank_id, limit=100, offset=0):
         self.calls.append("observation_scope_counts")
-        return []
+        # Same paged shape as list_tags above: the histogram is the store's to group,
+        # order and page, so the stub does it over its own rows rather than shipping
+        # every scope back for the engine to trim.
+        counts: dict[tuple[str, ...], int] = {}
+        for row in self.rows.values():
+            if row.fact_type != "observation":
+                continue
+            scope = tuple(sorted(row.tags or []))
+            counts[scope] = counts.get(scope, 0) + 1
+        scopes = [{"tags": list(scope), "count": count} for scope, count in counts.items()]
+        scopes.sort(key=lambda it: (-it["count"], it["tags"]))
+        return {
+            "scopes": scopes[offset : offset + limit],
+            "total": len(scopes),
+            "limit": limit,
+            "offset": offset,
+        }
 
     # -- the knowledge-page index -------------------------------------------
     #
@@ -874,6 +885,11 @@ async def test_engine_list_tags_routes_through_the_installed_store(memory, reque
         tags = ["only-in-the-store"]
 
     await store.insert_facts(conn=None, ops=None, bank_id="seam-bank", facts=[_Fact()], document_id="d")
+
+    # The read 404s for a bank nobody created (#4175). A store owns the facts, never the bank row
+    # itself, so a real deployment always has this row — a retain writes it before the store sees
+    # anything. Only the stub reaches an engine read without one.
+    await memory.get_bank_profile("seam-bank", request_context=request_context)
 
     result = await memory.list_tags("seam-bank", request_context=request_context)
 
@@ -1092,6 +1108,7 @@ async def test_engine_list_memory_units_routes_through_store(memory, request_con
     store = InMemoryMemories({})
     set_memories(store)
     await _seed(store, "seam-bank", text="only in the store", fact_type="world")
+    await memory.get_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     res = await memory.list_memory_units("seam-bank", request_context=request_context)
     assert "list_memory_units" in store.calls
     assert res["total"] == 1  # the row exists only in the stub, so it can only have come from it
@@ -1133,6 +1150,7 @@ async def test_apply_edit_is_told_the_pre_edit_fact_type(memory, request_context
 async def test_engine_list_entities_routes_through_store(memory, request_context, restore_default_store):
     store = InMemoryMemories({})
     set_memories(store)
+    await memory.get_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     await memory.list_entities("seam-bank", request_context=request_context)
     assert "list_entities" in store.calls
 

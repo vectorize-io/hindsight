@@ -44,6 +44,9 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   Pencil,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
@@ -71,6 +74,8 @@ interface CreateWebhookForm {
     params: KeyValuePair[];
   };
 }
+
+const ITEMS_PER_PAGE = 50;
 
 const DEFAULT_FORM: CreateWebhookForm = {
   url: "",
@@ -306,6 +311,9 @@ export function WebhooksView() {
   const t = useTranslations("webhooksView");
   const { currentBank } = useBank();
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
+  // Pagination state — the listing endpoint pages (see loadWebhooks).
+  const [currentPage, setCurrentPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -331,12 +339,16 @@ export function WebhooksView() {
   const [deliveriesCursor, setDeliveriesCursor] = useState<string | null>(null);
   const [loadingMoreDeliveries, setLoadingMoreDeliveries] = useState(false);
 
-  const loadWebhooks = async () => {
+  const loadWebhooks = async (page: number = currentPage) => {
     if (!currentBank) return;
     setLoading(true);
     try {
-      const data = await client.listWebhooks(currentBank);
+      const data = await client.listWebhooks(currentBank, {
+        limit: ITEMS_PER_PAGE,
+        offset: (page - 1) * ITEMS_PER_PAGE,
+      });
       setWebhooks(data.items || []);
+      setTotal(data.total || 0);
     } catch (error) {
       console.error("Error loading webhooks:", error);
     } finally {
@@ -344,9 +356,29 @@ export function WebhooksView() {
     }
   };
 
+  const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
+  const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+
+  const handlePageChange = async (newPage: number) => {
+    setCurrentPage(newPage);
+    await loadWebhooks(newPage);
+  };
+
+  // A delete can empty the last page; step back so the view never lands on a
+  // page that no longer exists.
+  const reloadAfterMutation = async () => {
+    const page = webhooks.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage;
+    setCurrentPage(page);
+    await loadWebhooks(page);
+  };
+
   useEffect(() => {
     if (currentBank) {
-      loadWebhooks();
+      // Back to page 1 on a bank switch: the page number belongs to the bank we
+      // just left, and carrying it over lands on an offset the new bank may not
+      // reach (page 3 of a 120-webhook bank, then a bank with two).
+      setCurrentPage(1);
+      loadWebhooks(1);
     }
   }, [currentBank]);
 
@@ -364,7 +396,9 @@ export function WebhooksView() {
       setCreateDialogOpen(false);
       setForm(DEFAULT_FORM);
       setShowSecret(false);
-      await loadWebhooks();
+      // Rows are ordered oldest-first, so the new webhook is on the last page —
+      // reloading the current page would close the dialog and appear to do nothing.
+      await handlePageChange(Math.ceil((total + 1) / ITEMS_PER_PAGE));
     } catch (error) {
       // Error toast shown by API client interceptor
     } finally {
@@ -378,7 +412,7 @@ export function WebhooksView() {
     setDeleteConfirmWebhook(null);
     try {
       await client.deleteWebhook(currentBank, webhookId);
-      await loadWebhooks();
+      await reloadAfterMutation();
     } catch (error) {
       // Error toast shown by API client interceptor
     } finally {
@@ -491,9 +525,7 @@ export function WebhooksView() {
               />
             </button>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {t("webhookCount", { count: webhooks.length })}
-          </p>
+          <p className="text-sm text-muted-foreground">{t("webhookCount", { count: total })}</p>
         </div>
         <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
           <Plus className="w-4 h-4 mr-2" />
@@ -600,6 +632,54 @@ export function WebhooksView() {
               ))}
             </TableBody>
           </Table>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-3 pt-3 border-t">
+              <div className="text-xs text-muted-foreground">
+                {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(1)}
+                  disabled={currentPage === 1 || loading}
+                  className="h-7 w-7 p-0"
+                >
+                  <ChevronsLeft className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1 || loading}
+                  className="h-7 w-7 p-0"
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                <span className="text-xs px-2">
+                  {currentPage} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages || loading}
+                  className="h-7 w-7 p-0"
+                >
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(totalPages)}
+                  disabled={currentPage === totalPages || loading}
+                  className="h-7 w-7 p-0"
+                >
+                  <ChevronsRight className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <p className="text-muted-foreground text-center py-8 text-sm">{t("emptyStateCanManage")}</p>

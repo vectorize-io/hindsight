@@ -303,3 +303,31 @@ def build_labels_lookup(labels_cfg: EntityLabelsConfig | list | None) -> set[str
             if group.key and v.value:
                 valid.add(f"{group.key}:{v.value}".lower())
     return valid
+
+
+def label_tag_keys(labels_cfg: "EntityLabelsConfig | dict | list | None") -> set[str]:
+    """The label group keys (lowercase) whose values are projected into a fact's tags.
+
+    A group flagged ``tag: true`` is mirrored out of the fact's entities and into its
+    ``tags`` array by ``_inject_label_tags``, so a ``key:value`` tag whose key is in this
+    set is *derived* from the unit's entities rather than supplied by the caller. Both
+    the projection itself and the re-retain path that must leave it alone read the set
+    from here, so a group's ``tag`` flag is honoured identically by the two.
+
+    Accepts EntityLabelsConfig or the raw config value.
+    """
+    if labels_cfg is None:
+        return set()
+    if not isinstance(labels_cfg, EntityLabelsConfig):
+        parsed = parse_entity_labels(labels_cfg)
+        if parsed is None:
+            return set()
+        labels_cfg = parsed
+    return {g.key.lower() for g in labels_cfg.attributes if g.tag and g.key}
+
+
+def split_label_tags(tags: "list[str] | None", keys: "set[str] | None") -> list[str]:
+    """The label-derived subset of ``tags`` — the entries ``label_tag_keys`` claims."""
+    if not tags or not keys:
+        return []
+    return [t for t in tags if ":" in t and t.split(":", 1)[0].lower() in keys]

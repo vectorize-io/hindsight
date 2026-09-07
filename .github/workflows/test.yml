@@ -100,6 +100,14 @@ jobs:
             - 'scripts/**'
             - '.python-version'
             - '.env.example'
+            # The workspace lockfile and root manifest determine which versions
+            # the API actually runs against, so a change to either can break it
+            # without touching a line of source. Both are deliberately bare
+            # patterns: they match only the files at the repository root. A
+            # glob such as '**/uv.lock' would pull every integration lockfile
+            # into the core suite.
+            - 'uv.lock'
+            - 'pyproject.toml'
           clients-ts:
             - 'hindsight-clients/typescript/**'
             - 'package.json'
@@ -484,6 +492,12 @@ jobs:
     - name: Install openclaw dependencies
       working-directory: ./hindsight-integrations/openclaw
       run: npm ci
+
+    # Guards the guard: the smoke test's doctor assertion once passed a plugin
+    # whose hooks openclaw had blocked, so its logic has its own fixtures.
+    - name: Self-test the smoke test's doctor assertion
+      working-directory: ./hindsight-integrations/openclaw
+      run: ./scripts/doctor-check-selftest.sh
 
     - name: Run openclaw install smoke test
       working-directory: ./hindsight-integrations/openclaw

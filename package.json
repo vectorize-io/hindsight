@@ -39,7 +39,7 @@
     "websocket-driver": ">=0.7.5",
     "http-proxy-middleware": ">=2.0.10 <3",
     "next": ">=16.2.11 <17",
-    "fast-uri": ">=3.1.5 <4",
+    "fast-uri": ">=3.1.6 <4",
     "sharp": ">=0.35.0",
     "shell-quote": ">=1.9.0",
     "@istanbuljs/load-nyc-config": {
@@ -54,6 +54,9 @@
     "postcss": ">=8.5.23",
     "js-yaml": ">=3.15.1 <4.0.0 || >=4.3.1 <5.0.0",
     "nanoid": ">=3.3.18 <4.0.0",
-    "webpack-dev-server": ">=5.2.6 <6.0.0"
+    "webpack-dev-server": ">=5.2.6 <6.0.0",
+    "esbuild": ">=0.28.1 <0.29.0",
+    "body-parser": ">=1.20.6 <2.0.0",
+    "browserslist": ">=4.28.7 <5.0.0"
   }
 }

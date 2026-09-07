@@ -108,8 +108,11 @@ class BankStatsCache:
             value = await loader()
             with self._lock:
                 self._store_unlocked(key, value)
-                # Supersede any loader that was in flight for this key.
-                self._in_flight.pop(self._flight_key(key), None)
+                # Supersede every loader that was in flight for this key. Flights
+                # are loop-scoped, so removing only this loop's slot lets an older
+                # loader on another loop overwrite the force-refreshed value later.
+                for flight_key in [fk for fk in self._in_flight if fk[1] == key]:
+                    self._in_flight.pop(flight_key, None)
             return value
 
         with self._lock:

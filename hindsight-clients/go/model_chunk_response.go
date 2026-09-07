@@ -27,6 +27,7 @@ type ChunkResponse struct {
 	ChunkIndex int32 `json:"chunk_index"`
 	ChunkText string `json:"chunk_text"`
 	CreatedAt string `json:"created_at"`
+	Attachments []ChunkAttachment `json:"attachments,omitempty"`
 }
 
 type _ChunkResponse ChunkResponse
@@ -198,6 +199,39 @@ func (o *ChunkResponse) SetCreatedAt(v string) {
 	o.CreatedAt = v
 }
 
+// GetAttachments returns the Attachments field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ChunkResponse) GetAttachments() []ChunkAttachment {
+	if o == nil {
+		var ret []ChunkAttachment
+		return ret
+	}
+	return o.Attachments
+}
+
+// GetAttachmentsOk returns a tuple with the Attachments field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ChunkResponse) GetAttachmentsOk() ([]ChunkAttachment, bool) {
+	if o == nil || IsNil(o.Attachments) {
+		return nil, false
+	}
+	return o.Attachments, true
+}
+
+// HasAttachments returns a boolean if a field has been set.
+func (o *ChunkResponse) HasAttachments() bool {
+	if o != nil && !IsNil(o.Attachments) {
+		return true
+	}
+
+	return false
+}
+
+// SetAttachments gets a reference to the given []ChunkAttachment and assigns it to the Attachments field.
+func (o *ChunkResponse) SetAttachments(v []ChunkAttachment) {
+	o.Attachments = v
+}
+
 func (o ChunkResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -214,6 +248,9 @@ func (o ChunkResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["chunk_index"] = o.ChunkIndex
 	toSerialize["chunk_text"] = o.ChunkText
 	toSerialize["created_at"] = o.CreatedAt
+	if o.Attachments != nil {
+		toSerialize["attachments"] = o.Attachments
+	}
 	return toSerialize, nil
 }
 

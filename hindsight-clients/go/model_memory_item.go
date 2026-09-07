@@ -21,7 +21,7 @@ var _ MappedNullable = &MemoryItem{}
 
 // MemoryItem Single memory item for retain.
 type MemoryItem struct {
-	Content string `json:"content"`
+	Content Content `json:"content"`
 	Timestamp NullableTimestamp `json:"timestamp,omitempty"`
 	Context NullableString `json:"context,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
@@ -41,7 +41,7 @@ type _MemoryItem MemoryItem
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewMemoryItem(content string) *MemoryItem {
+func NewMemoryItem(content Content) *MemoryItem {
 	this := MemoryItem{}
 	this.Content = content
 	var resolveEntities bool = true
@@ -60,9 +60,9 @@ func NewMemoryItemWithDefaults() *MemoryItem {
 }
 
 // GetContent returns the Content field value
-func (o *MemoryItem) GetContent() string {
+func (o *MemoryItem) GetContent() Content {
 	if o == nil {
-		var ret string
+		var ret Content
 		return ret
 	}
 
@@ -71,7 +71,7 @@ func (o *MemoryItem) GetContent() string {
 
 // GetContentOk returns a tuple with the Content field value
 // and a boolean to check if the value has been set.
-func (o *MemoryItem) GetContentOk() (*string, bool) {
+func (o *MemoryItem) GetContentOk() (*Content, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -79,7 +79,7 @@ func (o *MemoryItem) GetContentOk() (*string, bool) {
 }
 
 // SetContent sets field value
-func (o *MemoryItem) SetContent(v string) {
+func (o *MemoryItem) SetContent(v Content) {
 	o.Content = v
 }
 

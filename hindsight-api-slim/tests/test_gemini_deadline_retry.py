@@ -95,7 +95,9 @@ async def test_call_retries_once_after_the_deadline():
     generate = _generate_content(_never_answers, lambda: _answers(_text_response("recovered")))
     provider._client.aio.models.generate_content = generate
 
-    result = await provider.call(messages=[{"role": "user", "content": "hi"}], scope="reflect", initial_backoff=0.0)
+    result = (
+        await provider.call(messages=[{"role": "user", "content": "hi"}], scope="reflect", initial_backoff=0.0)
+    ).content
 
     assert result == "recovered", "the retry's answer must be returned, not the stall"
     assert generate.call_count == 2

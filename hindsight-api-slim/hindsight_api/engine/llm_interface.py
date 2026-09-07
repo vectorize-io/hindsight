@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Callable, Self
 
-from .response_models import LLMToolCallResult
+from .response_models import LLMCallResult, LLMToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -148,10 +148,9 @@ class LLMInterface(ABC):
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
-        return_usage: bool = False,
         cached_prefix: str | None = None,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> Any:
+    ) -> LLMCallResult:
         """
         Make an LLM API call with retry logic.
 
@@ -168,7 +167,6 @@ class LLMInterface(ABC):
             strict_schema: Grammar-enforce structured output via json_schema strict
                 (OpenAI-compatible, LiteLLM) instead of the soft json_object path. Gemini
                 enforces its response_schema natively; providers without a strict mode ignore it.
-            return_usage: If True, return tuple (result, TokenUsage) instead of just result.
             cached_prefix: Opaque handle from ``get_or_create_cached_prefix`` for the
                 cacheable system prefix, or None. Providers without explicit prompt
                 caching ignore it (and the wrapper only forwards it when set).
@@ -179,8 +177,6 @@ class LLMInterface(ABC):
                 occupies a permit.
 
         Returns:
-            If return_usage=False: Parsed response if response_format is provided, otherwise text content.
-            If return_usage=True: Tuple of (result, TokenUsage) with token counts.
 
         Raises:
             OutputTooLongError: If output exceeds token limits.
@@ -265,6 +261,22 @@ class LLMInterface(ABC):
     def supports_attempt_scoped_concurrency(self) -> bool:
         """Whether retries can acquire concurrency permits per upstream attempt."""
         return False
+
+    def supports_vision(self) -> bool | None:
+        """Whether this provider can accept image parts in a user message.
+
+        Three-valued on purpose. ``True``/``False`` mean the provider knows;
+        ``None`` — the default — means it cannot tell, which is the honest answer
+        for a gateway (LiteLLM, Ollama, LM Studio, an OpenAI-compatible proxy)
+        that will happily forward whatever model name it is given.
+
+        Retain treats ``None`` as "refuse": an item carrying images is rejected
+        rather than sent to a model that would ignore them, because silently
+        dropping an image is exactly the lossy behaviour inline images exist to
+        remove. Operators running a vision model behind a gateway say so with
+        ``HINDSIGHT_API_LLM_VISION=true``, which overrides this.
+        """
+        return None
 
     # ── Prompt prefix caching (optional, per-provider) ─────────────────────────
 

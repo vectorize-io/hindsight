@@ -210,11 +210,13 @@ class TestRouterCall:
         mock_router.acompletion = AsyncMock(return_value=mock_router_response)
         provider = _make_router_provider(two_step_config, mock_router)
 
-        result = await provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            max_completion_tokens=50,
-            max_retries=0,
-        )
+        result = (
+            await provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                max_completion_tokens=50,
+                max_retries=0,
+            )
+        ).content
         assert result == "ok"
         # Hindsight always issues against model_name="default"; Router handles fallback,
         # load-balancing, and routing strategy from there.
@@ -240,11 +242,13 @@ class TestRouterCall:
         mock_router.acompletion = AsyncMock(return_value=response)
         provider = _make_router_provider(two_step_config, mock_router)
 
-        result = await provider.call(
-            messages=[{"role": "user", "content": "q"}],
-            response_format=MySchema,
-            max_retries=0,
-        )
+        result = (
+            await provider.call(
+                messages=[{"role": "user", "content": "q"}],
+                response_format=MySchema,
+                max_retries=0,
+            )
+        ).content
         assert isinstance(result, MySchema)
         assert result.answer == "42"
 
@@ -255,12 +259,14 @@ class TestRouterCall:
         mock_router.acompletion = AsyncMock(side_effect=[Exception("503 Service Unavailable"), mock_router_response])
         provider = _make_router_provider(two_step_config, mock_router)
 
-        result = await provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            max_retries=2,
-            initial_backoff=0.0,
-            max_backoff=0.0,
-        )
+        result = (
+            await provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                max_retries=2,
+                initial_backoff=0.0,
+                max_backoff=0.0,
+            )
+        ).content
         assert result == "ok"
         assert mock_router.acompletion.await_count == 2
 

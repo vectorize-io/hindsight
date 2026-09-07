@@ -21,6 +21,21 @@ except metadata.PackageNotFoundError:
     _CLIENT_VERSION = "0.0.0"
 
 DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
+
+#: One element of a multimodal retain item's content.
+#:
+#: Retain accepts either a plain string or an ordered list of these, so an
+#: attachment sits inline where it actually appears and the extractor reads it
+#: alongside the prose that refers to it::
+#:
+#:     [{"type": "text",  "text": "click the button shown:"},
+#:      {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
+#:      {"type": "file",  "source": {"type": "base64", "media_type": "application/pdf", "data": "..."},
+#:       "filename": "policy.pdf"}]
+#:
+#: Requires a vision-capable retain LLM server-side; otherwise the retain is
+#: refused with 422 rather than silently dropping the attachments.
+ContentBlock = dict[str, Any]
 from hindsight_client_api.api import (
     banks_api,
     directives_api,
@@ -331,7 +346,7 @@ class Hindsight:
     def retain(
         self,
         bank_id: str,
-        content: str,
+        content: str | list[ContentBlock],
         timestamp: datetime | None = None,
         context: str | None = None,
         document_id: str | None = None,
@@ -348,7 +363,10 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            content: Memory content
+            content: Memory content. Either a plain string, or an ordered list of
+                content blocks so an image sits inline where it actually appears —
+                see :data:`ContentBlock`. The block form needs a vision-capable
+                retain LLM server-side.
             timestamp: Optional event timestamp
             context: Optional context description
             document_id: Optional document ID for grouping
@@ -667,6 +685,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         enable_text_search: bool | None = None,
@@ -692,6 +711,10 @@ class Hindsight:
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+            retain_max_attachments_per_chunk: Maximum inline attachments one extraction chunk may
+                carry. retain_chunk_size budgets text only — a placeholder costs the characters it
+                occupies and nothing more — so this is what bounds attachments. Match it to the
+                provider's per-request limit.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
             enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
@@ -719,6 +742,7 @@ class Hindsight:
                 retain_custom_instructions=retain_custom_instructions,
                 retain_chunk_size=retain_chunk_size,
                 retain_structured_chunk_size=retain_structured_chunk_size,
+                retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,
                 enable_text_search=enable_text_search,
@@ -744,6 +768,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         enable_text_search: bool | None = None,
@@ -786,6 +811,8 @@ class Hindsight:
             body["retain_chunk_size"] = retain_chunk_size
         if retain_structured_chunk_size is not None:
             body["retain_structured_chunk_size"] = retain_structured_chunk_size
+        if retain_max_attachments_per_chunk is not None:
+            body["retain_max_attachments_per_chunk"] = retain_max_attachments_per_chunk
         if enable_observations is not None:
             body["enable_observations"] = enable_observations
         if observations_mission is not None:
@@ -833,6 +860,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         enable_text_search: bool | None = None,
@@ -858,6 +886,10 @@ class Hindsight:
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+            retain_max_attachments_per_chunk: Maximum inline attachments one extraction chunk may
+                carry. retain_chunk_size budgets text only — a placeholder costs the characters it
+                occupies and nothing more — so this is what bounds attachments. Match it to the
+                provider's per-request limit.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
             enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
@@ -884,6 +916,7 @@ class Hindsight:
             retain_custom_instructions=retain_custom_instructions,
             retain_chunk_size=retain_chunk_size,
             retain_structured_chunk_size=retain_structured_chunk_size,
+            retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
             enable_observations=enable_observations,
             observations_mission=observations_mission,
             enable_text_search=enable_text_search,
@@ -927,6 +960,7 @@ class Hindsight:
         Returns:
             RetainResponse with success status and item count
         """
+        from hindsight_client_api.models.content import Content
         from hindsight_client_api.models.entity_input import EntityInput
         from hindsight_client_api.models.observation_scopes import ObservationScopes
         from hindsight_client_api.models.timestamp import Timestamp
@@ -943,7 +977,11 @@ class Hindsight:
                 obs_scopes = ObservationScopes(actual_instance=item["observation_scopes"])
             memory_items.append(
                 memory_item.MemoryItem(
-                    content=item["content"],
+                    # `content` is a generated anyOf wrapper since retain accepted
+                    # inline images (str | ContentBlock[]), so it is constructed the
+                    # same way as the Timestamp/ObservationScopes unions below.
+                    # Passing the raw value straight through fails validation.
+                    content=Content(actual_instance=item["content"]),
                     timestamp=timestamp_val,
                     context=item.get("context"),
                     metadata=item.get("metadata"),
@@ -973,7 +1011,7 @@ class Hindsight:
     async def aretain(
         self,
         bank_id: str,
-        content: str,
+        content: str | list[ContentBlock],
         timestamp: datetime | None = None,
         context: str | None = None,
         document_id: str | None = None,
@@ -990,7 +1028,10 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            content: Memory content
+            content: Memory content. Either a plain string, or an ordered list of
+                content blocks so an image sits inline where it actually appears —
+                see :data:`ContentBlock`. The block form needs a vision-capable
+                retain LLM server-side.
             timestamp: Optional event timestamp
             context: Optional context description
             document_id: Optional document ID for grouping
@@ -1938,7 +1979,8 @@ class Hindsight:
         """
         Get the resolved configuration for a bank (sync wrapper — use ``await client.banks.get_bank_config(...)`` in async code).
 
-        Can be disabled on the server by setting ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false``.
+        Always available: ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`` disables only
+        the config *writes*, not this read.
 
         Args:
             bank_id: The memory bank ID
@@ -1971,6 +2013,7 @@ class Hindsight:
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
+        retain_max_attachments_per_chunk: int | None = None,
         retain_default_strategy: str | None = None,
         retain_strategies: dict[str, Any] | None = None,
         retain_chunk_batch_size: int | None = None,
@@ -2035,6 +2078,10 @@ class Hindsight:
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+            retain_max_attachments_per_chunk: Maximum inline attachments one extraction chunk may
+                carry. retain_chunk_size budgets text only — a placeholder costs the characters it
+                occupies and nothing more — so this is what bounds attachments. Match it to the
+                provider's per-request limit.
             retain_default_strategy: Default retain strategy name.
             retain_strategies: Named strategy definitions (dict of strategy name to config).
             retain_chunk_batch_size: Number of chunks per sub-batch in chunks extraction mode.
@@ -2098,6 +2145,7 @@ class Hindsight:
                 "retain_custom_instructions": retain_custom_instructions,
                 "retain_chunk_size": retain_chunk_size,
                 "retain_structured_chunk_size": retain_structured_chunk_size,
+                "retain_max_attachments_per_chunk": retain_max_attachments_per_chunk,
                 "retain_default_strategy": retain_default_strategy,
                 "retain_strategies": retain_strategies,
                 "retain_chunk_batch_size": retain_chunk_batch_size,

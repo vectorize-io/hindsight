@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "hindsight-api-slim"
 version = "0.9.2"
-description = "Hindsight: Agent Memory That Works Like Human Memory"
+description = "Hindsight: Agent Memory That Learns"
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,6 +52,13 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-semantic-conventions>=0.65b0",
     "dateparser>=1.4.2",
+    # Transitive via dateparser, pinned here because the floor is load-bearing on a
+    # free-threaded build: 2025.11.3 turns concurrent entry into dateparser's locale
+    # caches into a SIGSEGV inside _regex (verified on the py3.14t image -- exit 139
+    # in seconds, 3/3; the same probe on 2026.9.3 survives). The engine also
+    # serialises those entries now (see engine/query_analyzer.py _DATEPARSER_LOCK),
+    # so this is the second of two independent guards, not the only one.
+    "regex>=2026.9.3",
     "google-genai>=1.72.0",
     "google-auth>=2.0.0",
     "anthropic>=0.40.0",
@@ -90,7 +97,6 @@ dependencies = [
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix
     "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix. Transitive only (via mcp) since the Supabase tenant extension moved to hindsight-extensions/supabase-tenant — no core module imports jwt.
     "python-multipart>=0.0.22", # Arbitrary file write via non-default configuration fix
-    "tornado>=6.5.5", # DoS multipart/incomplete cookie validation fix
     "aiohttp>=3.14.3", # GHSA-cq5v-8q36-5273: OOB heap read in the C response parser, plus earlier DoS fixes
     "pygments>=2.20.0", # ReDoS via inefficient GUID regex fix
     "claude-agent-sdk>=0.2.82",

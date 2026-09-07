@@ -427,6 +427,7 @@ else
     [ -f "integration_test.go" ] && cp integration_test.go "$TEMP_DIR/"
     [ -f "null_test.go" ] && cp null_test.go "$TEMP_DIR/"
     [ -f "trace_test.go" ] && cp trace_test.go "$TEMP_DIR/"
+    [ -f "content_marshal_test.go" ] && cp content_marshal_test.go "$TEMP_DIR/"
     [ -f "hindsight_client.go" ] && cp hindsight_client.go "$TEMP_DIR/"
     # go.mod/go.sum are maintained, not regenerated: a fresh `go mod tidy`
     # resolves unpinned deps (e.g. testify, pulled in by the maintained tests)
@@ -468,11 +469,32 @@ else
     [ -f "$TEMP_DIR/integration_test.go" ] && mv "$TEMP_DIR/integration_test.go" .
     [ -f "$TEMP_DIR/null_test.go" ] && mv "$TEMP_DIR/null_test.go" .
     [ -f "$TEMP_DIR/trace_test.go" ] && mv "$TEMP_DIR/trace_test.go" .
+    [ -f "$TEMP_DIR/content_marshal_test.go" ] && mv "$TEMP_DIR/content_marshal_test.go" .
     [ -f "$TEMP_DIR/hindsight_client.go" ] && mv "$TEMP_DIR/hindsight_client.go" .
     # Overwrites the generator-emitted go.mod/go.sum with the maintained ones.
     [ -f "$TEMP_DIR/go.mod" ] && mv "$TEMP_DIR/go.mod" .
     [ -f "$TEMP_DIR/go.sum" ] && mv "$TEMP_DIR/go.sum" .
     rm -rf "$TEMP_DIR"
+
+    # Fix known generator issue: anyOf/oneOf models get a POINTER-receiver
+    # MarshalJSON, but they are embedded in requests BY VALUE (e.g.
+    # MemoryItem.Content). encoding/json only reaches a pointer-receiver
+    # marshaller through an addressable value, and the top level of
+    # json.Marshal(v) is not addressable — so the custom marshaller is skipped
+    # and the union serialises as its raw struct:
+    #     {"content":{"ArrayOfContentAnyOfInner":null,"String":"hi"}}
+    # which the API rejects with 422. A value receiver is found in both cases,
+    # and these marshallers are pure reads, so widening the receiver is safe.
+    # Nullable wrappers (NullableTimestamp) already use value receivers, which
+    # is why only the non-nullable unions are affected.
+    for f in model_*.go; do
+        [ -e "$f" ] || continue
+        if grep -q 'func (src \*[A-Za-z]*) MarshalJSON' "$f"; then
+            echo "Patching $f: union MarshalJSON to a value receiver..."
+            sed -i.bak -E 's|func \(src \*([A-Za-z]+)\) MarshalJSON|func (src \1) MarshalJSON|' "$f"
+            rm -f "$f.bak"
+        fi
+    done
 
     # Fix known generator issue: api_files.go uses os.File but generator omits "os" import
     if [ -f "api_files.go" ] && grep -q 'os\.File' api_files.go && ! grep -q '"os"' api_files.go; then

@@ -1316,6 +1316,7 @@ class DocumentsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListDocumentsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1408,6 +1409,7 @@ class DocumentsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListDocumentsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1500,6 +1502,7 @@ class DocumentsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListDocumentsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(

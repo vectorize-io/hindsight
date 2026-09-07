@@ -18,6 +18,7 @@ from .ops import (
     UpdatedWindow,
     bank_serialization_sql,
     document_serialization_sql,
+    memory_unit_columns,
 )
 from .result import DictResultRow as ResultRow
 
@@ -104,6 +105,7 @@ class OracleOps(DataAccessOps):
         tags_list: list[str],
         observation_scopes_list: list,
         text_signals_list: list,
+        attachment_ids_list: list,
         text_search_extension: str = "native",
     ) -> list[str]:
         table = self._get_mu_table()
@@ -131,14 +133,19 @@ class OracleOps(DataAccessOps):
                     tags_value,
                     observation_scopes_list[i],
                     text_signals_list[i],
+                    # Already a JSON string from the writes layer (the same
+                    # convention `tags_list` uses), and the column's IS JSON
+                    # check wants exactly that — pass it through rather than
+                    # encoding it twice.
+                    attachment_ids_list[i] or "[]",
                 )
             )
         await conn.executemany(
             f"""
             INSERT INTO {table} (id, bank_id, text, embedding, event_date, occurred_start,
                 occurred_end, mentioned_at, context, fact_type, metadata, chunk_id, document_id,
-                tags, observation_scopes, text_signals)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                tags, observation_scopes, text_signals, attachment_ids)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             """,
             rows_data,
         )
@@ -604,9 +611,7 @@ class OracleOps(DataAccessOps):
                 GROUP BY t.unit_id
             ),
             entity_expanded AS (
-                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                       mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                SELECT {memory_unit_columns("mu", indent=23)},
                        es.score, 'entity' AS source
                 FROM entity_scores es
                 JOIN {mu_table} mu ON mu.id = es.unit_id
@@ -647,9 +652,7 @@ class OracleOps(DataAccessOps):
                 GROUP BY id
             ),
             semantic_expanded AS (
-                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                       mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                SELECT {memory_unit_columns("mu", indent=23)},
                        ss.score, 'semantic' AS source
                 FROM sem_scores ss
                 JOIN {mu_table} mu ON mu.id = ss.id
@@ -658,9 +661,7 @@ class OracleOps(DataAccessOps):
             ),
             causal_ranked AS (
                 SELECT
-                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                    mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    {memory_unit_columns("mu", indent=20)},
                     ml.weight AS score,
                     'causal' AS source,
                     ROW_NUMBER() OVER (PARTITION BY mu.id ORDER BY ml.weight DESC) AS rn_
@@ -672,8 +673,8 @@ class OracleOps(DataAccessOps):
                   {window.clause("mu")}
             ),
             causal_expanded AS (
-                SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
-                       fact_type, document_id, chunk_id, tags, proof_count, score, source
+                SELECT {memory_unit_columns(indent=23)},
+                       score, source
                 FROM causal_ranked WHERE rn_ = 1
                 ORDER BY score DESC
                 FETCH FIRST $3 ROWS ONLY
@@ -751,9 +752,7 @@ class OracleOps(DataAccessOps):
             ),
             observation_entity_expanded AS (
                 SELECT
-                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                    mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    {memory_unit_columns("mu", indent=20)},
                     (SELECT COUNT(*)
                      FROM {obs_sources_table} os2
                      WHERE os2.observation_id = mu.id
@@ -792,9 +791,7 @@ class OracleOps(DataAccessOps):
                 GROUP BY id
             ),
             semantic_expanded AS (
-                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                       mu.occurred_end, mu.mentioned_at,
-                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                SELECT {memory_unit_columns("mu", indent=23)},
                        ss.score, 'semantic' AS source
                 FROM sem_scores ss
                 JOIN {mu_table} mu ON mu.id = ss.id
@@ -803,9 +800,8 @@ class OracleOps(DataAccessOps):
             ),
             causal_ranked AS (
                 SELECT
-                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                    mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
-                    mu.chunk_id, mu.tags, mu.proof_count, ml.weight AS score,
+                    {memory_unit_columns("mu", indent=20)},
+                    ml.weight AS score,
                     'causal' AS source,
                     ROW_NUMBER() OVER (PARTITION BY mu.id ORDER BY ml.weight DESC) AS rn_
                 FROM {ml_table} ml
@@ -816,8 +812,8 @@ class OracleOps(DataAccessOps):
                   {window.clause("mu")}
             ),
             causal_expanded AS (
-                SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
-                       fact_type, document_id, chunk_id, tags, proof_count, score, source
+                SELECT {memory_unit_columns(indent=23)},
+                       score, source
                 FROM causal_ranked WHERE rn_ = 1
                 ORDER BY score DESC
                 FETCH FIRST $2 ROWS ONLY
@@ -914,17 +910,24 @@ class OracleOps(DataAccessOps):
             http_config_json,
         )
 
-    async def list_webhooks_for_bank(self, conn, table, bank_id):
+    async def list_webhooks_for_bank(self, conn, table, bank_id, limit, offset):
         return await conn.fetch(
             f"""
             SELECT id, bank_id, url, secret, event_types, enabled,
                    http_config::text, created_at::text, updated_at::text
             FROM {table}
             WHERE bank_id = $1
-            ORDER BY created_at
+            ORDER BY created_at, id
+            LIMIT $2 OFFSET $3
             """,
             bank_id,
+            limit,
+            offset,
         )
+
+    async def count_webhooks_for_bank(self, conn, table, bank_id):
+        row = await conn.fetchrow(f"SELECT COUNT(*) AS total FROM {table} WHERE bank_id = $1", bank_id)
+        return int(row["total"]) if row else 0
 
     async def get_webhooks_for_dispatch(self, conn, webhook_table, bank_id):
         return await conn.fetch(

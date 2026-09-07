@@ -93,12 +93,14 @@ async def test_strict_schema_uses_forced_function_tool():
     with stub_codex_stream(llm, response) as mock_stream:
         with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as mock_parse:
             mock_parse.return_value = (None, [tool_call])
-            result = await llm.call(
-                messages=[{"role": "user", "content": "The sky is blue"}],
-                response_format=_Fact,
-                strict_schema=True,
-                max_retries=0,
-            )
+            result = (
+                await llm.call(
+                    messages=[{"role": "user", "content": "The sky is blue"}],
+                    response_format=_Fact,
+                    strict_schema=True,
+                    max_retries=0,
+                )
+            ).content
         sent_payload = mock_stream.call_args.kwargs["json"]
         sent_headers = mock_stream.call_args.kwargs["headers"]
 
@@ -128,13 +130,15 @@ async def test_strict_schema_skip_validation_returns_dict():
         with stub_codex_stream(llm, response) as mock_stream:
             with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as mock_parse:
                 mock_parse.return_value = (None, [tool_call])
-                result = await llm.call(
-                    messages=[{"role": "user", "content": "hi"}],
-                    response_format=_Fact,
-                    strict_schema=True,
-                    skip_validation=True,
-                    max_retries=0,
-                )
+                result = (
+                    await llm.call(
+                        messages=[{"role": "user", "content": "hi"}],
+                        response_format=_Fact,
+                        strict_schema=True,
+                        skip_validation=True,
+                        max_retries=0,
+                    )
+                ).content
 
     assert result == {"fact": "x"}
     assert span_recorder.record_llm_call.call_args.kwargs["response_content"] == '{"fact": "x"}'
@@ -175,12 +179,14 @@ async def test_non_strict_repairs_invalid_escapes_without_retrying():
     with stub_codex_stream(llm, response) as mock_stream:
         with patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock) as mock_parse:
             mock_parse.return_value = escape_heavy
-            result = await llm.call(
-                messages=[{"role": "user", "content": "coding transcript"}],
-                response_format=_Fact,
-                strict_schema=False,
-                max_retries=3,
-            )
+            result = (
+                await llm.call(
+                    messages=[{"role": "user", "content": "coding transcript"}],
+                    response_format=_Fact,
+                    strict_schema=False,
+                    max_retries=3,
+                )
+            ).content
 
     # Parsed on the first attempt (no retry storm): the SSE stream was read once.
     assert mock_stream.call_count == 1

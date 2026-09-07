@@ -160,7 +160,7 @@ async def test_real_openai_batch_api(real_llm_config, test_contents_real, integr
         # Call REAL batch API extraction
         logger.info("\n📤 Submitting batch to OpenAI...")
 
-        facts, chunks, usage = await extract_facts_from_contents_batch_api(
+        extraction = await extract_facts_from_contents_batch_api(
             contents=test_contents_real,
             llm_config=real_llm_config,
             config=integration_config,
@@ -168,6 +168,9 @@ async def test_real_openai_batch_api(real_llm_config, test_contents_real, integr
             operation_id=None,  # No crash recovery for this test
             schema=schema,
         )
+        facts = extraction.facts
+        chunks = extraction.chunks
+        usage = extraction.usage
 
         test_end_time = time.time()
         total_duration = test_end_time - test_start_time

@@ -77,8 +77,8 @@ func main() {
 	resp, _, err := client.MemoryAPI.RetainMemories(ctx, "my-bank").
 		RetainRequest(hindsight.RetainRequest{
 			Items: []hindsight.MemoryItem{
-				{Content: "Alice joined Google in 2023"},
-				{Content: "Bob prefers Python over JavaScript"},
+				{Content: hindsight.TextContent("Alice joined Google in 2023")},
+				{Content: hindsight.TextContent("Bob prefers Python over JavaScript")},
 			},
 			Async: &async,
 		}).Execute()

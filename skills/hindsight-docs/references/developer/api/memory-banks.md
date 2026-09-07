@@ -19,6 +19,12 @@ Banks are completely isolated from each other — memories stored in one bank ar
 
 You don't need to pre-create a bank. Hindsight will automatically create it with default settings when you first use it.
 
+Only *writes* create a bank — retaining, updating its profile, changing its config. **Reads of a
+bank that does not exist return `404`**, so a typo'd, renamed or deleted `bank_id` is reported
+rather than answered with empty results. That matters if you are monitoring a bank: `GET .../stats`
+on a missing bank fails loudly instead of returning zeroed counters that look like a healthy,
+empty bank.
+
 > **💡 Prerequisites**
 >
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.

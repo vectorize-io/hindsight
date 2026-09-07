@@ -12,7 +12,10 @@ right to flag it.
 
 from dataclasses import dataclass, field
 
-from hindsight_api.config import HindsightConfig
+from hindsight_api.config import (
+    DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK,
+    HindsightConfig,
+)
 from hindsight_api.engine.memory_engine import (
     RetainContentDict,
     ScreenedDocumentBody,
@@ -43,14 +46,21 @@ def collect_sub_batches(
     *,
     chunk_size: int,
     structured_chunk_size: int | None = None,
+    max_attachments_per_chunk: int = DEFAULT_RETAIN_MAX_ATTACHMENTS_PER_CHUNK,
 ) -> CollectedSplit:
-    """Drain the raw splitter into a ``CollectedSplit``."""
+    """Drain the raw splitter into a ``CollectedSplit``.
+
+    The image cap defaults to the server default: these tests use text-only
+    documents, where it never binds, but the splitter requires every caller to
+    state its chunking terms so no path can silently chunk on different ones.
+    """
     collected = CollectedSplit()
     for raw in _iter_raw_sub_batches(
         contents,
         tokens_per_batch,
         chunk_size=chunk_size,
         structured_chunk_size=structured_chunk_size,
+        max_attachments_per_chunk=max_attachments_per_chunk,
     ):
         collected.sub_batches.append(raw.contents)
         collected.origin_indices.append(raw.origins)

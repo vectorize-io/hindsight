@@ -49,6 +49,7 @@
     "lightMode": "切換到淺色模式",
     "bank": {
       "select": "選擇記憶庫...",
+      "allBanks": "所有記憶庫",
       "search": "搜尋記憶庫...",
       "empty": "還沒有記憶庫。",
       "noSearchResults": "沒有符合搜尋的記憶庫。",
@@ -739,7 +740,8 @@
     "labelObservationScopes": "觀測範圍",
     "invalidatedFactsTitle": "已失效的事實",
     "documentUpdating": "更新中",
-    "lastRefreshed": "已重新整理 {time}"
+    "lastRefreshed": "已重新整理 {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -1626,12 +1628,46 @@
     "observationScopesEmpty": "在上方新增標籤以預覽觀察範圍",
     "metadataHelpText": "每行一個 <code>key: value</code>",
     "entitiesHelpText": "逗號分隔的提示，與自動擷取的實體合併",
-    "textNotStoredWarning": "此伺服器不會儲存文件原始文字，僅保留擷取的記憶。"
+    "textNotStoredWarning": "此伺服器不會儲存文件原始文字，僅保留擷取的記憶。",
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "歡迎使用 Hindsight",
-    "selectBank": "請從上方下拉選單選擇一個記憶庫開始使用。",
-    "sidebarHint": "選擇記憶庫後，側邊欄會出現。"
+  "banksOverview": {
+    "title": "記憶庫",
+    "subtitle": "每個記憶庫都是一個獨立的大腦——隔離儲存某個使用者、代理或專案記住的一切。記憶庫之間不會共享任何內容。",
+    "welcomeTitle": "歡迎使用 Hindsight",
+    "welcomeBody": "記憶庫是一個獨立的大腦——隔離儲存某個使用者、代理或專案記住的一切。建立第一個記憶庫開始使用。",
+    "search": "搜尋記憶庫...",
+    "noSearchResults": "沒有符合搜尋的記憶庫。",
+    "columnBank": "記憶庫",
+    "columnMemories": "記憶",
+    "columnLastActivity": "最近活動",
+    "columnCreated": "建立時間",
+    "never": "從未",
+    "emptyBank": "空",
+    "selectAll": "選取所有已載入的記憶庫",
+    "selectBank": "選取 {bank}",
+    "selectedCount": "已選取 {count} 個",
+    "clearSelection": "清除",
+    "deleteSelected": "刪除所選",
+    "bulkDeleteTitle": "刪除 {count} 個記憶庫？",
+    "bulkDeletePrompt": "這些記憶庫及其中的所有內容將被永久刪除：",
+    "bulkDeleteMore": "以及另外 {count} 個",
+    "bulkDeleteWarning": "此操作無法復原。所有記憶、實體、文件與記憶庫設定都會永久刪除。",
+    "bulkDeleteSequentialNote": "記憶庫會逐一刪除，可能需要一些時間。請在完成前保持此對話框開啟。",
+    "bulkDeleteConfirmLabel": "輸入 {word} 以確認",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "正在刪除 {total} 個中的第 {done} 個...",
+    "bulkDeleteDone": "已刪除 {count} 個記憶庫",
+    "bulkDeletePartial": "已刪除 {deleted} 個，失敗 {failed} 個",
+    "bulkDeleteFailures": "以下記憶庫無法刪除："
   },
   "login": {
     "title": "Hindsight 控制面板",
@@ -1678,10 +1714,6 @@
         "fetch": "取得記憶庫設定失敗",
         "update": "更新記憶庫設定失敗",
         "reset": "重設記憶庫設定失敗"
-      },
-      "bankProfile": {
-        "fetch": "取得記憶庫設定檔失敗",
-        "update": "更新記憶庫設定檔失敗"
       },
       "memories": {
         "list": "列出記憶單元失敗",

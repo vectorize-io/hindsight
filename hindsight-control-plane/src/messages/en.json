@@ -49,6 +49,7 @@
     "lightMode": "Switch to light mode",
     "bank": {
       "select": "Select a memory bank...",
+      "allBanks": "All memory banks",
       "search": "Search memory banks...",
       "empty": "No memory banks yet.",
       "noSearchResults": "No banks match your search.",
@@ -739,7 +740,8 @@
     "labelObservationScopes": "Observation scopes",
     "invalidatedFactsTitle": "Invalidated facts",
     "documentUpdating": "Updating",
-    "lastRefreshed": "Refreshed {time}"
+    "lastRefreshed": "Refreshed {time}",
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1626,12 +1628,46 @@
     "observationScopesEmpty": "Add tags above to preview observation scopes",
     "metadataHelpText": "One <code>key: value</code> per line",
     "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",
-    "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept."
+    "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept.",
+    "composeText": "Text",
+    "composeBlocks": "Blocks",
+    "composeBlocksHint": "Arrange text and attachments in the order they appear in the source. Needs a vision-capable model.",
+    "blockAddText": "Text",
+    "blockAddAttachment": "Attachment",
+    "blockRemove": "Remove block",
+    "blockMoveUp": "Move block up",
+    "blockMoveDown": "Move block down",
+    "blockAdd": "Add"
   },
-  "dashboard": {
-    "welcome": "Welcome to Hindsight",
-    "selectBank": "Select a memory bank from the dropdown above to get started.",
-    "sidebarHint": "The sidebar will appear once you select a memory bank."
+  "banksOverview": {
+    "title": "Memory banks",
+    "subtitle": "Each memory bank is a separate brain — an isolated store of everything one user, agent or project remembers. Nothing is shared between banks.",
+    "welcomeTitle": "Welcome to Hindsight",
+    "welcomeBody": "A memory bank is a separate brain — an isolated store of everything one user, agent or project remembers. Create your first one to get started.",
+    "search": "Search banks...",
+    "noSearchResults": "No banks match your search.",
+    "columnBank": "Bank",
+    "columnMemories": "Memories",
+    "columnLastActivity": "Last activity",
+    "columnCreated": "Created",
+    "never": "Never",
+    "emptyBank": "empty",
+    "selectAll": "Select all loaded banks",
+    "selectBank": "Select {bank}",
+    "selectedCount": "{count} selected",
+    "clearSelection": "Clear",
+    "deleteSelected": "Delete selected",
+    "bulkDeleteTitle": "Delete {count} memory banks?",
+    "bulkDeletePrompt": "These banks and everything in them will be permanently deleted:",
+    "bulkDeleteMore": "and {count} more",
+    "bulkDeleteWarning": "This action cannot be undone. All memories, entities, documents, and bank profiles will be permanently deleted.",
+    "bulkDeleteSequentialNote": "Banks are deleted one at a time, so this can take a while. Keep this dialog open until it finishes.",
+    "bulkDeleteConfirmLabel": "Type {word} to confirm",
+    "bulkDeleteConfirmWord": "delete",
+    "bulkDeleteProgress": "Deleting {done} of {total}...",
+    "bulkDeleteDone": "{count} banks deleted",
+    "bulkDeletePartial": "{deleted} deleted, {failed} failed",
+    "bulkDeleteFailures": "These banks could not be deleted:"
   },
   "login": {
     "title": "Hindsight Control Plane",
@@ -1678,10 +1714,6 @@
         "fetch": "Failed to fetch bank config",
         "update": "Failed to update bank config",
         "reset": "Failed to reset bank config"
-      },
-      "bankProfile": {
-        "fetch": "Failed to fetch bank profile",
-        "update": "Failed to update bank profile"
       },
       "memories": {
         "list": "Failed to list memory units",
