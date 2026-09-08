@@ -22,6 +22,11 @@ from __future__ import annotations
 STEP_ANCHORS: dict[str, str] = {
     "extract_facts": "Extract facts from the following chunk.",
     "consolidate": "### Existing observations",
+    # The reflect loop uses two different system prompts: a tool-using role for
+    # the search turns, and a separate synthesising role for the turn that writes
+    # the answer. They need separate anchors or the final turn matches nothing.
+    "reflect": "You are a reflection agent that answers questions by reasoning over retrieved memories.",
+    "reflect_answer": "You are a thoughtful assistant that synthesizes answers from retrieved memories.",
     "connection_probe": "Say 'ok'",
 }
 

@@ -47,7 +47,11 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         body = await request.json()
         validate_chat(body)
 
-        chat_request = ChatRequest(model=body["model"], messages=body["messages"])
+        chat_request = ChatRequest(
+            model=body["model"],
+            messages=body["messages"],
+            tools=tuple(tool["function"]["name"] for tool in body.get("tools") or []),
+        )
 
         reply = stubs.llm.resolve(chat_request)
         if reply is None:

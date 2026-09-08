@@ -19,6 +19,7 @@ a new system test is mechanical: run it, paste the suggested rule, run again.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,8 @@ class ChatRequest:
 
     model: str
     messages: list[dict[str, Any]]
+    tools: tuple[str, ...] = ()
+    """Names of the tools offered on this call, when it is a tool-using turn."""
 
     @property
     def user_text(self) -> str:
@@ -74,18 +77,27 @@ class StubbedReply:
 class ChatRule:
     contains: tuple[str, ...]
     respond: Callable[[ChatRequest], StubbedReply]
+    tool: str | None = None
+    """When set, match only a turn that offers this tool.
+
+    The reflect loop sends the *same* system prompt on every turn and varies only
+    the tools it offers, so the tool list is the one thing that distinguishes one
+    step of the loop from the next. Prompt substrings cannot.
+    """
 
     def matches(self, request: ChatRequest) -> bool:
-        haystack = request.all_text
-        return all(needle in haystack for needle in self.contains)
+        if self.tool is not None and self.tool not in request.tools:
+            return False
+        return all(needle in request.all_text for needle in self.contains)
 
 
 class RuleBuilder:
     """The ``when`` half of a rule; one of the ``returns*`` methods completes it."""
 
-    def __init__(self, stub: LLMStub, *, contains: tuple[str, ...]) -> None:
+    def __init__(self, stub: LLMStub, *, contains: tuple[str, ...], tool: str | None = None) -> None:
         self._stub = stub
         self._contains = contains
+        self._tool = tool
 
     def returns(self, payload: BaseModel) -> LLMStub:
         """Answer with ``payload`` serialized as the assistant message content.
@@ -115,9 +127,50 @@ class RuleBuilder:
         """
         return self._register(lambda request: _assistant_message(build(request).model_dump_json()))
 
+    def returns_tool_call(self, tool_name: str, **arguments: Any) -> LLMStub:
+        """Answer by calling a named tool, the way an agentic turn does.
+
+        The reflect loop only advances when the model calls the tool it was
+        offered; a text reply ends the turn, and the loop with it.
+        """
+        return self._register(lambda _request: _tool_call(tool_name, arguments))
+
+    def calls_the_offered_tool(self, **arguments: Any) -> LLMStub:
+        """Answer a forced-tool turn by calling whichever tool it was offered.
+
+        The reflect prelude walks a fixed ladder of searches, offering one tool per
+        turn and refusing to advance until it is called. A story about what reflect
+        *concludes* does not care which rung it is on, only that the ladder is
+        climbed — so this drives every search turn with one rule instead of one
+        rule per tool, and keeps working when a rung is added or renamed.
+        """
+
+        def respond(request: ChatRequest) -> StubbedReply:
+            assert request.tools, "calls_the_offered_tool used on a turn that offered none"
+            return _tool_call(request.tools[0], arguments)
+
+        return self._register(respond)
+
     def _register(self, respond: Callable[[ChatRequest], StubbedReply]) -> LLMStub:
-        self._stub.add_rule(ChatRule(contains=self._contains, respond=respond))
+        self._stub.add_rule(ChatRule(contains=self._contains, respond=respond, tool=self._tool))
         return self._stub
+
+
+def _tool_call(tool_name: str, arguments: dict[str, Any]) -> StubbedReply:
+    return StubbedReply(
+        message={
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": f"call_{tool_name}",
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": json.dumps(arguments)},
+                }
+            ],
+        },
+        finish_reason="tool_calls",
+    )
 
 
 def _assistant_message(content: str) -> StubbedReply:
@@ -128,19 +181,31 @@ def _assistant_message(content: str) -> StubbedReply:
 class UnmatchedCall:
     """A call no rule answered, kept so the fixture can fail the test with it."""
 
-    excerpt: str
+    tools: tuple[str, ...]
+    """Tools offered on the turn, which is what distinguishes one reflect step
+    from the next when the prompt is identical."""
+
+    prompt: str
+    """The whole conversation, system message included.
+
+    Not just the user turn: for several steps — a mental-model refresh sends the
+    bare source query as its user message — the only thing identifying the caller
+    is in the system prompt, so a report that omitted it would name no anchor and
+    show nothing useful.
+    """
 
     def suggestion(self) -> str:
         """A rule the author can paste into the test, near enough to be a starting point."""
         from .steps import STEP_ANCHORS
 
-        step = next((name for name, anchor in STEP_ANCHORS.items() if anchor in self.excerpt), None)
+        step = next((name for name, anchor in STEP_ANCHORS.items() if anchor in self.prompt), None)
+        offered = f', tool="{self.tools[0]}"' if self.tools else ""
         if step:
-            return f'llm.on_step("{step}", contains=[...]).returns(...)'
+            return f'llm.on_step("{step}"{offered}, contains=[...]).returns(...)'
         return (
             "llm.on_chat(contains=[...]).returns(...)  "
             "# no known step anchor matched — add one to steps.py. Prompt: "
-            f"{self.excerpt[:400]!r}"
+            f"{self.prompt[:600]!r}"
         )
 
 
@@ -160,7 +225,7 @@ class LLMStub:
         """
         self.on_step("connection_probe").returns_text("ok")
 
-    def on_step(self, step: str, *, contains: str | list[str] | None = None) -> RuleBuilder:
+    def on_step(self, step: str, *, contains: str | list[str] | None = None, tool: str | None = None) -> RuleBuilder:
         """Declare what the model says at a named pipeline step.
 
         The preferred form. ``step`` resolves through ``steps.py``, so the prompt
@@ -168,11 +233,11 @@ class LLMStub:
         """
         from .steps import anchor_for
 
-        return self.on_chat(contains=[anchor_for(step), *_as_tuple(contains)])
+        return self.on_chat(contains=[anchor_for(step), *_as_tuple(contains)], tool=tool)
 
-    def on_chat(self, *, contains: str | list[str] | None = None) -> RuleBuilder:
-        """Match on prompt substrings alone, for a call with no named step yet."""
-        return RuleBuilder(self, contains=_as_tuple(contains))
+    def on_chat(self, *, contains: str | list[str] | None = None, tool: str | None = None) -> RuleBuilder:
+        """Match on prompt substrings, and optionally on the tool a turn offers."""
+        return RuleBuilder(self, contains=_as_tuple(contains), tool=tool)
 
     def add_rule(self, rule: ChatRule) -> None:
         self._rules.append(rule)
@@ -183,7 +248,7 @@ class LLMStub:
             if rule.matches(request):
                 return rule.respond(request)
 
-        self.unmatched.append(UnmatchedCall(excerpt=request.user_text or request.all_text))
+        self.unmatched.append(UnmatchedCall(tools=request.tools, prompt=request.all_text))
         return None
 
     def reset(self) -> None:

@@ -137,6 +137,12 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         "HINDSIGHT_API_LLM_MAX_RETRIES": "0",
         "HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES": "0",
         "HINDSIGHT_API_RERANKER_MAX_RETRIES": "0",
+        # Same reasoning one level up: the worker retries a failed operation on a
+        # backoff schedule, so an unstubbed call inside background work would sit
+        # in `pending` through several rounds before reaching `failed`. Against a
+        # deterministic stub the retry cannot change the answer, and the wait
+        # turns a fast loud-miss into a 90-second timeout.
+        "HINDSIGHT_API_WORKER_MAX_RETRIES": "0",
     }
 
 
