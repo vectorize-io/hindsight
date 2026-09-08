@@ -1,8 +1,7 @@
 """The TEI client is not shared between threads.
 
-`encode` runs through `run_in_executor`, so several threads use this provider at once. On a
-free-threaded build they run genuinely in parallel, and httpcore's sync pool has an unguarded
-check-then-use on shared connection state:
+`encode` runs through `run_in_executor`, so several threads use this provider at once, and
+httpcore's sync pool has an unguarded check-then-use on shared connection state:
 
     keepalive_expired = self._expire_at is not None and now > self._expire_at
 

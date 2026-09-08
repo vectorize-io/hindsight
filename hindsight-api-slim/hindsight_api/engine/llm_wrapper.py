@@ -58,9 +58,9 @@ configure_http_logging()
 #
 # CrossLoopSemaphore, not asyncio.Semaphore: this is module-level state shared by
 # every event loop in the process, and an asyncio.Semaphore binds to whichever loop
-# first waits on it — so with several loops (free-threaded uvicorn) the first
-# contended LLM call claims it and every other loop then fails. The cap stays
-# process-wide, which is what --workers N already implied.
+# first waits on it — so the first contended LLM call claims it and any other loop
+# reaching it then fails. The cap stays process-wide, which is what --workers N
+# already implied.
 _llm_max_concurrent = int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT)))
 _global_llm_semaphore = CrossLoopSemaphore(_llm_max_concurrent)
 

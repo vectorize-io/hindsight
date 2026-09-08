@@ -123,8 +123,7 @@ def test_concurrent_callers_share_one_bounded_pool() -> None:
     """max_concurrent_requests bounds the backend, not each caller separately.
 
     A pool per encode() call would let two simultaneous retains put 2x the bound on the
-    wire and spawn two pools' worth of threads — which is how the API's several event
-    loops in one process (#4067) on a free-threaded build (#4037) would multiply it.
+    wire and spawn two pools' worth of threads.
     """
     probe = _ConcurrencyProbe(hold_until=1)
     release = threading.Event()

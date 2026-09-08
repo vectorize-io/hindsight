@@ -5,12 +5,11 @@ under a lock, so that concurrent callers never reach dateparser's in-place
 `clean_dictionary` at the same time. That is only safe to do if the early call is
 otherwise invisible, which is what this asserts.
 
-The race it prevents is NOT reproducible on a GIL build: 12 threads entering cold
-locales through a barrier produce no error on 3.11, because the iterate-then-delete
-sequence in `Locale.clean_dictionary` is effectively atomic there. It reproduces
-reliably on a free-threaded interpreter, where it killed the startup of whichever
-event loops lost the race. tests/test_free_threading.py and the free-threaded CI job
-are what actually guard it; this file guards the equivalence.
+The race it prevents is hard to reproduce deterministically: 12 threads entering cold
+locales through a barrier usually produce no error, because the iterate-then-delete
+sequence in `Locale.clean_dictionary` rarely gets interrupted at the wrong point. So
+this file asserts the equivalence — that warming up front gives the same answers as
+the racy cold path — rather than trying to trigger the crash.
 """
 
 from dateparser.languages.loader import LocaleDataLoader

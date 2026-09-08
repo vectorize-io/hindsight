@@ -111,10 +111,9 @@ async def test_batches_never_exceed_the_backend_batch_size() -> None:
     # Every text is dispatched exactly once — compared as a multiset, not in order.
     # The coalescer runs up to `max_concurrent_requests` backend calls at a time
     # (`self._slots`), so which batch reaches the backend first is a scheduling
-    # detail it has never promised. Under the GIL the interleaving happened to be
-    # stable; on a free-threaded interpreter the batches genuinely race, and this
-    # assertion was failing on order alone with every text present and every batch
-    # within budget. What must hold is that nothing is dropped or sent twice...
+    # detail it has never promised. Asserting on order made this flake with every
+    # text present and every batch within budget. What must hold is that nothing is
+    # dropped or sent twice...
     assert Counter(text for call in backend.calls for text in call) == Counter(texts)
     # ...and that each caller still gets its own vectors, in its own position.
     assert results == [[_expected(text)] for text in texts]

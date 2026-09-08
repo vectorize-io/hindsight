@@ -14,31 +14,10 @@ Read and internalize these standards before writing code. The review steps below
 
 ### Supported interpreters
 
-Hindsight must work on **both** of these, and a change is not done until it does:
-
-- **CPython 3.11** — the baseline, what `docker/standalone/Dockerfile` ships by default
-  and what the `.python-version` pin and `uv.lock` resolve for.
-- **Free-threaded CPython 3.14** (`python3.14t`) — the `-py3.14t` image target, where
-  the process runs an event loop per thread and executes Python bytecode in parallel.
-
-Neither is a "future" target that can be deferred to a follow-up. Two consequences
-that catch people, both covered in detail under Concurrency below:
-
-- **Anything process-wide is genuinely concurrent** on 3.14t. The GIL is no longer
-  making check-then-act sequences accidentally atomic, and `asyncio` primitives shared
-  between loops break outright.
-- **Free-threading is lost silently.** Importing a C extension that has not declared
-  `Py_MOD_GIL_NOT_USED` re-enables the GIL for the whole process, with only a
-  `RuntimeWarning`. Nothing crashes; the 3.14t image simply performs like the 3.11 one.
-  So "it passed CI" is weaker evidence here than usual — that is why the free-threaded
-  job asserts the GIL is off *before* running a single test, and why the image build
-  asserts it too.
-
-Most of what breaks is not free-threading-specific: it is *multi-loop*, which
-reproduces on 3.11 as soon as two event loops exist in one process.
-`tests/test_multi_loop_conformance.py` is the cheap guard for that and runs in the
-ordinary suite, so a reviewer should expect new shared state to be covered there
-rather than only by the free-threaded job.
+**CPython 3.11** is the baseline — what `docker/standalone/Dockerfile` ships, and what
+the `.python-version` pin and `uv.lock` resolve for. The package supports 3.11 through
+3.14; `build-api-python-versions` in CI installs and smoke-tests each of them, so a
+dependency floor that excludes one of those interpreters is a break, not a follow-up.
 
 ### Python Style
 - Python 3.11+, type hints required — and see Supported interpreters above
@@ -129,11 +108,11 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - The pre-existing usage in `hindsight_api/migrations.py` is grandfathered, not a precedent — it is tracked for removal. Don't copy it.
 - Design the concurrency out instead of locking around it: give each process its own object to write (e.g. per-schema DDL rather than a shared `public.` object), make the operation idempotent, or use a real row/table constraint (`INSERT ... ON CONFLICT`, `SELECT ... FOR UPDATE` in a fixed order). See #2690 for a migration that reached for `pg_advisory_xact_lock` and had to be reverted.
 
-### Concurrency: asyncio vs threading primitives, and free-threading
+### Concurrency: asyncio vs threading primitives
 
-Hindsight is expected to run on free-threaded CPython (`python3.14t`), where one
-process can host several event loops in parallel threads. Two rules follow, and both
-are silent when broken — the code passes tests and fails under load.
+A Hindsight process runs threads (executors, `asyncio.to_thread`) and, across tests
+and tooling, more than one event loop. The rules below are silent when broken — the
+code passes tests and fails under load.
 
 **Which lock.** The choice is not style, it is ownership:
 
@@ -160,20 +139,11 @@ that owns them.
 `asyncio.Future` must key its in-flight map by `(running loop, key)`. Sharing the
 cached *data* across loops is fine and desirable; sharing the future is not.
 
-**Module-level mutable state.** Under free-threading, a process-global dict/set/list
-is genuinely concurrent for the first time — the GIL no longer makes check-then-act
-sequences accidentally atomic. Guard them, and never iterate one while another thread
-may mutate it (`RuntimeError: dictionary changed size during iteration`). Prefer
+**Module-level mutable state.** A process-global dict/set/list reachable from more
+than one thread needs a guard, and must never be iterated while another thread may
+mutate it (`RuntimeError: dictionary changed size during iteration` at best; a C
+extension handed borrowed references into a resizing dict can segfault). Prefer
 warm-once-under-a-lock over locking the hot path.
-
-**C extension imports.** On a free-threaded build, importing an extension that has not
-declared `Py_MOD_GIL_NOT_USED` **re-enables the GIL for the whole process**, with only
-a `RuntimeWarning`. Everything then still works, just single-threaded. So a new
-module-scope `import` of a C/Rust package is a load-bearing decision: keep it lazy
-unless the package is known free-threading-safe. `tests/test_free_threading.py` guards
-the API import surface; run the suite under
-`PYTHONWARNINGS="error:The global interpreter lock:RuntimeWarning"` to make a
-regression fail at the offending import.
 
 ### Branch Hygiene
 - **Always start new feature branches from `origin/main`** — rebase to ensure a clean base.
@@ -416,7 +386,7 @@ see "HTTP Middleware" above. Ask for a pure-ASGI middleware (or an `APIRoute` su
 if the logic needs routing context), and check that a `send` wrapper sanitises any
 header value derived from client input.
 
-### 11d. Check concurrency primitives and free-threading safety
+### 11d. Check concurrency primitives
 
 See "Concurrency" above. Grep the diff:
 
@@ -432,23 +402,14 @@ git diff main...HEAD -- '*.py' | grep -nE "asyncio\.(Lock|Semaphore|Event|Condit
 - An in-flight/coalescing map holding `asyncio.Future`s keyed without the running loop.
 
 **Also check the change does not quietly drop an interpreter:**
-- A new dependency, or a version bump, that has no free-threaded (`cp3XXt`) wheel and
-  is imported on the API path — it costs the `-py3.14t` image its free-threading.
-  Check with `pip index versions` / the project's wheel list, and if there is no
-  wheel, either keep the import lazy or add it to
-  `hindsight-api-slim/overrides-freethreaded.txt` with a runtime fallback.
+- A new dependency, or a version bump, with no wheel for one of 3.11-3.14 — the
+  `build-api-python-versions` CI matrix installs and smoke-tests every one of them.
 - Syntax or stdlib usage newer than 3.11 (`uv run ty check` catches most of it).
 - A test that assumes one event loop per process, when what it covers is shared state.
 
 **Should fix:**
 - New process-global mutable state (dict/set/list, `lru_cache` over mutable values)
   with no lock, or iterated somewhere it can be mutated concurrently.
-- A new module-scope `import` of a C/Rust extension on the API import path. Check it
-  ships free-threaded wheels and declares `Py_MOD_GIL_NOT_USED`; if not, make it lazy.
-  Verify with:
-  ```bash
-  python -c "import sys, <mod>; print(sys._is_gil_enabled())"   # on a 3.14t build
-  ```
 
 ### 12. Review against other coding standards
 
@@ -483,10 +444,8 @@ Present a clear summary organized by severity:
   harness, dialect, provider or language variant that skips a lifecycle step the others perform
 - An `asyncio` lock/semaphore/event created at import time or owned by a process-wide
   singleton, or a `threading.Lock` held across an `await` (see step 11d)
-- A change that only works on one of the two supported interpreters — 3.11 and
-  free-threaded 3.14 (see Supported interpreters); in particular a new C-extension
-  dependency with no `cp3XXt` wheel imported on the API path, which silently costs the
-  `-py3.14t` image its free-threading
+- A change that works on only some of the supported interpreters, 3.11 through 3.14
+  (see Supported interpreters)
 
 **Should fix** — issues that hurt code quality:
 - Dead code / unused imports missed by linter

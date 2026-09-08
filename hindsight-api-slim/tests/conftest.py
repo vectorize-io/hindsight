@@ -505,11 +505,7 @@ def _skip_without_local_ml(what: str) -> None:
     """Skip rather than error when the local ML stack is not installed.
 
     The ``local-ml`` extra (sentence-transformers, transformers, torch) is optional: a
-    deployment using TEI/OpenAI/Cohere for embeddings and reranking never installs it,
-    and a free-threaded build may deliberately leave it out -- importing
-    ``sentence_transformers`` re-enables the GIL, so a process that wants to stay
-    free-threaded cannot load the local models. (torch, tokenizers, safetensors and
-    transformers are all fine on their own; see ``hindsight_api/_free_threading.py``.)
+    deployment using TEI/OpenAI/Cohere for embeddings and reranking never installs it.
 
     Without this, every DB-backed test collapses into an ImportError from deep inside
     fixture setup ("sentence-transformers is required for LocalSTEmbeddings"), which

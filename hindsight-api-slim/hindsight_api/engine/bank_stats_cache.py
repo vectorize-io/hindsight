@@ -41,9 +41,8 @@ class BankStatsCache:
         self._entries: OrderedDict[tuple[str, str], tuple[float, dict[str, Any]]] = OrderedDict()
         # In-flight loaders are keyed by (event loop, cache key), not by cache key
         # alone. An asyncio.Future belongs to the loop that created it, so a caller on
-        # another loop must never await it -- with several loops in one process
-        # (free-threaded uvicorn) that raises "<Future> is bound to a different event
-        # loop" under load. Coalescing therefore happens within a loop; the cached
+        # another loop must never await it -- doing so raises "<Future> is bound to a
+        # different event loop". Coalescing therefore happens within a loop; the cached
         # DATA below is still shared across all of them, which is the part worth having.
         self._in_flight: dict[tuple[object, tuple[str, str]], asyncio.Future[dict[str, Any]]] = {}
         # A threading.Lock, not an asyncio.Lock: it is loop-agnostic, and every

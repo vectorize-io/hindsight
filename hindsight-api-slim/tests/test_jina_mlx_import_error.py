@@ -22,8 +22,7 @@ import pytest
 
 # These stub mlx itself, but the code path under test still reaches transformers for
 # the tokenizer — so without the local-ml extra the assertion sees
-# "No module named 'transformers'" rather than the message it is checking. A
-# free-threaded install has no local-ml (sentence-transformers re-enables the GIL).
+# "No module named 'transformers'" rather than the message it is checking.
 pytest.importorskip("transformers", reason="the mlx path loads a tokenizer; needs the local-ml extra")
 
 from hindsight_api.engine.cross_encoder import JinaMLXCrossEncoder

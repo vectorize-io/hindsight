@@ -159,9 +159,7 @@ class Embeddings(ABC):
     # max_concurrent_requests. Deliberately NOT one per encode() call: a pool per call
     # multiplies threads by every concurrent caller, and it makes the bound per-caller
     # when it is supposed to describe the embedding service — four concurrent retains
-    # would put 4 x max_concurrent_requests on the wire. That got sharper once the API
-    # gained several event loops in one process (#4067) on a free-threaded build (#4037),
-    # where those callers genuinely run at the same time. Shared here, the bound holds
+    # would put 4 x max_concurrent_requests on the wire. Shared here, the bound holds
     # process-wide and the thread count stays flat.
     #
     # Lock is class-level: creation is once per instance, so contention is nil, and it
@@ -668,16 +666,15 @@ class RemoteTEIEmbeddings(Embeddings):
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
         # One client per THREAD, not one per provider. `encode` is called through
-        # `run_in_executor`, so several threads share this object, and on a free-threaded build
-        # they genuinely run at once. httpcore's sync pool has at least one unguarded
-        # check-then-use on the shared connection state:
+        # `run_in_executor`, so several threads share this object. httpcore's sync pool has
+        # at least one unguarded check-then-use on the shared connection state:
         #
         #     keepalive_expired = self._expire_at is not None and now > self._expire_at
         #
         # Another thread can null `_expire_at` between the two halves, and the comparison then
         # raises `'>' not supported between instances of 'float' and 'NoneType'` — surfacing as
-        # a 500 from recall. Under the GIL the window is small enough that it effectively never
-        # happens; without it, it does.
+        # a 500 from recall. The window is narrow, but it is real: the executor runs these
+        # threads concurrently and nothing serialises them.
         #
         # A client per thread removes the sharing rather than trying to serialise around it. The
         # cost is one connection pool per executor thread, which is bounded by the executor.

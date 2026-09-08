@@ -55,21 +55,6 @@ class ExtensionContext(ABC):
         """
         ...
 
-    @property
-    def is_primary(self) -> bool:
-        """Whether this context belongs to the loop that owns process-level work.
-
-        A multi-loop server builds one application per loop and designates exactly one of
-        them primary; that one runs what belongs to the PROCESS rather than to a loop --
-        migrations, the background pollers, and any one-off startup provisioning an
-        extension does. An extension that installs shared infrastructure on startup should
-        guard it with this, or it does that work once per loop.
-
-        Always True for a single-loop server, which is every deployment that does not opt
-        into more, so an extension that ignores this keeps its current behaviour.
-        """
-        return True
-
     @abstractmethod
     def get_memory_engine(self) -> "MemoryEngineInterface":
         """
@@ -101,7 +86,6 @@ class DefaultExtensionContext(ExtensionContext):
         memory_engine: "MemoryEngineInterface | None" = None,
         webhook_manager: "WebhookManager | None" = None,
         current_schema: str | None = None,
-        is_primary: bool = True,
     ):
         """
         Initialize the context.
@@ -111,15 +95,11 @@ class DefaultExtensionContext(ExtensionContext):
             memory_engine: Optional MemoryEngine instance for memory operations.
             webhook_manager: Optional WebhookManager for firing webhooks.
             current_schema: Optional current schema name for tenant context.
-            is_primary: Whether this context's loop owns process-level work. Defaults to
-                True so a single-loop server, and any caller that predates the flag, keeps
-                doing that work.
         """
         self._database_url = database_url
         self._memory_engine = memory_engine
         self.webhook_manager = webhook_manager
         self.current_schema = current_schema
-        self._is_primary = is_primary
 
     async def run_migration(self, schema: str) -> None:
         """Run migrations for a specific schema."""
@@ -146,11 +126,10 @@ class DefaultExtensionContext(ExtensionContext):
         # One call, not four: run_migrations_for_schemas is the migration-isolation
         # boundary. Calling run_migrations() and then the ensure_* helpers separately
         # would run each of them here -- and every one opens SQLAlchemy's sync engine,
-        # i.e. psycopg2, which has no free-threaded build. On a python3.14t interpreter
-        # that import re-enables the GIL for the life of the server (and, with the
-        # strict free-threading guard on, fails the request outright). Startup already
-        # goes through this entrypoint; runtime tenant provisioning must too, or
-        # provisioning a new bank on a free-threaded API 500s.
+        # i.e. psycopg2, in the server process, sidestepping the isolation the flag
+        # asks for. Startup already goes through this entrypoint; runtime tenant
+        # provisioning must too, or HINDSIGHT_API_MIGRATION_ISOLATION=true silently
+        # stops applying to it.
         config = get_config()
         await asyncio.to_thread(
             run_migrations_for_schemas,
@@ -175,11 +154,6 @@ class DefaultExtensionContext(ExtensionContext):
             pool = await get_pool()
             async with pool.acquire() as conn:
                 await tenant_extension.provision_bank_tables(conn, schema)
-
-    @property
-    def is_primary(self) -> bool:
-        """Whether this context's loop owns process-level work."""
-        return self._is_primary
 
     def get_memory_engine(self) -> "MemoryEngineInterface":
         """Get the memory engine interface."""

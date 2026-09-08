@@ -1,11 +1,11 @@
 """Concurrency primitives that several event loops in one process can share.
 
 ``asyncio.Lock``/``Semaphore`` bind to the event loop that first *waits* on them.
-That is fine for state one loop owns, and wrong for anything process-wide: on a
-free-threaded build (``python3.14t``) uvicorn can run an event loop per thread, and
-the first contended acquire claims the primitive for its loop while every other loop
-fails with ``RuntimeError: ... is bound to a different event loop``. The failure only
-appears under contention, so it passes tests and breaks under load.
+That is fine for state one loop owns, and wrong for anything process-wide: the first
+contended acquire claims the primitive for its loop, and any other loop reaching the
+same module-level or class-level object then fails with ``RuntimeError: ... is bound
+to a different event loop``. The failure only appears under contention, so it passes
+tests and breaks under load.
 
 The state here lives under a ``threading.Lock``, which is loop-agnostic, and a waiter
 polls its own ticket on a short async backoff so a loop is never blocked while it

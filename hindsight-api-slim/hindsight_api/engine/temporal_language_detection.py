@@ -106,11 +106,11 @@ def _char_tables(languages: list[Locale], settings: Settings) -> LocaleCharTable
     # locale's dictionary under a fresh ``Settings`` (hence a fresh
     # ``registry_key``) and writes it into ``locale.dictionaries`` and
     # dateparser's class-level regex caches — for all 200+ locales. Two threads
-    # missing together therefore mutate the same dicts concurrently, which on a
-    # free-threaded build segfaults inside the ``regex`` extension rather than
-    # merely raising "dictionary changed size during iteration". Missing at the
-    # same moment is the *normal* case, not a rare one: it is what N engines
-    # warming their analyzers on the startup executor do. Same shape as
+    # missing together therefore mutate the same dicts concurrently, which can
+    # segfault inside the ``regex`` extension rather than merely raising
+    # "dictionary changed size during iteration". Missing at the same moment is
+    # the *normal* case, not a rare one: it is what concurrent warmups on the
+    # startup executor do. Same shape as
     # ``_ensure_dictionary_warm`` below — unlocked pre-check, then
     # double-checked under the lock, so the steady state is still lock-free.
     with _char_table_lock:

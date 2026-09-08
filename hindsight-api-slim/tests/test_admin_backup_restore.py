@@ -813,9 +813,7 @@ async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(m
     # See migrations._should_isolate_migrations.
     # Patched rather than set via HINDSIGHT_API_MIGRATION_ISOLATION: the flag is read
     # through get_config(), whose result is cached in a module global, so setting the
-    # env var after any earlier get_config() call has no effect. That goes unnoticed on
-    # 3.11, where "auto" resolves to no-isolation anyway, and fails on a free-threaded
-    # build where "auto" isolates and these patches are never reached.
+    # env var after any earlier get_config() call has no effect.
     monkeypatch.setattr(migrations, "_should_isolate_migrations", lambda: False)
     calls: dict[str, list] = {
         "run_migrations": [],
@@ -889,9 +887,7 @@ async def test_run_migration_without_schema_runs_optional_post_migration_hooks(m
     # See migrations._should_isolate_migrations.
     # Patched rather than set via HINDSIGHT_API_MIGRATION_ISOLATION: the flag is read
     # through get_config(), whose result is cached in a module global, so setting the
-    # env var after any earlier get_config() call has no effect. That goes unnoticed on
-    # 3.11, where "auto" resolves to no-isolation anyway, and fails on a free-threaded
-    # build where "auto" isolates and these patches are never reached.
+    # env var after any earlier get_config() call has no effect.
     monkeypatch.setattr(migrations, "_should_isolate_migrations", lambda: False)
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     calls: dict[str, list] = {
@@ -979,9 +975,7 @@ async def test_run_migration_with_schema_only_runs_requested_schema(monkeypatch)
     # See migrations._should_isolate_migrations.
     # Patched rather than set via HINDSIGHT_API_MIGRATION_ISOLATION: the flag is read
     # through get_config(), whose result is cached in a module global, so setting the
-    # env var after any earlier get_config() call has no effect. That goes unnoticed on
-    # 3.11, where "auto" resolves to no-isolation anyway, and fails on a free-threaded
-    # build where "auto" isolates and these patches are never reached.
+    # env var after any earlier get_config() call has no effect.
     monkeypatch.setattr(migrations, "_should_isolate_migrations", lambda: False)
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     calls: dict[str, list] = {

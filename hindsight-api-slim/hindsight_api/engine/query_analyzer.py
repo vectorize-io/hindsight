@@ -214,11 +214,9 @@ class QueryAnalysis(BaseModel):
 # ``regex`` extension, which is handed borrowed references into a dict another
 # thread is resizing.
 #
-# Under the GIL this is rare enough to have gone unnoticed; on a free-threaded
-# build (``python3.14t``) it is immediate — six event loops in one process, each
-# warming its own analyzer on the default executor, crash the interpreter with
-# SIGSEGV in under a minute (traceback bottoming out in
-# ``dateparser/languages/dictionary.py`` ``split`` -> ``_regex...so``).
+# It is rare, because the threads have to interleave inside the cache build, but
+# it is a hard crash when it lands: SIGSEGV with the traceback bottoming out in
+# ``dateparser/languages/dictionary.py`` ``split`` -> ``_regex...so``.
 #
 # One process-wide lock around every entry into dateparser fixes both. It costs
 # nothing on the recall path, which already funnels through the single-worker
@@ -305,7 +303,7 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
 
         # Serialised against every other entry into dateparser: warming builds
         # its process-global locale caches, and a second thread reading them
-        # mid-build is what crashes free-threaded builds. See _DATEPARSER_LOCK.
+        # mid-build is what segfaults the interpreter. See _DATEPARSER_LOCK.
         with _DATEPARSER_LOCK:
             if self._loaded:
                 return

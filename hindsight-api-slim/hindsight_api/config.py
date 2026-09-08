@@ -613,9 +613,6 @@ ENV_BASE_PATH = "HINDSIGHT_API_BASE_PATH"
 ENV_LOG_LEVEL = "HINDSIGHT_API_LOG_LEVEL"
 ENV_LOG_FORMAT = "HINDSIGHT_API_LOG_FORMAT"
 ENV_LOG_JSON_FIELDS = "HINDSIGHT_API_LOG_JSON_FIELDS"
-# Event loops per process. >1 only pays off on a free-threaded build, where the loops
-# execute Python in parallel rather than taking turns; see hindsight_api/multi_loop.py.
-ENV_EVENT_LOOPS = "HINDSIGHT_API_EVENT_LOOPS"
 ENV_WORKERS = "HINDSIGHT_API_WORKERS"
 ENV_ACCESS_LOG = "HINDSIGHT_API_ACCESS_LOG"
 ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
@@ -800,10 +797,9 @@ ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
 
 # Database migrations
 ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
-# Whether migrations run in a subprocess instead of in the calling process.
-# "auto" (default) isolates only on a free-threaded interpreter, where alembic's
-# psycopg2 would otherwise re-enable the GIL for the life of the process; "true"
-# and "false" force it either way. See migrations._should_isolate_migrations.
+# Whether migrations run in a subprocess instead of in the calling process, keeping
+# alembic's import graph and its psycopg2 sync engine out of a long-lived server.
+# "false" (the default) runs them in-process. See migrations._should_isolate_migrations.
 ENV_MIGRATION_ISOLATION = "HINDSIGHT_API_MIGRATION_ISOLATION"
 ENV_MIGRATION_CONCURRENCY = "HINDSIGHT_API_MIGRATION_CONCURRENCY"
 
@@ -1393,7 +1389,6 @@ DEFAULT_PORT = 8888
 DEFAULT_BASE_PATH = ""  # Empty string = root path
 DEFAULT_LOG_LEVEL = "info"
 DEFAULT_LOG_FORMAT = "text"  # Options: "text", "json"
-DEFAULT_EVENT_LOOPS = 1
 DEFAULT_WORKERS = 1
 DEFAULT_ACCESS_LOG = False
 DEFAULT_MCP_ENABLED = True
@@ -1565,12 +1560,9 @@ DEFAULT_OBSERVATION_SCOPE_LIMITS: list | None = None
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
-# "auto" | "true" | "false" — see ENV_MIGRATION_ISOLATION. Spelled as a tri-state
-# boolean rather than always/never so it reads like every other on/off flag here:
-# the question the value answers is "isolate the migration?", and "auto" is the
-# third answer, "let the interpreter decide".
-DEFAULT_MIGRATION_ISOLATION = "auto"
-MIGRATION_ISOLATION_CHOICES = ("auto", "true", "false")
+# "true" | "false" — see ENV_MIGRATION_ISOLATION.
+DEFAULT_MIGRATION_ISOLATION = "false"
+MIGRATION_ISOLATION_CHOICES = ("true", "false")
 # Number of tenant schemas to migrate concurrently. Each schema runs in its own
 # process (Alembic's command.upgrade() is not thread-safe); within a schema the
 # work is always sequential. 1 = fully sequential (the safe default).
@@ -4887,7 +4879,7 @@ _config_cache: HindsightConfig | None = None
 
 
 def _parse_migration_isolation() -> str:
-    """Validate HINDSIGHT_API_MIGRATION_ISOLATION, defaulting to "auto".
+    """Validate HINDSIGHT_API_MIGRATION_ISOLATION, defaulting to "false".
 
     Rejects an unknown value rather than silently falling back: getting this wrong
     means migrations quietly run in the wrong process, which is invisible until

@@ -24,7 +24,7 @@ The API service handles all memory operations (retain, recall, reflect).
 | `HINDSIGHT_API_MIGRATION_DATABASE_URL` | Direct PostgreSQL URL for running migrations, bypassing connection poolers (e.g. PgBouncer). When set, advisory locks and Alembic migrations use this URL instead of `DATABASE_URL`. | Falls back to `DATABASE_URL` |
 | `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
-| `HINDSIGHT_API_MIGRATION_ISOLATION` | Run migrations in a subprocess instead of in the calling process: `auto` (only on a free-threaded interpreter, where Alembic's psycopg2 would otherwise re-enable the GIL for the life of the process), `true`, or `false` | `auto` |
+| `HINDSIGHT_API_MIGRATION_ISOLATION` | Run migrations in a subprocess instead of in the calling process: `true` (keeps Alembic's import graph and its psycopg2 sync engine out of a long-lived server process) or `false` | `false` |
 | `HINDSIGHT_API_MIGRATION_CONCURRENCY` | Number of tenant schemas to migrate concurrently (PostgreSQL only). Each schema runs in its own process; within a schema migrations are always sequential. Each worker has a fixed startup cost (~1–2s to boot a fresh interpreter), so this only pays off with **many** schemas (roughly tens or more) or slow/high-latency migrations — for a handful of schemas it is slower than sequential. Each worker uses ~3 database connections, so keep `concurrency × 3` within your database's spare `max_connections` (and any PgBouncer pool limit). `1` = fully sequential. Measured at 20k schemas: the per-restart no-op resweep dropped from ~60min to ~11min (≈5×) at `concurrency=12`. | `1` |
 | `HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES` | Comma-separated list of maintenance discovery routines this deployment installs itself (see [Owning a maintenance routine](#owning-a-maintenance-routine)). Migrations skip anything named here. | Empty (every routine installed) |
 | `HINDSIGHT_API_DATABASE_BACKEND` | Database engine backend: `postgresql` or `oracle` (Oracle 23ai) | `postgresql` |
@@ -1375,7 +1375,6 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_PORT` | Server port | `8888` |
 | `HINDSIGHT_API_BASE_PATH` | Base path for API when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 | `HINDSIGHT_API_WORKERS` | Number of uvicorn worker processes | `1` |
-| `HINDSIGHT_API_EVENT_LOOPS` | Number of event loops served from a single process, each on its own thread. Only a throughput win on the free-threaded `-py3.14t` image, where the loops execute Python in parallel rather than taking turns; on a standard build it warns and buys nothing. The DB pool size is divided across the loops, not multiplied. | `1` |
 | `HINDSIGHT_API_ACCESS_LOG` | Enable uvicorn access log (`true`, `1`, `yes`, `on` to enable) | `false` |
 | `HINDSIGHT_API_LOG_LEVEL` | Log level: `debug`, `info`, `warning`, `error` | `info` |
 | `HINDSIGHT_API_LOG_FORMAT` | Log format: `text` or `json` (structured logging for cloud platforms) | `text` |
@@ -2558,10 +2557,8 @@ Three things will mislead you otherwise:
 
 Profiling is process-wide and single-instance: since Python 3.12 the profiler is a global
 monitoring tool, so nothing else in the process may profile at the same time (a second
-attempt logs `tool 2 is already in use` and leaves profiling off). On a free-threaded build
-this is the supported route, because `py-spy` cannot read a `Py_GIL_DISABLED` process --- it
-locates threads through the GIL, which such a build does not have. On a normal build,
-`py-spy` remains the better tool when you can attach to the process.
+attempt logs `tool 2 is already in use` and leaves profiling off). `py-spy` remains the
+better tool when you can attach to the process; this exists for the cases where you cannot.
 
 ### Metrics
 
